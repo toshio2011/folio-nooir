@@ -45,15 +45,15 @@ void FolioNooirTheme::drawShelfTabs(const GfxRenderer& renderer, const FolioShel
 }
 
 void FolioNooirTheme::drawShelfStats(const GfxRenderer& renderer, const FolioShelfLayout& layout,
-                                     const uint32_t lastMinutes, const uint32_t todayMinutes,
-                                     const uint16_t finishedCount) const {
+                                     const uint32_t lastMinutes, const uint32_t middleMinutes,
+                                     const uint16_t finishedCount, const bool accumulated) const {
   const int pageWidth = renderer.getScreenWidth();
   renderer.fillRect(0, layout.statsTop, pageWidth, layout.statsHeight, false);
   renderer.drawLine(0, layout.statsTop, pageWidth - 1, layout.statsTop);
-  const char* labels[] = {tr(STR_LAST_READ), tr(STR_TODAY), tr(STR_FINISHED)};
+  const char* labels[] = {tr(STR_LAST_READ), accumulated ? tr(STR_ACCUMULATED) : tr(STR_TODAY), tr(STR_FINISHED)};
   char values[3][24];
   snprintf(values[0], sizeof(values[0]), "%lu %s", static_cast<unsigned long>(lastMinutes), tr(STR_MIN_SHORT));
-  snprintf(values[1], sizeof(values[1]), "%lu %s", static_cast<unsigned long>(todayMinutes), tr(STR_MIN_SHORT));
+  snprintf(values[1], sizeof(values[1]), "%lu %s", static_cast<unsigned long>(middleMinutes), tr(STR_MIN_SHORT));
   snprintf(values[2], sizeof(values[2]), "%u", finishedCount);
   for (int i = 0; i < 3; ++i) {
     const int left = pageWidth * i / 3;

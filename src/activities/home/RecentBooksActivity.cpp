@@ -521,15 +521,20 @@ void RecentBooksActivity::render(RenderLock&&) {
   const int contentHeight = layout.contentHeight;
   const int detailHeight = layout.detailHeight;
   auto drawStats = [&] {
+    const bool accumulated = !halClock.isAvailable();
     const uint32_t today = halClock.getDateKey();
-    uint32_t todaySeconds = 0;
+    uint32_t middleSeconds = 0;
     uint16_t finishedCount = 0;
     for (const auto& book : recentBooks) {
-      if (today != 0 && book.dailyReadingDateKey == today) todaySeconds += book.dailyReadingSeconds;
+      const uint32_t seconds = accumulated ? book.readingSeconds
+                                           : (today != 0 && book.dailyReadingDateKey == today
+                                                  ? book.dailyReadingSeconds
+                                                  : 0);
+      middleSeconds += std::min(seconds, UINT32_MAX - middleSeconds);
       if (book.progressPercent >= 100) ++finishedCount;
     }
     const uint32_t lastMinutes = recentBooks.empty() ? 0 : (recentBooks.front().lastSessionSeconds + 30) / 60;
-    folioTheme.drawShelfStats(renderer, layout, lastMinutes, (todaySeconds + 30) / 60, finishedCount);
+    folioTheme.drawShelfStats(renderer, layout, lastMinutes, (middleSeconds + 30) / 60, finishedCount, accumulated);
   };
   if (visibleBookCount == 0) {
     renderer.fillRect(0, contentTop, pageWidth, contentHeight, false);
