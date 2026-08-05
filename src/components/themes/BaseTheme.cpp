@@ -668,11 +668,14 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
       renderer.drawCenteredText(UI_10_FONT_ID, titleYStart, truncatedAuthor.c_str(), !bookSelected);
     }
 
-    // "Continue Reading" label at the bottom
+    // "Continue Reading" label at the bottom, with durable book progress.
     const int continueY = bookY + bookHeight - renderer.getLineHeight(UI_10_FONT_ID) * 3 / 2;
+    char continueLabel[48];
+    snprintf(continueLabel, sizeof(continueLabel), "%s · %u%%", tr(STR_CONTINUE_READING),
+             recentBooks[0].progressPercent);
     if (coverRendered) {
       // Draw box behind "Continue Reading" text (inverted when selected: black box instead of white)
-      const char* continueText = tr(STR_CONTINUE_READING);
+      const char* continueText = continueLabel;
       const int continueTextWidth = renderer.getTextWidth(UI_10_FONT_ID, continueText);
       constexpr int continuePadding = 6;
       const int continueBoxWidth = continueTextWidth + continuePadding * 2;
@@ -683,7 +686,7 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
       renderer.drawRect(continueBoxX, continueBoxY, continueBoxWidth, continueBoxHeight, !bookSelected);
       renderer.drawCenteredText(UI_10_FONT_ID, continueY, continueText, !bookSelected);
     } else {
-      renderer.drawCenteredText(UI_10_FONT_ID, continueY, tr(STR_CONTINUE_READING), !bookSelected);
+      renderer.drawCenteredText(UI_10_FONT_ID, continueY, continueLabel, !bookSelected);
     }
   } else {
     // No book to continue reading

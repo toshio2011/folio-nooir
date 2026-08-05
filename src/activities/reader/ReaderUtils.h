@@ -42,6 +42,15 @@ inline void applyOrientation(GfxRenderer& renderer, const uint8_t orientation) {
   }
 }
 
+// Reader pages use many differential FAST refreshes. Before leaving a book or
+// painting the sleep screen, run one white full-waveform pass to discharge the
+// accumulated text ghosts and establish a clean panel baseline. Reader onExit()
+// is invoked while ActivityManager already holds the render lock.
+inline void clearGhostingOnExit(GfxRenderer& renderer) {
+  renderer.clearScreen();
+  renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+}
+
 struct PageTurnResult {
   bool prev;
   bool next;

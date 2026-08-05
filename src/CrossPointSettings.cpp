@@ -9,6 +9,7 @@
 #include <string>
 
 #include "I18nKeys.h"
+#include "MappedInputManager.h"
 #include "SettingsList.h"
 #include "fontIds.h"
 
@@ -85,6 +86,15 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["frontButtonConfirm"] = frontButtonConfirm;
   doc["frontButtonLeft"] = frontButtonLeft;
   doc["frontButtonRight"] = frontButtonRight;
+  doc["bluetoothEnabled"] = bluetoothEnabled;
+  JsonArray bleMap = doc["bleKeyMap"].to<JsonArray>();
+  for (const auto& entry : bleKeyMap) {
+    if (entry.keyKind == 0xFF || entry.button == 0xFF) continue;
+    JsonObject item = bleMap.add<JsonObject>();
+    item["k"] = entry.keyKind;
+    item["v"] = entry.keyValue;
+    item["b"] = entry.button;
+  }
   // Font family — uses dynamic getter/setter in SettingsList so the generic loop skips it.
   doc["fontFamily"] = fontFamily;
   // SD card font family name — not in SettingsList, save manually
@@ -176,6 +186,26 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   frontButtonRight =
       clamp(doc["frontButtonRight"] | (uint8_t)FRONT_HW_RIGHT, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_RIGHT);
   validateFrontButtonMapping(s);
+
+  bluetoothEnabled = clamp(doc["bluetoothEnabled"] | (uint8_t)0, 2, 0);
+  for (auto& entry : bleKeyMap) entry = BleKeyMapEntry{};
+  JsonArrayConst storedBleMap = doc["bleKeyMap"];
+  if (!storedBleMap.isNull()) {
+    uint8_t slot = 0;
+    for (JsonObjectConst item : storedBleMap) {
+      if (slot >= BLE_MAP_CAPACITY) break;
+      const uint8_t kind = item["k"] | (uint8_t)0xFF;
+      const uint8_t button = item["b"] | (uint8_t)0xFF;
+      if (kind > 1 || button >= MappedInputManager::kButtonCount) {
+        needsResave = true;
+        continue;
+      }
+      bleKeyMap[slot].keyKind = kind;
+      bleKeyMap[slot].keyValue = item["v"] | (uint8_t)0;
+      bleKeyMap[slot].button = button;
+      slot++;
+    }
+  }
 
   // Font family — uses dynamic getter/setter in SettingsList so the generic loop skips it.
   const uint8_t storedFontFamily = doc["fontFamily"] | (uint8_t)0;

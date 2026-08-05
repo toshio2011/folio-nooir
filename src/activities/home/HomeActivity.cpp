@@ -53,55 +53,44 @@ void HomeActivity::loadRecentBooks(int maxBooks) {
 
 void HomeActivity::loadRecentCovers(int coverHeight) {
   recentsLoading = true;
-  bool showingLoading = false;
-  Rect popupRect;
-
-  int progress = 0;
-  for (RecentBook& book : recentBooks) {
+  while (nextRecentCover < recentBooks.size()) {
+    RecentBook& book = recentBooks[nextRecentCover++];
     if (!book.coverBmpPath.empty()) {
       std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
       if (!Storage.exists(coverPath.c_str())) {
-        // If epub, try to load the metadata for title/author and cover
+        bool attempted = false;
+        bool success = false;
         if (FsHelpers::hasEpubExtension(book.path)) {
           Epub epub(book.path, "/.crosspoint");
-          // Skip loading css since we only need metadata here
-          epub.load(false, true);
-
-          // Try to generate thumbnail image for Continue Reading card
-          if (!showingLoading) {
-            showingLoading = true;
-            popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+          if (epub.load(false, true)) {
+            attempted = true;
+            success = epub.generateThumbBmp(coverHeight);
           }
-          GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
-          bool success = epub.generateThumbBmp(coverHeight);
-          if (!success) {
-            RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
-            book.coverBmpPath = "";
-          }
-          coverRendered = false;
-          requestUpdate();
         } else if (FsHelpers::hasXtcExtension(book.path)) {
-          // Handle XTC file
           Xtc xtc(book.path, "/.crosspoint");
           if (xtc.load()) {
-            // Try to generate thumbnail image for Continue Reading card
-            if (!showingLoading) {
-              showingLoading = true;
-              popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
-            }
-            GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
-            bool success = xtc.generateThumbBmp(coverHeight);
-            if (!success) {
-              RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
-              book.coverBmpPath = "";
-            }
-            coverRendered = false;
-            requestUpdate();
+            attempted = true;
+            success = xtc.generateThumbBmp(coverHeight);
           }
+        }
+
+        if (attempted && !success) {
+          RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+          book.coverBmpPath.clear();
+        }
+        if (attempted) {
+          // Yield back to the normal activity/render cycle after one expensive
+          // decode. This keeps Home responsive instead of decoding every missing
+          // recent cover in one long blocking batch.
+          coverRendered = false;
+          freeCoverBuffer();
+          recentsLoading = false;
+          if (nextRecentCover >= recentBooks.size()) recentsLoaded = true;
+          requestUpdate();
+          return;
         }
       }
     }
-    progress++;
   }
 
   recentsLoaded = true;
@@ -273,7 +262,10 @@ void HomeActivity::loop() {
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     activateSelection();
+    return;
   }
+
+  if (firstRenderDone && !recentsLoaded && !recentsLoading) loadRecentCovers(metrics.homeCoverHeight);
 }
 
 void HomeActivity::render(RenderLock&&) {
@@ -334,9 +326,6 @@ void HomeActivity::render(RenderLock&&) {
   if (!firstRenderDone) {
     firstRenderDone = true;
     requestUpdate();
-  } else if (!recentsLoaded && !recentsLoading) {
-    recentsLoading = true;
-    loadRecentCovers(metrics.homeCoverHeight);
   }
 }
 

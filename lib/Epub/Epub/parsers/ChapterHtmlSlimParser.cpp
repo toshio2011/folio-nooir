@@ -412,7 +412,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   // before tag-specific branches emit any content or metadata.
   CssStyle cssStyle;
   if (self->cssParser) {
-    cssStyle = self->cssParser->resolveStyle(name, classAttr);
+    const char* id = getAttribute(atts, "id");
+    cssStyle = self->cssParser->resolveStyle(name, classAttr, id ? std::string_view{id} : std::string_view{});
     if (!styleAttr.empty()) {
       CssStyle inlineStyle = CssParser::parseInlineStyle(styleAttr);
       cssStyle.applyOver(inlineStyle);
@@ -444,7 +445,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     return;
   }
 
-  // Special handling for tables/cells: flatten into per-cell paragraphs with a prefixed header.
+  // Tables use a bounded row renderer: each HTML row becomes one flowing text
+  // block and cells are separated visibly. This preserves the actual table text
+  // without the old synthetic "Tab Row N, Cell N" labels, while still allowing
+  // long cells to wrap safely on the narrow, fixed-memory display.
   if (strcmp(name, "table") == 0) {
     // skip nested tables
     if (self->tableDepth > 0) {
@@ -465,6 +469,11 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   if (self->tableDepth == 1 && strcmp(name, "tr") == 0) {
     self->tableRowIndex += 1;
     self->tableColIndex = 0;
+    if (self->partWordBufferIndex > 0) self->flushPartWordBuffer();
+    auto tableRowStyle = BlockStyle();
+    tableRowStyle.textAlignDefined = true;
+    tableRowStyle.alignment = CssTextAlign::Left;
+    self->startNewTextBlock(tableRowStyle);
     self->depth += 1;
     return;
   }
@@ -475,33 +484,25 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     }
     self->tableColIndex += 1;
 
-    auto tableCellBlockStyle = BlockStyle();
-    tableCellBlockStyle.textAlignDefined = true;
-    const auto align = (self->paragraphAlignment == static_cast<uint8_t>(CssTextAlign::None))
-                           ? CssTextAlign::Justify
-                           : static_cast<CssTextAlign>(self->paragraphAlignment);
-    tableCellBlockStyle.alignment = align;
-    self->startNewTextBlock(tableCellBlockStyle);
-
-    const std::string headerText =
-        "Tab Row " + std::to_string(self->tableRowIndex) + ", Cell " + std::to_string(self->tableColIndex) + ":";
-    StyleStackEntry headerStyle;
-    headerStyle.depth = self->depth;
-    headerStyle.hasBold = true;
-    headerStyle.bold = false;
-    headerStyle.hasItalic = true;
-    headerStyle.italic = true;
-    self->inlineStyleStack.push_back(headerStyle);
-    self->updateEffectiveInlineStyle();
-    const CssTextDecoration savedTextDecoration = self->effectiveTextDecoration;
-    self->effectiveTextDecoration = CssTextDecoration::None;
-    self->characterData(userData, headerText.c_str(), static_cast<int>(headerText.length()));
-    if (self->partWordBufferIndex > 0) {
-      self->flushPartWordBuffer();
+    if (self->tableColIndex > 1) {
+      constexpr char CELL_SEPARATOR[] = " | ";
+      self->characterData(userData, CELL_SEPARATOR, sizeof(CELL_SEPARATOR) - 1);
+      if (self->partWordBufferIndex > 0) self->flushPartWordBuffer();
     }
-    self->effectiveTextDecoration = savedTextDecoration;
-    self->nextWordContinues = false;
-    self->inlineStyleStack.pop_back();
+
+    StyleStackEntry cellStyle;
+    cellStyle.depth = self->depth;
+    if (strcmp(name, "th") == 0 || cssStyle.hasFontWeight()) {
+      cellStyle.hasBold = true;
+      cellStyle.bold = strcmp(name, "th") == 0 || cssStyle.fontWeight == CssFontWeight::Bold;
+    }
+    if (cssStyle.hasFontStyle()) {
+      cellStyle.hasItalic = true;
+      cellStyle.italic = cssStyle.fontStyle == CssFontStyle::Italic;
+    }
+    applyTextDecorationToEntry(cellStyle, cssStyle);
+    applyDirectionToEntry(cellStyle, cssStyle);
+    self->inlineStyleStack.push_back(cellStyle);
     self->updateEffectiveInlineStyle();
 
     self->depth += 1;

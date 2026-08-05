@@ -20,12 +20,14 @@
 #include "ProgressFile.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
+#include "BookStateStore.h"
 #include "XtcReaderChapterSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
 void XtcReaderActivity::onEnter() {
   Activity::onEnter();
+  readingSessionStartedMs = millis();
 
   if (!xtc) {
     return;
@@ -47,6 +49,16 @@ void XtcReaderActivity::onEnter() {
 
 void XtcReaderActivity::onExit() {
   Activity::onExit();
+
+  if (xtc) {
+    const ScreenshotInfo info = getScreenshotInfo();
+    RECENT_BOOKS.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent),
+                               (millis() - readingSessionStartedMs) / 1000UL);
+    BOOK_STATES.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent),
+                              (millis() - readingSessionStartedMs) / 1000UL);
+  }
+
+  ReaderUtils::clearGhostingOnExit(renderer);
 
   APP_STATE.readerActivityLoadCount = 0;
   APP_STATE.saveToFile();

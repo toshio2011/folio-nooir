@@ -129,6 +129,15 @@ void Page::renderImages(GfxRenderer& renderer, const int fontId, const int xOffs
                              [](const PageElement& element) { return element.getTag() == TAG_PageImage; });
 }
 
+void Page::blankImages(GfxRenderer& renderer, const int xOffset, const int yOffset) const {
+  for (const auto& element : elements) {
+    if (element->getTag() != TAG_PageImage) continue;
+    const auto& image = static_cast<const PageImage&>(*element);
+    renderer.fillRect(image.xPos + xOffset, image.yPos + yOffset, image.getImageBlock().getWidth(),
+                      image.getImageBlock().getHeight(), false);
+  }
+}
+
 void Page::renderWithImagePlaceholders(GfxRenderer& renderer, const int fontId, const int xOffset,
                                        const int yOffset) const {
   for (const auto& element : elements) {

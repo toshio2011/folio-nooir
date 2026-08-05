@@ -39,6 +39,13 @@ bool HalClock::getTime(uint8_t& hour, uint8_t& minute) const {
   return true;
 }
 
+uint32_t HalClock::getDateKey() const {
+  if (!_available) return 0;
+  Rtc::DateTime dt;
+  if (!_sdkRtc.now(dt)) return 0;
+  return static_cast<uint32_t>(dt.year) * 10000UL + static_cast<uint32_t>(dt.month) * 100UL + dt.day;
+}
+
 bool HalClock::formatTime(char* buf, size_t bufSize, uint8_t utcOffsetQuarterHoursBiased, bool use12Hour) const {
   if (bufSize < (use12Hour ? 9u : 6u)) return false;
   uint8_t h, m;

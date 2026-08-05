@@ -15,6 +15,77 @@ constexpr char MEDIA_TYPE_CSS[] = "text/css";
 constexpr char MEDIA_TYPE_IMAGE_PREFIX[] = "image/";
 constexpr char itemCacheFile[] = "/.items.bin";
 
+// EPUB descriptions frequently contain an escaped HTML fragment. Convert it
+// to bounded plain text in place so markup is interpreted instead of shown on
+// the bookshelf. The output never exceeds the input size, so this adds no heap
+// allocation beyond the description string already owned by the parser.
+void normalizeDescriptionHtml(std::string& text) {
+  size_t read = 0;
+  size_t write = 0;
+  bool pendingSpace = false;
+
+  auto emitSpace = [&] {
+    if (write > 0) pendingSpace = true;
+  };
+  auto emitByte = [&](const char value) {
+    if (pendingSpace && write > 0) text[write++] = ' ';
+    pendingSpace = false;
+    text[write++] = value;
+  };
+  auto emitUtf8 = [&](const char* value, const size_t length) {
+    if (pendingSpace && write > 0) text[write++] = ' ';
+    pendingSpace = false;
+    for (size_t i = 0; i < length; ++i) text[write++] = value[i];
+  };
+
+  while (read < text.size()) {
+    if (text[read] == '<') {
+      const size_t close = text.find('>', read + 1);
+      if (close == std::string::npos) break;
+      read = close + 1;
+      emitSpace();
+      continue;
+    }
+    if (text.compare(read, 6, "&nbsp;") == 0) {
+      read += 6;
+      emitSpace();
+      continue;
+    }
+    if (text.compare(read, 5, "&amp;") == 0) {
+      read += 5;
+      emitByte('&');
+      continue;
+    }
+    if (text.compare(read, 6, "&quot;") == 0) {
+      read += 6;
+      emitByte('"');
+      continue;
+    }
+    if (text.compare(read, 6, "&apos;") == 0) {
+      read += 6;
+      emitByte('\'');
+      continue;
+    }
+    if (text.compare(read, 7, "&ndash;") == 0) {
+      read += 7;
+      emitUtf8("\xE2\x80\x93", 3);
+      continue;
+    }
+    if (text.compare(read, 7, "&mdash;") == 0) {
+      read += 7;
+      emitUtf8("\xE2\x80\x94", 3);
+      continue;
+    }
+    const unsigned char value = static_cast<unsigned char>(text[read++]);
+    if (std::isspace(value)) {
+      emitSpace();
+    } else {
+      emitByte(static_cast<char>(value));
+    }
+  }
+  text.resize(write);
+}
+
 bool startsWithImageMediaType(const std::string& mediaType) {
   constexpr size_t prefixLen = sizeof(MEDIA_TYPE_IMAGE_PREFIX) - 1;
   if (mediaType.size() < prefixLen) {
@@ -93,6 +164,15 @@ size_t ContentOpfParser::write(const uint8_t* buffer, const size_t size) {
 
 void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name, const XML_Char** atts) {
   auto* self = static_cast<ContentOpfParser*>(userData);
+
+  // Preserve separation between text nodes when dc:description contains real
+  // nested XHTML rather than escaped markup.
+  if (self->state == IN_BOOK_DESCRIPTION) {
+    if (!self->description.empty() && self->description.back() != ' ' && self->description.size() < 512) {
+      self->description.push_back(' ');
+    }
+    return;
+  }
   (void)atts;
 
   if (self->state == START && (strcmp(name, "package") == 0 || strcmp(name, "opf:package") == 0)) {
@@ -120,6 +200,11 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
 
   if (self->state == IN_METADATA && strcmp(name, "dc:language") == 0) {
     self->state = IN_BOOK_LANGUAGE;
+    return;
+  }
+
+  if (self->state == IN_METADATA && strcmp(name, "dc:description") == 0) {
+    self->state = IN_BOOK_DESCRIPTION;
     return;
   }
 
@@ -352,6 +437,13 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
     self->language.append(s, len);
     return;
   }
+
+  if (self->state == IN_BOOK_DESCRIPTION) {
+    constexpr size_t MAX_DESCRIPTION_BYTES = 512;
+    const size_t room = MAX_DESCRIPTION_BYTES - std::min(MAX_DESCRIPTION_BYTES, self->description.size());
+    self->description.append(s, std::min(static_cast<size_t>(len), room));
+    return;
+  }
 }
 
 void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) {
@@ -387,6 +479,12 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
   }
 
   if (self->state == IN_BOOK_LANGUAGE && strcmp(name, "dc:language") == 0) {
+    self->state = IN_METADATA;
+    return;
+  }
+
+  if (self->state == IN_BOOK_DESCRIPTION && strcmp(name, "dc:description") == 0) {
+    normalizeDescriptionHtml(self->description);
     self->state = IN_METADATA;
     return;
   }

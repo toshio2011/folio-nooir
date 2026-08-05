@@ -45,6 +45,7 @@ class Activity {
   virtual bool preventAutoSleep() { return false; }
   virtual bool isReaderActivity() const { return false; }
   virtual bool isHomeActivity() const { return false; }
+  virtual bool keepsBluetoothAlive() const { return false; }
   virtual bool handleHomeGesture() { return false; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
 

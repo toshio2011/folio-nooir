@@ -5,6 +5,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <PngToBmpConverter.h>
 #include <Txt.h>
 #include <Xtc.h>
 
@@ -63,17 +64,9 @@ void SleepActivity::renderCustomSleepScreen() const {
   // Look for sleep.bmp on the root of the sd card to determine if we should
   // render a custom sleep screen instead of the default.
   // This takes priority over the /sleep folder.
-  HalFile file;
-  if (Storage.openFileForRead("SLP", "/sleep.bmp", file)) {
-    Bitmap bitmap(file, true);
-    if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-      LOG_DBG("SLP", "Loading: /sleep.bmp");
-      renderBitmapSleepScreen(bitmap);
-      file.close();
-      if (dir) dir.close();
-      return;
-    }
-    file.close();
+  if (renderCustomImage("/sleep.bmp") || renderCustomImage("/sleep.png")) {
+    if (dir) dir.close();
+    return;
   }
 
   if (dir && dir.isDirectory()) {
@@ -88,7 +81,9 @@ void SleepActivity::renderCustomSleepScreen() const {
   if (sleepDir) {
     std::vector<std::string> files;
     char name[500];
-    // collect all valid BMP files
+    files.reserve(16);
+    // Collect supported images. PNG validity is checked by the streaming
+    // decoder only after selection so browsing the folder remains quick.
     for (auto dirFile = dir.openNextFile(); dirFile; dirFile = dir.openNextFile()) {
       if (dirFile.isDirectory()) {
         dirFile.close();
@@ -101,13 +96,14 @@ void SleepActivity::renderCustomSleepScreen() const {
         continue;
       }
 
-      if (!FsHelpers::hasBmpExtension(filename)) {
-        LOG_DBG("SLP", "Skipping non-.bmp file name: %s", name);
+      const bool isBmp = FsHelpers::hasBmpExtension(filename);
+      if (!isBmp && !FsHelpers::hasPngExtension(filename)) {
+        LOG_DBG("SLP", "Skipping unsupported sleep image: %s", name);
         dirFile.close();
         continue;
       }
       Bitmap bitmap(dirFile);
-      if (bitmap.parseHeaders() != BmpReaderError::Ok) {
+      if (isBmp && bitmap.parseHeaders() != BmpReaderError::Ok) {
         LOG_DBG("SLP", "Skipping invalid BMP file: %s", name);
         dirFile.close();
         continue;
@@ -129,24 +125,64 @@ void SleepActivity::renderCustomSleepScreen() const {
       APP_STATE.pushRecentSleep(randomFileIndex);
       APP_STATE.saveToFile();
       const auto filename = std::string(sleepDir) + "/" + files[randomFileIndex];
-      HalFile randFile;
-      if (Storage.openFileForRead("SLP", filename, randFile)) {
-        LOG_DBG("SLP", "Randomly loading: %s/%s", sleepDir, files[randomFileIndex].c_str());
-        delay(100);
-        Bitmap bitmap(randFile, true);
-        if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-          renderBitmapSleepScreen(bitmap);
-          randFile.close();
-          dir.close();
-          return;
-        }
-        randFile.close();
+      LOG_DBG("SLP", "Randomly loading: %s/%s", sleepDir, files[randomFileIndex].c_str());
+      delay(100);
+      if (renderCustomImage(filename)) {
+        dir.close();
+        return;
       }
     }
   }
   if (dir) dir.close();
 
   renderDefaultSleepScreen();
+}
+
+bool SleepActivity::renderCustomImage(const std::string& path) const {
+  HalFile imageFile;
+  if (!Storage.openFileForRead("SLP", path, imageFile)) return false;
+
+  if (FsHelpers::hasBmpExtension(path)) {
+    Bitmap bitmap(imageFile, true);
+    if (bitmap.parseHeaders() != BmpReaderError::Ok) {
+      LOG_DBG("SLP", "Invalid BMP sleep image: %s", path.c_str());
+      return false;
+    }
+    LOG_DBG("SLP", "Loading BMP: %s", path.c_str());
+    renderBitmapSleepScreen(bitmap);
+    return true;
+  }
+
+  if (!FsHelpers::hasPngExtension(path)) return false;
+
+  // Decode to an SD-backed BMP rather than a full in-memory image. The PNG
+  // converter holds scanlines only, which is safe on the X4's 380 KB RAM.
+  constexpr const char* PNG_CACHE_PATH = "/.crosspoint/.sleep-image.bmp";
+  Storage.mkdir("/.crosspoint");
+  HalFile bmpOut;
+  if (!Storage.openFileForWrite("SLP", PNG_CACHE_PATH, bmpOut)) return false;
+
+  const bool crop = SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP;
+  const bool converted = PngToBmpConverter::pngFileToBmpStream(imageFile, bmpOut, crop);
+  // Both handles must be closed before reopening the generated BMP.
+  imageFile.close();
+  bmpOut.close();
+  if (!converted) {
+    LOG_ERR("SLP", "Failed to decode PNG sleep image: %s", path.c_str());
+    Storage.remove(PNG_CACHE_PATH);
+    return false;
+  }
+
+  HalFile cachedBmp;
+  if (!Storage.openFileForRead("SLP", PNG_CACHE_PATH, cachedBmp)) return false;
+  Bitmap bitmap(cachedBmp, true);
+  if (bitmap.parseHeaders() != BmpReaderError::Ok) {
+    LOG_ERR("SLP", "Invalid converted sleep image: %s", path.c_str());
+    return false;
+  }
+  LOG_DBG("SLP", "Loading PNG: %s", path.c_str());
+  renderBitmapSleepScreen(bitmap);
+  return true;
 }
 
 // Sleep screens paint with a single HALF refresh (stock parity): the OEM X4

@@ -6,11 +6,13 @@
 #include <algorithm>
 
 #include "OpdsServerStore.h"
+#include "components/UITheme.h"
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
 #include "browser/OpdsBookBrowserActivity.h"
 #include "home/CrashActivity.h"
 #include "home/FileBrowserActivity.h"
+#include "home/FolioLibraryActivity.h"
 #include "home/HomeActivity.h"
 #include "home/RecentBooksActivity.h"
 #include "network/CrossPointWebServerActivity.h"
@@ -191,7 +193,15 @@ void ActivityManager::goToFileTransfer() {
 void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }
 
 void ActivityManager::goToFileBrowser(std::string path) {
+  if (GUI.usesGraphicalLibrary()) {
+    replaceActivity(std::make_unique<FolioLibraryActivity>(renderer, mappedInput, path.empty() ? "/" : std::move(path)));
+    return;
+  }
   replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path)));
+}
+
+void ActivityManager::goToFolioShelf(const uint8_t tab) {
+  replaceActivity(std::make_unique<RecentBooksActivity>(renderer, mappedInput, tab));
 }
 
 void ActivityManager::goToRecentBooks() {
@@ -224,6 +234,10 @@ void ActivityManager::goToFullScreenMessage(std::string message, EpdFontFamily::
 }
 
 void ActivityManager::goHome(HomeMenuItem initialMenuItem) {
+  if (GUI.usesBookshelfHome()) {
+    replaceActivity(std::make_unique<RecentBooksActivity>(renderer, mappedInput));
+    return;
+  }
   if (initialMenuItem == HomeMenuItem::NONE && currentActivity) {
     const auto& activityName = currentActivity->name;
     if (activityName == "FileBrowser") {
@@ -267,6 +281,14 @@ bool ActivityManager::isReaderActivity() const {
   return std::any_of(stackActivities.begin(), stackActivities.end(),
                      [](const auto& activity) { return activity->isReaderActivity(); }) ||
          (currentActivity && currentActivity->isReaderActivity());
+}
+
+bool ActivityManager::bluetoothShouldBeActive() const {
+  const auto wantsBluetooth = [](const auto& activity) {
+    return activity && (activity->isReaderActivity() || activity->keepsBluetoothAlive());
+  };
+  return std::any_of(stackActivities.begin(), stackActivities.end(), wantsBluetooth) ||
+         wantsBluetooth(currentActivity);
 }
 
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }

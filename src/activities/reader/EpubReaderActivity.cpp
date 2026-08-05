@@ -33,6 +33,7 @@
 #include "QrDisplayActivity.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
+#include "BookStateStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/BookmarkUtil.h"
@@ -141,6 +142,7 @@ void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string&
   // Keep the book in recents (crossink behavior): repoint the entry to its new
   // location instead of dropping it. updatePath persists on success.
   RECENT_BOOKS.updatePath(srcPath, dstPath, oldCachePath, newCachePath);
+  BOOK_STATES.updatePath(srcPath, dstPath);
   if (APP_STATE.openEpubPath == srcPath) {
     APP_STATE.openEpubPath = dstPath;
     APP_STATE.saveToFile();
@@ -151,6 +153,7 @@ void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string&
 
 void EpubReaderActivity::onEnter() {
   Activity::onEnter();
+  readingSessionStartedMs = millis();
 
   if (!epub) {
     return;
@@ -203,7 +206,8 @@ void EpubReaderActivity::onEnter() {
   // Save current epub as last opened epub and add to recent books
   APP_STATE.openEpubPath = epub->getPath();
   APP_STATE.saveToFile();
-  RECENT_BOOKS.addBook(epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getThumbBmpPath());
+  RECENT_BOOKS.addBook(epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getThumbBmpPath(),
+                       epub->getDescription());
 
   loadCachedBookmarks();
 
@@ -213,6 +217,19 @@ void EpubReaderActivity::onEnter() {
 
 void EpubReaderActivity::onExit() {
   Activity::onExit();
+
+  if (epub) {
+    const ScreenshotInfo info = getScreenshotInfo();
+    const bool completed = pendingReadFolderMove ||
+                           (currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount());
+    const uint8_t finalProgress = completed ? 100 : static_cast<uint8_t>(info.progressPercent);
+    RECENT_BOOKS.recordReading(epub->getPath(), finalProgress,
+                               (millis() - readingSessionStartedMs) / 1000UL);
+    BOOK_STATES.recordReading(epub->getPath(), finalProgress,
+                              (millis() - readingSessionStartedMs) / 1000UL);
+  }
+
+  ReaderUtils::clearGhostingOnExit(renderer);
 
   // The extractor holds a raw pointer to this activity's epub; drop it before
   // the activity (and the shared_ptr) goes away.
@@ -419,14 +436,18 @@ void EpubReaderActivity::loop() {
   // Drop this book from the Recent Books list; if the reader then pages back into the book,
   // re-add it. So removal only sticks if the reader leaves while still on the End-of-Book
   // screen. Acts only on the transition (guarded by recentsEntryRemoved) — no per-frame writes.
-  if (SETTINGS.removeReadBooksFromRecents) {
+  // Folio Nooir uses the persistent recent-book record as its Finished shelf
+  // and statistics source, so completed entries must remain in the store.
+  if (SETTINGS.removeReadBooksFromRecents &&
+      SETTINGS.uiTheme != CrossPointSettings::UI_THEME::FOLIO_NOOIR) {
     if (atEndOfBook && !recentsEntryRemoved) {
       // Only treat the book as "removed by us" if it was actually in the list, so the
       // re-add branch below doesn't insert a book the feature never removed.
       recentsEntryRemoved = RECENT_BOOKS.removeByPath(epub->getPath());
     } else if (!atEndOfBook && recentsEntryRemoved) {
       // Re-add (goes to front of the list via addBook — accepted ordering side effect).
-      RECENT_BOOKS.addBook(epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getThumbBmpPath());
+      RECENT_BOOKS.addBook(epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getThumbBmpPath(),
+                           epub->getDescription());
       recentsEntryRemoved = false;
     }
   }
@@ -1477,7 +1498,6 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const auto tPrewarm = millis();
 
   const bool pageHasImages = page->hasImages();
-  const bool pageHasImagesNeedingDecode = pageHasImages && page->hasImagesNeedingDecode();
   const bool needsTextGrayscale = SETTINGS.textAntiAliasing;
   const bool needsAnyGrayscale = needsTextGrayscale || pageHasImages;
   const bool tiledGrayscale = needsAnyGrayscale && renderer.supportsStripGrayscale();
@@ -1495,13 +1515,6 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     }
   };
 
-  if (pageHasImagesNeedingDecode) {
-    page->renderWithImagePlaceholders(renderer, fontId, orientedMarginLeft, orientedMarginTop);
-    renderStatusBar();
-    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
-    renderer.clearScreen();
-  }
-
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
   renderStatusBar();
   const auto tBwRender = millis();
@@ -1512,18 +1525,13 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     // Instead, blank only the image area and do two fast refreshes.
     // Step 1: Display page with image area blanked (text appears, image area white)
     // Step 2: Re-render with images and display again (images appear clean)
-    int16_t imgX, imgY, imgW, imgH;
-    if (page->getImageBoundingBox(imgX, imgY, imgW, imgH)) {
-      renderer.fillRect(imgX + orientedMarginLeft, imgY + orientedMarginTop, imgW, imgH, false);
-      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    page->blankImages(renderer, orientedMarginLeft, orientedMarginTop);
+    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 
-      // Re-render page content to restore images into the blanked area
-      // Status bar is not re-rendered here to avoid reading stale dynamic values (e.g. battery %)
-      page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
-      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
-    } else {
-      renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-    }
+    // Restore only the image rectangles. Text and status-bar pixels were not
+    // blanked, so avoid another full page/font render here.
+    page->renderImages(renderer, fontId, orientedMarginLeft, orientedMarginTop);
+    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     // The image's own page is handled above and doesn't count toward the full
     // refresh cadence. But the grayscale pass below leaves gray charge in the
     // image region that a plain fast diff on the *next* page can't clear, so

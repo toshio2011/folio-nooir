@@ -1,12 +1,23 @@
 #include "MappedInputManager.h"
 
 #include <GfxRenderer.h>
+#include <Logging.h>
 
 #include <algorithm>
 #include <cstdlib>
 
+#include "BleInput.h"
 #include "CrossPointSettings.h"
 #include "components/UITheme.h"
+
+namespace {
+// Cheap page-turner rings often emit several keyboard/consumer usages for one
+// click. Treat codes arriving in this window as one physical-button burst.
+constexpr unsigned long BLE_CAPTURE_QUIET_MS = 220;
+// Also suppress repeats of the same logical action across adjacent HID reports.
+// 280 ms remains responsive for deliberate reading while preventing double turns.
+constexpr unsigned long BLE_ACTION_DEBOUNCE_MS = 280;
+}  // namespace
 
 bool MappedInputManager::isNavDirectionSwapped() const {
   // Key the swap on the orientation the screen is *actually* rendered at, not the persisted reader
@@ -272,17 +283,89 @@ bool MappedInputManager::wasHomeGesture() const {
   return false;
 }
 
+bool MappedInputManager::bleEdge(const bool* edges, const Button button) const {
+  switch (button) {
+    case Button::NavNext:
+      return isNavDirectionSwapped() ? (edges[(int)Button::Up] || edges[(int)Button::Left])
+                                     : (edges[(int)Button::Down] || edges[(int)Button::Right]);
+    case Button::NavPrevious:
+      return isNavDirectionSwapped() ? (edges[(int)Button::Down] || edges[(int)Button::Right])
+                                     : (edges[(int)Button::Up] || edges[(int)Button::Left]);
+    default:
+      return edges[(int)button];
+  }
+}
+
 bool MappedInputManager::wasPressed(const Button button) const {
   if (button == Button::Back && wasBackGesture()) return true;
-  return mapButton(button, &HalGPIO::wasPressed);
+  return mapButton(button, &HalGPIO::wasPressed) || bleEdge(blePressEdge, button);
 }
 
 bool MappedInputManager::wasReleased(const Button button) const {
   if (button == Button::Back && wasBackGesture()) return true;
-  return mapButton(button, &HalGPIO::wasReleased);
+  return mapButton(button, &HalGPIO::wasReleased) || bleEdge(bleReleaseEdge, button);
 }
 
-bool MappedInputManager::isPressed(const Button button) const { return mapButton(button, &HalGPIO::isPressed); }
+bool MappedInputManager::isPressed(const Button button) const {
+  return mapButton(button, &HalGPIO::isPressed) || bleEdge(blePressEdge, button);
+}
+
+void MappedInputManager::setBleCaptureMode(const bool enabled) {
+  bleCaptureMode = enabled;
+  bleHasCaptured = false;
+  bleCaptureQuietUntil = 0;
+  if (!enabled) return;
+  for (uint8_t i = 0; i < kButtonCount; i++) {
+    blePressEdge[i] = false;
+    bleReleaseEdge[i] = false;
+  }
+}
+
+bool MappedInputManager::takeCapturedBleKey(uint8_t& kind, uint8_t& value) {
+  if (!bleHasCaptured || static_cast<int32_t>(millis() - bleCaptureQuietUntil) < 0) return false;
+  kind = bleCapturedKind;
+  value = bleCapturedValue;
+  bleHasCaptured = false;
+  return true;
+}
+
+void MappedInputManager::pollBle() {
+  bleActivityThisFrame = false;
+  for (uint8_t i = 0; i < kButtonCount; i++) {
+    bleReleaseEdge[i] = blePressEdge[i];
+    blePressEdge[i] = false;
+  }
+
+  freeink::KeyEvent event;
+  while (BleHid.popKey(event)) {
+    uint8_t kind = 0xFF;
+    uint8_t value = 0;
+    if (!bleinput::encodeKey(event, kind, value)) continue;
+    LOG_DBG("BLE", "key code=0x%02X special=%u kind=%u value=0x%02X", event.keycode,
+            static_cast<unsigned>(event.special), kind, value);
+    if (bleCaptureMode) {
+      // Keep the first usable identity from this physical press and extend the
+      // quiet window for every extra code. The mapper receives one key only.
+      if (!bleHasCaptured) {
+        bleCapturedKind = kind;
+        bleCapturedValue = value;
+        bleHasCaptured = true;
+      }
+      bleCaptureQuietUntil = millis() + BLE_CAPTURE_QUIET_MS;
+      continue;
+    }
+    for (const auto& entry : SETTINGS.bleKeyMap) {
+      if (entry.keyKind != kind || entry.keyValue != value || entry.button >= kButtonCount) continue;
+      const unsigned long now = millis();
+      const unsigned long last = bleLastDispatchAt[entry.button];
+      if (last != 0 && now - last < BLE_ACTION_DEBOUNCE_MS) break;
+      bleLastDispatchAt[entry.button] = now;
+      blePressEdge[entry.button] = true;
+      bleActivityThisFrame = true;
+      break;
+    }
+  }
+}
 
 bool MappedInputManager::wasAnyPressed() const { return gpio.wasAnyPressed(); }
 

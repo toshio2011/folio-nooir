@@ -14,6 +14,7 @@
 #include "ProgressFile.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
+#include "BookStateStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -26,6 +27,7 @@ constexpr uint8_t CACHE_VERSION = 3;          // Increment when cache format cha
 
 void TxtReaderActivity::onEnter() {
   Activity::onEnter();
+  readingSessionStartedMs = millis();
 
   if (!txt) {
     return;
@@ -48,6 +50,16 @@ void TxtReaderActivity::onEnter() {
 
 void TxtReaderActivity::onExit() {
   Activity::onExit();
+
+  if (txt) {
+    const ScreenshotInfo info = getScreenshotInfo();
+    RECENT_BOOKS.recordReading(txt->getPath(), static_cast<uint8_t>(info.progressPercent),
+                               (millis() - readingSessionStartedMs) / 1000UL);
+    BOOK_STATES.recordReading(txt->getPath(), static_cast<uint8_t>(info.progressPercent),
+                              (millis() - readingSessionStartedMs) / 1000UL);
+  }
+
+  ReaderUtils::clearGhostingOnExit(renderer);
 
   // Reset orientation back to portrait for the rest of the UI
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);

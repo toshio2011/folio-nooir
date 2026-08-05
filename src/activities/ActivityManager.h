@@ -84,6 +84,7 @@ class ActivityManager {
   void goToFileTransfer();
   void goToSettings();
   void goToFileBrowser(std::string path = {});
+  void goToFolioShelf(uint8_t tab = 1);
   void goToRecentBooks();
   void goToBrowser();
   void goToReader(std::string path);
@@ -102,6 +103,7 @@ class ActivityManager {
 
   bool preventAutoSleep() const;
   bool isReaderActivity() const;
+  bool bluetoothShouldBeActive() const;
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;
 

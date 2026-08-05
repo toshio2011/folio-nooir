@@ -7,6 +7,7 @@ class GfxRenderer;
 class MappedInputManager {
  public:
   enum class Button { Back, Confirm, Left, Right, Up, Down, Power, PageBack, PageForward, NavNext, NavPrevious };
+  static constexpr uint8_t kButtonCount = 11;
   enum class SwipeDir { None, Left, Right, Up, Down };
 
   struct Labels {
@@ -55,6 +56,16 @@ class MappedInputManager {
   // Returns the raw front button index that was pressed this frame (or -1 if none).
   int getPressedFrontButton() const;
 
+  // Drain BLE HID events into the same logical-button interface used by
+  // activities. Call once per frame after BleHid.poll().
+  void pollBle();
+  bool bleHadActivityThisFrame() const { return bleActivityThisFrame; }
+
+  // Mapping screens temporarily capture an unmapped remote key instead of
+  // dispatching it to the active activity.
+  void setBleCaptureMode(bool enabled);
+  bool takeCapturedBleKey(uint8_t& kind, uint8_t& value);
+
   // True when the control axis is flipped relative to the physical buttons: the user opted into
   // orientation-following front buttons AND the screen is *currently rendered* rotated (INVERTED /
   // LANDSCAPE_CCW). Keyed on the live renderer orientation rather than the persisted reader setting,
@@ -71,6 +82,7 @@ class MappedInputManager {
   const GfxRenderer& renderer;
 
   bool mapButton(Button button, bool (HalGPIO::*fn)(uint8_t) const) const;
+  bool bleEdge(const bool* edges, Button button) const;
   bool wasBackGesture() const;
   // Fetch the pending swipe (if any) and map both endpoints to logical screen coords
   bool decodeSwipe(int& sx, int& sy, int& ex, int& ey) const;
@@ -81,4 +93,13 @@ class MappedInputManager {
   mutable bool touchHeldOverrideValid = false;
   mutable unsigned long touchHeldOverrideMs = 0;
   mutable unsigned long touchHeldOverrideAt = 0;
+  bool blePressEdge[kButtonCount] = {};
+  bool bleReleaseEdge[kButtonCount] = {};
+  bool bleActivityThisFrame = false;
+  bool bleCaptureMode = false;
+  bool bleHasCaptured = false;
+  unsigned long bleCaptureQuietUntil = 0;
+  uint8_t bleCapturedKind = 0xFF;
+  uint8_t bleCapturedValue = 0;
+  unsigned long bleLastDispatchAt[kButtonCount] = {};
 };

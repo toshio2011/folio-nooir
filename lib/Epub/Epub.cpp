@@ -79,6 +79,7 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   bookMetadata.title = utf8ComposeNfc(opfParser.title);
   bookMetadata.author = opfParser.author;
   bookMetadata.language = opfParser.language;
+  bookMetadata.description = opfParser.description;
   bookMetadata.coverItemHref = opfParser.coverItemHref;
 
   // Guide-based cover fallback: if no cover found via metadata/properties,
@@ -553,6 +554,12 @@ const std::string& Epub::getLanguage() const {
   }
 
   return bookMetadataCache->coreMetadata.language;
+}
+
+const std::string& Epub::getDescription() const {
+  static std::string blank;
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) return blank;
+  return bookMetadataCache->coreMetadata.description;
 }
 
 std::string Epub::getCoverBmpPath(bool cropped) const {

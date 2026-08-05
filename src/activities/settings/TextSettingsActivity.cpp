@@ -71,10 +71,10 @@ void TextSettingsActivity::onEnter() {
 
   sizes_.clear();
   sizes_.reserve(CrossPointSettings::FONT_SIZE_COUNT);
-  sizes_.push_back({I18N.get(StrId::STR_SMALL), static_cast<uint8_t>(CrossPointSettings::SMALL)});
-  sizes_.push_back({I18N.get(StrId::STR_MEDIUM), static_cast<uint8_t>(CrossPointSettings::MEDIUM)});
-  sizes_.push_back({I18N.get(StrId::STR_LARGE), static_cast<uint8_t>(CrossPointSettings::LARGE)});
-  sizes_.push_back({I18N.get(StrId::STR_X_LARGE), static_cast<uint8_t>(CrossPointSettings::EXTRA_LARGE)});
+  sizes_.push_back({I18N.get(StrId::STR_FONT_12_PT), static_cast<uint8_t>(CrossPointSettings::SMALL)});
+  sizes_.push_back({I18N.get(StrId::STR_FONT_14_PT), static_cast<uint8_t>(CrossPointSettings::MEDIUM)});
+  sizes_.push_back({I18N.get(StrId::STR_FONT_16_PT), static_cast<uint8_t>(CrossPointSettings::LARGE)});
+  sizes_.push_back({I18N.get(StrId::STR_FONT_18_PT), static_cast<uint8_t>(CrossPointSettings::EXTRA_LARGE)});
 
   currentFamilyIndex_ = findCurrentFontIndex(registry_, SETTINGS.sdFontFamilyName, SETTINGS.fontFamily);
   currentSizeIndex_ = findCurrentFontSizeIndex(SETTINGS.fontSize, sizes_.size());

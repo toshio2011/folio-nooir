@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <iterator>
 
+#include "HalClock.h"
+
 void RecentBooksStore::toJson(JsonDocument& doc) const {
   JsonArray arr = doc["books"].to<JsonArray>();
   for (const auto& book : recentBooks) {
@@ -17,6 +19,13 @@ void RecentBooksStore::toJson(JsonDocument& doc) const {
     obj["title"] = book.title;
     obj["author"] = book.author;
     obj["coverBmpPath"] = book.coverBmpPath;
+    obj["synopsis"] = book.synopsis;
+    obj["progressPercent"] = book.progressPercent;
+    obj["readingSeconds"] = book.readingSeconds;
+    obj["lastSessionSeconds"] = book.lastSessionSeconds;
+    obj["dailyReadingSeconds"] = book.dailyReadingSeconds;
+    obj["dailyReadingDateKey"] = book.dailyReadingDateKey;
+    obj["readingSessions"] = book.readingSessions;
   }
 }
 
@@ -33,6 +42,13 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
     book.title = obj["title"] | "";
     book.author = obj["author"] | "";
     book.coverBmpPath = obj["coverBmpPath"] | "";
+    book.synopsis = obj["synopsis"] | "";
+    book.progressPercent = obj["progressPercent"] | 0;
+    book.readingSeconds = obj["readingSeconds"] | 0;
+    book.lastSessionSeconds = obj["lastSessionSeconds"] | 0;
+    book.dailyReadingSeconds = obj["dailyReadingSeconds"] | 0;
+    book.dailyReadingDateKey = obj["dailyReadingDateKey"] | 0;
+    book.readingSessions = obj["readingSessions"] | 0;
     recentBooks.push_back(book);
   }
 
@@ -41,19 +57,27 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
 }
 
 void RecentBooksStore::addBook(const std::string& path, const std::string& title, const std::string& author,
-                               const std::string& coverBmpPath) {
+                               const std::string& coverBmpPath, const std::string& synopsis) {
   // Drop stale entries first so a new add can't evict a valid book in their stead.
   pruneMissing();
 
   // Remove existing entry if present
   auto it =
       std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
+  RecentBook entry{path, title, author, coverBmpPath, synopsis.substr(0, 384)};
   if (it != recentBooks.end()) {
+    if (entry.synopsis.empty()) entry.synopsis = it->synopsis;
+    entry.progressPercent = it->progressPercent;
+    entry.readingSeconds = it->readingSeconds;
+    entry.lastSessionSeconds = it->lastSessionSeconds;
+    entry.dailyReadingSeconds = it->dailyReadingSeconds;
+    entry.dailyReadingDateKey = it->dailyReadingDateKey;
+    entry.readingSessions = it->readingSessions;
     recentBooks.erase(it);
   }
 
   // Add to front
-  recentBooks.insert(recentBooks.begin(), {path, title, author, coverBmpPath});
+  recentBooks.insert(recentBooks.begin(), std::move(entry));
 
   // Trim to max size
   if (recentBooks.size() > MAX_RECENT_BOOKS) {
@@ -61,6 +85,29 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
   }
 
   saveToFile();
+}
+
+void RecentBooksStore::recordReading(const std::string& path, uint8_t progress, uint32_t elapsedSeconds) {
+  auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
+                         [&](const RecentBook& book) { return book.path == path; });
+  if (it == recentBooks.end()) return;
+  it->progressPercent = std::min<uint8_t>(progress, 100);
+  if (elapsedSeconds > 0) {
+    const uint32_t room = UINT32_MAX - it->readingSeconds;
+    it->readingSeconds += std::min(elapsedSeconds, room);
+    it->lastSessionSeconds = elapsedSeconds;
+    const uint32_t today = halClock.getDateKey();
+    if (today != 0) {
+      if (it->dailyReadingDateKey != today) {
+        it->dailyReadingDateKey = today;
+        it->dailyReadingSeconds = 0;
+      }
+      const uint32_t dailyRoom = UINT32_MAX - it->dailyReadingSeconds;
+      it->dailyReadingSeconds += std::min(elapsedSeconds, dailyRoom);
+    }
+    if (it->readingSessions < UINT16_MAX) ++it->readingSessions;
+  }
+  if (!saveToFile()) LOG_ERR("RBS", "Failed to persist reading statistics");
 }
 
 void RecentBooksStore::updateBook(const std::string& path, const std::string& title, const std::string& author,
@@ -85,6 +132,16 @@ bool RecentBooksStore::removeByPath(const std::string& path) {
   recentBooks.erase(it);
   if (!saveToFile()) {
     LOG_ERR("RBS", "Failed to persist removal of recent book: %s", path.c_str());
+  }
+  return true;
+}
+
+bool RecentBooksStore::clearAll() {
+  if (recentBooks.empty()) return true;
+  recentBooks.clear();
+  if (!saveToFile()) {
+    LOG_ERR("RBS", "Failed to persist cleared recent books");
+    return false;
   }
   return true;
 }
@@ -126,7 +183,8 @@ RecentBook RecentBooksStore::getDataFromBook(std::string path) const {
   if (FsHelpers::hasEpubExtension(lastBookFileName)) {
     Epub epub(path, "/.crosspoint");
     epub.load(false, true);
-    return RecentBook{path, epub.getTitle(), epub.getAuthor(), epub.getThumbBmpPath()};
+    return RecentBook{path, epub.getTitle(), epub.getAuthor(), epub.getThumbBmpPath(),
+                      epub.getDescription().substr(0, 384)};
   } else if (FsHelpers::hasXtcExtension(lastBookFileName)) {
     // Handle XTC file
     Xtc xtc(path, "/.crosspoint");

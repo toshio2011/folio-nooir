@@ -94,6 +94,9 @@ class CrossPointWebServer {
   void handleJszip() const;
   void handleNotFound() const;
   void handleStatus() const;
+  void handleLibrary() const;
+  void handleLibraryData() const;
+  void handleLibraryCover() const;
   void handleFileList() const;
   void handleFileListData() const;
   void handleDownload() const;

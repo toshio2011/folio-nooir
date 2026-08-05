@@ -457,20 +457,28 @@ void CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const 
           return;
         }
 
-        // TODO: Support richer CSS selector syntax in the future. For now we only
-        // handle `tag`, `.class`, or `tag.class`. Reject anything containing a
+        // TODO: Support richer CSS selector syntax in the future. For now we handle
+        // `tag`, `.class`, `tag.class`, `#id`, or `tag#id`. Reject anything containing a
         // character that introduces unsupported syntax:
         //   '+'  adjacent sibling combinator
         //   '>'  child combinator
         //   '['  attribute selector
         //   ':'  pseudo class/element
-        //   '#'  ID selector
         //   '~'  general sibling combinator
         //   '*'  wildcard
         //   ' '  descendant combinator
         // Single-pass scan via find_first_of instead of eight sequential find() calls.
-        constexpr std::string_view kUnsupportedSelectorChars = "+>[:#~* ";
+        constexpr std::string_view kUnsupportedSelectorChars = "+>[:~* ";
         if (sel.find_first_of(kUnsupportedSelectorChars) != std::string_view::npos) return;
+
+        // At most one ID separator is supported, and both sides must be non-empty
+        // unless this is the normal `#id` form. This keeps malformed selectors out
+        // of the cache without allocating a normalized copy.
+        const size_t hash = sel.find('#');
+        if (hash != std::string_view::npos &&
+            (hash + 1 >= sel.size() || sel.find('#', hash + 1) != std::string_view::npos)) {
+          return;
+        }
 
         // Skip if this would exceed the rule limit
         if (rulesBySelector_.size() >= MAX_RULES) {
@@ -637,7 +645,8 @@ bool CssParser::loadFromStream(HalFile& source) {
 
 // Style resolution
 
-CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view classAttr) const {
+CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view classAttr,
+                                 std::string_view idAttr) const {
   static bool lowHeapWarningLogged = false;
   if (ESP.getFreeHeap() < MIN_FREE_HEAP_FOR_CSS) {
     if (!lowHeapWarningLogged) {
@@ -656,8 +665,6 @@ CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view clas
     result.applyOver(it->second);
   }
 
-  if (classAttr.empty()) return result;
-
   // TODO: Support combinations of classes (e.g. style on .class1.class2)
   // 2. Apply class styles (medium priority). The transparent hash/equal accept
   // a CompositeKey, so we never materialize the concatenation.
@@ -674,6 +681,17 @@ CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view clas
       result.applyOver(it->second);
     }
   });
+
+  // ID selectors have higher specificity than element and class selectors.
+  // Transparent composite lookup avoids constructing temporary strings.
+  if (!idAttr.empty()) {
+    if (auto it = rulesBySelector_.find(CompositeKey{"#", idAttr}); it != rulesBySelector_.end()) {
+      result.applyOver(it->second);
+    }
+    if (auto it = rulesBySelector_.find(CompositeKey{tagName, "#", idAttr}); it != rulesBySelector_.end()) {
+      result.applyOver(it->second);
+    }
+  }
 
   return result;
 }

@@ -22,6 +22,7 @@
  *   - Element selectors: p, div, h1, etc.
  *   - Class selectors: .classname
  *   - Combined: element.classname
+ *   - ID selectors: #id, element#id
  *   - Grouped: selector1, selector2 { }
  *
  * Not supported (silently ignored):
@@ -33,7 +34,7 @@
 class CssParser {
  public:
   // Bump when CSS cache format or rules change; section caches are invalidated when this changes
-  static constexpr uint8_t CSS_CACHE_VERSION = 8;
+  static constexpr uint8_t CSS_CACHE_VERSION = 9;
 
   explicit CssParser(std::string cachePath) : cachePath(std::move(cachePath)) {}
   ~CssParser() = default;
@@ -58,7 +59,8 @@ class CssParser {
    * @param classAttr The class attribute value (may contain multiple space-separated classes)
    * @return Combined style with all applicable rules merged
    */
-  [[nodiscard]] CssStyle resolveStyle(std::string_view tagName, std::string_view classAttr) const;
+  [[nodiscard]] CssStyle resolveStyle(std::string_view tagName, std::string_view classAttr,
+                                      std::string_view idAttr = {}) const;
 
   /**
    * Parse an inline style attribute string.

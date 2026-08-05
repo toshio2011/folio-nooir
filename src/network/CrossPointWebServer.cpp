@@ -13,8 +13,10 @@
 #include <cctype>
 
 #include "CrossPointSettings.h"
+#include "components/UITheme.h"
 #include "FontInstaller.h"
 #include "OpdsServerStore.h"
+#include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
 #include "WebDAVHandler.h"
@@ -22,6 +24,7 @@
 #include "html/FilesPageHtml.generated.h"
 #include "html/FontsPageHtml.generated.h"
 #include "html/HomePageHtml.generated.h"
+#include "html/LibraryPageHtml.generated.h"
 #include "html/SettingsPageHtml.generated.h"
 #include "html/js/jszip_minJs.generated.h"
 #include "util/BookCacheUtils.h"
@@ -144,6 +147,9 @@ void CrossPointWebServer::begin() {
   server->on("/js/jszip.min.js", HTTP_GET, [this] { handleJszip(); });
 
   server->on("/api/status", HTTP_GET, [this] { handleStatus(); });
+  server->on("/library", HTTP_GET, [this] { handleLibrary(); });
+  server->on("/api/library", HTTP_GET, [this] { handleLibraryData(); });
+  server->on("/api/library/cover", HTTP_GET, [this] { handleLibraryCover(); });
   server->on("/api/files", HTTP_GET, [this] { handleFileListData(); });
   server->on("/download", HTTP_GET, [this] { handleDownload(); });
 
@@ -366,6 +372,75 @@ static void sendHtmlContent(WebServer* server, const char* data, size_t len) {
 void CrossPointWebServer::handleRoot() const {
   sendHtmlContent(server.get(), HomePageHtml, sizeof(HomePageHtml));
   LOG_DBG("WEB", "Served root page");
+}
+
+void CrossPointWebServer::handleLibrary() const {
+  sendHtmlContent(server.get(), LibraryPageHtml, sizeof(LibraryPageHtml));
+}
+
+void CrossPointWebServer::handleLibraryData() const {
+  server->setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server->send(200, "application/json", "");
+  server->sendContent("{\"books\":[");
+  bool first = true;
+  int index = 0;
+  for (const auto& book : RECENT_BOOKS.getBooks()) {
+    if (RecentBooksStore::isMissing(book)) continue;
+    JsonDocument doc;
+    doc["index"] = index++;
+    doc["title"] = book.title;
+    doc["author"] = book.author;
+    doc["progress"] = book.progressPercent;
+    doc["seconds"] = book.readingSeconds;
+    doc["sessions"] = book.readingSessions;
+    doc["hasCover"] = !book.coverBmpPath.empty();
+    String row;
+    serializeJson(doc, row);
+    if (!first) server->sendContent(",");
+    first = false;
+    server->sendContent(row);
+  }
+  server->sendContent("]}");
+  server->sendContent("");
+}
+
+void CrossPointWebServer::handleLibraryCover() const {
+  if (!server->hasArg("index")) {
+    server->send(400, "text/plain", "Missing index");
+    return;
+  }
+  const int wanted = server->arg("index").toInt();
+  int index = 0;
+  const RecentBook* selected = nullptr;
+  for (const auto& book : RECENT_BOOKS.getBooks()) {
+    if (RecentBooksStore::isMissing(book)) continue;
+    if (index++ == wanted) {
+      selected = &book;
+      break;
+    }
+  }
+  if (!selected || selected->coverBmpPath.empty()) {
+    server->send(404, "text/plain", "Cover not found");
+    return;
+  }
+  const std::string coverPath = UITheme::getCoverThumbPath(
+      selected->coverBmpPath, UITheme::getInstance().getMetrics().homeCoverHeight);
+  HalFile file = Storage.open(coverPath.c_str());
+  if (!file || file.isDirectory()) {
+    server->send(404, "text/plain", "Cover not found");
+    return;
+  }
+  server->setContentLength(file.size());
+  server->sendHeader("Cache-Control", "public, max-age=3600");
+  server->send(200, "image/bmp", "");
+  NetworkClient client = server->client();
+  uint8_t buffer[1024];
+  while (file.available()) {
+    const int count = file.read(buffer, sizeof(buffer));
+    if (count <= 0) break;
+    if (client.write(buffer, static_cast<size_t>(count)) != static_cast<size_t>(count)) break;
+    resetTaskWatchdogIfSubscribed();
+  }
 }
 
 void CrossPointWebServer::handleJszip() const {

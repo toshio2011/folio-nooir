@@ -1,5 +1,13 @@
 # CrossPoint Reader
 
+> # ⚠️ CRITICAL HARDWARE WARNING — READ BEFORE FLASHING
+>
+> **If CrossInk is already installed and working on your device, this warning does not apply to your current installation. You can safely ignore this firmware update.**
+>
+> Newly manufactured Xteink X3 and X4 devices may use a newer display panel. **Do not flash this Folio Nooir firmware on those devices.** It has been developed and tested only for the older Xteink X4 hardware revision because that is the only physical device currently available to the maintainer.
+>
+> Flashing an incompatible display build may leave the screen unusable or make recovery difficult. If you cannot confirm that your device is the older X4 model, **do not install this firmware.** Continue using a firmware that explicitly supports your panel revision.
+
 [![Fund contributors](https://img.shields.io/badge/%F0%9F%91%91_Fund_contributors-royalty.dev-BB953A?style=for-the-badge&labelColor=1a1a1a)](https://app.royalty.dev/crosspoint-reader/crosspoint-reader)
 
 CrossPoint is open-source e-reader firmware - community-built, fully hackable, free forever. It's maintained by a growing community of developers and readers who believe your device should do what you want - not what a manufacturer decided for you.

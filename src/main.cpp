@@ -19,12 +19,14 @@
 
 #include <cstring>
 
+#include "BleInput.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
+#include "BookStateStore.h"
 #include "SdCardFontSystem.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
@@ -219,6 +221,7 @@ void enterDeepSleep(bool fromTimeout = false) {
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
   }
+  bleinput::stop();
 
   halTiltSensor.deepSleep();
   display.deepSleep();
@@ -309,6 +312,7 @@ void setup() {
   SETTINGS.loadFromFile();
   APP_STATE.loadFromFile();
   RECENT_BOOKS.loadFromFile();
+  BOOK_STATES.loadFromFile();
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   KOREADER_STORE.loadFromFile();
   OPDS_STORE.loadFromFile();
@@ -444,6 +448,21 @@ void setup() {
   allowSleepAt = millis() + 2000;
 }
 
+void updateBluetoothLifecycle() {
+#if FREEINK_CAP_BLE_HID_HOST
+  const bool wanted =
+      SETTINGS.bluetoothEnabled && activityManager.bluetoothShouldBeActive() && WiFi.getMode() == WIFI_MODE_NULL;
+  if (wanted && !BleHid.isRunning()) {
+    bleinput::ensureStarted();
+  } else if (!wanted && BleHid.isRunning()) {
+    bleinput::stop();
+  }
+#else
+  // Folio Nooir reader builds currently keep experimental BLE completely dormant.
+  if (BleHid.isRunning()) bleinput::stop();
+#endif
+}
+
 void loop() {
   static unsigned long maxLoopDuration = 0;
   const unsigned long loopStartTime = millis();
@@ -451,6 +470,9 @@ void loop() {
 
   gpio.setSharedConfirmPowerShortPressEmitsPower(SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
   gpio.update();
+  updateBluetoothLifecycle();
+  BleHid.poll();
+  mappedInputManager.pollBle();
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
 
   renderer.setFadingFix(SETTINGS.fadingFix);
@@ -481,7 +503,7 @@ void loop() {
   // Check for any user activity (button press or release) or active background work
   static unsigned long lastActivityTime = millis();
   if (gpio.wasAnyPressed() || gpio.wasAnyReleased() || gpio.wasTouchActivity() || halTiltSensor.hadActivity() ||
-      activityManager.preventAutoSleep()) {
+      mappedInputManager.bleHadActivityThisFrame() || activityManager.preventAutoSleep()) {
     lastActivityTime = millis();         // Reset inactivity timer
     powerManager.setPowerSaving(false);  // Restore normal CPU frequency on user activity
   }
@@ -562,11 +584,12 @@ void loop() {
     powerManager.setPowerSaving(false);  // Make sure we're at full performance when skipLoopDelay is requested
     yield();                             // Give FreeRTOS a chance to run tasks, but return immediately
   } else {
-    if (millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS) {
+    if (!BleHid.isRunning() && millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS) {
       // If we've been inactive for a while, increase the delay to save power
       powerManager.setPowerSaving(true);  // Lower CPU frequency after extended inactivity
       delay(50);
     } else {
+      if (BleHid.isRunning()) powerManager.setPowerSaving(false);
       // Short delay to prevent tight loop while still being responsive
       delay(10);
     }

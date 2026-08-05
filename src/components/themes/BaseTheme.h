@@ -176,6 +176,8 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
 class BaseTheme {
  public:
   virtual ~BaseTheme() = default;
+  virtual bool usesBookshelfHome() const { return false; }
+  virtual bool usesGraphicalLibrary() const { return false; }
 
   // Component drawing methods
   void drawProgressBar(const GfxRenderer& renderer, Rect rect, size_t current, size_t total) const;

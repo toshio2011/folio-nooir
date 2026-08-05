@@ -6,6 +6,8 @@
 #include <Logging.h>
 
 #include "MappedInputManager.h"
+#include "BookStateStore.h"
+#include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/BookCacheUtils.h"
@@ -133,6 +135,27 @@ void ClearCacheActivity::clearCache() {
     }
   }
   root.close();
+
+  // Clearing reading data must also clear the in-memory stores and persist
+  // empty JSON files. Deleting cache directories alone leaves blank entries
+  // in the Recent and Finished tabs until those stores are rewritten.
+  if (RECENT_BOOKS.clearAll()) {
+    clearedCount++;
+  } else {
+    failedCount++;
+  }
+  if (BOOK_STATES.clearAll()) {
+    clearedCount++;
+  } else {
+    failedCount++;
+  }
+  if (Storage.exists("/.crosspoint/folio_home.bin")) {
+    if (Storage.remove("/.crosspoint/folio_home.bin")) {
+      clearedCount++;
+    } else {
+      failedCount++;
+    }
+  }
 
   LOG_DBG("CLEAR_CACHE", "Cache cleared: %d removed, %d failed", clearedCount, failedCount);
 
