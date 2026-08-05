@@ -26,6 +26,10 @@ Folio Nooir is experimental e-reader firmware with a bookshelf-focused interface
 - Typography controls using point sizes, margins and line spacing
 - Web-based library and file-transfer tools
 - BMP and PNG custom sleep images
+- Folio Nooir branding and boot logo
+- Core reader, Wi-Fi transfer, sleep-cover and settings features retained
+
+Bluetooth remote support is experimental and may be disabled or unstable in current test builds.
 
 <img width="960" height="1280" alt="WhatsApp Image 2026-08-05 at 2 46 29 PM" src="https://github.com/user-attachments/assets/f8ef98bf-49bc-43e4-a6bd-1a774e7ecf38" />
 <img width="765" height="1020" alt="WhatsApp Image 2026-08-05 at 2 46 28 PM" src="https://github.com/user-attachments/assets/fe269b6b-9f88-4e08-b9ac-41c41dcc247a" />
@@ -33,11 +37,6 @@ Folio Nooir is experimental e-reader firmware with a bookshelf-focused interface
 <img width="765" height="1020" alt="WhatsApp Image 2026-08-05 at 2 46 28 PM (2)" src="https://github.com/user-attachments/assets/5455e05f-4c30-4390-a9d6-4c994957ec0f" />
 <img width="765" height="1020" alt="WhatsApp Image 2026-08-05 at 2 46 28 PM (1)" src="https://github.com/user-attachments/assets/159aad88-3e7b-46a6-8492-307680439f27" />
 <img width="765" height="1020" alt="WhatsApp Image 2026-08-05 at 2 46 27 PM" src="https://github.com/user-attachments/assets/2fc621c3-248a-41b7-8b67-e719c16fe163" />
-
-- Folio Nooir branding and boot logo
-- Core reader, Wi-Fi transfer, sleep-cover and settings features retained
-
-Bluetooth remote support is experimental and may be disabled or unstable in current test builds.
 
 ## Install
 
