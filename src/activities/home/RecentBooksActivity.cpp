@@ -16,6 +16,7 @@
 #include "RecentBooksStore.h"
 #include "BookStateStore.h"
 #include "activities/util/ConfirmationActivity.h"
+#include "activities/home/SynopsisActivity.h"
 #include "util/BookCacheUtils.h"
 #include "components/UITheme.h"
 #include "components/themes/folio_nooir/FolioNooirTheme.h"
@@ -115,6 +116,9 @@ void RecentBooksActivity::writeSnapshot() {
 void RecentBooksActivity::generateNextCover() {
   if (coverGenerationActive) return;
   coverGenerationActive = true;
+  // A manual Refresh Book Cache intentionally rebuilds the metadata cache;
+  // normal shelf warming remains non-blocking and must not build books.
+  const bool forceRebuild = coverGenerationRequested;
   while (nextCoverToGenerate < recentBooks.size()) {
     RecentBook& book = recentBooks[nextCoverToGenerate++];
     if (book.coverBmpPath.empty()) continue;
@@ -124,7 +128,7 @@ void RecentBooksActivity::generateNextCover() {
     bool attempted = false;
     if (FsHelpers::hasEpubExtension(book.path)) {
       Epub epub(book.path, "/.crosspoint");
-      if (epub.load(false, true)) {
+      if (epub.load(forceRebuild, true)) {
         attempted = true;
         epub.generateThumbBmp(BOOKSHELF_COVER_HEIGHT);
       }
@@ -140,11 +144,14 @@ void RecentBooksActivity::generateNextCover() {
       if (Storage.exists(FOLIO_HOME_SNAPSHOT)) Storage.remove(FOLIO_HOME_SNAPSHOT);
       initialRenderPending = true;
       coverGenerationActive = false;
+      coverGenerationRequested = false;
       requestUpdate();
       return;  // At most one expensive extraction per activity cycle.
     }
   }
   coverGenerationActive = false;
+  coverGenerationRequested = false;
+  requestUpdate();
 }
 
 void RecentBooksActivity::showMenu() {
@@ -162,8 +169,8 @@ void RecentBooksActivity::showBookActions() {
   static constexpr StrId actions[] = {StrId::STR_OPEN,           StrId::STR_MARK_READING,
                                       StrId::STR_MARK_ON_HOLD,   StrId::STR_FINISHED,
                                       StrId::STR_RESET_PROGRESS, StrId::STR_REFRESH_BOOK_CACHE,
-                                      StrId::STR_REMOVE_FROM_LIST};
-  bookActionsPopup.show(StrId::STR_BOOK_ACTIONS, actions, 7, 0, [this](const int action) {
+                                      StrId::STR_REMOVE_FROM_LIST, StrId::STR_READ_FULL_SYNOPSIS};
+  bookActionsPopup.show(StrId::STR_BOOK_ACTIONS, actions, 8, 0, [this](const int action) {
     if (visibleBookCount == 0 || selectorIndex >= visibleBookCount) return;
     const RecentBook selected = recentBooks[selectedRecentIndex()];
     if (action == 0) {
@@ -182,10 +189,26 @@ void RecentBooksActivity::showBookActions() {
       BOOK_STATES.reset(selected.path);
       RECENT_BOOKS.recordReading(selected.path, 0, 0);
     }
-    if (action == 5) clearBookCache(selected.path);
+    if (action == 5) {
+      clearBookCache(selected.path);
+      // Clearing a cache removes the thumbnail as well. Show feedback first,
+      // then make this selected book the next (and only immediate) extraction.
+      nextCoverToGenerate = selectedRecentIndex();
+      coverGenerationActive = false;
+      coverGenerationRequested = false;
+      retrievingBookCache = true;
+      retrievingBookCacheIndex = selectorIndex;
+      retrievingBookCachePopupRendered = false;
+    }
     if (action == 6) {
       RECENT_BOOKS.removeByPath(selected.path);
       BOOK_STATES.removeByPath(selected.path);
+    }
+    if (action == 7) {
+      startActivityForResult(
+          std::make_unique<SynopsisActivity>(renderer, mappedInput, selected.title, selected.author, selected.synopsis),
+          nullptr);
+      return;
     }
     loadRecentBooks();
     rebuildVisibleBooks();
@@ -205,6 +228,10 @@ void RecentBooksActivity::onEnter() {
 
   selectorIndex = 0;
   nextCoverToGenerate = 0;
+  coverGenerationRequested = false;
+  retrievingBookCache = false;
+  retrievingBookCacheIndex = SIZE_MAX;
+  retrievingBookCachePopupRendered = false;
   snapshotRestored = restoreSnapshot();
   initialRenderPending = true;
   requestUpdate();
@@ -236,6 +263,15 @@ void RecentBooksActivity::loop() {
   }
   if (swallowBookBackRelease) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) swallowBookBackRelease = false;
+    return;
+  }
+
+  if (retrievingBookCache) {
+    if (!retrievingBookCachePopupRendered) return;
+    retrievingBookCache = false;
+    retrievingBookCachePopupRendered = false;
+    coverGenerationRequested = true;
+    requestUpdate();
     return;
   }
 
@@ -378,6 +414,8 @@ void RecentBooksActivity::loop() {
     selectorIndex = ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
     requestUpdate();
   });
+
+  if (coverGenerationRequested) generateNextCover();
 
   // Cover extraction is paced by FolioLibraryActivity. Running it here makes
   // the freshly restored Home screen unresponsive immediately after reading.
@@ -548,9 +586,12 @@ void RecentBooksActivity::render(RenderLock&&) {
       if (drawBitmap && !book.coverBmpPath.empty() && Storage.openFileForRead("SHELF", path, file)) {
         Bitmap bitmap(file);
         if (bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() > 0 && bitmap.getHeight() > 0) {
-          width = std::min(maxWidth, maxHeight * bitmap.getWidth() / bitmap.getHeight());
-          renderer.drawBitmap(bitmap, x + (maxWidth - width) / 2, y, width, maxHeight);
-          renderer.drawRect(x + (maxWidth - width) / 2, y, width, maxHeight);
+          // Fill the card instead of leaving a white strip beside portrait
+          // covers. The small stretch is preferable on the low-resolution
+          // shelf and keeps every cover visually aligned.
+          width = maxWidth;
+          renderer.drawBitmap(bitmap, x, y, maxWidth, maxHeight);
+          renderer.drawRect(x, y, maxWidth, maxHeight);
           return;
         }
       }
@@ -609,7 +650,7 @@ void RecentBooksActivity::render(RenderLock&&) {
       renderer.fillRect(x, y + coverHeight, cardWidth, std::max(1, cardHeight - coverHeight), false);
       if (index == selectorIndex) renderer.drawRect(x - 3, y - 3, cardWidth + 6, coverHeight + 6);
       drawCover(book, x, y, cardWidth, coverHeight, !snapshotRestored);
-      folioTheme.drawCoverProgress(renderer, x, y + coverHeight + 5, cardWidth, book.progressPercent);
+      folioTheme.drawCoverProgressBadge(renderer, x, y, cardWidth, coverHeight, book.progressPercent);
     }
     const size_t pageCount = (visibleBookCount + BOOKS_PER_PAGE - 1) / BOOKS_PER_PAGE;
     folioTheme.drawPageIndicator(renderer, layout, selectorIndex / BOOKS_PER_PAGE + 1, pageCount);
@@ -619,6 +660,11 @@ void RecentBooksActivity::render(RenderLock&&) {
 
   if (menuPopup.processRender(renderer, mappedInput)) return;
   if (bookActionsPopup.processRender(renderer, mappedInput)) return;
+  if (retrievingBookCache && retrievingBookCacheIndex == selectorIndex) {
+    GUI.drawPopup(renderer, tr(STR_RETRIEVING_BOOK_DETAILS));
+    retrievingBookCachePopupRendered = true;
+    return;
+  }
   const auto labels = mappedInput.mapLabels(tr(STR_MENU), tr(STR_OPEN), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();

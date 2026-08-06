@@ -26,6 +26,7 @@ Folio Nooir is experimental e-reader firmware with a bookshelf-focused interface
 - Typography controls using point sizes, margins and line spacing
 - Web-based library and file-transfer tools
 - BMP and PNG custom sleep images
+- Transparent PNG page-overlay sleep mode with ghosting mitigation
 - Folio Nooir branding and boot logo
 - Core reader, Wi-Fi transfer, sleep-cover and settings features retained
 
@@ -55,6 +56,15 @@ Select **Custom** or **Cover + Custom** in the sleep-screen settings, then use e
 - multiple `.png` and `.bmp` files inside `/.sleep/` for randomized sleep images.
 
 BMP takes priority if both `/sleep.bmp` and `/sleep.png` exist.
+
+### Page overlay
+
+Select **Page Overlay** in the sleep-screen settings and place a transparent
+PNG at `/sleep-overlay.png` on the SD card. The overlay is drawn over the last
+reader page; transparent pixels leave the page visible. The folder alternatives
+`/.sleep/overlay.png` and `/sleep/overlay.png` are also supported. If the named
+overlay is absent, Folio Nooir selects a PNG randomly from `/.sleep/` or
+`/sleep/`, so no additional setting is needed for rotating overlays.
 
 ## Building
 

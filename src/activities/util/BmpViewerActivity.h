@@ -16,9 +16,11 @@ class BmpViewerActivity final : public Activity {
 
  private:
   void loadSiblingImages();
+  bool prepareRenderPath();
   void doSetSleepCover();
 
   std::string filePath;
+  std::string renderPath;
   std::vector<std::string> siblingImages;
   int currentImageIndex = -1;
 };

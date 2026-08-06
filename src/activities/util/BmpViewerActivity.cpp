@@ -5,12 +5,18 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <JpegToBmpConverter.h>
+#include <PngToBmpConverter.h>
 
 #include <algorithm>
 
 #include "CrossPointSettings.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+
+namespace {
+constexpr char PNG_VIEWER_CACHE[] = "/.crosspoint/.image-viewer.bmp";
+}
 
 BmpViewerActivity::BmpViewerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string path)
     : Activity("BmpViewer", renderer, mappedInput), filePath(std::move(path)) {}
@@ -37,7 +43,8 @@ void BmpViewerActivity::loadSiblingImages() {
       file.getName(name, sizeof(name));
       if (name[0] != '.') {
         std::string fname(name);
-        if (fname.length() >= 4 && fname.substr(fname.length() - 4) == ".bmp") {
+        if (FsHelpers::hasBmpExtension(fname) || FsHelpers::hasPngExtension(fname) ||
+            FsHelpers::hasJpgExtension(fname)) {
           siblingImages.push_back(fname);
         }
       }
@@ -56,6 +63,38 @@ void BmpViewerActivity::loadSiblingImages() {
   }
 }
 
+bool BmpViewerActivity::prepareRenderPath() {
+  renderPath = filePath;
+  const bool isPng = FsHelpers::hasPngExtension(filePath);
+  const bool isJpg = FsHelpers::hasJpgExtension(filePath);
+  if (!isPng && !isJpg) return true;
+
+  Storage.ensureDirectoryExists("/.crosspoint");
+  HalFile pngFile;
+  HalFile bmpFile;
+  if (!Storage.openFileForRead("IMG", filePath, pngFile) ||
+      !Storage.openFileForWrite("IMG", PNG_VIEWER_CACHE, bmpFile)) {
+    if (pngFile) pngFile.close();
+    if (bmpFile) bmpFile.close();
+    renderPath.clear();
+    return false;
+  }
+  const bool converted = isPng
+                             ? PngToBmpConverter::pngFileToBmpStreamWithSize(
+                                   pngFile, bmpFile, renderer.getScreenWidth(), renderer.getScreenHeight())
+                             : JpegToBmpConverter::jpegFileToBmpStreamWithSize(
+                                   pngFile, bmpFile, renderer.getScreenWidth(), renderer.getScreenHeight());
+  pngFile.close();
+  bmpFile.close();
+  if (!converted) {
+    Storage.remove(PNG_VIEWER_CACHE);
+    renderPath.clear();
+    return false;
+  }
+  renderPath = PNG_VIEWER_CACHE;
+  return true;
+}
+
 void BmpViewerActivity::onEnter() {
   Activity::onEnter();
 
@@ -69,8 +108,16 @@ void BmpViewerActivity::onEnter() {
   const auto pageHeight = renderer.getScreenHeight();
   Rect popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   GUI.fillPopupProgress(renderer, popupRect, 20);  // Initial 20% progress
+  if (!prepareRenderPath()) {
+    renderer.clearScreen();
+    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, "Could not decode image");
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+    return;
+  }
   // 1. Open the file
-  if (Storage.openFileForRead("BMP", filePath, file)) {
+  if (Storage.openFileForRead("BMP", renderPath, file)) {
     Bitmap bitmap(file, true);
 
     // 2. Parse headers to get dimensions
@@ -148,7 +195,7 @@ void BmpViewerActivity::doSetSleepCover() {
 
   bool success = false;
   HalFile inFile, outFile;
-  if (Storage.openFileForRead("BMP", filePath, inFile)) {
+  if (Storage.openFileForRead("BMP", renderPath, inFile)) {
     if (Storage.openFileForWrite("BMP", "/sleep.bmp", outFile)) {
       char buffer[2048];
       int bytesRead;

@@ -25,6 +25,10 @@ class RecentBooksActivity final : public Activity {
   std::vector<RecentBook> recentBooks;
   size_t nextCoverToGenerate = 0;
   bool coverGenerationActive = false;
+  bool coverGenerationRequested = false;
+  bool retrievingBookCache = false;
+  size_t retrievingBookCacheIndex = SIZE_MAX;
+  volatile bool retrievingBookCachePopupRendered = false;
   bool snapshotRestored = false;
   bool snapshotWritePending = false;
   bool initialRenderPending = true;

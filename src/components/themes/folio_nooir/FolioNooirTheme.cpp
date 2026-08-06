@@ -74,6 +74,19 @@ void FolioNooirTheme::drawCoverProgress(const GfxRenderer& renderer, const int x
   renderer.drawText(SMALL_FONT_ID, x + (width - progressWidth) / 2, y, progress);
 }
 
+void FolioNooirTheme::drawCoverProgressBadge(const GfxRenderer& renderer, const int x, const int y, const int width,
+                                             const int height, const uint8_t percent) const {
+  char progress[8];
+  snprintf(progress, sizeof(progress), "%u%%", percent);
+  constexpr int badgeHeight = 18;
+  const int badgeWidth = std::min(42, std::max(28, renderer.getTextWidth(SMALL_FONT_ID, progress) + 12));
+  const int badgeX = x + width - badgeWidth - 3;
+  const int badgeY = y + height - badgeHeight - 3;
+  renderer.fillRect(badgeX, badgeY, badgeWidth, badgeHeight, true);
+  const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, progress);
+  renderer.drawText(SMALL_FONT_ID, badgeX + (badgeWidth - textWidth) / 2, badgeY + 3, progress, false);
+}
+
 void FolioNooirTheme::drawPageIndicator(const GfxRenderer& renderer, const FolioShelfLayout& layout,
                                         const size_t page, const size_t pages) const {
   if (pages <= 1) return;

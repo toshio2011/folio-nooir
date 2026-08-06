@@ -17,6 +17,8 @@ class SleepActivity final : public Activity {
   void renderBitmapSleepScreen(const Bitmap& bitmap) const;
   void renderLastScreenSleepScreen() const;
   void renderBlankSleepScreen() const;
+  bool renderOverlaySleepScreen() const;
+  bool renderOverlayPng(const std::string& path) const;
 
   bool fromTimeout = false;
 };

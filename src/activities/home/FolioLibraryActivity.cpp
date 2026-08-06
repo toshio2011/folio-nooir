@@ -18,6 +18,8 @@
 #include "components/UITheme.h"
 #include "components/themes/folio_nooir/FolioNooirTheme.h"
 #include "fontIds.h"
+#include "activities/home/SynopsisActivity.h"
+#include "activities/util/BmpViewerActivity.h"
 #include "util/BookCacheUtils.h"
 
 void FolioLibraryActivity::loadFiles() {
@@ -37,7 +39,8 @@ void FolioLibraryActivity::loadFiles() {
     } else {
       const std::string_view name(fileNameBuffer.get());
       if (FsHelpers::hasEpubExtension(name) || FsHelpers::hasXtcExtension(name) || FsHelpers::hasTxtExtension(name) ||
-          FsHelpers::hasMarkdownExtension(name)) {
+          FsHelpers::hasMarkdownExtension(name) || FsHelpers::hasBmpExtension(name) ||
+          FsHelpers::hasPngExtension(name) || FsHelpers::hasJpgExtension(name)) {
         files.emplace_back(name);
       }
     }
@@ -86,7 +89,15 @@ void FolioLibraryActivity::loadNextPreview() {
         preview.author = recentIt->author;
         preview.synopsis = recentIt->synopsis;
         preview.coverBmpPath = recentIt->coverBmpPath;
-        preview.metadataAttempted = !preview.title.empty() && !preview.coverBmpPath.empty();
+        const bool cachedThumbAvailable =
+            !preview.coverBmpPath.empty() &&
+            Storage.exists(UITheme::getCoverThumbPath(preview.coverBmpPath, FolioNooirTheme::COVER_HEIGHT).c_str());
+        preview.metadataAttempted = !preview.title.empty() && cachedThumbAvailable;
+      }
+      // Images are viewable files, not books. Do not show the metadata
+      // retrieval popup when the highlight lands on a PNG/JPEG/BMP.
+      if (FsHelpers::hasBmpExtension(path) || FsHelpers::hasPngExtension(path) || FsHelpers::hasJpgExtension(path)) {
+        preview.metadataAttempted = true;
       }
       if (FsHelpers::hasEpubExtension(path) && !preview.metadataAttempted) {
         // Browsing must never build an EPUB cache or generate a thumbnail.
@@ -113,8 +124,9 @@ void FolioLibraryActivity::showBookActions() {
   if (selectorIndex >= files.size() || (!files[selectorIndex].empty() && files[selectorIndex].back() == '/')) return;
   static constexpr StrId actions[] = {StrId::STR_OPEN,          StrId::STR_MARK_READING,
                                       StrId::STR_MARK_ON_HOLD,  StrId::STR_FINISHED,
-                                      StrId::STR_RESET_PROGRESS, StrId::STR_REFRESH_BOOK_CACHE};
-  bookActionsPopup.show(StrId::STR_BOOK_ACTIONS, actions, 6, 0, [this](const int action) {
+                                      StrId::STR_RESET_PROGRESS, StrId::STR_REFRESH_BOOK_CACHE,
+                                      StrId::STR_READ_FULL_SYNOPSIS};
+  bookActionsPopup.show(StrId::STR_BOOK_ACTIONS, actions, 7, 0, [this](const int action) {
     const std::string path = fullPath(selectorIndex);
     const size_t slot = selectorIndex - previewPageStart;
     if (slot >= PAGE_SIZE) return;
@@ -152,6 +164,11 @@ void FolioLibraryActivity::showBookActions() {
       observedSelectorIndex = SIZE_MAX;
       retrievingMetadata = false;
       retrievingPopupRendered = false;
+    } else if (action == 6) {
+      startActivityForResult(
+          std::make_unique<SynopsisActivity>(renderer, mappedInput, preview.title, preview.author, preview.synopsis),
+          nullptr);
+      return;
     }
     requestUpdate(true);
   });
@@ -194,6 +211,19 @@ void FolioLibraryActivity::loadSelectedMetadata() {
   Preview& preview = previews[selectorIndex - previewPageStart];
   if (!preview.loaded || preview.directory || preview.metadataAttempted) return;
 
+  const std::string path = fullPath(selectorIndex);
+  if (FsHelpers::hasBmpExtension(path) || FsHelpers::hasPngExtension(path) || FsHelpers::hasJpgExtension(path)) {
+    preview.metadataAttempted = true;
+    return;
+  }
+  // Only EPUB/XTC books have metadata extractors here. Leave other file types
+  // (including future PDF/image entries) as filename-only rows without a
+  // misleading retrieval popup.
+  if (!FsHelpers::hasEpubExtension(path) && !FsHelpers::hasXtcExtension(path)) {
+    preview.metadataAttempted = true;
+    return;
+  }
+
   if (!retrievingMetadata) {
     retrievingMetadata = true;
     retrievingMetadataIndex = selectorIndex;
@@ -206,7 +236,6 @@ void FolioLibraryActivity::loadSelectedMetadata() {
   retrievingMetadata = false;
   retrievingPopupRendered = false;
   preview.metadataAttempted = true;
-  const std::string path = fullPath(selectorIndex);
   bool changed = false;
   if (FsHelpers::hasEpubExtension(path)) {
     Epub epub(path, "/.crosspoint");
@@ -241,7 +270,12 @@ void FolioLibraryActivity::activateSelected() {
     requestUpdate();
     return;
   }
-  onSelectBook(fullPath(selectorIndex));
+  const std::string path = fullPath(selectorIndex);
+  if (FsHelpers::hasBmpExtension(path) || FsHelpers::hasPngExtension(path) || FsHelpers::hasJpgExtension(path)) {
+    activityManager.replaceActivity(std::make_unique<BmpViewerActivity>(renderer, mappedInput, path));
+  } else {
+    onSelectBook(path);
+  }
 }
 
 void FolioLibraryActivity::onEnter() {
@@ -395,9 +429,10 @@ void FolioLibraryActivity::render(RenderLock&&) {
     if (Storage.openFileForRead("FLIB", thumb, file)) {
       Bitmap bitmap(file);
       if (bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() > 0 && bitmap.getHeight() > 0) {
-        const int width = std::min(coverWidth, coverHeight * bitmap.getWidth() / bitmap.getHeight());
-        renderer.drawBitmap(bitmap, coverX + (coverWidth - width) / 2, coverY, width, coverHeight);
-        renderer.drawRect(coverX + (coverWidth - width) / 2, coverY, width, coverHeight);
+        // Use the whole cover slot. A slightly stretched portrait is easier to
+        // read than a tall image surrounded by an empty border.
+        renderer.drawBitmap(bitmap, coverX, coverY, coverWidth, coverHeight);
+        renderer.drawRect(coverX, coverY, coverWidth, coverHeight);
         drewCover = true;
       }
     }
