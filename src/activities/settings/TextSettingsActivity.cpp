@@ -106,6 +106,16 @@ void TextSettingsActivity::onEnter() {
 
 void TextSettingsActivity::onExit() { Activity::onExit(); }
 
+bool TextSettingsActivity::handleHomeGesture() {
+  // Reader Options is a modal child of the reader.  A bottom-edge swipe is
+  // treated as Home by ActivityManager before this activity's loop() runs;
+  // while editing reader settings it should close the options and resume the
+  // book instead of replacing the whole reader with the bookshelf.
+  if (!activityManager.isReaderActivity()) return false;
+  finish();
+  return true;
+}
+
 TextSettingsActivity::PaneGeometry TextSettingsActivity::paneGeometry() const {
   const int previewTop = afterHeader;
   const int tabTop = previewTop + previewHeight;

@@ -28,6 +28,7 @@ class TextSettingsActivity final : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
+  bool handleHomeGesture() override;
 
  private:
   // Row indices per tab. enum class (not plain enum) so a LayoutRow can't be
