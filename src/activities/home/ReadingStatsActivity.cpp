@@ -206,8 +206,9 @@ void ReadingStatsActivity::render(RenderLock&&) {
   const size_t pageLines = static_cast<size_t>(std::max(1, (bottom - top) / lineHeight));
   for (size_t row = 0; row < pageLines && firstLine + row < lines.size(); ++row) {
     const std::string line = renderer.truncatedText(UI_10_FONT_ID, lines[firstLine + row].c_str(), width);
-    renderer.drawText(UI_10_FONT_ID, side, top + static_cast<int>(row) * lineHeight, line.c_str(),
-                      row == 0 && !bookPath.empty());
+    const EpdFontFamily::Style style = row == 0 && !bookPath.empty() ? EpdFontFamily::BOLD
+                                                                       : EpdFontFamily::REGULAR;
+    renderer.drawText(UI_10_FONT_ID, side, top + static_cast<int>(row) * lineHeight, line.c_str(), true, style);
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", tr(STR_DIR_UP), tr(STR_DIR_DOWN));
