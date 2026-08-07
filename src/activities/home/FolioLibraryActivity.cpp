@@ -285,14 +285,19 @@ void FolioLibraryActivity::showMenu() {
                            "Reading Calendar", "Retrieve All Book Details"};
   menuPopup.show(tr(STR_MENU), options, 5, 0, [this](const int index) {
     if (index == 0) {
+      menuPopup.dismiss();
       activityManager.goToFileTransfer();
     } else if (index == 1) {
+      menuPopup.dismiss();
       activityManager.goToSettings();
     } else if (index == 2) {
+      menuPopup.dismiss();
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), nullptr);
     } else if (index == 3) {
+      menuPopup.dismiss();
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, "", true), nullptr);
     } else if (index == 4) {
+      menuPopup.dismiss();
       startRetrieveAllBooks();
     }
   });

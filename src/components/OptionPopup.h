@@ -124,6 +124,14 @@ class OptionPopup {
 
   bool isActive() const { return active; }
 
+  // Explicitly close the popup before an activity transition.  Selection
+  // normally deactivates the popup inside handleInput(), but callers that
+  // launch another activity from the selection callback should be able to
+  // make the transition unambiguous.
+  void dismiss() {
+    active = false;
+  }
+
  private:
   struct Layout {
     Rect dialog{0, 0, 0, 0};
