@@ -2,6 +2,7 @@
 
 #include <Epub.h>
 #include <FsHelpers.h>
+#include <Bitmap.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <Txt.h>
@@ -32,6 +33,16 @@ void clearCachePreservingProgress(const std::string& cachePath, const size_t max
 }
 
 }  // namespace
+
+bool isValidBookThumbnail(const std::string& path) {
+  if (path.empty()) return false;
+  HalFile file;
+  if (!Storage.openFileForRead("BookCache", path, file)) return false;
+  Bitmap bitmap(file);
+  const bool valid = bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() > 0 && bitmap.getHeight() > 0;
+  file.close();
+  return valid;
+}
 
 bool isBookCacheDirectoryName(const char* name) {
   if (!name) {

@@ -95,6 +95,39 @@ void ReadingStatsActivity::buildLines() {
     return;
   }
 
+  if (calendarMode) {
+    heading = "Reading Calendar";
+    const auto& days = READING_STATS.getDays();
+    const size_t start = days.size() > 30 ? days.size() - 30 : 0;
+    uint32_t totalSeconds = 0;
+    uint32_t totalSessions = 0;
+    for (size_t i = start; i < days.size(); ++i) {
+      totalSeconds += std::min(days[i].seconds, UINT32_MAX - totalSeconds);
+      totalSessions += std::min<uint32_t>(days[i].sessions, UINT32_MAX - totalSessions);
+    }
+    lines.emplace_back("Last 30 recorded days");
+    lines.emplace_back("Reading: " + durationText(totalSeconds) + "   Sessions: " +
+                       std::to_string(totalSessions));
+    lines.emplace_back("");
+    if (days.empty()) {
+      lines.emplace_back("No completed reading sessions yet.");
+    } else {
+      for (size_t i = days.size(); i > start; --i) {
+        const auto& day = days[i - 1];
+        const uint32_t minutes = (day.seconds + 30) / 60;
+        const uint8_t barLength = static_cast<uint8_t>(std::min<uint32_t>(20, (minutes + 4) / 5));
+        std::string bar(barLength, '#');
+        if (bar.empty()) bar = "-";
+        lines.emplace_back(dateText(day.dateKey) + "  " + durationText(day.seconds) + "  " +
+                           std::to_string(day.sessions) + " session" + (day.sessions == 1 ? "" : "s") +
+                           "  " + bar);
+      }
+    }
+    lines.emplace_back("");
+    lines.emplace_back("Sessions are saved when you leave a book.");
+    return;
+  }
+
   heading = "Reading Statistics";
   uint32_t bookSeconds = 0;
   uint32_t bookSessions = 0;

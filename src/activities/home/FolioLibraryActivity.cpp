@@ -181,7 +181,7 @@ void FolioLibraryActivity::loadNextPreview() {
         preview.coverBmpPath = recentIt->coverBmpPath;
         const bool cachedThumbAvailable =
             !preview.coverBmpPath.empty() &&
-            Storage.exists(UITheme::getCoverThumbPath(preview.coverBmpPath, FolioNooirTheme::COVER_HEIGHT).c_str());
+            isValidBookThumbnail(UITheme::getCoverThumbPath(preview.coverBmpPath, FolioNooirTheme::COVER_HEIGHT));
         preview.metadataAttempted = !preview.title.empty() && cachedThumbAvailable;
       }
       // Images are viewable files, not books. Do not show the metadata
@@ -279,16 +279,22 @@ void FolioLibraryActivity::generateNextMissingCover() {
     Preview& preview = previews[nextCoverSlot++];
     if (!preview.loaded || preview.directory || preview.coverBmpPath.empty()) continue;
     const std::string thumb = UITheme::getCoverThumbPath(preview.coverBmpPath, FolioNooirTheme::COVER_HEIGHT);
-    if (Storage.exists(thumb.c_str())) continue;
+    if (isValidBookThumbnail(thumb)) continue;
+    if (Storage.exists(thumb.c_str())) Storage.remove(thumb.c_str());
 
     const std::string path = fullPath(preview.fileIndex);
     bool generated = false;
     if (FsHelpers::hasEpubExtension(path)) {
       Epub epub(path, "/.crosspoint");
-      if (epub.load(false, true)) generated = epub.generateThumbBmp(FolioNooirTheme::COVER_HEIGHT);
+      if (epub.load(false, true))
+        generated = epub.generateThumbBmp(FolioNooirTheme::COVER_HEIGHT) && isValidBookThumbnail(thumb);
     } else if (FsHelpers::hasXtcExtension(path)) {
       Xtc xtc(path, "/.crosspoint");
-      if (xtc.load()) generated = xtc.generateThumbBmp(FolioNooirTheme::COVER_HEIGHT);
+      if (xtc.load()) generated = xtc.generateThumbBmp(FolioNooirTheme::COVER_HEIGHT) && isValidBookThumbnail(thumb);
+    }
+    if (!generated) {
+      preview.coverBmpPath.clear();
+      preview.metadataAttempted = true;
     }
     lastCoverGenerationMs = millis();
     if (generated) requestUpdate();

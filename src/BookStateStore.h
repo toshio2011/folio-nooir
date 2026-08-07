@@ -36,6 +36,10 @@ class BookStateStore : public PersistableStore<BookStateStore> {
   const BookState* find(const std::string& path) const;
   const std::vector<BookState>& getBooks() const { return books; }
   void recordReading(const std::string& path, uint8_t progress, uint32_t elapsedSeconds);
+  // Update fields exposed by the web book editor. Values are normalized but
+  // otherwise kept exactly as supplied so users can correct dates manually.
+  bool updateEditable(const std::string& path, BookStatus status, uint8_t progress, uint32_t startDate,
+                      uint32_t finishDate);
   void setStatus(const std::string& path, BookStatus status);
   void reset(const std::string& path);
   bool removeByPath(const std::string& path);

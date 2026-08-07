@@ -11,8 +11,10 @@
 // reading summary and the latest persisted day buckets.
 class ReadingStatsActivity final : public Activity {
  public:
-  ReadingStatsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string bookPath = {})
-      : Activity("ReadingStats", renderer, mappedInput), bookPath(std::move(bookPath)) {}
+  ReadingStatsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string bookPath = {},
+                       bool calendarMode = false)
+      : Activity(calendarMode ? "ReadingCalendar" : "ReadingStats", renderer, mappedInput),
+        bookPath(std::move(bookPath)), calendarMode(calendarMode) {}
 
   void onEnter() override;
   void loop() override;
@@ -20,6 +22,7 @@ class ReadingStatsActivity final : public Activity {
 
  private:
   std::string bookPath;
+  bool calendarMode = false;
   std::string heading;
   std::vector<std::string> lines;
   size_t firstLine = 0;

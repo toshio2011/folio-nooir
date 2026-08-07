@@ -124,6 +124,38 @@ void RecentBooksStore::updateBook(const std::string& path, const std::string& ti
   }
 }
 
+bool RecentBooksStore::updateMetadata(const std::string& path, const std::string& title, const std::string& author,
+                                      const std::string& synopsis) {
+  auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
+                         [&](const RecentBook& book) { return book.path == path; });
+  if (it == recentBooks.end()) return false;
+  it->title = title.substr(0, 192);
+  it->author = author.substr(0, 128);
+  it->synopsis = synopsis.substr(0, 384);
+  if (!saveToFile()) {
+    LOG_ERR("RBS", "Failed to save edited metadata: %s", path.c_str());
+    return false;
+  }
+  return true;
+}
+
+bool RecentBooksStore::resetReading(const std::string& path) {
+  auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
+                         [&](const RecentBook& book) { return book.path == path; });
+  if (it == recentBooks.end()) return false;
+  it->progressPercent = 0;
+  it->readingSeconds = 0;
+  it->lastSessionSeconds = 0;
+  it->dailyReadingSeconds = 0;
+  it->dailyReadingDateKey = 0;
+  it->readingSessions = 0;
+  if (!saveToFile()) {
+    LOG_ERR("RBS", "Failed to reset reading data: %s", path.c_str());
+    return false;
+  }
+  return true;
+}
+
 bool RecentBooksStore::removeByPath(const std::string& path) {
   auto it =
       std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });

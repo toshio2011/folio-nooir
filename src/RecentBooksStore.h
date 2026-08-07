@@ -43,6 +43,9 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
 
   void updateBook(const std::string& path, const std::string& title, const std::string& author,
                   const std::string& coverBmpPath, const std::string& synopsis = {});
+  bool updateMetadata(const std::string& path, const std::string& title, const std::string& author,
+                      const std::string& synopsis);
+  bool resetReading(const std::string& path);
 
   // Persist one completed reader session. This is called only when leaving a
   // book, keeping SD writes away from the page-turn path.

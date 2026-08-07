@@ -1,11 +1,13 @@
 #include "CrossPointWebServer.h"
 
 #include <ArduinoJson.h>
+#include <Epub.h>
 #include <FsHelpers.h>
 #include <HalGPIO.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <WiFi.h>
+#include <Xtc.h>
 #include <esp_efuse.h>
 #include <esp_efuse_table.h>
 
@@ -156,6 +158,8 @@ void CrossPointWebServer::begin() {
   server->on("/api/library/cover", HTTP_GET, [this] { handleLibraryCover(); });
   server->on("/stats", HTTP_GET, [this] { handleStatsPage(); });
   server->on("/api/stats", HTTP_GET, [this] { handleStatsData(); });
+  server->on("/api/stats/export", HTTP_GET, [this] { handleStatsExport(); });
+  server->on("/api/book", HTTP_POST, [this] { handlePostBookUpdate(); });
   server->on("/api/files", HTTP_GET, [this] { handleFileListData(); });
   server->on("/download", HTTP_GET, [this] { handleDownload(); });
 
@@ -399,6 +403,8 @@ void CrossPointWebServer::handleLibraryData() const {
     doc["progress"] = book.progressPercent;
     doc["seconds"] = book.readingSeconds;
     doc["sessions"] = book.readingSessions;
+    // Keep the image request alive when the cached BMP is stale; the cover
+    // endpoint validates and regenerates it on demand.
     doc["hasCover"] = !book.coverBmpPath.empty();
     String row;
     serializeJson(doc, row);
@@ -429,8 +435,23 @@ void CrossPointWebServer::handleLibraryCover() const {
     server->send(404, "text/plain", "Cover not found");
     return;
   }
-  const std::string coverPath = UITheme::getCoverThumbPath(
-      selected->coverBmpPath, UITheme::getInstance().getMetrics().homeCoverHeight);
+  const int coverHeight = UITheme::getInstance().getMetrics().homeCoverHeight;
+  const std::string coverPath = UITheme::getCoverThumbPath(selected->coverBmpPath, coverHeight);
+  if (!isValidBookThumbnail(coverPath)) {
+    if (Storage.exists(coverPath.c_str())) Storage.remove(coverPath.c_str());
+    bool generated = false;
+    if (FsHelpers::hasEpubExtension(selected->path)) {
+      Epub epub(selected->path, "/.crosspoint");
+      generated = epub.load(false, true) && epub.generateThumbBmp(coverHeight);
+    } else if (FsHelpers::hasXtcExtension(selected->path)) {
+      Xtc xtc(selected->path, "/.crosspoint");
+      generated = xtc.load() && xtc.generateThumbBmp(coverHeight);
+    }
+    if (!generated || !isValidBookThumbnail(coverPath)) {
+      server->send(404, "text/plain", "Cover not found");
+      return;
+    }
+  }
   HalFile file = Storage.open(coverPath.c_str());
   if (!file || file.isDirectory()) {
     server->send(404, "text/plain", "Cover not found");
@@ -451,6 +472,11 @@ void CrossPointWebServer::handleLibraryCover() const {
 
 void CrossPointWebServer::handleStatsPage() const {
   sendHtmlContent(server.get(), StatsPageHtml, sizeof(StatsPageHtml));
+}
+
+void CrossPointWebServer::handleStatsExport() const {
+  server->sendHeader("Content-Disposition", "attachment; filename=folio-nooir-reading-stats.json");
+  handleStatsData();
 }
 
 void CrossPointWebServer::handleStatsData() const {
@@ -496,6 +522,7 @@ void CrossPointWebServer::handleStatsData() const {
     row["path"] = path;
     row["title"] = recent && !recent->title.empty() ? recent->title : path;
     row["author"] = recent ? recent->author : "";
+    row["synopsis"] = recent ? recent->synopsis : "";
     row["progress"] = progress;
     row["status"] = status;
     row["seconds"] = seconds;
@@ -503,6 +530,17 @@ void CrossPointWebServer::handleStatsData() const {
     row["startDate"] = state ? state->startDate : 0;
     row["finishDate"] = state ? state->finishDate : 0;
     row["lastOpenedDate"] = state ? state->lastOpenedDate : 0;
+    int coverIndex = -1;
+    int visibleIndex = 0;
+    for (const auto& candidate : RECENT_BOOKS.getBooks()) {
+      if (RecentBooksStore::isMissing(candidate)) continue;
+      if (candidate.path == path) {
+        coverIndex = visibleIndex;
+        break;
+      }
+      ++visibleIndex;
+    }
+    row["coverIndex"] = coverIndex;
   };
   for (const auto& book : BOOK_STATES.getBooks()) {
     const RecentBook* recent = nullptr;
@@ -524,6 +562,84 @@ void CrossPointWebServer::handleStatsData() const {
   String response;
   serializeJson(doc, response);
   server->send(200, "application/json", response);
+}
+
+void CrossPointWebServer::handlePostBookUpdate() {
+  if (!server->hasArg("plain")) {
+    server->send(400, "application/json", "{\"error\":\"Missing JSON body\"}");
+    return;
+  }
+  JsonDocument doc;
+  const DeserializationError err = deserializeJson(doc, server->arg("plain"));
+  if (err) {
+    server->send(400, "application/json", String("{\"error\":\"Invalid JSON: ") + err.c_str() + "\"}");
+    return;
+  }
+
+  const std::string path = doc["path"] | "";
+  bool knownBook = BOOK_STATES.find(path) != nullptr;
+  if (!knownBook) {
+    for (const auto& candidate : RECENT_BOOKS.getBooks()) {
+      if (candidate.path == path) {
+        knownBook = true;
+        break;
+      }
+    }
+  }
+  if (path.empty() || !knownBook || !Storage.exists(path.c_str())) {
+    server->send(404, "application/json", "{\"error\":\"Book not found\"}");
+    return;
+  }
+
+  const std::string action = doc["action"] | "update";
+  if (action == "reset") {
+    BOOK_STATES.reset(path);
+    RECENT_BOOKS.resetReading(path);
+    server->send(200, "application/json", "{\"ok\":true,\"action\":\"reset\"}");
+    return;
+  }
+
+  const BookState* existing = BOOK_STATES.find(path);
+  const RecentBook* recent = nullptr;
+  for (const auto& candidate : RECENT_BOOKS.getBooks()) {
+    if (candidate.path == path) {
+      recent = &candidate;
+      break;
+    }
+  }
+  uint8_t progress = existing ? existing->progressPercent : (recent ? recent->progressPercent : 0);
+  uint32_t startDate = existing ? existing->startDate : 0;
+  uint32_t finishDate = existing ? existing->finishDate : 0;
+  BookStatus status = existing ? existing->status : BookStatus::New;
+  if (!doc["progress"].isNull())
+    progress = static_cast<uint8_t>(std::max(0, std::min(100, doc["progress"].as<int>())));
+  if (!doc["startDate"].isNull()) startDate = doc["startDate"].as<uint32_t>();
+  if (!doc["finishDate"].isNull()) finishDate = doc["finishDate"].as<uint32_t>();
+  if (!doc["status"].isNull() && doc["status"].is<int>()) {
+    status = static_cast<BookStatus>(std::min(3, std::max(0, doc["status"].as<int>())));
+  } else if (!doc["status"].isNull() && doc["status"].is<const char*>()) {
+    const String value = doc["status"].as<const char*>();
+    if (value.equalsIgnoreCase("reading")) status = BookStatus::Reading;
+    else if (value.equalsIgnoreCase("on hold")) status = BookStatus::OnHold;
+    else if (value.equalsIgnoreCase("finished")) status = BookStatus::Finished;
+    else status = BookStatus::New;
+  }
+  if (!BOOK_STATES.updateEditable(path, status, progress, startDate, finishDate)) {
+    server->send(500, "application/json", "{\"error\":\"Could not save book state\"}");
+    return;
+  }
+  if (recent) RECENT_BOOKS.recordReading(path, progress, 0);
+
+  bool metadataUpdated = false;
+  if (recent && (doc["title"].is<const char*>() || doc["author"].is<const char*>() ||
+                 doc["synopsis"].is<const char*>())) {
+    const std::string title = doc["title"] | recent->title;
+    const std::string author = doc["author"] | recent->author;
+    const std::string synopsis = doc["synopsis"] | recent->synopsis;
+    metadataUpdated = RECENT_BOOKS.updateMetadata(path, title, author, synopsis);
+  }
+  server->send(200, "application/json", metadataUpdated ? "{\"ok\":true,\"metadata\":true}"
+                                                          : "{\"ok\":true,\"metadata\":false}");
 }
 
 void CrossPointWebServer::handleJszip() const {

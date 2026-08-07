@@ -44,7 +44,7 @@ bool RecentBooksActivity::hasMissingRecentCache() const {
     if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path)) continue;
     if (book.title.empty() || book.coverBmpPath.empty()) return true;
     const std::string thumb = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
-    if (!Storage.exists(thumb.c_str())) return true;
+    if (!isValidBookThumbnail(thumb)) return true;
   }
   return false;
 }
@@ -151,7 +151,8 @@ void RecentBooksActivity::generateNextCover() {
     const std::string thumbPath = book.coverBmpPath.empty()
                                       ? std::string()
                                       : UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
-    if (!metadataMissing && !thumbPath.empty() && Storage.exists(thumbPath.c_str())) continue;
+    if (!metadataMissing && !thumbPath.empty() && isValidBookThumbnail(thumbPath)) continue;
+    if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) Storage.remove(thumbPath.c_str());
 
     bool attempted = false;
     if (FsHelpers::hasEpubExtension(book.path)) {
@@ -172,7 +173,13 @@ void RecentBooksActivity::generateNextCover() {
         }
         if (!book.coverBmpPath.empty()) {
           const std::string thumb = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
-          if (!Storage.exists(thumb.c_str())) epub.generateThumbBmp(BOOKSHELF_COVER_HEIGHT);
+          if (!isValidBookThumbnail(thumb)) {
+            Storage.remove(thumb.c_str());
+            if (!epub.generateThumbBmp(BOOKSHELF_COVER_HEIGHT) || !isValidBookThumbnail(thumb)) {
+              book.coverBmpPath.clear();
+              RECENT_BOOKS.updateBook(book.path, book.title, book.author, "", book.synopsis);
+            }
+          }
         }
       }
     } else if (FsHelpers::hasXtcExtension(book.path)) {
@@ -189,7 +196,13 @@ void RecentBooksActivity::generateNextCover() {
           RECENT_BOOKS.updateBook(book.path, book.title, book.author, book.coverBmpPath);
         }
         const std::string thumb = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
-        if (!Storage.exists(thumb.c_str())) xtc.generateThumbBmp(BOOKSHELF_COVER_HEIGHT);
+        if (!isValidBookThumbnail(thumb)) {
+          Storage.remove(thumb.c_str());
+          if (!xtc.generateThumbBmp(BOOKSHELF_COVER_HEIGHT) || !isValidBookThumbnail(thumb)) {
+            book.coverBmpPath.clear();
+            RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+          }
+        }
       }
     }
     if (attempted) {
@@ -214,12 +227,15 @@ void RecentBooksActivity::generateNextCover() {
 }
 
 void RecentBooksActivity::showMenu() {
-  const char* options[] = {tr(STR_BROWSE_FILES), tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), "Reading Statistics"};
-  menuPopup.show(tr(STR_MENU), options, 4, 0, [this](int index) {
+  const char* options[] = {tr(STR_BROWSE_FILES), tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), "Reading Statistics",
+                           "Reading Calendar"};
+  menuPopup.show(tr(STR_MENU), options, 5, 0, [this](int index) {
     if (index == 0) activityManager.goToFileBrowser();
     if (index == 1) activityManager.goToFileTransfer();
     if (index == 2) activityManager.goToSettings();
     if (index == 3) startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), nullptr);
+    if (index == 4)
+      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, "", true), nullptr);
   });
   requestUpdate();
 }

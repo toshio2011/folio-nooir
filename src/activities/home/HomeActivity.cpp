@@ -17,6 +17,7 @@
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
+#include "util/BookCacheUtils.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -57,7 +58,8 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
     RecentBook& book = recentBooks[nextRecentCover++];
     if (!book.coverBmpPath.empty()) {
       std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
-      if (!Storage.exists(coverPath.c_str())) {
+      if (!isValidBookThumbnail(coverPath)) {
+        if (Storage.exists(coverPath.c_str())) Storage.remove(coverPath.c_str());
         bool attempted = false;
         bool success = false;
         if (FsHelpers::hasEpubExtension(book.path)) {
