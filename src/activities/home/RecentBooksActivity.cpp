@@ -295,7 +295,8 @@ void RecentBooksActivity::showBookActions() {
     }
     if (action == 7) {
       startActivityForResult(
-          std::make_unique<SynopsisActivity>(renderer, mappedInput, selected.title, selected.author, selected.synopsis),
+          std::make_unique<SynopsisActivity>(renderer, mappedInput, selected.title, selected.author, selected.synopsis,
+                                             selected.path),
           nullptr);
       return;
     }

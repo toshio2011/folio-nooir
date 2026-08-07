@@ -131,7 +131,9 @@ bool RecentBooksStore::updateMetadata(const std::string& path, const std::string
   if (it == recentBooks.end()) return false;
   it->title = title.substr(0, 192);
   it->author = author.substr(0, 128);
-  it->synopsis = synopsis.substr(0, 384);
+  // Metadata edited explicitly through the web UI should not be truncated;
+  // the shelf's generated EPUB cache remains bounded separately.
+  it->synopsis = synopsis;
   if (!saveToFile()) {
     LOG_ERR("RBS", "Failed to save edited metadata: %s", path.c_str());
     return false;

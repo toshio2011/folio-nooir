@@ -349,7 +349,8 @@ void FolioLibraryActivity::showBookActions() {
       retrievingPopupRendered = false;
     } else if (action == 6) {
       startActivityForResult(
-          std::make_unique<SynopsisActivity>(renderer, mappedInput, preview.title, preview.author, preview.synopsis),
+          std::make_unique<SynopsisActivity>(renderer, mappedInput, preview.title, preview.author, preview.synopsis,
+                                             path),
           nullptr);
       return;
     } else if (action == 7) {

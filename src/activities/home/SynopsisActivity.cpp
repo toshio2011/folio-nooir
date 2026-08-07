@@ -1,9 +1,12 @@
 #include "SynopsisActivity.h"
 
+#include <Epub.h>
+#include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 
 #include <algorithm>
+#include <limits>
 
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
@@ -49,11 +52,22 @@ std::string SynopsisActivity::stripHtml(const std::string& source) {
 
 void SynopsisActivity::onEnter() {
   Activity::onEnter();
+  // Shelf entries intentionally keep a small synopsis cache for boot and
+  // scrolling speed. If it looks like that cache was truncated, retrieve the
+  // original EPUB description only when the user explicitly asks to read it.
+  if (FsHelpers::hasEpubExtension(bookPath) && (synopsis.empty() || synopsis.size() >= 384)) {
+    Epub epub(bookPath, "/.crosspoint");
+    if (epub.loadMetadataOnly() && epub.getDescription().size() > synopsis.size()) {
+      synopsis = epub.getDescription();
+    }
+  }
   synopsis = stripHtml(synopsis);
   if (synopsis.empty()) synopsis = tr(STR_NO_SYNOPSIS);
-  // A synopsis is normally only a few paragraphs. Keeping a bounded line
-  // list avoids rendering or allocating an unbounded document on the X4.
-  lines = renderer.wrappedText(SMALL_FONT_ID, synopsis.c_str(), renderer.getScreenWidth() - 24, 256);
+  // The shelf cache is bounded, but this view must not silently truncate a
+  // longer description. wrappedText only stores the lines that actually fit.
+  const size_t maxLineCount = std::min(synopsis.size() + 1, static_cast<size_t>(std::numeric_limits<int>::max()));
+  lines = renderer.wrappedText(SMALL_FONT_ID, synopsis.c_str(), renderer.getScreenWidth() - 24,
+                               static_cast<int>(maxLineCount));
   firstLine = 0;
   requestUpdate();
 }
