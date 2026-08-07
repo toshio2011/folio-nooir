@@ -756,12 +756,14 @@ void RecentBooksActivity::render(RenderLock&&) {
       renderer.drawText(SMALL_FONT_ID, detailX, synopsisY, line.c_str());
       synopsisY += renderer.getLineHeight(SMALL_FONT_ID);
     }
-    char state[32];
-    snprintf(state, sizeof(state), "%s - %u%%",
+    char state[96];
+    const uint32_t readingMinutes = (selected.readingSeconds + 30) / 60;
+    snprintf(state, sizeof(state), "%s - %u%% - %lu min - %u sessions",
              selected.progressPercent >= 100 ? tr(STR_COMPLETE)
                                              : (selected.progressPercent > 0 ? tr(STR_ONGOING) : tr(STR_NEW)),
-             selected.progressPercent);
-    renderer.drawText(UI_10_FONT_ID, detailX, contentTop + detailHeight - 54, state);
+             selected.progressPercent, static_cast<unsigned long>(readingMinutes), selected.readingSessions);
+    const std::string stateText = renderer.truncatedText(SMALL_FONT_ID, state, detailWidth);
+    renderer.drawText(SMALL_FONT_ID, detailX, contentTop + detailHeight - 54, stateText.c_str());
     const int progressY = contentTop + detailHeight - 28;
     renderer.drawRect(detailX, progressY, detailWidth, 12);
     const int fill = (detailWidth - 2) * selected.progressPercent / 100;

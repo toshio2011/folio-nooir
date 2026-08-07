@@ -64,12 +64,18 @@ void ReadingStatsActivity::buildLines() {
     lines.push_back(renderer.truncatedText(UI_12_FONT_ID, title.c_str(), renderer.getScreenWidth() - 24));
     if (recent && !recent->author.empty()) lines.push_back(recent->author);
 
-    const uint8_t progress = state ? state->progressPercent : (recent ? recent->progressPercent : 0);
-    const uint32_t seconds = state ? state->readingSeconds : (recent ? recent->readingSeconds : 0);
-    const uint16_t sessions = state ? state->readingSessions : (recent ? recent->readingSessions : 0);
-    const BookStatus displayStatus = state ? state->status
-                                           : (progress >= 100 ? BookStatus::Finished
-                                                              : (progress > 0 ? BookStatus::Reading : BookStatus::New));
+    const uint8_t progress = std::max<uint8_t>(state ? state->progressPercent : 0,
+                                                recent ? recent->progressPercent : 0);
+    const uint32_t seconds = std::max<uint32_t>(state ? state->readingSeconds : 0,
+                                                recent ? recent->readingSeconds : 0);
+    const uint16_t sessions = std::max<uint16_t>(state ? state->readingSessions : 0,
+                                                 recent ? recent->readingSessions : 0);
+    BookStatus displayStatus = state ? state->status : BookStatus::New;
+    if (progress >= 100) {
+      displayStatus = BookStatus::Finished;
+    } else if (displayStatus == BookStatus::New && progress > 0) {
+      displayStatus = BookStatus::Reading;
+    }
     char progressLine[48];
     snprintf(progressLine, sizeof(progressLine), "Progress: %u%% - %s", progress,
              progress >= 100 ? "Complete" : (progress > 0 ? "Ongoing" : "New"));
@@ -96,13 +102,30 @@ void ReadingStatsActivity::buildLines() {
   uint16_t onHold = 0;
   uint16_t finished = 0;
   uint16_t started = 0;
+  auto accumulateBook = [&](uint8_t progress, BookStatus status, uint32_t seconds, uint16_t sessions) {
+    bookSeconds += std::min(seconds, UINT32_MAX - bookSeconds);
+    bookSessions += std::min<uint32_t>(sessions, UINT32_MAX - bookSessions);
+    if (progress > 0) ++started;
+    if (status == BookStatus::Reading) ++reading;
+    if (status == BookStatus::OnHold) ++onHold;
+    if (status == BookStatus::Finished || progress >= 100) ++finished;
+  };
   for (const auto& book : BOOK_STATES.getBooks()) {
-    bookSeconds += std::min(book.readingSeconds, UINT32_MAX - bookSeconds);
-    bookSessions += std::min<uint32_t>(book.readingSessions, UINT32_MAX - bookSessions);
-    if (book.progressPercent > 0) ++started;
-    if (book.status == BookStatus::Reading) ++reading;
-    if (book.status == BookStatus::OnHold) ++onHold;
-    if (book.status == BookStatus::Finished || book.progressPercent >= 100) ++finished;
+    const RecentBook* recent = findRecent(book.path);
+    const uint8_t progress = std::max<uint8_t>(book.progressPercent, recent ? recent->progressPercent : 0);
+    const uint32_t seconds = std::max<uint32_t>(book.readingSeconds, recent ? recent->readingSeconds : 0);
+    const uint16_t sessions = std::max<uint16_t>(book.readingSessions, recent ? recent->readingSessions : 0);
+    BookStatus status = book.status;
+    if (progress >= 100) status = BookStatus::Finished;
+    else if (status == BookStatus::New && progress > 0) status = BookStatus::Reading;
+    accumulateBook(progress, status, seconds, sessions);
+  }
+  for (const auto& recent : RECENT_BOOKS.getBooks()) {
+    if (BOOK_STATES.find(recent.path)) continue;
+    const BookStatus status = recent.progressPercent >= 100
+                                  ? BookStatus::Finished
+                                  : (recent.progressPercent > 0 ? BookStatus::Reading : BookStatus::New);
+    accumulateBook(recent.progressPercent, status, recent.readingSeconds, recent.readingSessions);
   }
 
   const uint32_t trackedSeconds = std::max(bookSeconds, READING_STATS.totalSeconds());

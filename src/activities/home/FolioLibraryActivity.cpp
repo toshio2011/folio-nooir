@@ -583,10 +583,27 @@ void FolioLibraryActivity::render(RenderLock&&) {
     synopsisY += renderer.getLineHeight(SMALL_FONT_ID);
   }
   if (selected && !selected->directory) {
-    char progress[20];
-    snprintf(progress, sizeof(progress), "%u%%", selected->progressPercent);
-    renderer.drawText(UI_10_FONT_ID, textX, featuredTop + featuredHeight - 43, progress, true);
-    theme.drawCoverProgress(renderer, textX, featuredTop + featuredHeight - 21, textWidth, selected->progressPercent);
+    const std::string selectedPath = fullPath(selectorIndex);
+    const BookState* trackedState = BOOK_STATES.find(selectedPath);
+    const RecentBook* trackedRecent = nullptr;
+    const auto& recentBooks = RECENT_BOOKS.getBooks();
+    const auto recentIt = std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) {
+      return book.path == selectedPath;
+    });
+    if (recentIt != recentBooks.end()) trackedRecent = &*recentIt;
+    const uint8_t progress = std::max<uint8_t>(selected->progressPercent,
+                                                trackedState ? trackedState->progressPercent : 0);
+    const uint32_t seconds = std::max<uint32_t>(trackedState ? trackedState->readingSeconds : 0,
+                                                trackedRecent ? trackedRecent->readingSeconds : 0);
+    const uint16_t sessions = std::max<uint16_t>(trackedState ? trackedState->readingSessions : 0,
+                                                 trackedRecent ? trackedRecent->readingSessions : 0);
+    char progressLine[96];
+    snprintf(progressLine, sizeof(progressLine), "%s - %u%% - %lu min - %u sessions",
+             progress >= 100 ? tr(STR_COMPLETE) : (progress > 0 ? tr(STR_ONGOING) : tr(STR_NEW)), progress,
+             static_cast<unsigned long>((seconds + 30) / 60), sessions);
+    const std::string progressText = renderer.truncatedText(SMALL_FONT_ID, progressLine, textWidth);
+    renderer.drawText(SMALL_FONT_ID, textX, featuredTop + featuredHeight - 43, progressText.c_str());
+    theme.drawCoverProgress(renderer, textX, featuredTop + featuredHeight - 21, textWidth, progress);
   }
   renderer.drawLine(0, detailTop + detailHeight - 1, renderer.getScreenWidth() - 1, detailTop + detailHeight - 1);
 

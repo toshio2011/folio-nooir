@@ -482,13 +482,16 @@ void CrossPointWebServer::handleStatsData() const {
 
   JsonArray books = doc["books"].to<JsonArray>();
   auto appendBook = [&](const std::string& path, const BookState* state, const RecentBook* recent) {
-    const uint8_t progress = state ? state->progressPercent : (recent ? recent->progressPercent : 0);
-    const uint8_t status = state ? static_cast<uint8_t>(state->status)
-                                 : (progress >= 100 ? static_cast<uint8_t>(BookStatus::Finished)
-                                                    : (progress > 0 ? static_cast<uint8_t>(BookStatus::Reading)
-                                                                    : static_cast<uint8_t>(BookStatus::New)));
-    const uint32_t seconds = state ? state->readingSeconds : (recent ? recent->readingSeconds : 0);
-    const uint16_t sessions = state ? state->readingSessions : (recent ? recent->readingSessions : 0);
+    const uint8_t progress = std::max<uint8_t>(state ? state->progressPercent : 0,
+                                                recent ? recent->progressPercent : 0);
+    const uint32_t seconds = std::max<uint32_t>(state ? state->readingSeconds : 0,
+                                                recent ? recent->readingSeconds : 0);
+    const uint16_t sessions = std::max<uint16_t>(state ? state->readingSessions : 0,
+                                                 recent ? recent->readingSessions : 0);
+    uint8_t status = state ? static_cast<uint8_t>(state->status) : static_cast<uint8_t>(BookStatus::New);
+    if (progress >= 100) status = static_cast<uint8_t>(BookStatus::Finished);
+    else if (status == static_cast<uint8_t>(BookStatus::New) && progress > 0)
+      status = static_cast<uint8_t>(BookStatus::Reading);
     JsonObject row = books.add<JsonObject>();
     row["path"] = path;
     row["title"] = recent && !recent->title.empty() ? recent->title : path;
