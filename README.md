@@ -1,5 +1,5 @@
-<img width="648" height="956" alt="WhatsApp Image 2026-08-07 at 4 32 39 PM" src="https://github.com/user-attachments/assets/cf0a9cd3-6783-417a-986c-0ec2fdf89ba4" />
-<img width="648" height="956" alt="WhatsApp Image 2026-08-07 at 4 32 39 PM" src="https://github.com/user-attachments/assets/a7caa8df-b2e1-4313-88ad-d4c73081d864" />
+<img width="324" height="450" alt="WhatsApp Image 2026-08-07 at 4 32 39 PM" src="https://github.com/user-attachments/assets/cf0a9cd3-6783-417a-986c-0ec2fdf89ba4" />
+
 # Folio Nooir
 
 Folio Nooir is an experimental, bookshelf-focused e-reader firmware for Xteink devices. It is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), keeping the core reader, wireless transfer, sleep, and settings features while adding a Folio Nooir interface and reading tools.
