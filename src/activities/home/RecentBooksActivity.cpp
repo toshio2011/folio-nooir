@@ -231,19 +231,12 @@ void RecentBooksActivity::generateNextCover() {
 }
 
 void RecentBooksActivity::showMenu() {
-  const char* options[] = {tr(STR_BROWSE_FILES), tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), "Reading Statistics",
-                           "Reading Calendar"};
-  menuPopup.show(tr(STR_MENU), options, 5, 0, [this](int index) {
-    if (index == 0) {
-      // Match the header's Library button exactly: open the graphical Library
-      // at its root and stop processing this menu choice.
-      activityManager.goToFileBrowser("/");
-      return;
-    }
-    if (index == 1) activityManager.goToFileTransfer();
-    if (index == 2) activityManager.goToSettings();
-    if (index == 3) startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), nullptr);
-    if (index == 4)
+  const char* options[] = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), "Reading Statistics", "Reading Calendar"};
+  menuPopup.show(tr(STR_MENU), options, 4, 0, [this](int index) {
+    if (index == 0) activityManager.goToFileTransfer();
+    if (index == 1) activityManager.goToSettings();
+    if (index == 2) startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), nullptr);
+    if (index == 3)
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, "", true), nullptr);
   });
   requestUpdate();

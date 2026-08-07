@@ -281,24 +281,18 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
 }
 
 void FolioLibraryActivity::showMenu() {
-  const char* options[] = {tr(STR_BROWSE_FILES), tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE),
-                           "Reading Statistics", "Reading Calendar", "Retrieve All Book Details"};
-  menuPopup.show(tr(STR_MENU), options, 6, 0, [this](const int index) {
+  const char* options[] = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), "Reading Statistics",
+                           "Reading Calendar", "Retrieve All Book Details"};
+  menuPopup.show(tr(STR_MENU), options, 5, 0, [this](const int index) {
     if (index == 0) {
-      // Always enter the graphical Library at its root.  The menu action is
-      // a file-browsing entry point, not an instruction to reopen the current
-      // folder or the currently selected book.
-      activityManager.goToFileBrowser("/");
-      return;
-    } else if (index == 1) {
       activityManager.goToFileTransfer();
-    } else if (index == 2) {
+    } else if (index == 1) {
       activityManager.goToSettings();
-    } else if (index == 3) {
+    } else if (index == 2) {
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), nullptr);
-    } else if (index == 4) {
+    } else if (index == 3) {
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, "", true), nullptr);
-    } else if (index == 5) {
+    } else if (index == 4) {
       startRetrieveAllBooks();
     }
   });
