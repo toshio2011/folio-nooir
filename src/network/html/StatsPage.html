@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Folio Nooir Reading Statistics</title>
+  <style>
+    :root{--ink:#1d1b1a;--paper:#f3eee4;--card:#fffaf0;--muted:#756d63;--accent:#7b4635;--line:#d8cdbd}
+    @media(prefers-color-scheme:dark){:root{--ink:#eee8dd;--paper:#181614;--card:#24201c;--muted:#b8ada0;--accent:#d39a78;--line:#4a423a}}
+    *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:Georgia,"Times New Roman",serif}
+    header{max-width:1100px;margin:auto;padding:32px 22px 18px;border-bottom:1px solid var(--line)}
+    h1{margin:0;font-size:clamp(2rem,7vw,4.5rem);font-weight:500;letter-spacing:-.04em}.noo{color:var(--accent)}
+    nav{display:flex;gap:18px;margin-top:16px;flex-wrap:wrap}a{color:var(--ink);text-decoration:none}nav a.active{color:var(--accent);border-bottom:2px solid}
+    main{max-width:1100px;margin:auto;padding:24px 22px 60px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:28px}
+    .card{background:var(--card);border:1px solid var(--line);padding:16px}.label{color:var(--muted);font-size:.85rem}.value{font-size:1.6rem;margin-top:5px}
+    .calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin:12px 0 32px}.day{min-height:54px;border:1px solid var(--line);padding:6px;font-size:.75rem;background:var(--card)}
+    .day.read{background:var(--accent);color:white}.day.unknown{background:var(--line);color:var(--muted)}.day small{display:block;opacity:.75}.book{padding:11px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:18px}.book .meta{color:var(--muted);text-align:right;white-space:nowrap}
+    .muted{color:var(--muted)}.book small{display:block;color:var(--muted);margin-top:3px}
+  </style>
+</head>
+<body>
+  <header><h1>Folio <span class="noo">Nooir</span></h1><nav><a href="/">Device</a><a href="/library">Bookshelf</a><a class="active" href="/stats">Reading Stats</a><a href="/files">Transfer</a><a href="/settings">Settings</a><a href="/fonts">Typography</a></nav></header>
+  <main><div class="cards" id="summary"><div class="card">Loading statistics...</div></div><h2>Reading Calendar</h2><p class="muted">Each filled day represents a saved reading session. Unknown-date sessions are shown separately until the device clock is synchronized.</p><section class="calendar" id="calendar"></section><h2>Book Details</h2><section id="books"></section></main>
+  <script>
+    const esc=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const duration=s=>s<60?`${s}s`:s<3600?`${Math.floor(s/60)}m`:`${Math.floor(s/3600)}h ${Math.floor(s%3600/60)}m`;
+    const dateKey=n=>n?String(n).padStart(8,'0').replace(/(\d{4})(\d{2})(\d{2})/,'$1-$2-$3'):'Unknown';
+    fetch('/api/stats').then(r=>r.json()).then(data=>{
+      document.getElementById('summary').innerHTML=`<div class="card"><div class="label">Total reading</div><div class="value">${duration(data.totalSeconds)}</div></div><div class="card"><div class="label">Sessions</div><div class="value">${data.sessions}</div></div><div class="card"><div class="label">Today</div><div class="value">${data.today?duration(data.todaySeconds):'Sync clock'}</div></div>`;
+      const byDate=new Map((data.days||[]).map(d=>[d.date,d]));
+      const days=[...(data.days||[])];
+      const max=days.reduce((m,d)=>Math.max(m,d.seconds),1);
+      document.getElementById('calendar').innerHTML=days.length?days.map(d=>`<div class="day ${d.seconds?'read':''}" style="opacity:${d.seconds?(.45+.55*d.seconds/max):.45}"><b>${dateKey(d.date)}</b><small>${duration(d.seconds)} · ${d.sessions} session${d.sessions==1?'':'s'}</small></div>`).join(''):'<div class="muted">No completed sessions yet.</div>';
+      const status=['New','Reading','On hold','Finished'];
+      document.getElementById('books').innerHTML=(data.books||[]).length?data.books.map(b=>`<div class="book"><span>${esc(b.title||b.path)}${b.author?`<small>${esc(b.author)}</small>`:''}</span><span class="meta">${status[b.status]||'New'} · ${b.progress}%<br>${duration(b.seconds)} · ${b.sessions} session${b.sessions==1?'':'s'}</span></div>`).join(''):'<div class="muted">No book statistics yet.</div>';
+    }).catch(()=>document.getElementById('summary').textContent='Could not load statistics.');
+  </script>
+</body>
+</html>

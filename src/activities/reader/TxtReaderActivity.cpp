@@ -3,6 +3,7 @@
 #include <BidiUtils.h>
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
+#include <HalClock.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Serialization.h>
@@ -15,6 +16,7 @@
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
 #include "BookStateStore.h"
+#include "ReadingStatsStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -50,13 +52,14 @@ void TxtReaderActivity::onEnter() {
 
 void TxtReaderActivity::onExit() {
   Activity::onExit();
+  renderer.setDarkMode(false);
 
   if (txt) {
     const ScreenshotInfo info = getScreenshotInfo();
-    RECENT_BOOKS.recordReading(txt->getPath(), static_cast<uint8_t>(info.progressPercent),
-                               (millis() - readingSessionStartedMs) / 1000UL);
-    BOOK_STATES.recordReading(txt->getPath(), static_cast<uint8_t>(info.progressPercent),
-                              (millis() - readingSessionStartedMs) / 1000UL);
+    const uint32_t elapsedSeconds = (millis() - readingSessionStartedMs) / 1000UL;
+    RECENT_BOOKS.recordReading(txt->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds);
+    BOOK_STATES.recordReading(txt->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds);
+    READING_STATS.recordSession(halClock.getDateKey(), elapsedSeconds);
   }
 
   ReaderUtils::clearGhostingOnExit(renderer);
@@ -72,6 +75,21 @@ void TxtReaderActivity::onExit() {
 }
 
 void TxtReaderActivity::loop() {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (darkShortcutFired) {
+      darkShortcutFired = false;
+      return;
+    }
+  }
+  if (SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_DARK_MODE &&
+      mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && !darkShortcutFired) {
+    SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
+    SETTINGS.saveToFile();
+    darkShortcutFired = true;
+    requestUpdate();
+    return;
+  }
   if (ReaderUtils::handleBackNavigation(mappedInput, activityManager, txt ? txt->getPath().c_str() : "",
                                         {this, [](void* ctx) { static_cast<TxtReaderActivity*>(ctx)->onGoHome(); }})) {
     return;
@@ -327,6 +345,9 @@ void TxtReaderActivity::render(RenderLock&&) {
   if (!txt) {
     return;
   }
+
+  renderer.setDarkMode(SETTINGS.readerDarkMode != 0);
+  renderer.setRenderMode(GfxRenderer::BW);
 
   // Initialize reader if not done
   if (!initialized) {

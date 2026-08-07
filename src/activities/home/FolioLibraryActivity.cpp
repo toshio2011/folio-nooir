@@ -19,12 +19,44 @@
 #include "components/themes/folio_nooir/FolioNooirTheme.h"
 #include "fontIds.h"
 #include "activities/home/SynopsisActivity.h"
+#include "activities/home/ReadingStatsActivity.h"
 #include "activities/util/BmpViewerActivity.h"
 #include "util/BookCacheUtils.h"
 
+namespace {
+bool isLibraryBook(const std::string& path) {
+  return FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path) ||
+         FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path);
+}
+
+std::string joinLibraryPath(const std::string& basepath, const std::string& name) {
+  std::string path = basepath;
+  if (path.empty() || path.back() != '/') path += '/';
+  path += name;
+  if (!path.empty() && path.back() == '/') path.pop_back();
+  return path;
+}
+
+enum class LibraryBookState : uint8_t { Reading, Unread, OnHold, Finished };
+
+LibraryBookState getLibraryBookState(const std::string& path) {
+  const BookState* state = BOOK_STATES.find(path);
+  const auto& recentBooks = RECENT_BOOKS.getBooks();
+  const auto recentIt = std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) {
+    return book.path == path;
+  });
+  const uint8_t progress = state ? state->progressPercent
+                                 : (recentIt == recentBooks.end() ? 0 : recentIt->progressPercent);
+  if ((state && state->status == BookStatus::Finished) || progress >= 100) return LibraryBookState::Finished;
+  if (state && state->status == BookStatus::OnHold) return LibraryBookState::OnHold;
+  if ((state && state->status == BookStatus::Reading) || progress > 0) return LibraryBookState::Reading;
+  return LibraryBookState::Unread;
+}
+}  // namespace
+
 void FolioLibraryActivity::loadFiles() {
-  files.clear();
-  files.reserve(64);
+  allFiles.clear();
+  allFiles.reserve(64);
   HalFile root = Storage.open(basepath.c_str());
   if (!root || !root.isDirectory() || !fileNameBuffer) return;
   root.rewindDirectory();
@@ -35,19 +67,77 @@ void FolioLibraryActivity::loadFiles() {
       continue;
     }
     if (entry.isDirectory()) {
-      files.emplace_back(std::string(fileNameBuffer.get()) + "/");
+      allFiles.emplace_back(std::string(fileNameBuffer.get()) + "/");
     } else {
       const std::string_view name(fileNameBuffer.get());
       if (FsHelpers::hasEpubExtension(name) || FsHelpers::hasXtcExtension(name) || FsHelpers::hasTxtExtension(name) ||
           FsHelpers::hasMarkdownExtension(name) || FsHelpers::hasBmpExtension(name) ||
           FsHelpers::hasPngExtension(name) || FsHelpers::hasJpgExtension(name)) {
-        files.emplace_back(name);
+        allFiles.emplace_back(name);
       }
     }
   }
-  FsHelpers::sortFileList(files);
+  FsHelpers::sortFileList(allFiles);
+  applyLibraryFilter();
+}
+
+bool FolioLibraryActivity::matchesLibraryFilter(const std::string& name) const {
+  if (libraryFilter == LibraryFilter::All || (!name.empty() && name.back() == '/')) return true;
+  const std::string path = joinLibraryPath(basepath, name);
+  if (!isLibraryBook(path)) return false;
+  const LibraryBookState state = getLibraryBookState(path);
+  switch (libraryFilter) {
+    case LibraryFilter::Reading:
+      return state == LibraryBookState::Reading;
+    case LibraryFilter::Unread:
+      return state == LibraryBookState::Unread;
+    case LibraryFilter::OnHold:
+      return state == LibraryBookState::OnHold;
+    case LibraryFilter::Finished:
+      return state == LibraryBookState::Finished;
+    case LibraryFilter::All:
+      return true;
+  }
+  return true;
+}
+
+void FolioLibraryActivity::applyLibraryFilter() {
+  files.clear();
+  files.reserve(allFiles.size());
+  for (const auto& name : allFiles) {
+    if (matchesLibraryFilter(name)) files.push_back(name);
+  }
   selectorIndex = 0;
+  observedSelectorIndex = SIZE_MAX;
+  retrievingMetadata = false;
+  retrievingMetadataIndex = SIZE_MAX;
+  retrievingPopupRendered = false;
   resetPreviews();
+}
+
+FolioLibrarySummary FolioLibraryActivity::getLibrarySummary() const {
+  FolioLibrarySummary summary;
+  for (const auto& name : allFiles) {
+    if (!name.empty() && name.back() == '/') continue;
+    const std::string path = joinLibraryPath(basepath, name);
+    if (!isLibraryBook(path)) continue;
+    ++summary.total;
+    switch (getLibraryBookState(path)) {
+      case LibraryBookState::Reading:
+        ++summary.reading;
+        break;
+      case LibraryBookState::Unread:
+        ++summary.unread;
+        break;
+      case LibraryBookState::OnHold:
+        ++summary.onHold;
+        break;
+      case LibraryBookState::Finished:
+        ++summary.finished;
+        break;
+    }
+  }
+  return summary;
 }
 
 void FolioLibraryActivity::resetPreviews() {
@@ -103,7 +193,8 @@ void FolioLibraryActivity::loadNextPreview() {
         // Browsing must never build an EPUB cache or generate a thumbnail.
         // Cache misses keep the filename and placeholder until the book is opened.
         Epub epub(path, "/.crosspoint");
-        if (epub.load(false, true)) {
+        const std::string metadataCache = epub.getCachePath() + "/book.bin";
+        if (Storage.exists(metadataCache.c_str()) && epub.load(false, true)) {
           preview.title = epub.getTitle().empty() ? files[index] : epub.getTitle();
           preview.author = epub.getAuthor();
           preview.synopsis = epub.getDescription();
@@ -122,11 +213,11 @@ void FolioLibraryActivity::loadNextPreview() {
 
 void FolioLibraryActivity::showBookActions() {
   if (selectorIndex >= files.size() || (!files[selectorIndex].empty() && files[selectorIndex].back() == '/')) return;
-  static constexpr StrId actions[] = {StrId::STR_OPEN,          StrId::STR_MARK_READING,
-                                      StrId::STR_MARK_ON_HOLD,  StrId::STR_FINISHED,
-                                      StrId::STR_RESET_PROGRESS, StrId::STR_REFRESH_BOOK_CACHE,
-                                      StrId::STR_READ_FULL_SYNOPSIS};
-  bookActionsPopup.show(StrId::STR_BOOK_ACTIONS, actions, 7, 0, [this](const int action) {
+  const char* actions[] = {tr(STR_OPEN),           tr(STR_MARK_READING),
+                           tr(STR_MARK_ON_HOLD),   tr(STR_FINISHED),
+                           tr(STR_RESET_PROGRESS), tr(STR_REFRESH_BOOK_CACHE),
+                           tr(STR_READ_FULL_SYNOPSIS), "Book Statistics"};
+  bookActionsPopup.show(tr(STR_BOOK_ACTIONS), actions, 8, 0, [this](const int action) {
     const std::string path = fullPath(selectorIndex);
     const size_t slot = selectorIndex - previewPageStart;
     if (slot >= PAGE_SIZE) return;
@@ -168,6 +259,9 @@ void FolioLibraryActivity::showBookActions() {
       startActivityForResult(
           std::make_unique<SynopsisActivity>(renderer, mappedInput, preview.title, preview.author, preview.synopsis),
           nullptr);
+      return;
+    } else if (action == 7) {
+      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, path), nullptr);
       return;
     }
     requestUpdate(true);
@@ -244,8 +338,12 @@ void FolioLibraryActivity::loadSelectedMetadata() {
       preview.author = epub.getAuthor();
       preview.synopsis = epub.getDescription();
       preview.coverBmpPath = epub.getThumbBmpPath();
-      const std::string thumb = UITheme::getCoverThumbPath(preview.coverBmpPath, FolioNooirTheme::COVER_HEIGHT);
-      if (!Storage.exists(thumb.c_str())) epub.generateThumbBmp(FolioNooirTheme::COVER_HEIGHT);
+      // Metadata can be shown immediately.  Thumbnail conversion is deferred
+      // to the paced background generator so a large cover cannot hold the
+      // Library retrieval popup open.
+      const size_t selectedSlot = selectorIndex - previewPageStart;
+      nextCoverSlot = std::min(nextCoverSlot, selectedSlot);
+      lastCoverGenerationMs = millis();
       changed = true;
     }
   } else if (FsHelpers::hasXtcExtension(path)) {
@@ -254,8 +352,9 @@ void FolioLibraryActivity::loadSelectedMetadata() {
       preview.title = xtc.getTitle();
       preview.author = xtc.getAuthor();
       preview.coverBmpPath = xtc.getThumbBmpPath();
-      const std::string thumb = UITheme::getCoverThumbPath(preview.coverBmpPath, FolioNooirTheme::COVER_HEIGHT);
-      if (!Storage.exists(thumb.c_str())) xtc.generateThumbBmp(FolioNooirTheme::COVER_HEIGHT);
+      const size_t selectedSlot = selectorIndex - previewPageStart;
+      nextCoverSlot = std::min(nextCoverSlot, selectedSlot);
+      lastCoverGenerationMs = millis();
       changed = true;
     }
   }
@@ -305,6 +404,7 @@ void FolioLibraryActivity::onEnter() {
 
 void FolioLibraryActivity::onExit() {
   previews = {};
+  allFiles.clear();
   files.clear();
   fileNameBuffer.reset();
   Activity::onExit();
@@ -377,6 +477,12 @@ void FolioLibraryActivity::loop() {
   if (mappedInput.wasScreenTouchDown(touchX, touchY)) {
     if (touchY < layout.contentTop) {
       const int tab = std::min(2, std::max(0, touchX * 3 / renderer.getScreenWidth()));
+      if (tab == 0 && libraryFilter != LibraryFilter::All) {
+        libraryFilter = LibraryFilter::All;
+        applyLibraryFilter();
+        requestUpdate();
+        return;
+      }
       if (tab == 1) activityManager.goHome();
       if (tab == 2) activityManager.goToFolioShelf(2);
       return;
@@ -416,10 +522,13 @@ void FolioLibraryActivity::render(RenderLock&&) {
 
   const int detailTop = layout.contentTop;
   const int detailHeight = layout.detailHeight;
+  const int featuredTop = detailTop;
+  const int featuredHeight = detailHeight;
+
   const int coverX = 12;
-  const int coverY = detailTop + 9;
+  const int coverY = featuredTop + 9;
   const int coverWidth = 112;
-  const int coverHeight = detailHeight - 18;
+  const int coverHeight = featuredHeight - 18;
   const size_t slot = selectorIndex >= previewPageStart ? selectorIndex - previewPageStart : PAGE_SIZE;
   const Preview* selected = slot < PAGE_SIZE ? &previews[slot] : nullptr;
   bool drewCover = false;
@@ -429,9 +538,25 @@ void FolioLibraryActivity::render(RenderLock&&) {
     if (Storage.openFileForRead("FLIB", thumb, file)) {
       Bitmap bitmap(file);
       if (bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() > 0 && bitmap.getHeight() > 0) {
-        // Use the whole cover slot. A slightly stretched portrait is easier to
-        // read than a tall image surrounded by an empty border.
-        renderer.drawBitmap(bitmap, coverX, coverY, coverWidth, coverHeight);
+        // Fit the cover inside its featured slot without stretching it, then
+        // center it to keep the largest possible visible cover area.
+        const int sourceWidth = bitmap.getWidth();
+        const int sourceHeight = bitmap.getHeight();
+        int drawWidth = sourceWidth;
+        int drawHeight = sourceHeight;
+        if (sourceWidth > coverWidth || sourceHeight > coverHeight) {
+          if (static_cast<long long>(sourceWidth) * coverHeight >
+              static_cast<long long>(sourceHeight) * coverWidth) {
+            drawWidth = coverWidth;
+            drawHeight = std::max(1, sourceHeight * coverWidth / sourceWidth);
+          } else {
+            drawHeight = coverHeight;
+            drawWidth = std::max(1, sourceWidth * coverHeight / sourceHeight);
+          }
+        }
+        const int drawX = coverX + (coverWidth - drawWidth) / 2;
+        const int drawY = coverY + (coverHeight - drawHeight) / 2;
+        renderer.drawBitmap(bitmap, drawX, drawY, drawWidth, drawHeight);
         renderer.drawRect(coverX, coverY, coverWidth, coverHeight);
         drewCover = true;
       }
@@ -445,14 +570,14 @@ void FolioLibraryActivity::render(RenderLock&&) {
   const int textWidth = renderer.getScreenWidth() - textX - 12;
   const char* titleText = selected && selected->loaded ? selected->title.c_str()
                                                         : (files.empty() ? "" : files[selectorIndex].c_str());
-  renderer.drawText(UI_12_FONT_ID, textX, detailTop + 18,
+  renderer.drawText(UI_12_FONT_ID, textX, featuredTop + 18,
                     renderer.truncatedText(UI_12_FONT_ID, titleText, textWidth).c_str(), true);
   if (selected && !selected->author.empty())
-    renderer.drawText(UI_10_FONT_ID, textX, detailTop + 48,
+    renderer.drawText(UI_10_FONT_ID, textX, featuredTop + 48,
                       renderer.truncatedText(UI_10_FONT_ID, selected->author.c_str(), textWidth).c_str());
   const char* synopsis = selected && !selected->synopsis.empty() ? selected->synopsis.c_str() : tr(STR_NO_SYNOPSIS);
   const auto synopsisLines = renderer.wrappedText(SMALL_FONT_ID, synopsis, textWidth, 3);
-  int synopsisY = detailTop + 72;
+  int synopsisY = featuredTop + 72;
   for (const auto& line : synopsisLines) {
     renderer.drawText(SMALL_FONT_ID, textX, synopsisY, line.c_str());
     synopsisY += renderer.getLineHeight(SMALL_FONT_ID);
@@ -460,8 +585,8 @@ void FolioLibraryActivity::render(RenderLock&&) {
   if (selected && !selected->directory) {
     char progress[20];
     snprintf(progress, sizeof(progress), "%u%%", selected->progressPercent);
-    renderer.drawText(UI_10_FONT_ID, textX, detailTop + detailHeight - 43, progress, true);
-    theme.drawCoverProgress(renderer, textX, detailTop + detailHeight - 21, textWidth, selected->progressPercent);
+    renderer.drawText(UI_10_FONT_ID, textX, featuredTop + featuredHeight - 43, progress, true);
+    theme.drawCoverProgress(renderer, textX, featuredTop + featuredHeight - 21, textWidth, selected->progressPercent);
   }
   renderer.drawLine(0, detailTop + detailHeight - 1, renderer.getScreenWidth() - 1, detailTop + detailHeight - 1);
 

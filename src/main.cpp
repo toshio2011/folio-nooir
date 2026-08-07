@@ -27,6 +27,7 @@
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "BookStateStore.h"
+#include "ReadingStatsStore.h"
 #include "SdCardFontSystem.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
@@ -313,6 +314,7 @@ void setup() {
   APP_STATE.loadFromFile();
   RECENT_BOOKS.loadFromFile();
   BOOK_STATES.loadFromFile();
+  READING_STATS.loadFromFile();
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   KOREADER_STORE.loadFromFile();
   OPDS_STORE.loadFromFile();
@@ -424,6 +426,14 @@ void setup() {
     APP_STATE.readerActivityLoadCount++;
     APP_STATE.saveToFile();
     activityManager.goToReader(path);
+  }
+
+  // lastSleepFromReader is a one-boot routing hint.  Clear it after the wake
+  // destination has been selected so a later, ordinary reader exit does not
+  // accidentally skip its ghost-clearing refresh when overlay sleep is enabled.
+  if (resume != BootResume::Splash) {
+    APP_STATE.lastSleepFromReader = false;
+    APP_STATE.saveToFile();
   }
 
   if (resume == BootResume::Silent) {

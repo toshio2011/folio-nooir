@@ -111,7 +111,7 @@ void RecentBooksStore::recordReading(const std::string& path, uint8_t progress, 
 }
 
 void RecentBooksStore::updateBook(const std::string& path, const std::string& title, const std::string& author,
-                                  const std::string& coverBmpPath) {
+                                  const std::string& coverBmpPath, const std::string& synopsis) {
   auto it =
       std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
   if (it != recentBooks.end()) {
@@ -119,6 +119,7 @@ void RecentBooksStore::updateBook(const std::string& path, const std::string& ti
     book.title = title;
     book.author = author;
     book.coverBmpPath = coverBmpPath;
+    if (!synopsis.empty()) book.synopsis = synopsis.substr(0, 384);
     saveToFile();
   }
 }

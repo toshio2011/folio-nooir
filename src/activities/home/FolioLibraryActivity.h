@@ -9,10 +9,13 @@
 
 #include "activities/Activity.h"
 #include "components/OptionPopup.h"
+#include "components/themes/folio_nooir/FolioNooirTheme.h"
 #include "util/ButtonNavigator.h"
 
 class FolioLibraryActivity final : public Activity {
  private:
+  enum class LibraryFilter : uint8_t { All = 0, Reading, Unread, OnHold, Finished };
+
   struct Preview {
     size_t fileIndex = SIZE_MAX;
     bool loaded = false;
@@ -31,7 +34,9 @@ class FolioLibraryActivity final : public Activity {
   ButtonNavigator buttonNavigator;
   OptionPopup bookActionsPopup;
   std::string basepath = "/";
+  std::vector<std::string> allFiles;
   std::vector<std::string> files;
+  LibraryFilter libraryFilter = LibraryFilter::All;
   std::unique_ptr<char[]> fileNameBuffer;
   std::array<Preview, PAGE_SIZE> previews;
   size_t selectorIndex = 0;
@@ -49,10 +54,13 @@ class FolioLibraryActivity final : public Activity {
   bool swallowBackRelease = false;
 
   void loadFiles();
+  void applyLibraryFilter();
   void resetPreviews();
   void loadNextPreview();
   void generateNextMissingCover();
   void loadSelectedMetadata();
+  bool matchesLibraryFilter(const std::string& name) const;
+  FolioLibrarySummary getLibrarySummary() const;
   std::string fullPath(size_t index) const;
   void activateSelected();
   void showBookActions();

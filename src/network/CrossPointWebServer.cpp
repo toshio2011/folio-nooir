@@ -16,7 +16,10 @@
 #include "components/UITheme.h"
 #include "FontInstaller.h"
 #include "OpdsServerStore.h"
+#include "BookStateStore.h"
 #include "RecentBooksStore.h"
+#include "ReadingStatsStore.h"
+#include "HalClock.h"
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
 #include "WebDAVHandler.h"
@@ -25,6 +28,7 @@
 #include "html/FontsPageHtml.generated.h"
 #include "html/HomePageHtml.generated.h"
 #include "html/LibraryPageHtml.generated.h"
+#include "html/StatsPageHtml.generated.h"
 #include "html/SettingsPageHtml.generated.h"
 #include "html/js/jszip_minJs.generated.h"
 #include "util/BookCacheUtils.h"
@@ -150,6 +154,8 @@ void CrossPointWebServer::begin() {
   server->on("/library", HTTP_GET, [this] { handleLibrary(); });
   server->on("/api/library", HTTP_GET, [this] { handleLibraryData(); });
   server->on("/api/library/cover", HTTP_GET, [this] { handleLibraryCover(); });
+  server->on("/stats", HTTP_GET, [this] { handleStatsPage(); });
+  server->on("/api/stats", HTTP_GET, [this] { handleStatsData(); });
   server->on("/api/files", HTTP_GET, [this] { handleFileListData(); });
   server->on("/download", HTTP_GET, [this] { handleDownload(); });
 
@@ -441,6 +447,80 @@ void CrossPointWebServer::handleLibraryCover() const {
     if (client.write(buffer, static_cast<size_t>(count)) != static_cast<size_t>(count)) break;
     resetTaskWatchdogIfSubscribed();
   }
+}
+
+void CrossPointWebServer::handleStatsPage() const {
+  sendHtmlContent(server.get(), StatsPageHtml, sizeof(StatsPageHtml));
+}
+
+void CrossPointWebServer::handleStatsData() const {
+  JsonDocument doc;
+  const uint32_t today = halClock.getDateKey();
+  // Older installations already have cumulative per-book counters but do
+  // not have the newer day-bucket file yet. Keep those users' totals visible
+  // until the aggregate store catches up through the next completed session.
+  uint32_t bookSeconds = 0;
+  uint32_t bookSessions = 0;
+  for (const auto& book : BOOK_STATES.getBooks()) {
+    bookSeconds += std::min(book.readingSeconds, UINT32_MAX - bookSeconds);
+    bookSessions += std::min<uint32_t>(book.readingSessions, UINT32_MAX - bookSessions);
+  }
+  doc["totalSeconds"] = std::max(bookSeconds, READING_STATS.totalSeconds());
+  doc["sessions"] = std::max(bookSessions, READING_STATS.totalSessions());
+  doc["today"] = today;
+  doc["todaySeconds"] = today == 0 ? 0 : READING_STATS.secondsForDate(today);
+
+  JsonArray days = doc["days"].to<JsonArray>();
+  const auto& dayRows = READING_STATS.getDays();
+  const size_t firstDay = dayRows.size() > 90 ? dayRows.size() - 90 : 0;
+  for (size_t i = firstDay; i < dayRows.size(); ++i) {
+    JsonObject row = days.add<JsonObject>();
+    row["date"] = dayRows[i].dateKey;
+    row["seconds"] = dayRows[i].seconds;
+    row["sessions"] = dayRows[i].sessions;
+  }
+
+  JsonArray books = doc["books"].to<JsonArray>();
+  auto appendBook = [&](const std::string& path, const BookState* state, const RecentBook* recent) {
+    const uint8_t progress = state ? state->progressPercent : (recent ? recent->progressPercent : 0);
+    const uint8_t status = state ? static_cast<uint8_t>(state->status)
+                                 : (progress >= 100 ? static_cast<uint8_t>(BookStatus::Finished)
+                                                    : (progress > 0 ? static_cast<uint8_t>(BookStatus::Reading)
+                                                                    : static_cast<uint8_t>(BookStatus::New)));
+    const uint32_t seconds = state ? state->readingSeconds : (recent ? recent->readingSeconds : 0);
+    const uint16_t sessions = state ? state->readingSessions : (recent ? recent->readingSessions : 0);
+    JsonObject row = books.add<JsonObject>();
+    row["path"] = path;
+    row["title"] = recent && !recent->title.empty() ? recent->title : path;
+    row["author"] = recent ? recent->author : "";
+    row["progress"] = progress;
+    row["status"] = status;
+    row["seconds"] = seconds;
+    row["sessions"] = sessions;
+    row["startDate"] = state ? state->startDate : 0;
+    row["finishDate"] = state ? state->finishDate : 0;
+    row["lastOpenedDate"] = state ? state->lastOpenedDate : 0;
+  };
+  for (const auto& book : BOOK_STATES.getBooks()) {
+    const RecentBook* recent = nullptr;
+    for (const auto& candidate : RECENT_BOOKS.getBooks()) {
+      if (candidate.path == book.path) {
+        recent = &candidate;
+        break;
+      }
+    }
+    appendBook(book.path, &book, recent);
+  }
+  // A book can exist in Recent Books before its first reader session creates
+  // a BookState entry. Include it too, so the web view and long-press flow do
+  // not look empty on a fresh installation.
+  for (const auto& recent : RECENT_BOOKS.getBooks()) {
+    if (!BOOK_STATES.find(recent.path)) appendBook(recent.path, nullptr, &recent);
+  }
+
+  String response;
+  serializeJson(doc, response);
+  server->send(200, "application/json", response);
 }
 
 void CrossPointWebServer::handleJszip() const {

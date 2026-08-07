@@ -38,6 +38,7 @@ struct OverlayPngContext {
   int dstHeight{0};
   bool hasTransparentColor{false};
   uint32_t transparentColor{0};
+  GfxRenderer::RenderMode renderMode{GfxRenderer::BW};
 };
 
 void* overlayPngOpen(const char* filename, int32_t* size) {
@@ -111,7 +112,7 @@ uint8_t overlayExpandSample(uint8_t sample, int bitsPerSample) {
   return static_cast<uint8_t>((sample * 255U) / maxSample);
 }
 
-bool overlayPixel(const OverlayPngContext& ctx, const PNGDRAW& draw, int sourceX, bool& black) {
+bool overlayPixel(const OverlayPngContext& ctx, const PNGDRAW& draw, int sourceX, uint8_t& level) {
   const uint8_t* pixels = draw.pPixels;
   uint8_t gray = 255;
   uint8_t alpha = 255;
@@ -154,10 +155,10 @@ bool overlayPixel(const OverlayPngContext& ctx, const PNGDRAW& draw, int sourceX
       return false;
   }
 
-  // A threshold keeps the overlay crisp on the X4's 1-bit panel. Transparent
-  // pixels are never written, so the current reader page remains visible.
+  // Transparent pixels are never written, so the current reader page remains
+  // visible. The PNG's gray value is kept as one of the X4's four levels.
   if (alpha < 128) return false;
-  black = gray < 128;
+  level = static_cast<uint8_t>(gray >> 6);
   return true;
 }
 
@@ -175,9 +176,22 @@ int overlayPngDraw(PNGDRAW* draw) {
     const int outputY = ctx->dstY + dstY;
     for (int dstX = 0; dstX < ctx->dstWidth; ++dstX) {
       const int sourceX = std::min(ctx->srcWidth - 1, (dstX * ctx->srcWidth) / ctx->dstWidth);
-      bool black = false;
-      if (overlayPixel(*ctx, *draw, sourceX, black)) {
-        ctx->renderer->drawPixel(ctx->dstX + dstX, outputY, black);
+      uint8_t level = 0;
+      if (!overlayPixel(*ctx, *draw, sourceX, level)) continue;
+      const int x = ctx->dstX + dstX;
+      switch (ctx->renderMode) {
+        case GfxRenderer::GRAYSCALE_LSB:
+          if (level == 1) ctx->renderer->drawPixel(x, outputY, false);
+          break;
+        case GfxRenderer::GRAYSCALE_MSB:
+          if (level == 1 || level == 2) ctx->renderer->drawPixel(x, outputY, false);
+          break;
+        case GfxRenderer::BW:
+        default:
+          // Match Bitmap::drawBitmap's four-level mapping: level 3 is white;
+          // the other levels are part of the black base frame.
+          ctx->renderer->drawPixel(x, outputY, level >= 3 ? false : true);
+          break;
       }
     }
   }
@@ -364,7 +378,10 @@ bool SleepActivity::renderCustomImage(const std::string& path) const {
   if (!Storage.openFileForWrite("SLP", PNG_CACHE_PATH, bmpOut)) return false;
 
   const bool crop = SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP;
-  const bool converted = PngToBmpConverter::pngFileToBmpStream(imageFile, bmpOut, crop);
+  // Keep an 8-bit grayscale intermediate for custom sleep PNGs. The X4's
+  // grayscale waveform performs the final four-level conversion; reducing to
+  // 2-bit here makes photographs and soft artwork look unnecessarily harsh.
+  const bool converted = PngToBmpConverter::pngFileTo8BitBmpStream(imageFile, bmpOut, crop);
   // Both handles must be closed before reopening the generated BMP.
   imageFile.close();
   bmpOut.close();
@@ -449,59 +466,95 @@ bool SleepActivity::renderOverlayPng(const std::string& path) const {
     return false;
   }
 
-  auto png = makeUniqueNoThrow<PNG>();
-  if (!png) return false;
+  // Decode the same PNG three times. The first pass creates the opaque
+  // black/white base while preserving transparent pixels. The next two passes
+  // add the LSB/MSB grayscale planes on top of that base, so an overlay can
+  // retain the page underneath instead of clearing it to white.
+  auto decodePass = [&](const GfxRenderer::RenderMode mode) -> bool {
+    auto png = makeUniqueNoThrow<PNG>();
+    if (!png) return false;
 
-  const int openResult = png->open(path.c_str(), overlayPngOpen, overlayPngClose, overlayPngRead, overlayPngSeek,
-                                   overlayPngDraw);
-  const ScopedCleanup cleanup{[&png]() { png->close(); }};
-  if (openResult != PNG_SUCCESS) return false;
+    const int openResult = png->open(path.c_str(), overlayPngOpen, overlayPngClose, overlayPngRead,
+                                     overlayPngSeek, overlayPngDraw);
+    const ScopedCleanup cleanup{[&png]() { png->close(); }};
+    if (openResult != PNG_SUCCESS) return false;
 
-  const int srcWidth = png->getWidth();
-  const int srcHeight = png->getHeight();
-  const int pixelType = png->getPixelType();
-  const int bitsPerSample = png->getBpp();
-  if (srcWidth <= 0 || srcHeight <= 0 || png->isInterlaced() ||
-      overlayRequiredPngBufferBytes(srcWidth, pixelType, bitsPerSample) > PNG_MAX_BUFFERED_PIXELS ||
-      !overlaySupportedBitDepth(pixelType, bitsPerSample)) {
-    LOG_ERR("SLP", "Unsupported page overlay PNG: %s", path.c_str());
-    return false;
-  }
-
-  const int screenWidth = renderer.getScreenWidth();
-  const int screenHeight = renderer.getScreenHeight();
-  int dstWidth = srcWidth;
-  int dstHeight = srcHeight;
-  if (dstWidth > screenWidth || dstHeight > screenHeight) {
-    if (static_cast<int64_t>(srcWidth) * screenHeight > static_cast<int64_t>(srcHeight) * screenWidth) {
-      dstWidth = screenWidth;
-      dstHeight = std::max(1, (srcHeight * screenWidth) / srcWidth);
-    } else {
-      dstHeight = screenHeight;
-      dstWidth = std::max(1, (srcWidth * screenHeight) / srcHeight);
+    const int srcWidth = png->getWidth();
+    const int srcHeight = png->getHeight();
+    const int pixelType = png->getPixelType();
+    const int bitsPerSample = png->getBpp();
+    if (srcWidth <= 0 || srcHeight <= 0 || png->isInterlaced() ||
+        overlayRequiredPngBufferBytes(srcWidth, pixelType, bitsPerSample) > PNG_MAX_BUFFERED_PIXELS ||
+        !overlaySupportedBitDepth(pixelType, bitsPerSample)) {
+      LOG_ERR("SLP", "Unsupported page overlay PNG: %s", path.c_str());
+      return false;
     }
+
+    const int screenWidth = renderer.getScreenWidth();
+    const int screenHeight = renderer.getScreenHeight();
+    int dstWidth = srcWidth;
+    int dstHeight = srcHeight;
+    if (dstWidth > screenWidth || dstHeight > screenHeight) {
+      if (static_cast<int64_t>(srcWidth) * screenHeight > static_cast<int64_t>(srcHeight) * screenWidth) {
+        dstWidth = screenWidth;
+        dstHeight = std::max(1, (srcHeight * screenWidth) / srcWidth);
+      } else {
+        dstHeight = screenHeight;
+        dstWidth = std::max(1, (srcWidth * screenHeight) / srcHeight);
+      }
+    }
+
+    OverlayPngContext context;
+    context.renderer = &renderer;
+    context.srcWidth = srcWidth;
+    context.srcHeight = srcHeight;
+    context.dstWidth = dstWidth;
+    context.dstHeight = dstHeight;
+    context.dstX = (screenWidth - dstWidth) / 2;
+    context.dstY = (screenHeight - dstHeight) / 2;
+    context.transparentColor = png->getTransparentColor();
+    context.hasTransparentColor = png->hasAlpha() &&
+                                  (pixelType == PNG_PIXEL_GRAYSCALE || pixelType == PNG_PIXEL_TRUECOLOR);
+    context.renderMode = mode;
+
+    LOG_DBG("SLP", "Overlay PNG %dx%d -> %dx%d (%s)", srcWidth, srcHeight, dstWidth, dstHeight,
+            mode == GfxRenderer::BW ? "BW" : (mode == GfxRenderer::GRAYSCALE_LSB ? "LSB" : "MSB"));
+    const int decodeResult = png->decode(&context, 0);
+    if (decodeResult != PNG_SUCCESS) {
+      LOG_ERR("SLP", "Failed to decode page overlay PNG: %d", decodeResult);
+      return false;
+    }
+    return true;
+  };
+
+  renderer.setRenderMode(GfxRenderer::BW);
+  if (!decodePass(GfxRenderer::BW)) return false;
+
+  renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
+  renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
+  // Each grayscale plane is an independent bit plane. Start it from an
+  // all-black scratch frame, just like ReaderUtils::renderAntiAliased(), so
+  // white pixels from the BW pass do not accidentally become set bits in the
+  // gray planes. Transparent overlay pixels intentionally remain zero here;
+  // the underlying reader page is already represented by the BW base frame.
+  renderer.clearScreen(0x00);
+  if (!decodePass(GfxRenderer::GRAYSCALE_LSB)) {
+    renderer.setRenderMode(GfxRenderer::BW);
+    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+    return true;
   }
+  renderer.copyGrayscaleLsbBuffers();
 
-  OverlayPngContext context;
-  context.renderer = &renderer;
-  context.srcWidth = srcWidth;
-  context.srcHeight = srcHeight;
-  context.dstWidth = dstWidth;
-  context.dstHeight = dstHeight;
-  context.dstX = (screenWidth - dstWidth) / 2;
-  context.dstY = (screenHeight - dstHeight) / 2;
-  context.transparentColor = png->getTransparentColor();
-  context.hasTransparentColor = png->hasAlpha() &&
-                                (pixelType == PNG_PIXEL_GRAYSCALE || pixelType == PNG_PIXEL_TRUECOLOR);
-
-  LOG_DBG("SLP", "Overlay PNG %dx%d -> %dx%d", srcWidth, srcHeight, dstWidth, dstHeight);
-  const int decodeResult = png->decode(&context, 0);
-  if (decodeResult != PNG_SUCCESS) {
-    LOG_ERR("SLP", "Failed to decode page overlay PNG: %d", decodeResult);
-    return false;
+  renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
+  renderer.clearScreen(0x00);
+  if (!decodePass(GfxRenderer::GRAYSCALE_MSB)) {
+    renderer.setRenderMode(GfxRenderer::BW);
+    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+    return true;
   }
-
-  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+  renderer.copyGrayscaleMsbBuffers();
+  renderer.displayGrayBuffer();
+  renderer.setRenderMode(GfxRenderer::BW);
   return true;
 }
 

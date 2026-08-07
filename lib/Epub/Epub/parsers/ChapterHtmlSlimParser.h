@@ -82,6 +82,9 @@ class ChapterHtmlSlimParser {
   int tableRowIndex = 0;
   int tableColIndex = 0;
   bool listItemBulletOnly = false;  // true when currentTextBlock has only the <li> bullet
+  // Allocation failures are reported back through parseStep() instead of
+  // dereferencing a null page/block or continuing with a corrupt partial.
+  bool allocationFailed_ = false;
 
   // Anchor-to-page mapping: tracks which page each HTML id attribute lands on
   int completedPageCount = 0;
@@ -110,6 +113,7 @@ class ChapterHtmlSlimParser {
   uint32_t parseStartTime_ = 0;
 
   void updateEffectiveInlineStyle();
+  void failAllocation(const char* what);
   void startNewTextBlock(const BlockStyle& blockStyle);
   void flushPendingAnchor();
   void flushPartWordBuffer();

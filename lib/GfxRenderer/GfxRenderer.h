@@ -44,6 +44,10 @@ class GfxRenderer {
   RenderMode renderMode;
   Orientation orientation;
   bool fadingFix;
+  // Reader polarity. When enabled, BW and four-level grayscale rendering
+  // map source white to black and source black to white. Activities toggle
+  // this only for their page render and restore it on exit.
+  bool darkMode = false;
   uint8_t* frameBuffer = nullptr;
   uint16_t panelWidth = HalDisplay::DISPLAY_WIDTH;
   uint16_t panelHeight = HalDisplay::DISPLAY_HEIGHT;
@@ -149,6 +153,9 @@ class GfxRenderer {
   // Fading fix control
   void setFadingFix(const bool enabled) { fadingFix = enabled; }
 
+  void setDarkMode(const bool enabled) { darkMode = enabled; }
+  bool isDarkMode() const { return darkMode; }
+
   // Screen ops
   int getScreenWidth() const;
   int getScreenHeight() const;
@@ -198,6 +205,10 @@ class GfxRenderer {
 
   // Drawing
   void drawPixel(int x, int y, bool state = true) const;
+  // Read the raw framebuffer state at a logical coordinate. This is used by
+  // streamed two-plane readers when a later plane needs to toggle a pixel
+  // written by an earlier plane, without allocating another full plane.
+  bool isPixelBlack(int x, int y) const;
   void drawLine(int x1, int y1, int x2, int y2, bool state = true) const;
   void drawLine(int x1, int y1, int x2, int y2, int lineWidth, bool state) const;
   void drawArc(int maxRadius, int cx, int cy, int xDir, int yDir, int lineWidth, bool state) const;

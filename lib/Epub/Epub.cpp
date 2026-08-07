@@ -426,7 +426,10 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
     LOG_ERR("EBP", "Could not parse content.opf");
     return false;
   }
-  discoverCssFilesFromZip();
+  // Metadata-only callers pass skipLoadingCss=true (library/recent cover
+  // warmup).  Do not scan and parse every stylesheet during that path; the
+  // reader will build the CSS cache when it opens the book for reading.
+  if (!skipLoadingCss) discoverCssFilesFromZip();
   if (!bookMetadataCache->endContentOpfPass()) {
     LOG_ERR("EBP", "Could not end writing content.opf pass");
     return false;

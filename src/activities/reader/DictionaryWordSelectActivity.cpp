@@ -9,10 +9,13 @@
 #include <cctype>
 #include <climits>
 #include <cstdlib>
+#include <utility>
 
 #include "CrossPointSettings.h"
 #include "DictionaryDefinitionActivity.h"
 #include "components/UITheme.h"
+#include "util/DictionaryHistoryStore.h"
+#include "util/DictionaryRegistry.h"
 
 namespace {
 
@@ -150,9 +153,17 @@ void DictionaryWordSelectActivity::moveVertical(const int direction) {
 
 void DictionaryWordSelectActivity::performLookup() {
   popup = Popup::Busy;
-  if (!dictOpenAttempted) {
+  const std::string cleanedWord = Dictionary::cleanWord(words[selected].text);
+  const std::string rememberedDictionary = DICTIONARY_HISTORY.preferredDictionary(cleanedWord);
+  const std::string requestedDictionary = rememberedDictionary.empty() ? SETTINGS.dictionaryName : rememberedDictionary;
+
+  // Keep one Dictionary instance warm across word selections, but reopen it
+  // when history points at a different dictionary.  The qidx sidecar makes
+  // subsequent searches cheap without keeping a full index in RAM.
+  if (!dictOpenAttempted || activeDictionaryName != requestedDictionary) {
     dictOpenAttempted = true;
-    dictOpenOk = dict.open(SETTINGS.dictionaryName);
+    activeDictionaryName = requestedDictionary;
+    dictOpenOk = dict.open(activeDictionaryName.c_str());
   }
   const bool indexing = dictOpenOk && dict.needsIndex();
   popupMsg = indexing ? StrId::STR_DICT_INDEXING : StrId::STR_DICT_LOOKING_UP;
@@ -163,9 +174,38 @@ void DictionaryWordSelectActivity::performLookup() {
 
   std::string definition;
   std::string headword;
-  const bool found = ok && dict.lookup(words[selected].text, definition, headword);
+  bool found = ok && dict.lookup(words[selected].text, definition, headword);
+
+  // CrossInk-style multi-dictionary fallback: keep the configured dictionary
+  // as the fast path, then try the other discovered StarDict folders when the
+  // word is absent. This lets a compact primary dictionary cover common words
+  // while a specialist dictionary supplies names, technical terms, or a second
+  // language without changing the reader gesture.
+  if (!found) {
+    std::vector<DictionaryEntry> entries;
+    DictionaryRegistry::discover(entries);
+    for (const auto& entry : entries) {
+      // Skip only the dictionary already tried.  If a remembered dictionary
+      // was removed from the card, the configured primary dictionary must
+      // still be part of the fallback set.
+      if (entry.name == activeDictionaryName) continue;
+      Dictionary alternate;
+      if (!alternate.open(entry.name.c_str())) continue;
+      if (alternate.needsIndex() && !alternate.buildIndex(&indexBuildYield)) continue;
+      if (alternate.lookup(words[selected].text, definition, headword)) {
+        found = true;
+        // Keep the successful dictionary warm for the next word on this
+        // page; otherwise activeDictionaryName would point at the alternate
+        // while `dict` still held the failed primary instance.
+        dict = std::move(alternate);
+        activeDictionaryName = entry.name;
+        break;
+      }
+    }
+  }
 
   if (found) {
+    DICTIONARY_HISTORY.remember(cleanedWord, activeDictionaryName);
     popup = Popup::None;
     startActivityForResult(std::make_unique<DictionaryDefinitionActivity>(renderer, mappedInput, std::move(headword),
                                                                           std::move(definition)),

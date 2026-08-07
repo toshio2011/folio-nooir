@@ -4,9 +4,9 @@ Folio Nooir is experimental e-reader firmware with a bookshelf-focused interface
 
 > ## ⚠️ Hardware warning
 >
-> Folio Nooir is developed and tested only on the **older Xteink X4 hardware revision**, because that is the only physical device currently available to the maintainer.
+> Folio Nooir is physically tested only on the **older Xteink X4 hardware revision**, because that is the only device currently available to the maintainer. The firmware now includes conservative boot-time detection for the known C3 X3/X4 panel-controller variants, but those paths remain experimentally supported until hardware is tested.
 >
-> Newer X3 and X4 devices may use a different display panel. **Do not flash Folio Nooir unless you know your device is the older X4 model.** An incompatible build may leave the display unusable or make recovery difficult.
+> Newer X3 and X4 C3 devices may use a different display controller. Detection falls back to the original controller when the probe is inconclusive, but **do not flash an unknown device without a recovery path**. X4 Pro/S3 hardware is not supported by this build. An incompatible panel or board can still leave the display unusable or make recovery difficult.
 >
 > If CrossInk is already installed and working on your device, you can safely ignore this firmware update.
 

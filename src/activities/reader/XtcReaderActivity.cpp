@@ -9,6 +9,7 @@
 
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <HalClock.h>
 #include <HalStorage.h>
 #include <I18n.h>
 
@@ -21,9 +22,68 @@
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
 #include "BookStateStore.h"
+#include "ReadingStatsStore.h"
 #include "XtcReaderChapterSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+
+namespace {
+enum class XtchRenderPass { Base, Lsb, Msb };
+
+// XTCH stores two 2-bit planes in column-major order. Stream one 1 KB chunk at
+// a time so a page never needs a contiguous ~96 KB allocation. The raw reader
+// framebuffer is used as the small working area between planes: the LSB pass
+// leaves candidates white, and the MSB pass toggles pixels that belong to the
+// second grayscale bit.
+bool streamXtchRenderPass(const Xtc& xtc, const uint32_t pageIndex, const uint16_t pageWidth,
+                          const uint16_t pageHeight, GfxRenderer& renderer, const XtchRenderPass pass) {
+  const size_t planeSize = (static_cast<size_t>(pageWidth) * pageHeight + 7) / 8;
+  const size_t colBytes = (pageHeight + 7) / 8;
+  const xtc::XtcError error = xtc.loadPageStreaming(
+      pageIndex,
+      [&](const uint8_t* data, const size_t size, const size_t offset) {
+        for (size_t i = 0; i < size; ++i) {
+          const size_t absoluteOffset = offset + i;
+          const bool secondPlane = absoluteOffset >= planeSize;
+          const size_t planeOffset = secondPlane ? absoluteOffset - planeSize : absoluteOffset;
+          const size_t column = planeOffset / colBytes;
+          if (column >= pageWidth) continue;
+
+          const uint16_t x = static_cast<uint16_t>(pageWidth - 1 - column);
+          const uint16_t yBase = static_cast<uint16_t>((planeOffset % colBytes) * 8);
+          for (uint8_t bit = 0; bit < 8 && yBase + bit < pageHeight; ++bit) {
+            const uint16_t y = static_cast<uint16_t>(yBase + bit);
+            const bool bitSet = ((data[i] >> (7 - bit)) & 1U) != 0;
+            switch (pass) {
+              case XtchRenderPass::Base:
+                // XTH value 0 is white; values 1..3 are black.
+                if (bitSet) renderer.drawPixel(x, y, true);
+                break;
+              case XtchRenderPass::Lsb:
+                // Starting black, value 1 (bit1=0, bit2=1) is white.
+                if (!secondPlane) {
+                  if (!bitSet) renderer.drawPixel(x, y, false);
+                } else if (!bitSet) {
+                  renderer.drawPixel(x, y, true);
+                }
+                break;
+              case XtchRenderPass::Msb:
+                // Starting black, values 1 and 2 are white (bit1 XOR bit2).
+                if (!secondPlane && bitSet) {
+                  renderer.drawPixel(x, y, false);
+                } else if (secondPlane && bitSet) {
+                  renderer.drawPixel(x, y, !renderer.isPixelBlack(x, y));
+                }
+                break;
+            }
+          }
+        }
+      });
+  if (error == xtc::XtcError::OK) return true;
+  LOG_ERR("XTR", "Failed to stream XTCH page %lu: %s", pageIndex, xtc::errorToString(error));
+  return false;
+}
+}  // namespace
 
 void XtcReaderActivity::onEnter() {
   Activity::onEnter();
@@ -49,13 +109,14 @@ void XtcReaderActivity::onEnter() {
 
 void XtcReaderActivity::onExit() {
   Activity::onExit();
+  renderer.setDarkMode(false);
 
   if (xtc) {
     const ScreenshotInfo info = getScreenshotInfo();
-    RECENT_BOOKS.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent),
-                               (millis() - readingSessionStartedMs) / 1000UL);
-    BOOK_STATES.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent),
-                              (millis() - readingSessionStartedMs) / 1000UL);
+    const uint32_t elapsedSeconds = (millis() - readingSessionStartedMs) / 1000UL;
+    RECENT_BOOKS.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds);
+    BOOK_STATES.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds);
+    READING_STATS.recordSession(halClock.getDateKey(), elapsedSeconds);
   }
 
   ReaderUtils::clearGhostingOnExit(renderer);
@@ -78,6 +139,20 @@ void XtcReaderActivity::openChapterSelection() {
 
 void XtcReaderActivity::loop() {
   if (!xtc) {
+    return;
+  }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) && darkShortcutFired) {
+    darkShortcutFired = false;
+    return;
+  }
+  if (SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_DARK_MODE &&
+      mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && !darkShortcutFired) {
+    SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
+    SETTINGS.saveToFile();
+    darkShortcutFired = true;
+    requestUpdate();
     return;
   }
 
@@ -169,6 +244,9 @@ void XtcReaderActivity::render(RenderLock&&) {
   if (!xtc) {
     return;
   }
+
+  renderer.setDarkMode(SETTINGS.readerDarkMode != 0);
+  renderer.setRenderMode(GfxRenderer::BW);
 
   // Bounds check
   if (currentPage >= xtc->getPageCount()) {
@@ -265,10 +343,63 @@ void XtcReaderActivity::renderPage() {
   // XTG (1-bit): Row-major, ((width+7)/8) * height bytes
   // XTH (2-bit): Two bit planes, column-major, ((width * height + 7) / 8) * 2 bytes
   size_t pageBufferSize;
+  const bool darkMode = renderer.isDarkMode();
   if (bitDepth == 2) {
     pageBufferSize = ((static_cast<size_t>(pageWidth) * pageHeight + 7) / 8) * 2;
   } else {
     pageBufferSize = ((pageWidth + 7) / 8) * pageHeight;
+  }
+
+  if (bitDepth == 2 && !darkMode) {
+    auto showStreamError = [&]() {
+      renderer.clearScreen();
+      const char* message =
+          xtc->getLastError() == xtc::XtcError::MEMORY_ERROR ? tr(STR_MEMORY_ERROR) : tr(STR_PAGE_LOAD_ERROR);
+      renderer.drawCenteredText(UI_12_FONT_ID, 300, message, true, EpdFontFamily::BOLD);
+      renderer.displayBuffer();
+    };
+
+    // Stream each XTCH plane through the parser's small scratch chunk. This
+    // avoids the old contiguous two-plane allocation while preserving the
+    // existing grayscale waveform and refresh cadence.
+    renderer.clearScreen();
+    if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Base)) {
+      showStreamError();
+      return;
+    }
+
+    if (pagesUntilFullRefresh <= 1) {
+      renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+      renderer.preconditionGrayscale();
+      pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
+    } else {
+      renderer.displayGrayscaleBase(HalDisplay::FAST_REFRESH);
+      pagesUntilFullRefresh--;
+    }
+
+    renderer.clearScreen(0x00);
+    if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Lsb)) {
+      showStreamError();
+      return;
+    }
+    renderer.copyGrayscaleLsbBuffers();
+
+    renderer.clearScreen(0x00);
+    if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Msb)) {
+      showStreamError();
+      return;
+    }
+    renderer.copyGrayscaleMsbBuffers();
+    renderer.displayGrayBuffer();
+
+    // Rebuild the BW framebuffer for the next differential page turn.
+    renderer.clearScreen();
+    if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Base)) {
+      showStreamError();
+      return;
+    }
+    renderer.cleanupGrayscaleWithFrameBuffer();
+    return;
   }
 
   // Allocate page buffer
@@ -321,7 +452,8 @@ void XtcReaderActivity::renderPage() {
       const size_t byteOffset = colIndex * colBytes + byteInCol;
       const uint8_t bit1 = (plane1[byteOffset] >> bitInByte) & 1;
       const uint8_t bit2 = (plane2[byteOffset] >> bitInByte) & 1;
-      return (bit1 << 1) | bit2;
+      const uint8_t value = (bit1 << 1) | bit2;
+      return darkMode ? static_cast<uint8_t>(3 - value) : value;
     };
 
     // Optimized grayscale rendering without storeBwBuffer (saves 48KB peak memory)
@@ -340,7 +472,8 @@ void XtcReaderActivity::renderPage() {
     // Pass 1: BW buffer - draw all non-white pixels as black
     for (uint16_t y = 0; y < pageHeight; y++) {
       for (uint16_t x = 0; x < pageWidth; x++) {
-        if (getPixelValue(x, y) >= 1) {
+        const uint8_t value = getPixelValue(x, y);
+        if (darkMode ? value == 3 : value >= 1) {
           renderer.drawPixel(x, y, true);
         }
       }
@@ -389,10 +522,12 @@ void XtcReaderActivity::renderPage() {
     renderer.displayGrayBuffer();
 
     // Pass 4: Re-render BW to framebuffer (restore for next frame, instead of restoreBwBuffer)
+    renderer.setRenderMode(GfxRenderer::BW);
     renderer.clearScreen();
     for (uint16_t y = 0; y < pageHeight; y++) {
       for (uint16_t x = 0; x < pageWidth; x++) {
-        if (getPixelValue(x, y) >= 1) {
+        const uint8_t value = getPixelValue(x, y);
+        if (darkMode ? value == 3 : value >= 1) {
           renderer.drawPixel(x, y, true);
         }
       }
@@ -416,7 +551,8 @@ void XtcReaderActivity::renderPage() {
         // Read source pixel (MSB first, bit 7 = leftmost pixel)
         const size_t srcByte = srcRowStart + srcX / 8;
         const size_t srcBit = 7 - (srcX % 8);
-        const bool isBlack = !((pageBuffer[srcByte] >> srcBit) & 1);  // XTC: 0 = black, 1 = white
+        const bool sourceBlack = !((pageBuffer[srcByte] >> srcBit) & 1);  // XTC: 0 = black, 1 = white
+        const bool isBlack = darkMode ? !sourceBlack : sourceBlack;
 
         if (isBlack) {
           renderer.drawPixel(srcX, srcY, true);

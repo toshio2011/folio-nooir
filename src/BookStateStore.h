@@ -34,6 +34,7 @@ class BookStateStore : public PersistableStore<BookStateStore> {
   void toJson(JsonDocument& doc) const;
   bool fromJson(JsonVariantConst doc);
   const BookState* find(const std::string& path) const;
+  const std::vector<BookState>& getBooks() const { return books; }
   void recordReading(const std::string& path, uint8_t progress, uint32_t elapsedSeconds);
   void setStatus(const std::string& path, BookStatus status);
   void reset(const std::string& path);

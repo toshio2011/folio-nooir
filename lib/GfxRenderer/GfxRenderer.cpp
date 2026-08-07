@@ -347,7 +347,8 @@ static void renderCharScaled(const GfxRenderer& renderer, GfxRenderer::RenderMod
           }
         }
         if (maxRaw >= 2 || coverage >= 2) {
-          renderer.drawPixel(baseX + dstX, baseY + dstY, pixelState);
+          const bool outputState = (renderMode == GfxRenderer::BW && renderer.isDarkMode()) ? true : pixelState;
+          renderer.drawPixel(baseX + dstX, baseY + dstY, outputState);
         }
       }
     }
@@ -444,16 +445,20 @@ static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode 
           // we swap this to better match the way images and screen think about colors:
           // 0 -> black, 1 -> dark grey, 2 -> light grey, 3 -> white
           const uint8_t bmpVal = 3 - ((byte >> bit_index) & 0x3);
+          const uint8_t level = renderer.isDarkMode() ? static_cast<uint8_t>(3 - bmpVal) : bmpVal;
 
-          if (renderMode == GfxRenderer::BW && bmpVal < 3) {
-            // Black (also paints over the grays in BW mode)
-            renderer.drawPixel(screenX, screenY, pixelState);
-          } else if (renderMode == GfxRenderer::GRAYSCALE_MSB && (bmpVal == 1 || bmpVal == 2)) {
+          const bool drawBw = renderer.isDarkMode() ? level == 3 : level < 3;
+          if (renderMode == GfxRenderer::BW && drawBw) {
+            // Normal mode paints black over the white base. Dark mode paints
+            // the source ink white over the black base.
+            const bool outputState = renderer.isDarkMode() ? true : pixelState;
+            renderer.drawPixel(screenX, screenY, outputState);
+          } else if (renderMode == GfxRenderer::GRAYSCALE_MSB && (level == 1 || level == 2)) {
             // Light gray (also mark the MSB if it's going to be a dark gray too)
             // Dedicated X3 gray LUTs now provide proper 4-level gray on both devices
             // We have to flag pixels in reverse for the gray buffers, as 0 leave alone, 1 update
             renderer.drawPixel(screenX, screenY, false);
-          } else if (renderMode == GfxRenderer::GRAYSCALE_LSB && bmpVal == 1) {
+          } else if (renderMode == GfxRenderer::GRAYSCALE_LSB && level == 1) {
             // Dark gray
             renderer.drawPixel(screenX, screenY, false);
           }
@@ -516,11 +521,39 @@ void GfxRenderer::drawPixel(const int x, const int y, const bool state) const {
   const uint32_t byteIndex = rowY * panelWidthBytes + (phyX / 8);
   const uint8_t bitPosition = 7 - (phyX % 8);  // MSB first
 
-  if (state) {
+  // One-bit glyphs and line/image primitives use the caller's black/white
+  // state directly. In BW reader mode invert that state for dark pages. Gray
+  // planes write their own polarity and must not be inverted here.
+  const bool outputState = (darkMode && renderMode == BW) ? !state : state;
+  if (outputState) {
     target[byteIndex] &= ~(1 << bitPosition);  // Clear bit
   } else {
     target[byteIndex] |= 1 << bitPosition;  // Set bit
   }
+}
+
+bool GfxRenderer::isPixelBlack(const int x, const int y) const {
+  int phyX = 0;
+  int phyY = 0;
+  rotateCoordinates(orientation, x, y, &phyX, &phyY, panelWidth, panelHeight);
+  if (phyX < 0 || phyX >= panelWidth || phyY < 0 || phyY >= panelHeight) {
+    return false;
+  }
+
+  uint8_t* target = frameBuffer;
+  int rowY = phyY;
+  if (_stripActive) {
+    if (phyY < _stripY0 || phyY >= _stripY0 + _stripRows || !_stripBuf) {
+      return false;
+    }
+    target = _stripBuf;
+    rowY = phyY - _stripY0;
+  }
+  if (!target) return false;
+
+  const uint32_t byteIndex = static_cast<uint32_t>(rowY) * panelWidthBytes + (phyX / 8);
+  const uint8_t bitPosition = 7 - (phyX % 8);
+  return (target[byteIndex] & (1U << bitPosition)) == 0;
 }
 
 int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style,
@@ -1340,10 +1373,12 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
         continue;
       }
 
-      const uint8_t val = outputRow[bmpX / 4] >> (6 - ((bmpX * 2) % 8)) & 0x3;
+      const uint8_t rawVal = outputRow[bmpX / 4] >> (6 - ((bmpX * 2) % 8)) & 0x3;
+      const uint8_t val = darkMode ? static_cast<uint8_t>(3 - rawVal) : rawVal;
 
-      if (renderMode == BW && val < 3) {
-        drawPixel(screenX, screenY);
+      const bool drawBw = darkMode ? val == 3 : val < 3;
+      if (renderMode == BW && drawBw) {
+        drawPixel(screenX, screenY, true);
       } else if (renderMode == GRAYSCALE_MSB && (val == 1 || val == 2)) {
         drawPixel(screenX, screenY, false);
       } else if (renderMode == GRAYSCALE_LSB && val == 1) {
@@ -1490,12 +1525,16 @@ static unsigned long start_ms = 0;
 
 void GfxRenderer::clearScreen(const uint8_t color) const {
   start_ms = millis();
+  // Dark reader pages use a black BW base. Gray-plane passes explicitly clear
+  // with 0x00 and are left untouched; ordinary UI/sleep rendering keeps the
+  // normal white default because darkMode is reset by reader onExit().
+  const uint8_t clearColor = (darkMode && renderMode == BW && color == 0xFF) ? 0x00 : color;
   if (_stripActive) {
     // Clear only the active band's scratch, not the shared framebuffer.
-    memset(_stripBuf, color, static_cast<size_t>(panelWidthBytes) * _stripRows);
+    memset(_stripBuf, clearColor, static_cast<size_t>(panelWidthBytes) * _stripRows);
     return;
   }
-  display.clearScreen(color);
+  display.clearScreen(clearColor);
 }
 
 void GfxRenderer::beginStripTarget(uint8_t* scratch, int stripY0, int stripRows) const {

@@ -135,6 +135,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LP_MENU_DISABLED = 1,
     LP_MENU_BOOKMARK = 2,
     LP_MENU_DICTIONARY = 3,
+    LP_MENU_DARK_MODE = 4,
     LONG_PRESS_MENU_FUNCTION_COUNT
   };
 
@@ -263,6 +264,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t pwrBtnFootnoteBack = 1;
   // Use book's embedded CSS styles for EPUB rendering (1 = enabled, 0 = disabled)
   uint8_t embeddedStyle = 1;
+  // Reader dark mode: invert the page polarity while preserving four-level
+  // grayscale relationships (1 = dark page, 0 = normal page).
+  uint8_t readerDarkMode = 0;
   // Focus Reading - emphasizes the first part of words with bold
   uint8_t focusReadingEnabled = 0;
   // SD card font family name (empty = use built-in fontFamily)

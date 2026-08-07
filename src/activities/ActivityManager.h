@@ -86,6 +86,7 @@ class ActivityManager {
   void goToFileBrowser(std::string path = {});
   void goToFolioShelf(uint8_t tab = 1);
   void goToRecentBooks();
+  void goToReadingStats();
   void goToBrowser();
   void goToReader(std::string path);
   void goToSleep(bool fromTimeout = false);
