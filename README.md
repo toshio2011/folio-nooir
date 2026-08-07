@@ -1,78 +1,141 @@
 # Folio Nooir
 
-Folio Nooir is experimental e-reader firmware with a bookshelf-focused interface for the Xteink X4.
+Folio Nooir is an experimental, bookshelf-focused e-reader firmware for Xteink devices. It is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), keeping the core reader, wireless transfer, sleep, and settings features while adding a Folio Nooir interface and reading tools.
 
-> ## ⚠️ Hardware warning
->
-> Folio Nooir is developed and tested only on the **older Xteink X4 hardware revision**, because that is the only physical device currently available to the maintainer. X3 should work too, but make sure you have a way to flash it back in case it gets stuck.
+## Hardware warning
 
->
-> Newer X3 and X4 devices may use a different display panel. **Do not flash Folio Nooir unless you know your device is the older X4/X3 model.** An incompatible build may leave the display unusable or make recovery difficult.
->
-> If Crosspoint is already installed and working on your device, you can safely use this firmware.
+**Folio Nooir has been physically tested only on the older Xteink X4 hardware revision.** That is the only device currently available to the maintainer.
+
+The current display-driver direction follows the compatible X3/X4 work described by [CrossInk v1.5.0-rc-3](https://github.com/uxjulia/CrossInk/releases/tag/v1.5.0-rc-3), which reports fixes for all known X3/X4 display variants and support for the latest X4 battery latch. This should address the known panel/driver compatibility problems, but newer hardware still needs real-device validation with Folio Nooir. X3 should also work with the compatible driver path, but X3 testing is still pending. X4 Pro/S3 hardware is not supported by this build.
+
+This does not repair physical screen damage, factory firmware locks, damaged cables, or other hardware faults. Keep a working recovery firmware before flashing. An incompatible panel or board can leave the display unusable and may require recovery through the SD-card firmware picker.
+
+If CrossInk is already installed and working on your device, you can safely ignore this firmware. If CrossPoint is installed and working, use the recovery instructions and keep a known-good image before switching.
 
 ## Features
 
-- Folio Nooir bookshelf home screen
-- Library, Recent and Finished sections
-- Book covers, title, author, synopsis and reading progress
-- Persistent Reading, On Hold and Finished book states
-- Reading time, daily activity and finished-book statistics
-- Long-press book actions:
-  - Mark as Reading, On Hold or Finished
-  - Reset reading progress
-  - Refresh the book cache
-  - Remove a book from Recent and Finished without deleting the ebook
-- Improved EPUB styling, tables, images and metadata handling
-- Typography controls using point sizes, margins and line spacing
-- Web-based library and file-transfer tools
-- BMP and PNG custom sleep images
-- Folio Nooir branding and boot logo
-- Core reader, Wi-Fi transfer, sleep-cover and settings features retained
+### Folio Nooir bookshelf
 
-Bluetooth remote support is experimental and may be disabled or unstable in current test builds.
+- Folio Nooir boot logo and visual theme.
+- Three bookshelf views: **Library**, **Recent**, and **Finished**.
+- Library acts as a folder/file browser and loads metadata lazily as books are highlighted.
+- Featured-book panel with cover, title, author, HTML synopsis, progress, status, reading minutes, and session count.
+- Compact 4 x 2 cover grid with percentage progress ribbons.
+- Cover cache warm-up with visible retrieval feedback, cache reuse, and invalid/blank-BMP recovery.
+- Long-press actions for opening, status changes, progress reset, cache refresh, full synopsis, book statistics, and removing a book from the list without deleting the file.
+- Automatic movement to Finished when a book reaches 100%.
 
-<img width="960" height="1280" alt="WhatsApp Image 2026-08-05 at 2 46 29 PM" src="https://github.com/user-attachments/assets/f8ef98bf-49bc-43e4-a6bd-1a774e7ecf38" />
-<img width="765" height="1020" alt="WhatsApp Image 2026-08-05 at 2 46 28 PM" src="https://github.com/user-attachments/assets/fe269b6b-9f88-4e08-b9ac-41c41dcc247a" />
-<img width="765" height="1020" alt="WhatsApp Image 2026-08-05 at 2 46 28 PM (3)" src="https://github.com/user-attachments/assets/10fe0c5d-7848-4845-9e1d-d071976ef0c5" />
-<img width="765" height="1020" alt="WhatsApp Image 2026-08-05 at 2 46 28 PM (2)" src="https://github.com/user-attachments/assets/5455e05f-4c30-4390-a9d6-4c994957ec0f" />
-<img width="765" height="1020" alt="WhatsApp Image 2026-08-05 at 2 46 28 PM (1)" src="https://github.com/user-attachments/assets/159aad88-3e7b-46a6-8492-307680439f27" />
-<img width="765" height="1020" alt="WhatsApp Image 2026-08-05 at 2 46 27 PM" src="https://github.com/user-attachments/assets/2fc621c3-248a-41b7-8b67-e719c16fe163" />
+### Reader and typography
 
-## Install
+- CrossPoint reader engine retained for EPUB, XTC/XTCH, TXT, and Markdown workflows.
+- Improved EPUB CSS handling, HTML tables/cells, images, metadata, and memory safety.
+- Large images are fitted to the display instead of producing empty squares where possible.
+- XTC/XTCH cover and page rendering improvements.
+- Reader font size in points rather than only Small/Medium/Large presets.
+- Point-based margin and line-spacing controls.
+- Reader dark mode.
+- Multi-dictionary lookup with dictionary history and preferred-dictionary reuse.
+- Text clipping: select text, save clips, and review saved clips from the reader.
+- Reader shortcuts and existing CrossPoint input mappings remain available.
+- Bluetooth HID/page-turner support is present in the codebase but remains experimental and is not considered stable for release yet.
 
-1. Download the latest `.bin` file from this repository's **Releases** page.
-2. Keep a copy of your currently working firmware for recovery.
+### Reading statistics
+
+- Persistent per-book reading time, session count, progress, status, and dates.
+- On-device book statistics from the long-press menu.
+- Overall reading statistics from the Recent menu.
+- On-device reading calendar showing the last 30 recorded days.
+- Featured-book summary such as `Ongoing - 12% - 18 min - 22 sessions`.
+- Finished, Reading, On Hold, and New state tracking.
+
+### Web interface
+
+When the device is connected to the same network, the built-in web interface provides:
+
+- Folio Nooir-styled device dashboard.
+- Bookshelf with covers and progress.
+- Reading calendar and statistics dashboard at `/stats`.
+- Per-book covers, time, sessions, dates, status, and progress.
+- Web editing for title, author, synopsis, status, progress, start date, and finish date.
+- Reset-reading-data action and JSON statistics export.
+- File browsing, image preview, upload, download, rename, move, delete, and folder creation.
+- Existing CrossPoint settings, Wi-Fi, OPDS, font, and typography pages.
+
+### Sleep and display
+
+- Custom PNG/BMP sleep images.
+- Random sleep images from `/.sleep/`.
+- Transparent PNG page-overlay sleep mode that keeps the last reader page visible beneath the overlay.
+- Ghosting mitigation and clean refreshes when leaving books or entering sleep.
+- Conservative X3/X4 display-driver detection for the supported C3 family.
+
+Some sleep-overlay, display-compatibility, and reader usability ideas were reviewed against the open-source [CrossInk](https://github.com/uxjulia/CrossInk) project and adapted where they fit Folio Nooir's CrossPoint base.
+
+## Installation
+
+1. Download a release from this repository's **Releases** page.
+2. Keep a copy of the currently working firmware for recovery.
 3. Open the CrossPoint web flasher and select the custom firmware option.
-4. Choose the Folio Nooir `.bin` file and flash it to a supported older-model X4.
+4. Choose the Folio Nooir `firmware.bin` and flash it to a supported older-model X4.
 
 Test builds are provided without warranty. Flashing custom firmware is at your own risk.
 
+### SD-card update
+
+The SD-card firmware picker accepts a file named exactly `firmware.bin` in the SD-card root. The current reading position and book data are stored separately from the firmware image.
+
+### Over-the-air updates
+
+Folio Nooir checks releases from:
+
+```text
+https://github.com/toshio2011/folio-nooir/releases/latest
+```
+
+Each compatible GitHub release must contain an asset named exactly:
+
+```text
+firmware.bin
+```
+
+Use a numeric release tag such as `1.5.1`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
+
 ## Custom sleep images
 
-Select **Custom** or **Cover + Custom** in the sleep-screen settings, then use either:
+Choose **Custom** or **Cover + Custom** in sleep-screen settings, then use either:
 
-- `/sleep.png` or `/sleep.bmp` for one image; or
+- `/sleep.png` or `/sleep.bmp` for one fixed image; or
 - multiple `.png` and `.bmp` files inside `/.sleep/` for randomized sleep images.
 
-BMP takes priority if both `/sleep.bmp` and `/sleep.png` exist.
+If both root files exist, `/sleep.bmp` takes priority.
+
+### Page overlay
+
+Choose **Page Overlay** and place a transparent PNG at `/sleep-overlay.png`. Folder alternatives `/.sleep/overlay.png` and `/sleep/overlay.png` are also supported. If the named overlay is absent, Folio Nooir selects a PNG randomly from `/.sleep/` or `/sleep/`.
 
 ## Building
 
-Folio Nooir uses PlatformIO:
+Folio Nooir uses PlatformIO. From the repository root:
 
 ```powershell
+python scripts/build_html.py
 .\.venv\Scripts\pio.exe run -e default
 ```
 
-The resulting firmware is written to:
+The development firmware is written to:
 
 ```text
 .pio/build/default/firmware.bin
 ```
 
-## Credits
+For a release build, use the `gh_release` environment:
 
-Folio Nooir is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), with a redesigned library experience and additional reading features. Thanks to the CrossPoint contributors for the reader engine and hardware foundation.
+```powershell
+.\.venv\Scripts\pio.exe run -e gh_release
+```
+
+## Credits and license
+
+Folio Nooir is built on [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), with display and reader foundations from the CrossPoint contributors. It also acknowledges the open-source [CrossInk](https://github.com/uxjulia/CrossInk) project as a reference for compatible Xteink display, sleep-screen, and reader improvements.
 
 Licensed under the MIT License.
