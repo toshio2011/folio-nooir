@@ -135,24 +135,27 @@ void FolioNooirTheme::drawCoverProgressBadge(const GfxRenderer& renderer, const 
                                              const int height, const uint8_t percent) const {
   char progress[8];
   snprintf(progress, sizeof(progress), "%u%%", percent);
-  constexpr int ribbonHeight = 22;
+  // A taller ribbon reads clearly on the small 4x2 cards. It intentionally
+  // extends over the cover frame rather than being confined to the card label.
+  constexpr int ribbonHeight = 32;
   constexpr int ribbonLift = 7;
   const int ribbonWidth = std::min(42, std::max(28, renderer.getTextWidth(SMALL_FONT_ID, progress) + 12));
   const int ribbonX = x + 4;
   const int ribbonY = y + height - ribbonHeight - ribbonLift;
-  renderer.fillRect(ribbonX, ribbonY, ribbonWidth, ribbonHeight, true);
 
-  // Cut a small white V from the bottom so the marker reads as a physical
-  // bookmark ribbon instead of a floating rectangular badge.
-  const int notchCenter = ribbonX + ribbonWidth / 2;
-  const int notchDepth = 6;
-  const int notchHalfWidth = 5;
-  const int notchX[] = {notchCenter - notchHalfWidth, notchCenter + notchHalfWidth, notchCenter};
-  const int notchY[] = {ribbonY + ribbonHeight - notchDepth, ribbonY + ribbonHeight - notchDepth,
-                        ribbonY + ribbonHeight};
-  renderer.fillPolygon(notchX, notchY, 3, false);
+  // Draw the ribbon as a single bookmark silhouette.  Defining the V-cut in
+  // the outer polygon keeps the shape crisp on e-ink and avoids the square
+  // background that a rectangular badge leaves behind.
+  constexpr int notchDepth = 8;
+  const int ribbonCenter = ribbonX + ribbonWidth / 2;
+  const int ribbonXPoints[] = {ribbonX, ribbonX + ribbonWidth, ribbonX + ribbonWidth, ribbonCenter, ribbonX};
+  const int ribbonYPoints[] = {ribbonY, ribbonY, ribbonY + ribbonHeight, ribbonY + ribbonHeight - notchDepth,
+                               ribbonY + ribbonHeight};
+  renderer.fillPolygon(ribbonXPoints, ribbonYPoints, 5, true);
   const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, progress);
-  renderer.drawText(SMALL_FONT_ID, ribbonX + (ribbonWidth - textWidth) / 2, ribbonY + 4, progress, false);
+  const int textHeight = renderer.getLineHeight(SMALL_FONT_ID);
+  renderer.drawText(SMALL_FONT_ID, ribbonX + (ribbonWidth - textWidth) / 2,
+                    ribbonY + std::max(2, (ribbonHeight - textHeight) / 2), progress, false);
 }
 
 void FolioNooirTheme::drawPageIndicator(const GfxRenderer& renderer, const FolioShelfLayout& layout,

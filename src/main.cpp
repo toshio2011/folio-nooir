@@ -550,8 +550,10 @@ void loop() {
     return;
   }
 
+  const bool readerOwnsLongPower = activityManager.isReaderActivity() &&
+                                   SETTINGS.longPwrBtn != CrossPointSettings::LP_PWR_SLEEP;
   if (millis() >= allowSleepAt && gpio.isPressed(HalGPIO::BTN_POWER) &&
-      gpio.getPowerButtonHeldTime() > SETTINGS.getPowerButtonDuration()) {
+      gpio.getPowerButtonHeldTime() > SETTINGS.getPowerButtonDuration() && !readerOwnsLongPower) {
     // If the screenshot combination is potentially being pressed, don't sleep
     if (gpio.isPressed(HalGPIO::BTN_DOWN)) {
       return;

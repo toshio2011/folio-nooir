@@ -24,6 +24,9 @@
 #include "util/BookCacheUtils.h"
 
 namespace {
+constexpr char RETRIEVE_ALL_BOOKS_MESSAGE[] = "Retrieve all books details. Please be patient.";
+constexpr char RETRIEVE_ALL_BOOKS_DONE_MESSAGE[] = "All book details retrieved.";
+
 bool isLibraryBook(const std::string& path) {
   return FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path) ||
          FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path);
@@ -144,8 +147,6 @@ void FolioLibraryActivity::resetPreviews() {
   for (auto& preview : previews) preview = Preview{};
   previewPageStart = (selectorIndex / PAGE_SIZE) * PAGE_SIZE;
   nextPreviewSlot = 0;
-  nextCoverSlot = 0;
-  lastCoverGenerationMs = millis();
 }
 
 std::string FolioLibraryActivity::fullPath(const size_t index) const {
@@ -189,19 +190,6 @@ void FolioLibraryActivity::loadNextPreview() {
       if (FsHelpers::hasBmpExtension(path) || FsHelpers::hasPngExtension(path) || FsHelpers::hasJpgExtension(path)) {
         preview.metadataAttempted = true;
       }
-      if (FsHelpers::hasEpubExtension(path) && !preview.metadataAttempted) {
-        // Browsing must never build an EPUB cache or generate a thumbnail.
-        // Cache misses keep the filename and placeholder until the book is opened.
-        Epub epub(path, "/.crosspoint");
-        const std::string metadataCache = epub.getCachePath() + "/book.bin";
-        if (Storage.exists(metadataCache.c_str()) && epub.load(false, true)) {
-          preview.title = epub.getTitle().empty() ? files[index] : epub.getTitle();
-          preview.author = epub.getAuthor();
-          preview.synopsis = epub.getDescription();
-          preview.coverBmpPath = epub.getThumbBmpPath();
-          preview.metadataAttempted = true;
-        }
-      }
     }
     preview.loaded = true;
     // Prepare one item per loop so input remains responsive, but refresh the
@@ -209,6 +197,112 @@ void FolioLibraryActivity::loadNextPreview() {
     if (nextPreviewSlot >= PAGE_SIZE || previewPageStart + nextPreviewSlot >= files.size()) requestUpdate();
     return;  // Exactly one visible item per loop.
   }
+}
+
+void FolioLibraryActivity::startRetrieveAllBooks() {
+  retrieveDirectories.clear();
+  retrieveBooks.clear();
+  retrieveDirectories.reserve(16);
+  retrieveBooks.reserve(32);
+  retrieveDirectories.emplace_back("/");
+  retrieveDirectoryIndex = 0;
+  retrieveBookIndex = 0;
+  retrievingAllBooks = true;
+  retrievingAllBooksPopupRendered = false;
+  retrieveAllComplete = false;
+  retrieveAllCompleteUntilMs = 0;
+  requestUpdate(true);
+}
+
+void FolioLibraryActivity::processRetrieveAllBooks() {
+  if (!retrievingAllBooks || !retrievingAllBooksPopupRendered) return;
+
+  // Traverse one directory per loop.  The expensive EPUB/XTC work is kept
+  // out of the directory scan and is handled one book per later loop, so the
+  // popup remains visible even on slower X3 hardware.
+  if (retrieveDirectoryIndex < retrieveDirectories.size()) {
+    const std::string directoryPath = retrieveDirectories[retrieveDirectoryIndex++];
+    HalFile directory = Storage.open(directoryPath.c_str());
+    if (!directory || !directory.isDirectory() || !fileNameBuffer) return;
+    directory.rewindDirectory();
+    for (HalFile entry = directory.openNextFile(); entry; entry = directory.openNextFile()) {
+      entry.getName(fileNameBuffer.get(), NAME_BUFFER_SIZE);
+      const std::string name(fileNameBuffer.get());
+      if (name.empty() || name == "." || name == ".." || name == "System Volume Information" ||
+          (!SETTINGS.showHiddenFiles && name.front() == '.')) {
+        continue;
+      }
+      const std::string path = joinLibraryPath(directoryPath, name);
+      if (entry.isDirectory()) {
+        // The cache and sleep folders are implementation data, not user
+        // books.  Skipping them also prevents a needless scan of our own
+        // generated thumbnails.
+        if (name == ".crosspoint" || name == ".sleep") continue;
+        retrieveDirectories.push_back(path);
+      } else if (FsHelpers::hasEpubExtension(name) || FsHelpers::hasXtcExtension(name)) {
+        retrieveBooks.push_back(path);
+      }
+    }
+    return;
+  }
+
+  if (retrieveBookIndex < retrieveBooks.size()) {
+    const std::string path = retrieveBooks[retrieveBookIndex++];
+    if (FsHelpers::hasEpubExtension(path)) {
+      Epub epub(path, "/.crosspoint");
+      if (epub.loadMetadataOnly()) {
+        const std::string thumb = epub.getThumbBmpPath(FolioNooirTheme::COVER_HEIGHT);
+        if (!isValidBookThumbnail(thumb)) {
+          Storage.remove(thumb.c_str());
+          epub.generateThumbBmp(FolioNooirTheme::COVER_HEIGHT);
+        }
+      }
+    } else if (FsHelpers::hasXtcExtension(path)) {
+      Xtc xtc(path, "/.crosspoint");
+      if (xtc.load()) {
+        const std::string thumb = xtc.getThumbBmpPath(FolioNooirTheme::COVER_HEIGHT);
+        if (!isValidBookThumbnail(thumb)) {
+          Storage.remove(thumb.c_str());
+          xtc.generateThumbBmp(FolioNooirTheme::COVER_HEIGHT);
+        }
+      }
+    }
+    return;
+  }
+
+  retrievingAllBooks = false;
+  retrievingAllBooksPopupRendered = false;
+  retrieveAllComplete = true;
+  retrieveAllCompleteUntilMs = millis() + 1800;
+  retrieveDirectories.clear();
+  retrieveBooks.clear();
+  resetPreviews();
+  requestUpdate(true);
+}
+
+void FolioLibraryActivity::showMenu() {
+  const char* options[] = {tr(STR_BROWSE_FILES), tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE),
+                           "Reading Statistics", "Reading Calendar", "Retrieve All Book Details"};
+  menuPopup.show(tr(STR_MENU), options, 6, 0, [this](const int index) {
+    if (index == 0) {
+      // Always enter the graphical Library at its root.  The menu action is
+      // a file-browsing entry point, not an instruction to reopen the current
+      // folder or the currently selected book.
+      activityManager.goToFileBrowser("/");
+      return;
+    } else if (index == 1) {
+      activityManager.goToFileTransfer();
+    } else if (index == 2) {
+      activityManager.goToSettings();
+    } else if (index == 3) {
+      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), nullptr);
+    } else if (index == 4) {
+      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, "", true), nullptr);
+    } else if (index == 5) {
+      startRetrieveAllBooks();
+    }
+  });
+  requestUpdate();
 }
 
 void FolioLibraryActivity::showBookActions() {
@@ -251,7 +345,6 @@ void FolioLibraryActivity::showBookActions() {
       clearBookCache(path);
       preview = Preview{};
       nextPreviewSlot = slot;
-      nextCoverSlot = slot;
       observedSelectorIndex = SIZE_MAX;
       retrievingMetadata = false;
       retrievingPopupRendered = false;
@@ -267,39 +360,6 @@ void FolioLibraryActivity::showBookActions() {
     requestUpdate(true);
   });
   requestUpdate();
-}
-
-void FolioLibraryActivity::generateNextMissingCover() {
-  constexpr unsigned long COVER_GENERATION_INTERVAL_MS = 1500;
-  const bool previewsReady =
-      nextPreviewSlot >= PAGE_SIZE || previewPageStart + nextPreviewSlot >= files.size();
-  if (!previewsReady || millis() - lastCoverGenerationMs < COVER_GENERATION_INTERVAL_MS) return;
-
-  while (nextCoverSlot < PAGE_SIZE) {
-    Preview& preview = previews[nextCoverSlot++];
-    if (!preview.loaded || preview.directory || preview.coverBmpPath.empty()) continue;
-    const std::string thumb = UITheme::getCoverThumbPath(preview.coverBmpPath, FolioNooirTheme::COVER_HEIGHT);
-    if (isValidBookThumbnail(thumb)) continue;
-    if (Storage.exists(thumb.c_str())) Storage.remove(thumb.c_str());
-
-    const std::string path = fullPath(preview.fileIndex);
-    bool generated = false;
-    if (FsHelpers::hasEpubExtension(path)) {
-      Epub epub(path, "/.crosspoint");
-      if (epub.load(false, true))
-        generated = epub.generateThumbBmp(FolioNooirTheme::COVER_HEIGHT) && isValidBookThumbnail(thumb);
-    } else if (FsHelpers::hasXtcExtension(path)) {
-      Xtc xtc(path, "/.crosspoint");
-      if (xtc.load()) generated = xtc.generateThumbBmp(FolioNooirTheme::COVER_HEIGHT) && isValidBookThumbnail(thumb);
-    }
-    if (!generated) {
-      preview.coverBmpPath.clear();
-      preview.metadataAttempted = true;
-    }
-    lastCoverGenerationMs = millis();
-    if (generated) requestUpdate();
-    return;  // Never extract more than one cover during an idle interval.
-  }
 }
 
 void FolioLibraryActivity::loadSelectedMetadata() {
@@ -324,11 +384,34 @@ void FolioLibraryActivity::loadSelectedMetadata() {
     return;
   }
 
+  // A complete cached header is safe to read after the debounce and does not
+  // need a retrieval popup. Only a cache miss (or a missing thumbnail that
+  // needs extraction) enters the visible retrieval path.
+  if (!retrievingMetadata && FsHelpers::hasEpubExtension(path)) {
+    Epub epub(path, "/.crosspoint");
+    if (epub.loadCachedMetadataOnly()) {
+      preview.title = epub.getTitle().empty() ? files[selectorIndex] : epub.getTitle();
+      preview.author = epub.getAuthor();
+      preview.synopsis = epub.getDescription();
+      preview.coverBmpPath = epub.getThumbBmpPath();
+      const std::string thumb = UITheme::getCoverThumbPath(preview.coverBmpPath, FolioNooirTheme::COVER_HEIGHT);
+      if (preview.coverBmpPath.empty() || isValidBookThumbnail(thumb)) {
+        preview.metadataAttempted = true;
+        requestUpdate();
+        return;
+      }
+    }
+  }
+
   if (!retrievingMetadata) {
     retrievingMetadata = true;
     retrievingMetadataIndex = selectorIndex;
     retrievingPopupRendered = false;
-    requestUpdate();
+    // Do not let the next loop begin EPUB/XTC extraction until the busy
+    // message has actually reached the panel.  On the slower X3 this small
+    // synchronization prevents the device from appearing frozen while the
+    // first uncached book is being opened.
+    requestUpdateAndWait();
     return;
   }
   if (retrievingMetadataIndex != selectorIndex || !retrievingPopupRendered) return;
@@ -339,17 +422,21 @@ void FolioLibraryActivity::loadSelectedMetadata() {
   bool changed = false;
   if (FsHelpers::hasEpubExtension(path)) {
     Epub epub(path, "/.crosspoint");
-    if (epub.load(true, true)) {
+    if (epub.loadMetadataOnly()) {
       preview.title = epub.getTitle().empty() ? files[selectorIndex] : epub.getTitle();
       preview.author = epub.getAuthor();
       preview.synopsis = epub.getDescription();
       preview.coverBmpPath = epub.getThumbBmpPath();
+      const std::string thumb = UITheme::getCoverThumbPath(preview.coverBmpPath, FolioNooirTheme::COVER_HEIGHT);
+      if (!isValidBookThumbnail(thumb)) {
+        Storage.remove(thumb.c_str());
+        if (!epub.generateThumbBmp(FolioNooirTheme::COVER_HEIGHT) || !isValidBookThumbnail(thumb)) {
+          preview.coverBmpPath.clear();
+        }
+      }
       // Metadata can be shown immediately.  Thumbnail conversion is deferred
-      // to the paced background generator so a large cover cannot hold the
-      // Library retrieval popup open.
-      const size_t selectedSlot = selectorIndex - previewPageStart;
-      nextCoverSlot = std::min(nextCoverSlot, selectedSlot);
-      lastCoverGenerationMs = millis();
+      // only for already-cached entries; the metadata-only path above keeps
+      // this selected featured book self-contained.
       changed = true;
     }
   } else if (FsHelpers::hasXtcExtension(path)) {
@@ -358,9 +445,6 @@ void FolioLibraryActivity::loadSelectedMetadata() {
       preview.title = xtc.getTitle();
       preview.author = xtc.getAuthor();
       preview.coverBmpPath = xtc.getThumbBmpPath();
-      const size_t selectedSlot = selectorIndex - previewPageStart;
-      nextCoverSlot = std::min(nextCoverSlot, selectedSlot);
-      lastCoverGenerationMs = millis();
       changed = true;
     }
   }
@@ -432,6 +516,29 @@ void FolioLibraryActivity::loop() {
     retrievingPopupRendered = false;
   }
 
+  if (retrieveAllComplete) {
+    if (millis() >= retrieveAllCompleteUntilMs) {
+      retrieveAllComplete = false;
+      requestUpdate(true);
+    }
+    return;
+  }
+  if (retrievingAllBooks) {
+    processRetrieveAllBooks();
+    return;
+  }
+
+  const bool menuActive = menuPopup.isActive();
+  const bool menuBackPressed = menuActive && mappedInput.wasPressed(MappedInputManager::Button::Back);
+  if (menuPopup.handleInput(mappedInput, [this] { requestUpdate(); })) {
+    if (menuBackPressed) swallowMenuBackRelease = true;
+    return;
+  }
+  if (swallowMenuBackRelease) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) swallowMenuBackRelease = false;
+    return;
+  }
+
   const bool popupActive = bookActionsPopup.isActive();
   const bool popupConfirmPressed = popupActive && mappedInput.wasPressed(MappedInputManager::Button::Confirm);
   const bool popupBackPressed = popupActive && mappedInput.wasPressed(MappedInputManager::Button::Back);
@@ -464,7 +571,7 @@ void FolioLibraryActivity::loop() {
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     if (basepath == "/") {
-      activityManager.goHome();
+      showMenu();
     } else {
       basepath = FsHelpers::extractFolderPath(basepath);
       if (basepath.empty()) basepath = "/";
@@ -473,8 +580,12 @@ void FolioLibraryActivity::loop() {
     }
     return;
   }
+  if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+    activityManager.goToFolioShelf(1);
+    return;
+  }
   if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
-    activityManager.goHome();
+    activityManager.goToFolioShelf(2);
     return;
   }
 
@@ -489,7 +600,7 @@ void FolioLibraryActivity::loop() {
         requestUpdate();
         return;
       }
-      if (tab == 1) activityManager.goHome();
+      if (tab == 1) activityManager.goToFolioShelf(1);
       if (tab == 2) activityManager.goToFolioShelf(2);
       return;
     }
@@ -515,12 +626,25 @@ void FolioLibraryActivity::loop() {
     requestUpdate();
   });
   loadNextPreview();
+  // Metadata and cover extraction are deliberately selected-item work. Do not
+  // scan/generate a background cover merely because the highlight moved: the
+  // selected item must remain still for the debounce in loadSelectedMetadata().
   loadSelectedMetadata();
-  generateNextMissingCover();
 }
 
 void FolioLibraryActivity::render(RenderLock&&) {
   renderer.clearScreen();
+  if (retrieveAllComplete) {
+    GUI.drawPopup(renderer, RETRIEVE_ALL_BOOKS_DONE_MESSAGE);
+    return;
+  }
+  if (retrievingAllBooks) {
+    // Render the message before any Library list or cover work.  This makes
+    // the operation visibly start even on the slower X3 display path.
+    GUI.drawPopup(renderer, RETRIEVE_ALL_BOOKS_MESSAGE);
+    retrievingAllBooksPopupRendered = true;
+    return;
+  }
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto& theme = static_cast<const FolioNooirTheme&>(GUI);
   const FolioShelfLayout layout = theme.shelfLayout(renderer, metrics);
@@ -531,10 +655,12 @@ void FolioLibraryActivity::render(RenderLock&&) {
   const int featuredTop = detailTop;
   const int featuredHeight = detailHeight;
 
-  const int coverX = 12;
-  const int coverY = featuredTop + 9;
-  const int coverWidth = 112;
-  const int coverHeight = featuredHeight - 18;
+  constexpr int detailPadding = 12;
+  constexpr int detailCoverWidth = 126;
+  const int coverX = detailPadding;
+  const int coverY = featuredTop + 7;
+  const int coverWidth = detailCoverWidth;
+  const int coverHeight = featuredHeight - 20;
   const size_t slot = selectorIndex >= previewPageStart ? selectorIndex - previewPageStart : PAGE_SIZE;
   const Preview* selected = slot < PAGE_SIZE ? &previews[slot] : nullptr;
   bool drewCover = false;
@@ -572,21 +698,27 @@ void FolioLibraryActivity::render(RenderLock&&) {
     renderer.drawRect(coverX + 8, coverY, coverWidth - 16, coverHeight);
     if (selected && selected->directory) renderer.drawCenteredText(UI_12_FONT_ID, coverY + coverHeight / 2, "/", true);
   }
-  const int textX = coverX + coverWidth + 14;
-  const int textWidth = renderer.getScreenWidth() - textX - 12;
+  const int textX = detailPadding * 2 + detailCoverWidth;
+  const int textWidth = renderer.getScreenWidth() - textX - detailPadding;
   const char* titleText = selected && selected->loaded ? selected->title.c_str()
                                                         : (files.empty() ? "" : files[selectorIndex].c_str());
-  renderer.drawText(UI_12_FONT_ID, textX, featuredTop + 18,
+  renderer.drawText(UI_12_FONT_ID, textX, featuredTop + 20,
                     renderer.truncatedText(UI_12_FONT_ID, titleText, textWidth).c_str(), true);
   if (selected && !selected->author.empty())
-    renderer.drawText(UI_10_FONT_ID, textX, featuredTop + 48,
+    renderer.drawText(UI_10_FONT_ID, textX, featuredTop + 55,
                       renderer.truncatedText(UI_10_FONT_ID, selected->author.c_str(), textWidth).c_str());
   const char* synopsis = selected && !selected->synopsis.empty() ? selected->synopsis.c_str() : tr(STR_NO_SYNOPSIS);
-  const auto synopsisLines = renderer.wrappedText(SMALL_FONT_ID, synopsis, textWidth, 3);
-  int synopsisY = featuredTop + 72;
+  const int synopsisY = featuredTop + 79;
+  const int progressTextY = featuredTop + featuredHeight - 54;
+  constexpr int SYNOPSIS_PROGRESS_GAP_PX = 2;
+  const int synopsisLineHeight = std::max(1, renderer.getLineHeight(SMALL_FONT_ID));
+  const int synopsisMaxLines = std::clamp(
+      (progressTextY - synopsisY - SYNOPSIS_PROGRESS_GAP_PX) / synopsisLineHeight, 1, 5);
+  const auto synopsisLines = renderer.wrappedText(SMALL_FONT_ID, synopsis, textWidth, synopsisMaxLines);
+  int synopsisDrawY = synopsisY;
   for (const auto& line : synopsisLines) {
-    renderer.drawText(SMALL_FONT_ID, textX, synopsisY, line.c_str());
-    synopsisY += renderer.getLineHeight(SMALL_FONT_ID);
+    renderer.drawText(SMALL_FONT_ID, textX, synopsisDrawY, line.c_str());
+    synopsisDrawY += synopsisLineHeight;
   }
   if (selected && !selected->directory) {
     const std::string selectedPath = fullPath(selectorIndex);
@@ -608,8 +740,11 @@ void FolioLibraryActivity::render(RenderLock&&) {
              progress >= 100 ? tr(STR_COMPLETE) : (progress > 0 ? tr(STR_ONGOING) : tr(STR_NEW)), progress,
              static_cast<unsigned long>((seconds + 30) / 60), sessions);
     const std::string progressText = renderer.truncatedText(SMALL_FONT_ID, progressLine, textWidth);
-    renderer.drawText(SMALL_FONT_ID, textX, featuredTop + featuredHeight - 43, progressText.c_str());
-    theme.drawCoverProgress(renderer, textX, featuredTop + featuredHeight - 21, textWidth, progress);
+    renderer.drawText(SMALL_FONT_ID, textX, progressTextY, progressText.c_str());
+    const int progressY = featuredTop + featuredHeight - 28;
+    renderer.drawRect(textX, progressY, textWidth, 12);
+    const int fill = (textWidth - 2) * progress / 100;
+    if (fill > 0) renderer.fillRect(textX + 1, progressY + 1, fill, 10);
   }
   renderer.drawLine(0, detailTop + detailHeight - 1, renderer.getScreenWidth() - 1, detailTop + detailHeight - 1);
 
@@ -623,13 +758,15 @@ void FolioLibraryActivity::render(RenderLock&&) {
                },
                nullptr, [this](int index) { return UITheme::getFileIcon(files[index]); }, nullptr, false);
 
+  if (menuPopup.processRender(renderer, mappedInput)) return;
   if (bookActionsPopup.processRender(renderer, mappedInput)) return;
   if (retrievingMetadata && retrievingMetadataIndex == selectorIndex) {
     GUI.drawPopup(renderer, tr(STR_RETRIEVING_BOOK_DETAILS));
     retrievingPopupRendered = true;
     return;
   }
-  const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_OPEN), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(basepath == "/" ? tr(STR_MENU) : tr(STR_DIR_UP), tr(STR_OPEN),
+                                            tr(STR_RECENT), tr(STR_FINISHED));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }

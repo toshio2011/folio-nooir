@@ -12,6 +12,10 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "MappedInputManager.h"
+#include "SdCardFontSystem.h"
+#include "activities/home/ReadingStatsActivity.h"
+#include "activities/settings/TextSettingsActivity.h"
+#include "util/ScreenshotUtil.h"
 #include "ProgressFile.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
@@ -29,6 +33,7 @@ constexpr uint8_t CACHE_VERSION = 3;          // Increment when cache format cha
 
 void TxtReaderActivity::onEnter() {
   Activity::onEnter();
+  mappedInput.setReaderMappingMode(true);
   readingSessionStartedMs = millis();
 
   if (!txt) {
@@ -52,6 +57,7 @@ void TxtReaderActivity::onEnter() {
 
 void TxtReaderActivity::onExit() {
   Activity::onExit();
+  mappedInput.setReaderMappingMode(false);
   renderer.setDarkMode(false);
 
   if (txt) {
@@ -75,11 +81,41 @@ void TxtReaderActivity::onExit() {
 }
 
 void TxtReaderActivity::loop() {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Power) && longPowerShortcutFired) {
+    longPowerShortcutFired = false;
+    return;
+  }
+  if (SETTINGS.longPwrBtn != CrossPointSettings::LP_PWR_SLEEP &&
+      SETTINGS.longPwrBtn != CrossPointSettings::LP_PWR_IGNORE && gpio.isPressed(HalGPIO::BTN_POWER) &&
+      gpio.getPowerButtonHeldTime() >= ReaderUtils::GO_HOME_MS && !longPowerShortcutFired) {
+    longPowerShortcutFired = true;
+    if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_READER_OPTIONS) {
+      startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
+                                                                    TextSettingsActivity::Tab::Size),
+                             [this](const ActivityResult&) { requestUpdate(); });
+    } else if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_READING_STATS) {
+      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, txt->getPath()),
+                             [this](const ActivityResult&) { requestUpdate(); });
+    } else if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_SCREENSHOT) {
+      RenderLock lock(*this);
+      ScreenshotUtil::takeScreenshot(renderer);
+    }
+    return;
+  }
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (darkShortcutFired) {
       darkShortcutFired = false;
       return;
     }
+  }
+  if (SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_READER_OPTIONS &&
+      mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && !darkShortcutFired) {
+    darkShortcutFired = true;
+    startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
+                                                                  TextSettingsActivity::Tab::Size),
+                           [this](const ActivityResult&) { requestUpdate(); });
+    return;
   }
   if (SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_DARK_MODE &&
       mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
@@ -96,10 +132,49 @@ void TxtReaderActivity::loop() {
   }
 
   const auto touch = ReaderUtils::detectTouchPageTurn(renderer, mappedInput);
-  auto [prevTriggered, nextTriggered, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
+  auto [prevTriggered, nextTriggered, fromTilt, fromSide] = ReaderUtils::detectPageTurn(mappedInput);
   prevTriggered = prevTriggered || touch.prev;
   nextTriggered = nextTriggered || touch.next;
   if (!prevTriggered && !nextTriggered) {
+    return;
+  }
+
+  const unsigned long heldMs = (touch.prev || touch.next) ? touch.heldMs : mappedInput.getHeldTime();
+  const auto longPressBehavior = fromSide
+                                     ? (SETTINGS.sideLongPressAction == CrossPointSettings::SIDE_LONG_CHAPTER_SKIP
+                                            ? CrossPointSettings::CHAPTER_SKIP
+                                        : SETTINGS.sideLongPressAction == CrossPointSettings::SIDE_LONG_ORIENTATION
+                                            ? CrossPointSettings::ORIENTATION_CHANGE
+                                            : CrossPointSettings::OFF)
+                                     : SETTINGS.longPressButtonBehavior;
+  if (!fromTilt && heldMs > ReaderUtils::SKIP_HOLD_MS && longPressBehavior == CrossPointSettings::CHAPTER_SKIP) {
+    if (totalPages <= 0) return;
+    currentPage = nextTriggered ? std::min(totalPages - 1, currentPage + 10) : std::max(0, currentPage - 10);
+    requestUpdate();
+    return;
+  }
+  if (!fromTilt && heldMs > ReaderUtils::SKIP_HOLD_MS &&
+      longPressBehavior == CrossPointSettings::ORIENTATION_CHANGE) {
+    SETTINGS.orientation = nextTriggered
+                               ? static_cast<uint8_t>((SETTINGS.orientation - 1 + CrossPointSettings::ORIENTATION_COUNT) %
+                                                      CrossPointSettings::ORIENTATION_COUNT)
+                               : static_cast<uint8_t>((SETTINGS.orientation + 1) % CrossPointSettings::ORIENTATION_COUNT);
+    SETTINGS.saveToFile();
+    ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+    initialized = false;
+    pageOffsets.clear();
+    currentPageLines.clear();
+    requestUpdate();
+    return;
+  }
+  if (!fromTilt && fromSide && heldMs > ReaderUtils::SKIP_HOLD_MS &&
+      SETTINGS.sideLongPressAction == CrossPointSettings::SIDE_LONG_FONT_SIZE) {
+    SETTINGS.fontSize = static_cast<uint8_t>((SETTINGS.fontSize + 1) % CrossPointSettings::FONT_SIZE_COUNT);
+    SETTINGS.saveToFile();
+    initialized = false;
+    pageOffsets.clear();
+    currentPageLines.clear();
+    requestUpdate();
     return;
   }
 

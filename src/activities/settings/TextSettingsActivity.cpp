@@ -13,12 +13,14 @@
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
 #include "TextSettingsPreview.h"
+#include "activities/util/IntervalSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
 namespace {
-// Tab labels for Font | Size | Layout | Style (shared by render and loop touch hit-testing).
-constexpr StrId TAB_NAME_IDS[] = {StrId::STR_FONT, StrId::STR_SIZE, StrId::STR_LAYOUT, StrId::STR_STYLE};
+// Tab labels for Font | Size | Layout | Style | Dictionary (shared by render and loop touch hit-testing).
+constexpr StrId TAB_NAME_IDS[] = {StrId::STR_FONT, StrId::STR_SIZE, StrId::STR_LAYOUT, StrId::STR_STYLE,
+                                  StrId::STR_DICTIONARY};
 
 int findCurrentFontIndex(const SdCardFontRegistry* registry, const char* sdFontFamilyName, uint8_t fontFamily) {
   if (sdFontFamilyName[0] != '\0' && registry) {
@@ -37,7 +39,6 @@ int findCurrentFontSizeIndex(uint8_t fontSize, size_t listSize) {
   return fontSize < listSize ? fontSize : 1;  // default MEDIUM
 }
 
-constexpr StrId LINE_SPACING_IDS[] = {StrId::STR_TIGHT, StrId::STR_NORMAL, StrId::STR_WIDE};
 constexpr StrId ALIGNMENT_IDS[] = {StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId::STR_CENTER, StrId::STR_ALIGN_RIGHT,
                                    StrId::STR_BOOK_S_STYLE};
 constexpr int MARGIN_MIN = CrossPointSettings::SCREEN_MARGIN_MIN;
@@ -76,11 +77,29 @@ void TextSettingsActivity::onEnter() {
   sizes_.push_back({I18N.get(StrId::STR_FONT_16_PT), static_cast<uint8_t>(CrossPointSettings::LARGE)});
   sizes_.push_back({I18N.get(StrId::STR_FONT_18_PT), static_cast<uint8_t>(CrossPointSettings::EXTRA_LARGE)});
 
+  dictionaryFonts_.clear();
+  dictionaryFonts_.push_back({I18N.get(StrId::STR_USE_READER_FONT), false,
+                              static_cast<uint8_t>(CrossPointSettings::DICT_USE_READER)});
+  dictionaryFonts_.push_back({I18N.get(StrId::STR_NOTO_SERIF), true,
+                              static_cast<uint8_t>(CrossPointSettings::DICT_NOTOSERIF)});
+  dictionaryFonts_.push_back({I18N.get(StrId::STR_NOTO_SANS), true,
+                              static_cast<uint8_t>(CrossPointSettings::DICT_NOTOSANS)});
+  dictionarySizes_ = sizes_;
+
   currentFamilyIndex_ = findCurrentFontIndex(registry_, SETTINGS.sdFontFamilyName, SETTINGS.fontFamily);
   currentSizeIndex_ = findCurrentFontSizeIndex(SETTINGS.fontSize, sizes_.size());
+  currentDictionaryFamilyIndex_ = 0;
+  for (int i = 0; i < static_cast<int>(dictionaryFonts_.size()); ++i) {
+    if (dictionaryFonts_[i].settingIndex == SETTINGS.dictionaryFontFamily) {
+      currentDictionaryFamilyIndex_ = i;
+      break;
+    }
+  }
+  currentDictionarySizeIndex_ = findCurrentFontSizeIndex(SETTINGS.dictionaryFontSize, dictionarySizes_.size());
   std::fill(std::begin(selectedIndex_), std::end(selectedIndex_), 1);       // default to the first list row
   selectedIndex_[static_cast<int>(Tab::Family)] = currentFamilyIndex_ + 1;  // Family/Size open on current selection
   selectedIndex_[static_cast<int>(Tab::Size)] = currentSizeIndex_ + 1;
+  selectedIndex_[static_cast<int>(Tab::Dictionary)] = currentDictionaryFamilyIndex_ + 1;
 
   requestUpdate();
 }
@@ -268,6 +287,21 @@ void TextSettingsActivity::render(RenderLock&&) {
       break;
     }
 
+    case Tab::Dictionary: {
+      constexpr int DICTIONARY_ROWS = 2;
+      static constexpr StrId ROW_NAME_IDS[DICTIONARY_ROWS] = {StrId::STR_FONT, StrId::STR_SIZE};
+      GUI.drawList(
+          renderer, listRect, DICTIONARY_ROWS, selectedItem,
+          [](int index) { return std::string(I18N.get(ROW_NAME_IDS[index])); }, nullptr, nullptr,
+          [this](int index) {
+            return index == 0 ? dictionaryFonts_[currentDictionaryFamilyIndex_].name
+                              : dictionarySizes_[currentDictionarySizeIndex_].name;
+          },
+          true);
+      confirmLabel = onTabBar ? tr(STR_FONT) : tr(STR_SELECT);
+      break;
+    }
+
     default:
       break;
   }
@@ -328,6 +362,24 @@ void TextSettingsActivity::activateRow(int row) {
     case Tab::Style:
       confirmStyleRow(row);
       break;
+    case Tab::Dictionary:
+      if (row == 0) {
+        std::vector<std::string> options;
+        options.reserve(dictionaryFonts_.size());
+        for (const auto& entry : dictionaryFonts_) options.push_back(entry.name);
+        optionPopup_.show(StrId::STR_FONT, options, currentDictionaryFamilyIndex_, [this](int index) {
+          applyDictionaryFamily(index);
+        });
+      } else if (row == 1) {
+        std::vector<std::string> options;
+        options.reserve(dictionarySizes_.size());
+        for (const auto& entry : dictionarySizes_) options.push_back(entry.name);
+        optionPopup_.show(StrId::STR_SIZE, options, currentDictionarySizeIndex_, [this](int index) {
+          applyDictionarySize(index);
+        });
+      }
+      requestUpdate();
+      break;
     default:
       break;
   }
@@ -343,6 +395,18 @@ void TextSettingsActivity::applySize(int listIndex) {
   sdFontSystem.ensureLoaded(renderer);
 }
 
+void TextSettingsActivity::applyDictionaryFamily(int listIndex) {
+  if (listIndex < 0 || listIndex >= static_cast<int>(dictionaryFonts_.size())) return;
+  currentDictionaryFamilyIndex_ = listIndex;
+  SETTINGS.dictionaryFontFamily = dictionaryFonts_[listIndex].settingIndex;
+}
+
+void TextSettingsActivity::applyDictionarySize(int listIndex) {
+  if (listIndex < 0 || listIndex >= static_cast<int>(dictionarySizes_.size())) return;
+  currentDictionarySizeIndex_ = listIndex;
+  SETTINGS.dictionaryFontSize = dictionarySizes_[listIndex].settingIndex;
+}
+
 void TextSettingsActivity::confirmLayoutRow(int row) {
   switch (static_cast<LayoutRow>(row)) {
     case LayoutRow::ParaSpacing:
@@ -350,8 +414,17 @@ void TextSettingsActivity::confirmLayoutRow(int row) {
       requestUpdate();
       break;
     case LayoutRow::LineSpacing:
-      optionPopup_.show(StrId::STR_LINE_SPACING, LINE_SPACING_IDS, static_cast<int>(std::size(LINE_SPACING_IDS)),
-                        SETTINGS.lineSpacing, [](int idx) { SETTINGS.lineSpacing = static_cast<uint8_t>(idx); });
+      startActivityForResult(
+          std::make_unique<IntervalSelectionActivity>(
+              renderer, mappedInput, "LineSpacingInterval", StrId::STR_LINE_SPACING, SETTINGS.lineSpacingPercent,
+              CrossPointSettings::LINE_SPACING_MIN_PERCENT, CrossPointSettings::LINE_SPACING_MAX_PERCENT, 1, 10,
+              StrId::STR_PERCENT_VALUE_FORMAT, false, true),
+          [this](const ActivityResult& result) {
+            if (!result.isCancelled) {
+              SETTINGS.lineSpacingPercent = static_cast<uint8_t>(std::get<IntervalResult>(result.data).value);
+            }
+            requestUpdate();
+          });
       requestUpdate();
       break;
     case LayoutRow::Alignment:
@@ -379,8 +452,9 @@ void TextSettingsActivity::confirmLayoutRow(int row) {
 std::string TextSettingsActivity::layoutValueText(int row) const {
   switch (static_cast<LayoutRow>(row)) {
     case LayoutRow::LineSpacing: {
-      const uint8_t v = SETTINGS.lineSpacing;
-      return v < std::size(LINE_SPACING_IDS) ? I18N.get(LINE_SPACING_IDS[v]) : I18N.get(StrId::STR_NORMAL);
+      return std::to_string(std::clamp<int>(SETTINGS.lineSpacingPercent,
+                                             CrossPointSettings::LINE_SPACING_MIN_PERCENT,
+                                             CrossPointSettings::LINE_SPACING_MAX_PERCENT)) + "%";
     }
     case LayoutRow::ParaSpacing:
       return SETTINGS.extraParagraphSpacing ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
@@ -436,7 +510,9 @@ std::string TextSettingsActivity::styleValueText(int row) const {
 // Only Focus Reading shows in the preview (bold prefixes); the other Style rows
 // have no distinct preview.
 bool TextSettingsActivity::focusedRowHasNoPreview() const {
-  if (selectedIndex() == 0 || tab_ != Tab::Style) return false;
+  if (selectedIndex() == 0) return false;
+  if (tab_ == Tab::Dictionary) return true;
+  if (tab_ != Tab::Style) return false;
   const StyleRow row = static_cast<StyleRow>(selectedIndex() - 1);
   return row == StyleRow::Hyphenation || row == StyleRow::EmbeddedStyle || row == StyleRow::AntiAliasing;
 }
@@ -459,6 +535,8 @@ int TextSettingsActivity::currentListSize() const {
       return static_cast<int>(LayoutRow::Count);
     case Tab::Style:
       return static_cast<int>(StyleRow::Count);
+    case Tab::Dictionary:
+      return 2;
 
     default:
       return 0;

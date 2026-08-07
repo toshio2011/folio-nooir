@@ -32,6 +32,7 @@ class FolioLibraryActivity final : public Activity {
   static constexpr size_t NAME_BUFFER_SIZE = 500;
 
   ButtonNavigator buttonNavigator;
+  OptionPopup menuPopup;
   OptionPopup bookActionsPopup;
   std::string basepath = "/";
   std::vector<std::string> allFiles;
@@ -39,16 +40,23 @@ class FolioLibraryActivity final : public Activity {
   LibraryFilter libraryFilter = LibraryFilter::All;
   std::unique_ptr<char[]> fileNameBuffer;
   std::array<Preview, PAGE_SIZE> previews;
+  std::vector<std::string> retrieveDirectories;
+  std::vector<std::string> retrieveBooks;
   size_t selectorIndex = 0;
   size_t previewPageStart = SIZE_MAX;
   size_t nextPreviewSlot = 0;
-  size_t nextCoverSlot = 0;
-  unsigned long lastCoverGenerationMs = 0;
   size_t observedSelectorIndex = SIZE_MAX;
   unsigned long selectionChangedMs = 0;
   size_t retrievingMetadataIndex = SIZE_MAX;
   bool retrievingMetadata = false;
   volatile bool retrievingPopupRendered = false;
+  size_t retrieveDirectoryIndex = 0;
+  size_t retrieveBookIndex = 0;
+  bool retrievingAllBooks = false;
+  volatile bool retrievingAllBooksPopupRendered = false;
+  bool retrieveAllComplete = false;
+  unsigned long retrieveAllCompleteUntilMs = 0;
+  bool swallowMenuBackRelease = false;
   bool longPressActionShown = false;
   bool swallowConfirmRelease = false;
   bool swallowBackRelease = false;
@@ -57,11 +65,13 @@ class FolioLibraryActivity final : public Activity {
   void applyLibraryFilter();
   void resetPreviews();
   void loadNextPreview();
-  void generateNextMissingCover();
   void loadSelectedMetadata();
   bool matchesLibraryFilter(const std::string& name) const;
   FolioLibrarySummary getLibrarySummary() const;
   std::string fullPath(size_t index) const;
+  void showMenu();
+  void startRetrieveAllBooks();
+  void processRetrieveAllBooks();
   void activateSelected();
   void showBookActions();
 

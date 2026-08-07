@@ -22,6 +22,7 @@ class XtcReaderActivity final : public Activity {
   int pagesUntilFullRefresh = 0;
   unsigned long readingSessionStartedMs = 0UL;
   bool darkShortcutFired = false;
+  bool longPowerShortcutFired = false;
   // Next-book suggestion menu for the End-of-Book screen
   EndOfBookOptions endOfBookOptions;
 

@@ -1,5 +1,7 @@
 # Folio Nooir
 
+Current development release: **v1.5.1**.
+
 Folio Nooir is an experimental, bookshelf-focused e-reader firmware for Xteink devices. It is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), keeping the core reader, wireless transfer, sleep, and settings features while adding a Folio Nooir interface and reading tools.
 
 ## Hardware warning
@@ -13,6 +15,16 @@ This does not repair physical screen damage, factory firmware locks, damaged cab
 If CrossInk is already installed and working on your device, you can safely ignore this firmware. If CrossPoint is installed and working, use the recovery instructions and keep a known-good image before switching.
 
 ## Features
+
+### CrossPoint functions retained
+
+Folio Nooir is an interface and feature layer on top of CrossPoint rather than a replacement reader. The existing CrossPoint workflows remain available:
+
+- EPUB, XTC/XTCH, TXT, Markdown, and PDF/file-browser workflows.
+- Wi-Fi setup, browser-based file transfer, and the built-in web server.
+- OPDS browsing, KOReader Sync, and OTA update support.
+- Sleep cover, battery/status screens, SD-card firmware update, and recovery tools.
+- Existing input mappings, themes/settings storage, and device configuration.
 
 ### Folio Nooir bookshelf
 
@@ -32,11 +44,17 @@ If CrossInk is already installed and working on your device, you can safely igno
 - Large images are fitted to the display instead of producing empty squares where possible.
 - XTC/XTCH cover and page rendering improvements.
 - Reader font size in points rather than only Small/Medium/Large presets.
-- Point-based margin and line-spacing controls.
+- Point-based margin controls and line-spacing controls with fine percentage steps.
+- UI scale controls for menus and reader controls; bookshelf geometry remains fixed.
 - Reader dark mode.
 - Multi-dictionary lookup with dictionary history and preferred-dictionary reuse.
 - Text clipping: select text, save clips, and review saved clips from the reader.
 - Reader shortcuts and existing CrossPoint input mappings remain available.
+- CrossInk-inspired controls: short/long power actions, separate reader front-button remapping,
+  side-button layout and long-press actions, plus Reader Options shortcuts while reading.
+- Dictionary settings are available directly from the Reader settings tab as well as Text Settings.
+- Dictionary font and dictionary font-size settings are available independently from reading typography.
+- Reader Options can be opened while reading from the reader menu, mapped front button, long-press menu, or configured power-button action.
 - Bluetooth HID/page-turner support is present in the codebase but remains experimental and is not considered stable for release yet.
 
 ### Reading statistics
@@ -60,6 +78,7 @@ When the device is connected to the same network, the built-in web interface pro
 - Reset-reading-data action and JSON statistics export.
 - File browsing, image preview, upload, download, rename, move, delete, and folder creation.
 - Existing CrossPoint settings, Wi-Fi, OPDS, font, and typography pages.
+- Network activities keep their existing behavior and are entered without an unconditional reboot; memory-heavy cleanup is performed when leaving the activity.
 
 ### Sleep and display
 

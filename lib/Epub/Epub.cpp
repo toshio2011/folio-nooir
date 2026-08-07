@@ -354,9 +354,54 @@ void Epub::parseCssFiles() const {
   cssParser->clear();
 }
 
+const BookMetadataCache::BookMetadata* Epub::activeMetadata() const {
+  if (bookMetadataCache && bookMetadataCache->isLoaded()) return &bookMetadataCache->coreMetadata;
+  return metadataOnlyLoaded ? &metadataOnly : nullptr;
+}
+
+bool Epub::loadMetadataOnly() {
+  // Keep this path independent from the reader cache.  In particular, do not
+  // create spine/TOC output or parse CSS just to populate a bookshelf card.
+  bookMetadataCache.reset();
+  cssParser.reset();
+  metadataOnly = {};
+  metadataOnlyLoaded = false;
+  tocNcxItem.clear();
+  tocNavItem.clear();
+  cssFiles.clear();
+  contentBasePath.clear();
+  setupCacheDir();
+
+  BookMetadataCache::BookMetadata parsed;
+  if (!parseContentOpf(parsed, false)) return false;
+  metadataOnly = std::move(parsed);
+  metadataOnlyLoaded = true;
+  return true;
+}
+
+bool Epub::loadCachedMetadataOnly() {
+  // This is the fast shelf path: book.bin already contains the six core
+  // metadata strings at its header. Avoid constructing CssParser or touching
+  // the EPUB ZIP unless the selected item later enters loadMetadataOnly().
+  metadataOnly = {};
+  metadataOnlyLoaded = false;
+  cssParser.reset();
+  bookMetadataCache.reset(new BookMetadataCache(cachePath));
+  if (!bookMetadataCache->load()) {
+    bookMetadataCache.reset();
+    return false;
+  }
+  metadataOnly = bookMetadataCache->coreMetadata;
+  metadataOnlyLoaded = true;
+  return true;
+}
+
 // load in the meta data for the epub file
 bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
   LOG_DBG("EBP", "Loading ePub: %s", filepath.c_str());
+
+  metadataOnly = {};
+  metadataOnlyLoaded = false;
 
   // Initialize spine/TOC cache
   bookMetadataCache.reset(new BookMetadataCache(cachePath));
@@ -534,35 +579,26 @@ const std::string& Epub::getPath() const { return filepath; }
 
 const std::string& Epub::getTitle() const {
   static std::string blank;
-  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
-    return blank;
-  }
-
-  return bookMetadataCache->coreMetadata.title;
+  const auto* metadata = activeMetadata();
+  return metadata ? metadata->title : blank;
 }
 
 const std::string& Epub::getAuthor() const {
   static std::string blank;
-  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
-    return blank;
-  }
-
-  return bookMetadataCache->coreMetadata.author;
+  const auto* metadata = activeMetadata();
+  return metadata ? metadata->author : blank;
 }
 
 const std::string& Epub::getLanguage() const {
   static std::string blank;
-  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
-    return blank;
-  }
-
-  return bookMetadataCache->coreMetadata.language;
+  const auto* metadata = activeMetadata();
+  return metadata ? metadata->language : blank;
 }
 
 const std::string& Epub::getDescription() const {
   static std::string blank;
-  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) return blank;
-  return bookMetadataCache->coreMetadata.description;
+  const auto* metadata = activeMetadata();
+  return metadata ? metadata->description : blank;
 }
 
 std::string Epub::getCoverBmpPath(bool cropped) const {
@@ -576,12 +612,13 @@ bool Epub::generateCoverBmp(bool cropped) const {
     return true;
   }
 
-  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+  const auto* metadata = activeMetadata();
+  if (!metadata) {
     LOG_ERR("EBP", "Cannot generate cover BMP, cache not loaded");
     return false;
   }
 
-  const auto coverImageHref = bookMetadataCache->coreMetadata.coverItemHref;
+  const auto coverImageHref = metadata->coverItemHref;
   if (coverImageHref.empty()) {
     LOG_ERR("EBP", "No known cover image");
     return false;
@@ -668,12 +705,13 @@ bool Epub::generateThumbBmp(int height) const {
     return true;
   }
 
-  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
+  const auto* metadata = activeMetadata();
+  if (!metadata) {
     LOG_ERR("EBP", "Cannot generate thumb BMP, cache not loaded");
     return false;
   }
 
-  const auto coverImageHref = bookMetadataCache->coreMetadata.coverItemHref;
+  const auto coverImageHref = metadata->coverItemHref;
   if (coverImageHref.empty()) {
     LOG_DBG("EBP", "No known cover image for thumbnail");
   } else if (FsHelpers::hasJpgExtension(coverImageHref)) {

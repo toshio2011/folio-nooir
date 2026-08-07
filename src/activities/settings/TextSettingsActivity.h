@@ -19,7 +19,7 @@
 // names for the Font/Style tabs.)
 class TextSettingsActivity final : public Activity {
  public:
-  enum class Tab : uint8_t { Family, Size, Layout, Style, Count };
+  enum class Tab : uint8_t { Family, Size, Layout, Style, Dictionary, Count };
 
   TextSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const SdCardFontRegistry* registry,
                        Tab initialTab = Tab::Family);
@@ -37,6 +37,8 @@ class TextSettingsActivity final : public Activity {
 
   void applyFamily(int listIndex);
   void applySize(int listIndex);
+  void applyDictionaryFamily(int listIndex);
+  void applyDictionarySize(int listIndex);
   void confirmLayoutRow(int row);
   void confirmStyleRow(int row);
   // Applies the row at the given list index for the active tab (Confirm and tap share this).
@@ -80,6 +82,8 @@ class TextSettingsActivity final : public Activity {
   OptionPopup optionPopup_;
   std::vector<FontEntry> fonts_;
   std::vector<SizeEntry> sizes_;
+  std::vector<FontEntry> dictionaryFonts_;
+  std::vector<SizeEntry> dictionarySizes_;
   textsettings::PreviewLayout previewLayout_;  // cached preview line layout; relaid only on setting/geometry change
 
   Tab tab_;
@@ -87,6 +91,8 @@ class TextSettingsActivity final : public Activity {
       {};  // per-Tab nav position (0 = tab bar, 1..N = row); set in onEnter
   int currentFamilyIndex_ = 0;
   int currentSizeIndex_ = 0;
+  int currentDictionaryFamilyIndex_ = 0;
+  int currentDictionarySizeIndex_ = 0;
 
   ThemeMetrics metrics_ = {};
   int afterHeader = 0;

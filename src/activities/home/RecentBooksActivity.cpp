@@ -141,9 +141,11 @@ void RecentBooksActivity::writeSnapshot() {
 void RecentBooksActivity::generateNextCover() {
   if (coverGenerationActive) return;
   coverGenerationActive = true;
-  // A manual Refresh Book Cache intentionally rebuilds the metadata cache;
-  // normal shelf warming remains non-blocking and must not build books.
+  // First-run warmup and manual Refresh Book Cache only need the lightweight
+  // bookshelf metadata path.  Do not build the reader's spine/TOC cache here;
+  // that work is deferred until the user opens the book.
   const bool forceRebuild = coverGenerationRequested;
+  const bool metadataOnly = forceRebuild || recentCacheWarmupActive;
   while (nextCoverToGenerate < recentBooks.size()) {
     RecentBook& book = recentBooks[nextCoverToGenerate++];
     if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path)) continue;
@@ -157,7 +159,8 @@ void RecentBooksActivity::generateNextCover() {
     bool attempted = false;
     if (FsHelpers::hasEpubExtension(book.path)) {
       Epub epub(book.path, "/.crosspoint");
-      if (epub.load(forceRebuild || recentCacheWarmupActive, true)) {
+      const bool loaded = metadataOnly ? epub.loadMetadataOnly() : epub.load(false, true);
+      if (loaded) {
         attempted = true;
         const std::string title = epub.getTitle().empty() ? book.title : epub.getTitle();
         const std::string author = epub.getAuthor();
@@ -211,7 +214,8 @@ void RecentBooksActivity::generateNextCover() {
       initialRenderPending = true;
       coverGenerationActive = false;
       // Continue until every missing recent entry has been attempted during
-      // the first-run warmup. Manual refresh still rebuilds only one book.
+      // first-run warmup. Manual refresh intentionally processes one book at
+      // a time so the shelf stays responsive.
       coverGenerationRequested = recentCacheWarmupActive;
       requestUpdate();
       return;  // At most one expensive extraction per activity cycle.
@@ -230,7 +234,12 @@ void RecentBooksActivity::showMenu() {
   const char* options[] = {tr(STR_BROWSE_FILES), tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), "Reading Statistics",
                            "Reading Calendar"};
   menuPopup.show(tr(STR_MENU), options, 5, 0, [this](int index) {
-    if (index == 0) activityManager.goToFileBrowser();
+    if (index == 0) {
+      // Match the header's Library button exactly: open the graphical Library
+      // at its root and stop processing this menu choice.
+      activityManager.goToFileBrowser("/");
+      return;
+    }
     if (index == 1) activityManager.goToFileTransfer();
     if (index == 2) activityManager.goToSettings();
     if (index == 3) startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), nullptr);
@@ -408,11 +417,14 @@ void RecentBooksActivity::loop() {
 
   const bool previousTab = mappedInput.wasReleased(MappedInputManager::Button::Left);
   const bool nextTab = mappedInput.wasReleased(MappedInputManager::Button::Right);
-  if (previousTab || nextTab) {
-    if (previousTab && activeTab == 1) {
-      activityManager.goToFileBrowser();
-      return;
-    }
+  if (previousTab) {
+    // Third button: always return to the Library, regardless of whether the
+    // current shelf is Recent or Finished.
+    activityManager.goToFileBrowser("/");
+    return;
+  }
+  if (nextTab) {
+    // Fourth button: switch directly between Recent and Finished.
     activeTab = activeTab == 2 ? 1 : 2;
     selectorIndex = 0;
     rebuildVisibleBooks();
@@ -440,7 +452,7 @@ void RecentBooksActivity::loop() {
       const uint8_t touchedTab =
           static_cast<uint8_t>(std::min(2, std::max(0, touchX * 3 / renderer.getScreenWidth())));
       if (touchedTab == 0) {
-        activityManager.goToFileBrowser();
+        activityManager.goToFileBrowser("/");
         return;
       }
       activeTab = touchedTab;
@@ -765,12 +777,17 @@ void RecentBooksActivity::render(RenderLock&&) {
     renderer.drawText(UI_12_FONT_ID, detailX, contentTop + 20, title.c_str(), true);
     renderer.drawText(UI_10_FONT_ID, detailX, contentTop + 55, author.c_str());
     const char* synopsisText = selected.synopsis.empty() ? tr(STR_NO_SYNOPSIS) : selected.synopsis.c_str();
-    const int synopsisMaxLines = std::max(3, (detailHeight - 130) / renderer.getLineHeight(SMALL_FONT_ID));
+    const int synopsisY = contentTop + 79;
+    const int progressTextY = contentTop + detailHeight - 54;
+    constexpr int SYNOPSIS_PROGRESS_GAP_PX = 2;
+    const int synopsisLineHeight = std::max(1, renderer.getLineHeight(SMALL_FONT_ID));
+    const int synopsisMaxLines = std::clamp(
+        (progressTextY - synopsisY - SYNOPSIS_PROGRESS_GAP_PX) / synopsisLineHeight, 1, 5);
     const auto synopsisLines = renderer.wrappedText(SMALL_FONT_ID, synopsisText, detailWidth, synopsisMaxLines);
-    int synopsisY = contentTop + 79;
+    int synopsisDrawY = synopsisY;
     for (const auto& line : synopsisLines) {
-      renderer.drawText(SMALL_FONT_ID, detailX, synopsisY, line.c_str());
-      synopsisY += renderer.getLineHeight(SMALL_FONT_ID);
+      renderer.drawText(SMALL_FONT_ID, detailX, synopsisDrawY, line.c_str());
+      synopsisDrawY += synopsisLineHeight;
     }
     char state[96];
     const uint32_t readingMinutes = (selected.readingSeconds + 30) / 60;
@@ -779,7 +796,7 @@ void RecentBooksActivity::render(RenderLock&&) {
                                              : (selected.progressPercent > 0 ? tr(STR_ONGOING) : tr(STR_NEW)),
              selected.progressPercent, static_cast<unsigned long>(readingMinutes), selected.readingSessions);
     const std::string stateText = renderer.truncatedText(SMALL_FONT_ID, state, detailWidth);
-    renderer.drawText(SMALL_FONT_ID, detailX, contentTop + detailHeight - 54, stateText.c_str());
+    renderer.drawText(SMALL_FONT_ID, detailX, progressTextY, stateText.c_str());
     const int progressY = contentTop + detailHeight - 28;
     renderer.drawRect(detailX, progressY, detailWidth, 12);
     const int fill = (detailWidth - 2) * selected.progressPercent / 100;
@@ -861,7 +878,8 @@ void RecentBooksActivity::render(RenderLock&&) {
     overlayFrameShown = true;
     return;
   }
-  const auto labels = mappedInput.mapLabels(tr(STR_MENU), tr(STR_OPEN), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(tr(STR_MENU), tr(STR_OPEN), tr(STR_LIBRARY),
+                                            activeTab == 1 ? tr(STR_FINISHED) : tr(STR_RECENT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
   if (initialRenderPending) {

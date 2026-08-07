@@ -39,6 +39,9 @@
 #include "RecentBooksStore.h"
 #include "BookStateStore.h"
 #include "ReadingStatsStore.h"
+#include "SdCardFontSystem.h"
+#include "activities/home/ReadingStatsActivity.h"
+#include "activities/settings/TextSettingsActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/BookmarkUtil.h"
@@ -159,6 +162,7 @@ void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string&
 
 void EpubReaderActivity::onEnter() {
   Activity::onEnter();
+  mappedInput.setReaderMappingMode(true);
   readingSessionStartedMs = millis();
 
   if (!epub) {
@@ -224,6 +228,7 @@ void EpubReaderActivity::onEnter() {
 
 void EpubReaderActivity::onExit() {
   Activity::onExit();
+  mappedInput.setReaderMappingMode(false);
   renderer.setDarkMode(false);
 
   if (epub) {
@@ -291,6 +296,16 @@ void EpubReaderActivity::openReaderMenu() {
                              onReaderMenuConfirm(static_cast<EpubReaderMenuActivity::MenuAction>(menu.action));
                            }
                          });
+}
+
+void EpubReaderActivity::openReaderOptions() {
+  startActivityForResult(
+      std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
+                                             TextSettingsActivity::Tab::Size),
+      [this](const ActivityResult&) {
+        SETTINGS.saveToFile();
+        requestUpdate();
+      });
 }
 
 bool EpubReaderActivity::buildTickHeapGate() {
@@ -369,6 +384,41 @@ void EpubReaderActivity::openClipSelection() {
 }
 
 void EpubReaderActivity::loop() {
+  // A configurable long power hold is handled in the reader before the main
+  // sleep guard. The main loop deliberately leaves the button alone for these
+  // actions; releasing it must not also trigger a short-power action.
+  if (mappedInput.wasReleased(MappedInputManager::Button::Power)) {
+    if (longPowerShortcutFired) {
+      longPowerShortcutFired = false;
+      return;
+    }
+  }
+  if (SETTINGS.longPwrBtn != CrossPointSettings::LP_PWR_SLEEP &&
+      SETTINGS.longPwrBtn != CrossPointSettings::LP_PWR_IGNORE && gpio.isPressed(HalGPIO::BTN_POWER) &&
+      gpio.getPowerButtonHeldTime() >= ReaderUtils::GO_HOME_MS && !longPowerShortcutFired) {
+    longPowerShortcutFired = true;
+    ignoreNextConfirmRelease = true;
+    switch (SETTINGS.longPwrBtn) {
+      case CrossPointSettings::LP_PWR_READER_OPTIONS:
+        openReaderOptions();
+        break;
+      case CrossPointSettings::LP_PWR_READING_STATS:
+        startActivityForResult(
+            std::make_unique<ReadingStatsActivity>(renderer, mappedInput, epub ? epub->getPath() : std::string{}),
+            [this](const ActivityResult&) { requestUpdate(); });
+        break;
+      case CrossPointSettings::LP_PWR_SCREENSHOT:
+        pendingScreenshot = true;
+        requestUpdate();
+        break;
+      case CrossPointSettings::LP_PWR_SLEEP:
+      case CrossPointSettings::LP_PWR_IGNORE:
+      default:
+        break;
+    }
+    return;
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) darkShortcutFired = false;
   if (!epub) {
     // Should never happen
@@ -621,6 +671,13 @@ void EpubReaderActivity::loop() {
           return;
         }
         break;
+      case CrossPointSettings::LP_MENU_READER_OPTIONS:
+        if (mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS) {
+          ignoreNextConfirmRelease = true;
+          openReaderOptions();
+          return;
+        }
+        break;
       case CrossPointSettings::LP_MENU_DISABLED:
       default:
         break;
@@ -642,6 +699,23 @@ void EpubReaderActivity::loop() {
   // auto [prevTriggered, nextTriggered] = ReaderUtils::detectPageTurn(mappedInput);
 
   // Handle short power button press for footnotes
+  if (mappedInput.wasReleased(MappedInputManager::Button::Power) &&
+      !mappedInput.wasReleased(MappedInputManager::Button::Down)) {
+    if (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::BOOKMARK) {
+      addBookmark();
+      showBookmarkMessage = true;
+      bookmarkMessageTime = millis();
+      requestUpdate();
+      return;
+    }
+    if (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::DARK_MODE) {
+      SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
+      SETTINGS.saveToFile();
+      requestUpdate();
+      return;
+    }
+  }
+
   if (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::FOOTNOTES &&
       mappedInput.wasReleased(MappedInputManager::Button::Power) &&
       !mappedInput.wasReleased(MappedInputManager::Button::Down)) {
@@ -665,7 +739,7 @@ void EpubReaderActivity::loop() {
     return;
   }
 
-  auto [prevTriggered, nextTriggered, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
+  auto [prevTriggered, nextTriggered, fromTilt, fromSide] = ReaderUtils::detectPageTurn(mappedInput);
   prevTriggered = prevTriggered || touch.prev;
   nextTriggered = nextTriggered || touch.next;
   if (!prevTriggered && !nextTriggered) {
@@ -699,7 +773,28 @@ void EpubReaderActivity::loop() {
     return;
   }
 
-  if (longPress && SETTINGS.longPressButtonBehavior == SETTINGS.CHAPTER_SKIP) {
+  const auto longPressBehavior = fromSide
+                                     ? (SETTINGS.sideLongPressAction == CrossPointSettings::SIDE_LONG_CHAPTER_SKIP
+                                            ? CrossPointSettings::CHAPTER_SKIP
+                                        : SETTINGS.sideLongPressAction == CrossPointSettings::SIDE_LONG_ORIENTATION
+                                            ? CrossPointSettings::ORIENTATION_CHANGE
+                                            : CrossPointSettings::OFF)
+                                     : SETTINGS.longPressButtonBehavior;
+
+  if (longPress && fromSide && SETTINGS.sideLongPressAction == CrossPointSettings::SIDE_LONG_FONT_SIZE) {
+    SETTINGS.fontSize = static_cast<uint8_t>((SETTINGS.fontSize + 1) % CrossPointSettings::FONT_SIZE_COUNT);
+    SETTINGS.saveToFile();
+    // Rebuild the current chapter with the new typography while retaining the
+    // approximate page position. The normal cached-position reconciliation in
+    // render() corrects the page when the new pagination is known.
+    nextPageNumber = section ? section->currentPage : nextPageNumber;
+    cachedChapterTotalPageCount = section ? section->estimatedTotalPages() : cachedChapterTotalPageCount;
+    section.reset();
+    requestUpdate();
+    return;
+  }
+
+  if (longPress && longPressBehavior == SETTINGS.CHAPTER_SKIP) {
     if (!nextTriggered && section && section->currentPage > 0) {
       section->currentPage = 0;
       requestUpdate();
@@ -721,7 +816,7 @@ void EpubReaderActivity::loop() {
     return;
   }
 
-  if (longPress && SETTINGS.longPressButtonBehavior == SETTINGS.ORIENTATION_CHANGE) {
+  if (longPress && longPressBehavior == SETTINGS.ORIENTATION_CHANGE) {
     const uint8_t newOrientation =
         nextTriggered ? (SETTINGS.orientation - 1 + SETTINGS.ORIENTATION_COUNT) % SETTINGS.ORIENTATION_COUNT
                       : (SETTINGS.orientation + 1) % SETTINGS.ORIENTATION_COUNT;
@@ -863,6 +958,10 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
               section.reset();
             }
           });
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::READER_OPTIONS: {
+      openReaderOptions();
       break;
     }
     case EpubReaderMenuActivity::MenuAction::FOOTNOTES: {
