@@ -69,6 +69,10 @@ When the device is connected to the same network, the built-in web interface pro
 - Ghosting mitigation and clean refreshes when leaving books or entering sleep.
 - Conservative X3/X4 display-driver detection for the supported C3 family.
 
+Some sleep-overlay, display-compatibility, and reader usability ideas were
+reviewed against the open-source [CrossInk](https://github.com/uxjulia/CrossInk)
+project and adapted where they fit Folio Nooir's CrossPoint base.
+
 ## Installation
 
 1. Download a release from this repository's **Releases** page.
@@ -134,6 +138,6 @@ For a release build, use the `gh_release` environment:
 
 ## Credits and license
 
-Folio Nooir is built on [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), with display and reader foundations from the CrossPoint contributors and related Xteink community projects.
+Folio Nooir is built on [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), with display and reader foundations from the CrossPoint contributors. It also acknowledges the open-source [CrossInk](https://github.com/uxjulia/CrossInk) project as a reference for compatible Xteink display, sleep-screen, and reader improvements.
 
 Licensed under the MIT License.
