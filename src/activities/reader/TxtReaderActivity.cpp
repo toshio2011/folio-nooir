@@ -81,6 +81,11 @@ void TxtReaderActivity::onExit() {
 }
 
 void TxtReaderActivity::loop() {
+  if (skipNextButtonCheck) {
+    skipNextButtonCheck = false;
+    return;
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Power) && longPowerShortcutFired) {
     longPowerShortcutFired = false;
     return;
@@ -92,7 +97,16 @@ void TxtReaderActivity::loop() {
     if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_READER_OPTIONS) {
       startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
                                                                     TextSettingsActivity::Tab::Size),
-                             [this](const ActivityResult&) { requestUpdate(); });
+                             [this](const ActivityResult&) {
+                               SETTINGS.saveToFile();
+                               initialized = false;
+                               pageOffsets.clear();
+                               currentPageLines.clear();
+                               darkShortcutFired = false;
+                               longPowerShortcutFired = false;
+                               skipNextButtonCheck = true;
+                               requestUpdate();
+                             });
     } else if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_READING_STATS) {
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, txt->getPath()),
                              [this](const ActivityResult&) { requestUpdate(); });
@@ -114,7 +128,16 @@ void TxtReaderActivity::loop() {
     darkShortcutFired = true;
     startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
                                                                   TextSettingsActivity::Tab::Size),
-                           [this](const ActivityResult&) { requestUpdate(); });
+                           [this](const ActivityResult&) {
+                             SETTINGS.saveToFile();
+                             initialized = false;
+                             pageOffsets.clear();
+                             currentPageLines.clear();
+                             darkShortcutFired = false;
+                             longPowerShortcutFired = false;
+                             skipNextButtonCheck = true;
+                             requestUpdate();
+                           });
     return;
   }
   if (SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_DARK_MODE &&

@@ -144,6 +144,11 @@ void XtcReaderActivity::openChapterSelection() {
 }
 
 void XtcReaderActivity::loop() {
+  if (skipNextButtonCheck) {
+    skipNextButtonCheck = false;
+    return;
+  }
+
   if (!xtc) {
     return;
   }
@@ -159,7 +164,13 @@ void XtcReaderActivity::loop() {
     if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_READER_OPTIONS) {
       startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
                                                                     TextSettingsActivity::Tab::Size),
-                             [this](const ActivityResult&) { requestUpdate(); });
+                             [this](const ActivityResult&) {
+                               SETTINGS.saveToFile();
+                               darkShortcutFired = false;
+                               longPowerShortcutFired = false;
+                               skipNextButtonCheck = true;
+                               requestUpdate();
+                             });
     } else if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_READING_STATS) {
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, xtc->getPath()),
                              [this](const ActivityResult&) { requestUpdate(); });
@@ -180,7 +191,13 @@ void XtcReaderActivity::loop() {
     darkShortcutFired = true;
     startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
                                                                   TextSettingsActivity::Tab::Size),
-                           [this](const ActivityResult&) { requestUpdate(); });
+                           [this](const ActivityResult&) {
+                             SETTINGS.saveToFile();
+                             darkShortcutFired = false;
+                             longPowerShortcutFired = false;
+                             skipNextButtonCheck = true;
+                             requestUpdate();
+                           });
     return;
   }
   if (SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_DARK_MODE &&

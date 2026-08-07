@@ -304,8 +304,36 @@ void EpubReaderActivity::openReaderOptions() {
                                              TextSettingsActivity::Tab::Size),
       [this](const ActivityResult&) {
         SETTINGS.saveToFile();
+        refreshAfterReaderSettings();
+        // The Back/Confirm release that closed Text Settings can still be
+        // visible on the first reader loop after the child activity pops.
+        // Consume that one frame so it cannot navigate out of the book.
+        skipNextButtonCheck = true;
+        longPowerShortcutFired = false;
+        ignoreNextConfirmRelease = false;
         requestUpdate();
       });
+}
+
+void EpubReaderActivity::refreshAfterReaderSettings() {
+  // Typography, margins, line spacing, alignment, and embedded-style options
+  // are part of ReaderRenderSpec. Drop the live section so render() reloads or
+  // rebuilds it with the new spec. Preserve an approximate page position and
+  // let applyDeferredReposition() correct it once the new page count is known.
+  RenderLock lock(*this);
+  cachedSpineIndex = currentSpineIndex;
+  if (section) {
+    cachedChapterTotalPageCount = section->estimatedTotalPages();
+    nextPageNumber = section->currentPage;
+    section.reset();
+  } else {
+    cachedChapterTotalPageCount = 0;
+  }
+  currentPageFootnotes.clear();
+  idlePrewarmSpine = -1;
+  idlePrewarmPage = -1;
+  partialRebuildStartFailed = false;
+  pagesUntilFullRefresh = 1;
 }
 
 bool EpubReaderActivity::buildTickHeapGate() {
@@ -384,6 +412,11 @@ void EpubReaderActivity::openClipSelection() {
 }
 
 void EpubReaderActivity::loop() {
+  if (skipNextButtonCheck) {
+    skipNextButtonCheck = false;
+    return;
+  }
+
   // A configurable long power hold is handled in the reader before the main
   // sleep guard. The main loop deliberately leaves the button alone for these
   // actions; releasing it must not also trigger a short-power action.
