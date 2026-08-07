@@ -6,11 +6,11 @@ Folio Nooir is an experimental, bookshelf-focused e-reader firmware for Xteink d
 
 **Folio Nooir has been physically tested only on the older Xteink X4 hardware revision.** That is the only device currently available to the maintainer.
 
-The current display-driver direction follows the compatible X3/X4 work described by [CrossInk v1.5.0-rc-3](https://github.com/uxjulia/CrossInk/releases/tag/v1.5.0-rc-3), which reports fixes for all known X3/X4 display variants and support for the latest X4 battery latch. This should address the known panel/driver compatibility problems, but newer hardware still needs real-device validation with Folio Nooir. X4 Pro/S3 hardware is not supported by this build.
+The current display-driver direction follows the compatible X3/X4 work described by [CrossInk v1.5.0-rc-3](https://github.com/uxjulia/CrossInk/releases/tag/v1.5.0-rc-3), which reports fixes for all known X3/X4 display variants and support for the latest X4 battery latch. This should address the known panel/driver compatibility problems, but newer hardware still needs real-device validation with Folio Nooir. X3 should also work with the compatible driver path, but X3 testing is still pending. X4 Pro/S3 hardware is not supported by this build.
 
 This does not repair physical screen damage, factory firmware locks, damaged cables, or other hardware faults. Keep a working recovery firmware before flashing. An incompatible panel or board can leave the display unusable and may require recovery through the SD-card firmware picker.
 
-If CrossInk is already installed and working on your device, you can safely ignore this firmware.
+If CrossInk is already installed and working on your device, you can safely ignore this firmware. If CrossPoint is installed and working, use the recovery instructions and keep a known-good image before switching.
 
 ## Features
 
@@ -69,9 +69,7 @@ When the device is connected to the same network, the built-in web interface pro
 - Ghosting mitigation and clean refreshes when leaving books or entering sleep.
 - Conservative X3/X4 display-driver detection for the supported C3 family.
 
-Some sleep-overlay, display-compatibility, and reader usability ideas were
-reviewed against the open-source [CrossInk](https://github.com/uxjulia/CrossInk)
-project and adapted where they fit Folio Nooir's CrossPoint base.
+Some sleep-overlay, display-compatibility, and reader usability ideas were reviewed against the open-source [CrossInk](https://github.com/uxjulia/CrossInk) project and adapted where they fit Folio Nooir's CrossPoint base.
 
 ## Installation
 
