@@ -18,6 +18,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LIGHT = 1,
     CUSTOM = 2,
     COVER = 3,
+    // Legacy persisted value; hidden from the sleep-mode selector.
     COVER_CUSTOM = 4,
     BLANK = 5,
     QUICK_RESUME = 6,

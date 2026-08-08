@@ -150,8 +150,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         // --- Display ---
         SettingInfo::Enum(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen,
                           {StrId::STR_DARK, StrId::STR_LIGHT, StrId::STR_CUSTOM, StrId::STR_COVER,
-                           StrId::STR_COVER_CUSTOM, StrId::STR_NONE_OPT, StrId::STR_QUICK_RESUME,
-                           StrId::STR_PAGE_OVERLAY},
+                           StrId::STR_NONE_OPT, StrId::STR_QUICK_RESUME, StrId::STR_PAGE_OVERLAY},
                           "sleepScreen", StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_SLEEP_COVER_MODE, &CrossPointSettings::sleepScreenCoverMode,
                           {StrId::STR_FIT, StrId::STR_CROP}, "sleepScreenCoverMode", StrId::STR_CAT_DISPLAY),
@@ -393,10 +392,75 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
   // without regenerating the translation table. Legacy mode values are
   // migrated by CrossPointSettings when the settings file is loaded.
   if (!v.empty() && v.front().nameId == StrId::STR_SLEEP_SCREEN) {
+    // Keep COVER_CUSTOM as a persisted compatibility value, but hide it from
+    // the selectable UI. The getter/setter map keeps all later on-disk values
+    // stable while presenting a compact list without that legacy option.
+    auto& sleepSetting = v.front();
+    sleepSetting.valuePtr = nullptr;
+    sleepSetting.valueGetter = []() -> uint8_t {
+      switch (SETTINGS.sleepScreen) {
+        case CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM:
+          return 3;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::BLANK:
+          return 4;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME:
+          return 5;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY:
+          return 6;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::COVER_OVERLAY:
+          return 7;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::READING_STATS_SLEEP:
+          return 8;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::MINIMAL_STATS:
+          return 9;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::CLIPPING_COVER:
+          return 10;
+        default:
+          return SETTINGS.sleepScreen <= CrossPointSettings::SLEEP_SCREEN_MODE::COVER ? SETTINGS.sleepScreen : 3;
+      }
+    };
+    sleepSetting.valueSetter = [](const uint8_t index) {
+      switch (index) {
+        case 0:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::DARK;
+          break;
+        case 1:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::LIGHT;
+          break;
+        case 2:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM;
+          break;
+        case 3:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::COVER;
+          break;
+        case 4:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::BLANK;
+          break;
+        case 5:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME;
+          break;
+        case 6:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY;
+          break;
+        case 7:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::COVER_OVERLAY;
+          break;
+        case 8:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::READING_STATS_SLEEP;
+          break;
+        case 9:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::MINIMAL_STATS;
+          break;
+        case 10:
+        default:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::CLIPPING_COVER;
+          break;
+      }
+    };
     v.front().enumStringValues = {
         I18N.get(StrId::STR_DARK), I18N.get(StrId::STR_LIGHT), I18N.get(StrId::STR_CUSTOM),
-        I18N.get(StrId::STR_COVER), I18N.get(StrId::STR_COVER_CUSTOM), I18N.get(StrId::STR_NONE_OPT),
-        I18N.get(StrId::STR_QUICK_RESUME), I18N.get(StrId::STR_PAGE_OVERLAY),
+        I18N.get(StrId::STR_COVER), I18N.get(StrId::STR_NONE_OPT), I18N.get(StrId::STR_QUICK_RESUME),
+        I18N.get(StrId::STR_PAGE_OVERLAY),
         "Cover + Overlay", "Reading Stats", "Minimal Stats", "Clipping + Cover"};
   }
   if (!BoardConfig::hasTouch()) {

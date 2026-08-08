@@ -306,6 +306,25 @@ void EpubReaderActivity::onEnter() {
     }
   }
 
+  // A bookmark selected from the home shelf carries its source book and the
+  // computed chapter/page position.  Apply it after the normal resume logic
+  // (and after the first-open text-reference adjustment) so it always wins,
+  // while leaving regular reader launches untouched.
+  if (initialBookmark && initialBookmark->hasSavedProgress) {
+    const auto& bookmark = *initialBookmark;
+    if (bookmark.spineIndex >= 0 && bookmark.spineIndex < epub->getSpineItemsCount()) {
+      currentSpineIndex = bookmark.spineIndex;
+      nextPageNumber = std::max(0, bookmark.page);
+      cachedSpineIndex = currentSpineIndex;
+      cachedChapterTotalPageCount = std::max(0, bookmark.totalPages);
+      LOG_DBG("ERS", "Opening bookmark: spine %d, page %d/%d", currentSpineIndex, nextPageNumber,
+              cachedChapterTotalPageCount);
+    } else {
+      LOG_ERR("ERS", "Ignoring bookmark with invalid spine index %d", bookmark.spineIndex);
+    }
+  }
+  initialBookmark.reset();
+
   // Save current epub as last opened epub and add to recent books
   APP_STATE.openEpubPath = epub->getPath();
   APP_STATE.saveToFile();

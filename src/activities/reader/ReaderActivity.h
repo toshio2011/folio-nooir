@@ -1,7 +1,9 @@
 #pragma once
 #include <memory>
+#include <optional>
 
 #include "activities/Activity.h"
+#include "activities/ActivityResult.h"
 #include "activities/home/FileBrowserActivity.h"
 
 class Epub;
@@ -10,6 +12,7 @@ class Txt;
 
 class ReaderActivity final : public Activity {
   std::string initialBookPath;
+  std::optional<ProgressChangeResult> initialBookmark;
   std::string currentBookPath;  // Track current book path for navigation
   // Non-static (unlike the other loaders): draws the first-open indexing popup, which needs the renderer.
   std::unique_ptr<Epub> loadEpub(const std::string& path);
@@ -30,6 +33,11 @@ class ReaderActivity final : public Activity {
  public:
   explicit ReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string initialBookPath)
       : Activity("Reader", renderer, mappedInput), initialBookPath(std::move(initialBookPath)) {}
+  ReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string initialBookPath,
+                 ProgressChangeResult initialBookmark)
+      : Activity("Reader", renderer, mappedInput),
+        initialBookPath(std::move(initialBookPath)),
+        initialBookmark(std::move(initialBookmark)) {}
   void onEnter() override;
   bool isReaderActivity() const override { return true; }
 };

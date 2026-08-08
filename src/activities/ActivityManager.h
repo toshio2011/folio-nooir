@@ -12,6 +12,7 @@
 
 #include "GfxRenderer.h"
 #include "MappedInputManager.h"
+#include "ActivityResult.h"
 #include "util/ScreenshotInfo.h"
 
 class Activity;    // forward declaration
@@ -95,6 +96,9 @@ class ActivityManager {
   void goToReadingStats();
   void goToBrowser();
   void goToReader(std::string path);
+  // Open a book and land on a saved bookmark position selected from a
+  // cross-book bookmark list.
+  void goToReaderAtBookmark(std::string path, ProgressChangeResult bookmark);
   void goToSleep(bool fromTimeout = false);
   void goToBoot();
   void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);

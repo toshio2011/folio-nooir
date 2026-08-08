@@ -10,6 +10,7 @@
 #include <Xtc.h>
 
 #include <algorithm>
+#include <cctype>
 #include <memory>
 
 #include "MappedInputManager.h"
@@ -29,6 +30,15 @@ namespace {
 constexpr char FOLIO_HOME_SNAPSHOT[] = "/.crosspoint/folio_home.bin";
 constexpr uint32_t FOLIO_HOME_MAGIC = 0x464E484D;  // "FNHM"
 constexpr uint16_t FOLIO_HOME_VERSION = 2;
+
+bool isClippingsExport(const std::string& path) {
+  std::string name = path;
+  const size_t slash = name.find_last_of('/');
+  if (slash != std::string::npos) name.erase(0, slash + 1);
+  std::transform(name.begin(), name.end(), name.begin(),
+                 [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return name == "my clippings.txt" || name == "clippings.txt";
+}
 
 void hashBytes(uint64_t& hash, const void* data, const size_t size) {
   const auto* bytes = static_cast<const uint8_t*>(data);
@@ -54,6 +64,7 @@ bool RecentBooksActivity::hasMissingRecentCache() const {
 void RecentBooksActivity::rebuildVisibleBooks() {
   visibleBookCount = 0;
   for (size_t i = 0; i < recentBooks.size() && visibleBookCount < sizeof(visibleBookIndexes); ++i) {
+    if (isClippingsExport(recentBooks[i].path)) continue;
     const BookState* state = BOOK_STATES.find(recentBooks[i].path);
     const bool finished = state ? state->status == BookStatus::Finished : recentBooks[i].progressPercent >= 100;
     const bool show = activeTab == 0 || (activeTab == 1 && !finished) || (activeTab == 2 && finished);
@@ -234,17 +245,8 @@ void RecentBooksActivity::generateNextCover() {
 
 void RecentBooksActivity::showMenu() {
   std::vector<std::string> options = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), "Reading Statistics",
-                                      "Reading Calendar"};
-  std::string selectedEpubPath;
-  if (visibleBookCount > 0 && selectorIndex < visibleBookCount) {
-    const RecentBook& selected = recentBooks[selectedRecentIndex()];
-    if (FsHelpers::hasEpubExtension(selected.path)) {
-      selectedEpubPath = selected.path;
-      options.emplace_back("Bookmarks (selected book)");
-      options.emplace_back("Clippings (selected book)");
-    }
-  }
-  menuPopup.show(StrId::STR_MENU, options, 0, [this, selectedEpubPath](const int index) {
+                                      "Reading Calendar", "Bookmarks (all books)", "Clippings (all books)"};
+  menuPopup.show(StrId::STR_MENU, options, 0, [this](const int index) {
     if (index == 0) {
       menuPopup.dismiss();
       activityManager.goToFileTransfer();
@@ -257,14 +259,21 @@ void RecentBooksActivity::showMenu() {
     } else if (index == 3) {
       menuPopup.dismiss();
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, "", true), nullptr);
-    } else if (index == 4 && !selectedEpubPath.empty()) {
+    } else if (index == 4) {
       menuPopup.dismiss();
-      startActivityForResult(std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, selectedEpubPath),
-                             nullptr);
-    } else if (index == 5 && !selectedEpubPath.empty()) {
+      startActivityForResult(
+          std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, std::string{}, true),
+          [this](const ActivityResult& result) {
+            if (result.isCancelled) return;
+            const auto* bookmark = std::get_if<ProgressChangeResult>(&result.data);
+            if (bookmark && !bookmark->bookPath.empty()) {
+              activityManager.goToReaderAtBookmark(bookmark->bookPath, *bookmark);
+            }
+          });
+    } else if (index == 5) {
       menuPopup.dismiss();
       startActivityForResult(std::make_unique<EpubReaderClippingListActivity>(
-                                renderer, mappedInput, selectedEpubPath, "Selected book"),
+                                renderer, mappedInput, std::string{}, "All books", true),
                             nullptr);
     }
   });
@@ -328,7 +337,14 @@ void RecentBooksActivity::showBookActions() {
     }
     if (action == 9 && FsHelpers::hasEpubExtension(selected.path)) {
       startActivityForResult(
-          std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, selected.path), nullptr);
+          std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, selected.path),
+          [this](const ActivityResult& result) {
+            if (result.isCancelled) return;
+            const auto* bookmark = std::get_if<ProgressChangeResult>(&result.data);
+            if (bookmark && !bookmark->bookPath.empty()) {
+              activityManager.goToReaderAtBookmark(bookmark->bookPath, *bookmark);
+            }
+          });
       return;
     }
     if (action == 10 && FsHelpers::hasEpubExtension(selected.path)) {

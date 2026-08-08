@@ -13,6 +13,7 @@
 #include <Xtc.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <memory>
 #include <new>
@@ -263,6 +264,44 @@ struct SleepClippingSnapshot {
   uint16_t page = 0;
 };
 
+struct SleepBitmapPlacement {
+  int x = 0;
+  int y = 0;
+  float cropX = 0;
+  float cropY = 0;
+};
+
+SleepBitmapPlacement getSleepBitmapPlacement(const Bitmap& bitmap, const GfxRenderer& renderer) {
+  SleepBitmapPlacement placement;
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  if (bitmap.getWidth() > pageWidth || bitmap.getHeight() > pageHeight) {
+    float ratio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
+    const float screenRatio = static_cast<float>(pageWidth) / static_cast<float>(pageHeight);
+    if (ratio > screenRatio) {
+      if (SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP) {
+        placement.cropX = 1.0f - (screenRatio / ratio);
+        ratio = (1.0f - placement.cropX) * static_cast<float>(bitmap.getWidth()) /
+                static_cast<float>(bitmap.getHeight());
+      }
+      placement.x = 0;
+      placement.y = std::round((static_cast<float>(pageHeight) - static_cast<float>(pageWidth) / ratio) / 2);
+    } else {
+      if (SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP) {
+        placement.cropY = 1.0f - (ratio / screenRatio);
+        ratio = static_cast<float>(bitmap.getWidth()) /
+                ((1.0f - placement.cropY) * static_cast<float>(bitmap.getHeight()));
+      }
+      placement.x = std::round((static_cast<float>(pageWidth) - static_cast<float>(pageHeight) * ratio) / 2);
+      placement.y = 0;
+    }
+  } else {
+    placement.x = (pageWidth - bitmap.getWidth()) / 2;
+    placement.y = (pageHeight - bitmap.getHeight()) / 2;
+  }
+  return placement;
+}
+
 const RecentBook* recentBookForSleepPath(const std::string& path) {
   const auto it = std::find_if(RECENT_BOOKS.getBooks().begin(), RECENT_BOOKS.getBooks().end(),
                                [&](const RecentBook& book) { return book.path == path; });
@@ -395,6 +434,39 @@ void drawSleepMetric(GfxRenderer& renderer, const int x, const int y, const int 
   const int valueWidth = renderer.getTextWidth(UI_12_FONT_ID, value.c_str(), EpdFontFamily::BOLD);
   renderer.drawText(UI_12_FONT_ID, x + (width - valueWidth) / 2, y + height - 24, value.c_str(), true,
                     EpdFontFamily::BOLD);
+}
+
+void drawClippingSleepCard(GfxRenderer& renderer, const std::string& text, const std::string& title,
+                           const uint16_t page) {
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const int panelX = 18;
+  const int panelY = pageHeight - 306;
+  const int panelWidth = pageWidth - panelX * 2;
+  const int panelHeight = 286;
+  renderer.fillRoundedRect(panelX, panelY, panelWidth, panelHeight, 12, Color::White);
+  renderer.drawRoundedRect(panelX, panelY, panelWidth, panelHeight, 2, 12, true);
+
+  renderer.drawText(SMALL_FONT_ID, panelX + 18, panelY + 24, "FROM YOUR CLIPPINGS", true, EpdFontFamily::BOLD);
+  renderer.drawLine(panelX + 18, panelY + 38, panelX + panelWidth - 18, panelY + 38);
+
+  const int quoteX = panelX + 18;
+  const int quoteY = panelY + 60;
+  renderer.drawText(UI_12_FONT_ID, quoteX, quoteY, "\"", true, EpdFontFamily::BOLD);
+  const int textX = quoteX + 22;
+  const int textWidth = panelWidth - 42;
+  const auto lines = renderer.wrappedText(UI_10_FONT_ID, text.c_str(), textWidth, 5);
+  const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+  for (size_t i = 0; i < lines.size(); ++i) {
+    renderer.drawText(UI_10_FONT_ID, textX, quoteY + static_cast<int>(i) * lineHeight, lines[i].c_str());
+  }
+
+  const int footerY = panelY + panelHeight - 42;
+  renderer.drawLine(panelX + 18, footerY - 10, panelX + panelWidth - 18, footerY - 10);
+  const std::string attribution = renderer.truncatedText(
+      SMALL_FONT_ID, (title + "  ·  page " + std::to_string(static_cast<unsigned>(page) + 1)).c_str(), textWidth);
+  renderer.drawText(SMALL_FONT_ID, textX, footerY, attribution.c_str(), true, EpdFontFamily::BOLD);
+  renderer.drawText(SMALL_FONT_ID, panelX + panelWidth - 82, footerY, "RANDOM", true, EpdFontFamily::REGULAR);
 }
 
 }  // namespace
@@ -595,24 +667,116 @@ bool SleepActivity::renderCustomImage(const std::string& path) const {
 }
 
 bool SleepActivity::renderOverlaySleepScreen() const {
-  // Do not treat ordinary custom sleep artwork as an overlay: most of those
-  // PNGs are opaque and would hide the cover. Use one explicitly named file,
-  // in priority order, so transparency is intentional and predictable.
-  const char* candidates[] = {"/sleep-overlay.png", "/.sleep/overlay.png", "/sleep/overlay.png"};
-  for (const char* path : candidates) {
-    if (!Storage.exists(path)) continue;
-    if (renderOverlayPng(path)) {
-      LOG_DBG("SLP", "Rendering page overlay: %s", path);
-      return true;
-    }
-    LOG_ERR("SLP", "Overlay PNG is invalid or has no transparent pixels: %s", path);
+  // Standalone Page Overlay uses the same random PNG pool as Cover + Overlay.
+  // If a selected image is opaque, it is still shown as an explicit fallback;
+  // Cover + Overlay below can try another image while preserving the cover.
+  const std::string path = findOverlayPngPath();
+  if (path.empty()) {
+    LOG_DBG("SLP", "No dedicated page overlay PNG found");
     return false;
   }
-  LOG_DBG("SLP", "No dedicated page overlay PNG found");
+  if (renderOverlayPng(path, true)) {
+    LOG_DBG("SLP", "Rendering page overlay: %s", path.c_str());
+    return true;
+  }
+  LOG_ERR("SLP", "Overlay PNG is invalid or has no transparent pixels: %s", path.c_str());
   return false;
 }
 
-bool SleepActivity::renderOverlayPng(const std::string& path) const {
+std::vector<std::string> SleepActivity::findOverlayPngCandidates() const {
+  // Page Overlay shares the same artwork pool as Custom Sleep. This is
+  // intentionally a random PNG from the sleep folder, rather than requiring
+  // users to rename one file to overlay.png.
+  std::vector<std::string> sleepPngs;
+  const char* directories[] = {"/.sleep", "/sleep"};
+  for (const char* directory : directories) {
+    auto folder = Storage.open(directory);
+    if (!folder || !folder.isDirectory()) continue;
+    char name[500];
+    for (auto file = folder.openNextFile(); file; file = folder.openNextFile()) {
+      if (!file.isDirectory()) {
+        file.getName(name, sizeof(name));
+        std::string filename(name);
+        if (!filename.empty() && filename[0] != '.' && FsHelpers::hasPngExtension(filename))
+          sleepPngs.emplace_back(std::string(directory) + "/" + filename);
+      }
+      file.close();
+    }
+    folder.close();
+  }
+
+  // Keep the explicit/root forms as a fallback for installations that use a
+  // single overlay outside the random sleep-image folders.
+  const char* candidates[] = {"/sleep-overlay.png", "/.sleep/overlay.png", "/sleep/overlay.png",
+                              "/sleep.png"};
+  for (const char* candidate : candidates) {
+    if (Storage.exists(candidate) && std::find(sleepPngs.begin(), sleepPngs.end(), candidate) == sleepPngs.end())
+      sleepPngs.emplace_back(candidate);
+  }
+  return sleepPngs;
+}
+
+std::string SleepActivity::findOverlayPngPath() const {
+  const auto candidates = findOverlayPngCandidates();
+  if (candidates.empty()) return {};
+  const size_t index = static_cast<size_t>(random(static_cast<long>(candidates.size())));
+  return candidates[std::min(index, candidates.size() - 1)];
+}
+
+bool SleepActivity::renderOverlayPngPass(const std::string& path, const GfxRenderer::RenderMode mode,
+                                         bool* transparencyDetected) const {
+  auto png = makeUniqueNoThrow<PNG>();
+  if (!png) return false;
+
+  const int openResult = png->open(path.c_str(), overlayPngOpen, overlayPngClose, overlayPngRead,
+                                   overlayPngSeek, overlayPngDraw);
+  const ScopedCleanup cleanup{[&png]() { png->close(); }};
+  if (openResult != PNG_SUCCESS) return false;
+
+  const int srcWidth = png->getWidth();
+  const int srcHeight = png->getHeight();
+  const int pixelType = png->getPixelType();
+  const int bitsPerSample = png->getBpp();
+  if (srcWidth <= 0 || srcHeight <= 0 || png->isInterlaced() ||
+      overlayRequiredPngBufferBytes(srcWidth, pixelType, bitsPerSample) > PNG_MAX_BUFFERED_PIXELS ||
+      !overlaySupportedBitDepth(pixelType, bitsPerSample)) {
+    LOG_ERR("SLP", "Unsupported page overlay PNG: %s", path.c_str());
+    return false;
+  }
+
+  const int screenWidth = renderer.getScreenWidth();
+  const int screenHeight = renderer.getScreenHeight();
+  int dstWidth = srcWidth;
+  int dstHeight = srcHeight;
+  if (dstWidth > screenWidth || dstHeight > screenHeight) {
+    if (static_cast<int64_t>(srcWidth) * screenHeight > static_cast<int64_t>(srcHeight) * screenWidth) {
+      dstWidth = screenWidth;
+      dstHeight = std::max(1, (srcHeight * screenWidth) / srcWidth);
+    } else {
+      dstHeight = screenHeight;
+      dstWidth = std::max(1, (srcWidth * screenHeight) / srcHeight);
+    }
+  }
+
+  OverlayPngContext context;
+  context.renderer = &renderer;
+  context.srcWidth = srcWidth;
+  context.srcHeight = srcHeight;
+  context.dstWidth = dstWidth;
+  context.dstHeight = dstHeight;
+  context.dstX = (screenWidth - dstWidth) / 2;
+  context.dstY = (screenHeight - dstHeight) / 2;
+  context.transparentColor = -2;
+  context.pngObj = png.get();
+  context.transparencyDetected = transparencyDetected;
+  context.renderMode = mode;
+
+  LOG_DBG("SLP", "Overlay PNG %dx%d -> %dx%d (%s)", srcWidth, srcHeight, dstWidth, dstHeight,
+          mode == GfxRenderer::BW ? "BW" : (mode == GfxRenderer::GRAYSCALE_LSB ? "LSB" : "MSB"));
+  return png->decode(&context, 0) == PNG_SUCCESS;
+}
+
+bool SleepActivity::renderOverlayPng(const std::string& path, const bool allowOpaque) const {
   constexpr size_t PNG_DECODER_APPROX_SIZE = 44 * 1024;
   constexpr size_t MIN_FREE_HEAP_FOR_PNG = PNG_DECODER_APPROX_SIZE + 16 * 1024;
   if (ESP.getFreeHeap() < MIN_FREE_HEAP_FOR_PNG) {
@@ -622,102 +786,46 @@ bool SleepActivity::renderOverlayPng(const std::string& path) const {
 
   bool transparencyDetected = false;
 
-  // Decode the same PNG three times. The first pass creates the opaque
-  // black/white base while preserving transparent pixels. The next two passes
-  // add the LSB/MSB grayscale planes on top of that base, so an overlay can
-  // retain the page underneath instead of clearing it to white.
-  auto decodePass = [&](const GfxRenderer::RenderMode mode) -> bool {
-    auto png = makeUniqueNoThrow<PNG>();
-    if (!png) return false;
-
-    const int openResult = png->open(path.c_str(), overlayPngOpen, overlayPngClose, overlayPngRead,
-                                     overlayPngSeek, overlayPngDraw);
-    const ScopedCleanup cleanup{[&png]() { png->close(); }};
-    if (openResult != PNG_SUCCESS) return false;
-
-    const int srcWidth = png->getWidth();
-    const int srcHeight = png->getHeight();
-    const int pixelType = png->getPixelType();
-    const int bitsPerSample = png->getBpp();
-    if (srcWidth <= 0 || srcHeight <= 0 || png->isInterlaced() ||
-        overlayRequiredPngBufferBytes(srcWidth, pixelType, bitsPerSample) > PNG_MAX_BUFFERED_PIXELS ||
-        !overlaySupportedBitDepth(pixelType, bitsPerSample)) {
-      LOG_ERR("SLP", "Unsupported page overlay PNG: %s", path.c_str());
-      return false;
-    }
-
-    const int screenWidth = renderer.getScreenWidth();
-    const int screenHeight = renderer.getScreenHeight();
-    int dstWidth = srcWidth;
-    int dstHeight = srcHeight;
-    if (dstWidth > screenWidth || dstHeight > screenHeight) {
-      if (static_cast<int64_t>(srcWidth) * screenHeight > static_cast<int64_t>(srcHeight) * screenWidth) {
-        dstWidth = screenWidth;
-        dstHeight = std::max(1, (srcHeight * screenWidth) / srcWidth);
-      } else {
-        dstHeight = screenHeight;
-        dstWidth = std::max(1, (srcWidth * screenHeight) / srcHeight);
-      }
-    }
-
-    OverlayPngContext context;
-    context.renderer = &renderer;
-    context.srcWidth = srcWidth;
-    context.srcHeight = srcHeight;
-    context.dstWidth = dstWidth;
-    context.dstHeight = dstHeight;
-    context.dstX = (screenWidth - dstWidth) / 2;
-    context.dstY = (screenHeight - dstHeight) / 2;
-    // The decoder fills tRNS metadata during decode(), so the callback lazily
-    // resolves the color key on the first scanline.
-    context.transparentColor = -2;
-    context.pngObj = png.get();
-    context.transparencyDetected = &transparencyDetected;
-    context.renderMode = mode;
-
-    LOG_DBG("SLP", "Overlay PNG %dx%d -> %dx%d (%s)", srcWidth, srcHeight, dstWidth, dstHeight,
-            mode == GfxRenderer::BW ? "BW" : (mode == GfxRenderer::GRAYSCALE_LSB ? "LSB" : "MSB"));
-    const int decodeResult = png->decode(&context, 0);
-    if (decodeResult != PNG_SUCCESS) {
-      LOG_ERR("SLP", "Failed to decode page overlay PNG: %d", decodeResult);
-      return false;
-    }
-    return true;
-  };
-
   renderer.setRenderMode(GfxRenderer::BW);
-  if (!decodePass(GfxRenderer::BW)) return false;
+  if (!renderOverlayPngPass(path, GfxRenderer::BW, &transparencyDetected)) return false;
   if (!transparencyDetected) {
-    // The first pass may have touched the framebuffer, but it has not been
-    // sent to the panel yet. The caller can redraw the cover/default screen.
-    renderer.setRenderMode(GfxRenderer::BW);
-    return false;
+    if (!allowOpaque) {
+      // The first pass may have touched the framebuffer, but it has not been
+      // sent to the panel yet. The cover compositor can redraw and try another.
+      renderer.setRenderMode(GfxRenderer::BW);
+      return false;
+    }
+    // Standalone overlays are allowed to be opaque, but they must still use
+    // the same four-level grayscale pipeline as transparent artwork. Do not
+    // publish the initial BW probe here; the LSB/MSB passes below will render
+    // the complete image cleanly.
   }
-
+  // The BW probe is now the base frame on the panel. The grayscale controller
+  // keeps that base while the two detail planes are uploaded, so there is no
+  // need to allocate a second full framebuffer just to restore it later.
   renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
-  renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
-  // Each grayscale plane is an independent bit plane. Start it from an
-  // all-black scratch frame, just like ReaderUtils::renderAntiAliased(), so
-  // white pixels from the BW pass do not accidentally become set bits in the
-  // gray planes. Transparent overlay pixels intentionally remain zero here;
-  // the underlying reader page is already represented by the BW base frame.
+
+  // The grayscale planes contain only the overlay's gray detail. Start each
+  // pass from an empty plane; retaining the BW probe here would turn every
+  // dark pixel into a plane bit and collapse the artwork back to black/white.
   renderer.clearScreen(0x00);
-  if (!decodePass(GfxRenderer::GRAYSCALE_LSB)) {
+  renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
+  if (!renderOverlayPngPass(path, GfxRenderer::GRAYSCALE_LSB, nullptr)) {
     renderer.setRenderMode(GfxRenderer::BW);
-    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
-    return true;
+    return true;  // The already displayed BW base remains visible.
   }
   renderer.copyGrayscaleLsbBuffers();
 
-  renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
   renderer.clearScreen(0x00);
-  if (!decodePass(GfxRenderer::GRAYSCALE_MSB)) {
+  renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
+  if (!renderOverlayPngPass(path, GfxRenderer::GRAYSCALE_MSB, nullptr)) {
     renderer.setRenderMode(GfxRenderer::BW);
-    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
     return true;
   }
   renderer.copyGrayscaleMsbBuffers();
+  renderer.setFadingFix(true);
   renderer.displayGrayBuffer();
+  renderer.setFadingFix(SETTINGS.fadingFix);
   renderer.setRenderMode(GfxRenderer::BW);
   return true;
 }
@@ -744,88 +852,188 @@ void SleepActivity::renderDefaultSleepScreen() const {
 }
 
 void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap) const {
-  int x, y;
-  const auto pageWidth = renderer.getScreenWidth();
-  const auto pageHeight = renderer.getScreenHeight();
-  float cropX = 0, cropY = 0;
-
-  LOG_DBG("SLP", "bitmap %d x %d, screen %d x %d", bitmap.getWidth(), bitmap.getHeight(), pageWidth, pageHeight);
-  if (bitmap.getWidth() > pageWidth || bitmap.getHeight() > pageHeight) {
-    // image will scale, make sure placement is right
-    float ratio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
-    const float screenRatio = static_cast<float>(pageWidth) / static_cast<float>(pageHeight);
-
-    LOG_DBG("SLP", "bitmap ratio: %f, screen ratio: %f", ratio, screenRatio);
-    if (ratio > screenRatio) {
-      // image wider than viewport ratio, scaled down image needs to be centered vertically
-      if (SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP) {
-        cropX = 1.0f - (screenRatio / ratio);
-        LOG_DBG("SLP", "Cropping bitmap x: %f", cropX);
-        ratio = (1.0f - cropX) * static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
-      }
-      x = 0;
-      y = std::round((static_cast<float>(pageHeight) - static_cast<float>(pageWidth) / ratio) / 2);
-      LOG_DBG("SLP", "Centering with ratio %f to y=%d", ratio, y);
-    } else {
-      // image taller than viewport ratio, scaled down image needs to be centered horizontally
-      if (SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP) {
-        cropY = 1.0f - (ratio / screenRatio);
-        LOG_DBG("SLP", "Cropping bitmap y: %f", cropY);
-        ratio = static_cast<float>(bitmap.getWidth()) / ((1.0f - cropY) * static_cast<float>(bitmap.getHeight()));
-      }
-      x = std::round((static_cast<float>(pageWidth) - static_cast<float>(pageHeight) * ratio) / 2);
-      y = 0;
-      LOG_DBG("SLP", "Centering with ratio %f to x=%d", ratio, x);
-    }
-  } else {
-    // center the image
-    x = (pageWidth - bitmap.getWidth()) / 2;
-    y = (pageHeight - bitmap.getHeight()) / 2;
-  }
-
-  LOG_DBG("SLP", "drawing to %d x %d", x, y);
+  const auto placement = getSleepBitmapPlacement(bitmap, renderer);
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  LOG_DBG("SLP", "bitmap %d x %d, screen %d x %d -> %d,%d", bitmap.getWidth(), bitmap.getHeight(), pageWidth,
+          pageHeight, placement.x, placement.y);
   preconditionSleepRefresh(renderer);
 
   const bool hasGreyscale = bitmap.hasGreyscale() &&
                             SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::NO_FILTER;
-
-  renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY);
-
+  renderer.setRenderMode(GfxRenderer::BW);
+  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
   if (SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
     renderer.invertScreen();
   }
 
   if (hasGreyscale) {
-    // OEM grayscale pipeline base. Must stay HALF: the gray nudge LUT is
-    // calibrated against the pixel state the single-pass HALF waveform leaves
-    // behind. A FULL (GC) base parks pixels in a different charge state and
-    // the differential nudge then lands unevenly (blotchy noise in gray areas).
     renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
-  } else {
-    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
-  }
-
-  if (hasGreyscale) {
     bitmap.rewindToData();
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
-    renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY);
+    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
     renderer.copyGrayscaleLsbBuffers();
 
     bitmap.rewindToData();
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
-    renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, cropX, cropY);
+    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
     renderer.copyGrayscaleMsbBuffers();
 
     renderer.setFadingFix(true);
     renderer.displayGrayBuffer();
     renderer.setFadingFix(SETTINGS.fadingFix);
     renderer.setRenderMode(GfxRenderer::BW);
+  } else {
+    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
   }
 }
 
-void SleepActivity::renderCoverSleepScreen(const std::string& requestedBookPath) const {
+void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, const std::string& overlayPath) const {
+  const auto placement = getSleepBitmapPlacement(bitmap, renderer);
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  // Overlay quality should not depend on the cached cover's bit depth. Even
+  // a 1-bit cover can be composited with a four-level PNG overlay by drawing
+  // the cover into both grayscale planes.
+  const bool hasGreyscale = SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::NO_FILTER;
+
+  const auto drawBase = [&]() {
+    preconditionSleepRefresh(renderer);
+    renderer.setRenderMode(GfxRenderer::BW);
+    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+    if (SETTINGS.sleepScreenCoverFilter ==
+        CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
+      renderer.invertScreen();
+    }
+  };
+
+  // Try the random starting image first, then walk the remaining sleep PNGs
+  // until a transparent one is found. This prevents one opaque custom image
+  // from making Cover + Overlay appear to work only intermittently.
+  auto candidates = findOverlayPngCandidates();
+  if (!overlayPath.empty() && std::find(candidates.begin(), candidates.end(), overlayPath) == candidates.end()) {
+    candidates.insert(candidates.begin(), overlayPath);
+  }
+  if (candidates.empty()) {
+    renderBitmapSleepScreen(bitmap);
+    return;
+  }
+  size_t start = static_cast<size_t>(random(static_cast<long>(candidates.size())));
+  const auto selectedIt = std::find(candidates.begin(), candidates.end(), overlayPath);
+  if (selectedIt != candidates.end()) start = static_cast<size_t>(selectedIt - candidates.begin());
+
+  std::string selectedPath;
+  std::string opaqueFallback;
+  for (size_t offset = 0; offset < candidates.size(); ++offset) {
+    const std::string& candidate = candidates[(start + offset) % candidates.size()];
+    drawBase();
+    bool transparencyDetected = false;
+    if (!renderOverlayPngPass(candidate, GfxRenderer::BW, &transparencyDetected)) continue;
+    if (transparencyDetected) {
+      selectedPath = candidate;
+      break;
+    }
+    if (opaqueFallback.empty()) opaqueFallback = candidate;
+  }
+
+  if (selectedPath.empty()) {
+    if (opaqueFallback.empty()) {
+      renderBitmapSleepScreen(bitmap);
+      return;
+    }
+    // No transparent image was available. Show the first valid opaque image
+    // rather than silently replacing the requested overlay with the logo.
+    selectedPath = opaqueFallback;
+    drawBase();
+    bool ignoredTransparency = false;
+    if (!renderOverlayPngPass(selectedPath, GfxRenderer::BW, &ignoredTransparency)) {
+      renderBitmapSleepScreen(bitmap);
+      return;
+    }
+  }
+
+  if (!hasGreyscale) {
+    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+    renderer.setRenderMode(GfxRenderer::BW);
+    return;
+  }
+
+  renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
+  bitmap.rewindToData();
+  renderer.clearScreen(0x00);
+  renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
+  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+  if (!renderOverlayPngPass(selectedPath, GfxRenderer::GRAYSCALE_LSB, nullptr)) {
+    renderer.setRenderMode(GfxRenderer::BW);
+    renderBitmapSleepScreen(bitmap);
+    return;
+  }
+  renderer.copyGrayscaleLsbBuffers();
+
+  bitmap.rewindToData();
+  renderer.clearScreen(0x00);
+  renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
+  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+  if (!renderOverlayPngPass(selectedPath, GfxRenderer::GRAYSCALE_MSB, nullptr)) {
+    renderer.setRenderMode(GfxRenderer::BW);
+    renderBitmapSleepScreen(bitmap);
+    return;
+  }
+  renderer.copyGrayscaleMsbBuffers();
+
+  renderer.setFadingFix(true);
+  renderer.displayGrayBuffer();
+  renderer.setFadingFix(SETTINGS.fadingFix);
+  renderer.setRenderMode(GfxRenderer::BW);
+}
+
+void SleepActivity::renderBitmapSleepScreenWithClipping(const Bitmap& bitmap, const std::string& text,
+                                                        const std::string& title, const uint16_t page) const {
+  const auto placement = getSleepBitmapPlacement(bitmap, renderer);
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const bool hasGreyscale = bitmap.hasGreyscale() &&
+                            SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::NO_FILTER;
+
+  preconditionSleepRefresh(renderer);
+  renderer.setRenderMode(GfxRenderer::BW);
+  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+  drawClippingSleepCard(renderer, text, title, page);
+  if (SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
+    renderer.invertScreen();
+  }
+
+  if (hasGreyscale) {
+    renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
+    bitmap.rewindToData();
+    renderer.clearScreen(0x00);
+    renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
+    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+    drawClippingSleepCard(renderer, text, title, page);
+    renderer.copyGrayscaleLsbBuffers();
+
+    bitmap.rewindToData();
+    renderer.clearScreen(0x00);
+    renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
+    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+    drawClippingSleepCard(renderer, text, title, page);
+    renderer.copyGrayscaleMsbBuffers();
+
+    renderer.setFadingFix(true);
+    renderer.displayGrayBuffer();
+    renderer.setFadingFix(SETTINGS.fadingFix);
+    renderer.setRenderMode(GfxRenderer::BW);
+  } else {
+    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+    renderer.setRenderMode(GfxRenderer::BW);
+  }
+}
+
+void SleepActivity::renderCoverSleepScreen(const std::string& requestedBookPath, const std::string& overlayPath,
+                                           const std::string& clippingText, const std::string& clippingTitle,
+                                           const uint16_t clippingPage) const {
   void (SleepActivity::*renderNoCoverSleepScreen)() const;
   switch (SETTINGS.sleepScreen) {
     case (CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM):
@@ -904,7 +1112,13 @@ void SleepActivity::renderCoverSleepScreen(const std::string& requestedBookPath)
     Bitmap bitmap(file);
     if (bitmap.parseHeaders() == BmpReaderError::Ok) {
       LOG_DBG("SLP", "Rendering sleep cover: %s", coverBmpPath.c_str());
-      renderBitmapSleepScreen(bitmap);
+      if (!overlayPath.empty()) {
+        renderBitmapSleepScreenWithOverlay(bitmap, overlayPath);
+      } else if (!clippingText.empty()) {
+        renderBitmapSleepScreenWithClipping(bitmap, clippingText, clippingTitle, clippingPage);
+      } else {
+        renderBitmapSleepScreen(bitmap);
+      }
       return;
     }
   }
@@ -916,12 +1130,7 @@ void SleepActivity::renderCoverOverlaySleepScreen() const {
   // Always use the most recent/current book as the background. The overlay is
   // then composited above that cover, whether sleep was entered from Reader
   // or from the bookshelf.
-  renderCoverSleepScreen();
-  if (!renderOverlaySleepScreen()) {
-    // An invalid/opaque overlay may have drawn into RAM during validation, so
-    // restore the cover before completing the sleep screen.
-    renderCoverSleepScreen();
-  }
+  renderCoverSleepScreen({}, findOverlayPngPath());
 }
 
 void SleepActivity::renderReadingStatsSleepScreen() const {
@@ -1034,46 +1243,12 @@ void SleepActivity::renderClippingCoverSleepScreen() const {
   const auto clipping = loadSleepClippingSnapshot();
   // The clipping is selected from the same current/recent book used by the
   // cover renderer, so its own cover remains behind the quote card.
-  renderCoverSleepScreen(clipping.valid ? clipping.path : std::string());
-
   if (!clipping.valid) {
+    renderCoverSleepScreen();
     LOG_DBG("SLP", "No saved clipping for sleep card; keeping cover/default screen");
     return;
   }
-
-  const int pageWidth = renderer.getScreenWidth();
-  const int pageHeight = renderer.getScreenHeight();
-  const int panelX = 18;
-  const int panelY = pageHeight - 306;
-  const int panelWidth = pageWidth - panelX * 2;
-  const int panelHeight = 286;
-  renderer.fillRoundedRect(panelX, panelY, panelWidth, panelHeight, 12, Color::White);
-  renderer.drawRoundedRect(panelX, panelY, panelWidth, panelHeight, 2, 12, true);
-
-  renderer.drawText(SMALL_FONT_ID, panelX + 18, panelY + 24, "FROM YOUR CLIPPINGS", true, EpdFontFamily::BOLD);
-  renderer.drawLine(panelX + 18, panelY + 38, panelX + panelWidth - 18, panelY + 38);
-
-  const int quoteX = panelX + 18;
-  const int quoteY = panelY + 60;
-  renderer.drawText(UI_12_FONT_ID, quoteX, quoteY, "\"", true, EpdFontFamily::BOLD);
-  const int textX = quoteX + 22;
-  const int textWidth = panelWidth - 42;
-  const auto lines = renderer.wrappedText(UI_10_FONT_ID, clipping.text.c_str(), textWidth, 5);
-  const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
-  for (size_t i = 0; i < lines.size(); ++i) {
-    renderer.drawText(UI_10_FONT_ID, textX, quoteY + static_cast<int>(i) * lineHeight, lines[i].c_str());
-  }
-
-  const int footerY = panelY + panelHeight - 42;
-  renderer.drawLine(panelX + 18, footerY - 10, panelX + panelWidth - 18, footerY - 10);
-  const std::string attribution = renderer.truncatedText(SMALL_FONT_ID,
-                                                          (clipping.title + "  ·  page " +
-                                                           std::to_string(static_cast<unsigned>(clipping.page) + 1))
-                                                              .c_str(),
-                                                          textWidth);
-  renderer.drawText(SMALL_FONT_ID, textX, footerY, attribution.c_str(), true, EpdFontFamily::BOLD);
-  renderer.drawText(SMALL_FONT_ID, panelX + panelWidth - 82, footerY, "RANDOM", true, EpdFontFamily::REGULAR);
-  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+  renderCoverSleepScreen(clipping.path, {}, clipping.text, clipping.title, clipping.page);
 }
 
 void SleepActivity::renderLastScreenSleepScreen() const {

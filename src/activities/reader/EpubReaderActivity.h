@@ -14,6 +14,10 @@
 
 class EpubReaderActivity final : public Activity {
   std::shared_ptr<Epub> epub;
+  // Optional position supplied by the home bookmark list.  It is consumed on
+  // entry after the normal progress cache is loaded, so ordinary reader opens
+  // remain unchanged.
+  std::optional<ProgressChangeResult> initialBookmark;
   std::unique_ptr<Section> section = nullptr;
   int currentSpineIndex = 0;
   int nextPageNumber = 0;
@@ -197,6 +201,11 @@ class EpubReaderActivity final : public Activity {
  public:
   explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub)
       : Activity("EpubReader", renderer, mappedInput), epub(std::move(epub)) {}
+  EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub,
+                     std::optional<ProgressChangeResult> initialBookmark)
+      : Activity("EpubReader", renderer, mappedInput),
+        epub(std::move(epub)),
+        initialBookmark(std::move(initialBookmark)) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;

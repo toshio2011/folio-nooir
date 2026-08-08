@@ -109,6 +109,9 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   if (dictionaryName[0] != '\0') {
     doc["dictionaryName"] = dictionaryName;
   }
+  // Sleep screen uses a UI index map so the legacy Cover + Custom option can
+  // be hidden without renumbering the persisted modes.
+  doc["sleepScreen"] = sleepScreen;
   doc["dictionaryFontFamily"] = dictionaryFontFamily;
   doc["dictionaryFontSize"] = dictionaryFontSize;
 
@@ -199,6 +202,33 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
       s.*(info.valuePtr) = v;
     }
   }
+
+  // Sleep screen is dynamically presented to hide the legacy Cover + Custom
+  // option, so load its persisted value explicitly. Keep the old 8+ migration
+  // for settings files written before the current sleep-mode layout marker.
+  uint8_t loadedSleepScreen = doc["sleepScreen"] | s.sleepScreen;
+  if (!currentSleepModeLayout) {
+    const uint8_t legacyValue = loadedSleepScreen;
+    if (legacyValue == 8 || legacyValue == 9) {
+      loadedSleepScreen = COVER_OVERLAY;
+    } else if (legacyValue == 10) {
+      loadedSleepScreen = READING_STATS_SLEEP;
+    } else if (legacyValue == 11) {
+      loadedSleepScreen = MINIMAL_STATS;
+    } else if (legacyValue == 12) {
+      loadedSleepScreen = CLIPPING_COVER;
+    }
+    if (loadedSleepScreen != legacyValue) needsResave = true;
+  }
+  if (loadedSleepScreen == COVER_CUSTOM) {
+    loadedSleepScreen = COVER;
+    needsResave = true;
+  }
+  if (loadedSleepScreen >= SLEEP_SCREEN_MODE_COUNT) {
+    loadedSleepScreen = DARK;
+    needsResave = true;
+  }
+  s.sleepScreen = loadedSleepScreen;
 
   if (!currentSleepModeLayout) needsResave = true;
 

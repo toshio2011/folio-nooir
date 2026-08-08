@@ -135,7 +135,7 @@ and renders it in a quote card over that book's cover when the device sleeps.
 
 ### Page overlay
 
-Choose **Page Overlay** or **Cover + Overlay** and place a transparent PNG at `/sleep-overlay.png`. Folder alternatives `/.sleep/overlay.png` and `/sleep/overlay.png` are also supported. Ordinary custom sleep PNGs are not used as overlays because they may be opaque.
+Choose **Page Overlay** or **Cover + Overlay** and place PNG artwork in `/.sleep/` or `/sleep/`; one image is selected randomly for each sleep screen. Both modes preserve transparent artwork in grayscale; Cover + Overlay tries the next image when the random choice is opaque, then shows an opaque image only if no transparent artwork is available. A single `/sleep-overlay.png` (or `overlay.png`) is also supported as a fixed fallback. Transparent PNGs are recommended so the cover or reader page remains visible underneath.
 
 ## Building
 

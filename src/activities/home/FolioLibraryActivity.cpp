@@ -10,6 +10,7 @@
 #include <Xtc.h>
 
 #include <algorithm>
+#include <cctype>
 #include <iterator>
 
 #include "CrossPointSettings.h"
@@ -30,6 +31,12 @@ constexpr char RETRIEVE_ALL_BOOKS_MESSAGE[] = "Retrieve all books details. Pleas
 constexpr char RETRIEVE_ALL_BOOKS_DONE_MESSAGE[] = "All book details retrieved.";
 
 bool isLibraryBook(const std::string& path) {
+  std::string filename = path;
+  const size_t slash = filename.find_last_of('/');
+  if (slash != std::string::npos) filename.erase(0, slash + 1);
+  std::transform(filename.begin(), filename.end(), filename.begin(),
+                 [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (filename == "my clippings.txt" || filename == "clippings.txt") return false;
   return FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path) ||
          FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path);
 }
@@ -284,17 +291,9 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
 
 void FolioLibraryActivity::showMenu() {
   std::vector<std::string> options = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), "Reading Statistics",
-                                      "Reading Calendar", "Retrieve All Book Details"};
-  std::string selectedEpubPath;
-  if (selectorIndex < files.size() && (files[selectorIndex].empty() || files[selectorIndex].back() != '/')) {
-    const std::string selectedPath = fullPath(selectorIndex);
-    if (FsHelpers::hasEpubExtension(selectedPath)) {
-      selectedEpubPath = selectedPath;
-      options.emplace_back("Bookmarks (selected book)");
-      options.emplace_back("Clippings (selected book)");
-    }
-  }
-  menuPopup.show(StrId::STR_MENU, options, 0, [this, selectedEpubPath](const int index) {
+                                      "Reading Calendar", "Retrieve All Book Details", "Bookmarks (all books)",
+                                      "Clippings (all books)"};
+  menuPopup.show(StrId::STR_MENU, options, 0, [this](const int index) {
     if (index == 0) {
       menuPopup.dismiss();
       activityManager.goToFileTransfer();
@@ -310,14 +309,21 @@ void FolioLibraryActivity::showMenu() {
     } else if (index == 4) {
       menuPopup.dismiss();
       startRetrieveAllBooks();
-    } else if (index == 5 && !selectedEpubPath.empty()) {
+    } else if (index == 5) {
       menuPopup.dismiss();
-      startActivityForResult(std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, selectedEpubPath),
-                             nullptr);
-    } else if (index == 6 && !selectedEpubPath.empty()) {
+      startActivityForResult(
+          std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, std::string{}, true),
+          [this](const ActivityResult& result) {
+            if (result.isCancelled) return;
+            const auto* bookmark = std::get_if<ProgressChangeResult>(&result.data);
+            if (bookmark && !bookmark->bookPath.empty()) {
+              activityManager.goToReaderAtBookmark(bookmark->bookPath, *bookmark);
+            }
+          });
+    } else if (index == 6) {
       menuPopup.dismiss();
       startActivityForResult(std::make_unique<EpubReaderClippingListActivity>(
-                                renderer, mappedInput, selectedEpubPath, "Selected book"),
+                                renderer, mappedInput, std::string{}, "All books", true),
                             nullptr);
     }
   });
@@ -381,7 +387,15 @@ void FolioLibraryActivity::showBookActions() {
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, path), nullptr);
       return;
     } else if (action == 8 && FsHelpers::hasEpubExtension(path)) {
-      startActivityForResult(std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, path), nullptr);
+      startActivityForResult(
+          std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, path),
+          [this](const ActivityResult& result) {
+            if (result.isCancelled) return;
+            const auto* bookmark = std::get_if<ProgressChangeResult>(&result.data);
+            if (bookmark && !bookmark->bookPath.empty()) {
+              activityManager.goToReaderAtBookmark(bookmark->bookPath, *bookmark);
+            }
+          });
       return;
     } else if (action == 9 && FsHelpers::hasEpubExtension(path)) {
       startActivityForResult(
