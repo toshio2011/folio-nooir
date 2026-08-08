@@ -23,6 +23,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     QUICK_RESUME = 6,
     // Keep new sleep modes at the end: these values are persisted in settings.
     OVERLAY = 7,
+    // Recent/current book cover with a transparent page overlay above it.
+    COVER_OVERLAY = 8,
+    READING_STATS_SLEEP = 9,
+    MINIMAL_STATS = 10,
+    CLIPPING_COVER = 11,
     SLEEP_SCREEN_MODE_COUNT
   };
   enum SLEEP_SCREEN_COVER_MODE { FIT = 0, CROP = 1, SLEEP_SCREEN_COVER_MODE_COUNT };

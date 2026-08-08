@@ -1,6 +1,6 @@
 # Folio Nooir
 
-Current development release: **v1.5.1**.
+Current development release: **v1.5.2**.
 
 Folio Nooir is an experimental, bookshelf-focused e-reader firmware for Xteink devices. It is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), keeping the core reader, wireless transfer, sleep, and settings features while adding a Folio Nooir interface and reading tools.
 
@@ -85,6 +85,8 @@ When the device is connected to the same network, the built-in web interface pro
 - Custom PNG/BMP sleep images.
 - Random sleep images from `/.sleep/`.
 - Transparent PNG page-overlay sleep mode that keeps the last reader page visible beneath the overlay.
+- `Cover + Overlay`: use the current/recent book cover as the background and composite the transparent page overlay above it.
+- `Reading Stats`, `Minimal Stats`, and `Clipping + Cover` sleep modes.
 - Ghosting mitigation and clean refreshes when leaving books or entering sleep.
 - Conservative X3/X4 display-driver detection for the supported C3 family.
 
@@ -117,7 +119,7 @@ Each compatible GitHub release must contain an asset named exactly:
 firmware.bin
 ```
 
-Use a numeric release tag such as `1.5.1`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
+Use a numeric release tag such as `1.5.2`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
 
 ## Custom sleep images
 
@@ -128,9 +130,12 @@ Choose **Custom** or **Cover + Custom** in sleep-screen settings, then use eithe
 
 If both root files exist, `/sleep.bmp` takes priority.
 
+`Clipping + Cover` selects a random saved clipping from the current/recent book
+and renders it in a quote card over that book's cover when the device sleeps.
+
 ### Page overlay
 
-Choose **Page Overlay** and place a transparent PNG at `/sleep-overlay.png`. Folder alternatives `/.sleep/overlay.png` and `/sleep/overlay.png` are also supported. If the named overlay is absent, Folio Nooir selects a PNG randomly from `/.sleep/` or `/sleep/`.
+Choose **Page Overlay** or **Cover + Overlay** and place a transparent PNG at `/sleep-overlay.png`. Folder alternatives `/.sleep/overlay.png` and `/sleep/overlay.png` are also supported. Ordinary custom sleep PNGs are not used as overlays because they may be opaque.
 
 ## Building
 

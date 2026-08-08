@@ -18,6 +18,8 @@
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/home/SynopsisActivity.h"
 #include "activities/home/ReadingStatsActivity.h"
+#include "activities/reader/EpubReaderBookmarksActivity.h"
+#include "activities/reader/EpubReaderClippingListActivity.h"
 #include "util/BookCacheUtils.h"
 #include "components/UITheme.h"
 #include "components/themes/folio_nooir/FolioNooirTheme.h"
@@ -231,23 +233,39 @@ void RecentBooksActivity::generateNextCover() {
 }
 
 void RecentBooksActivity::showMenu() {
-  const char* options[] = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), "Reading Statistics", "Reading Calendar"};
-  menuPopup.show(tr(STR_MENU), options, 4, 0, [this](int index) {
+  std::vector<std::string> options = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), "Reading Statistics",
+                                      "Reading Calendar"};
+  std::string selectedEpubPath;
+  if (visibleBookCount > 0 && selectorIndex < visibleBookCount) {
+    const RecentBook& selected = recentBooks[selectedRecentIndex()];
+    if (FsHelpers::hasEpubExtension(selected.path)) {
+      selectedEpubPath = selected.path;
+      options.emplace_back("Bookmarks (selected book)");
+      options.emplace_back("Clippings (selected book)");
+    }
+  }
+  menuPopup.show(StrId::STR_MENU, options, 0, [this, selectedEpubPath](const int index) {
     if (index == 0) {
       menuPopup.dismiss();
       activityManager.goToFileTransfer();
-    }
-    if (index == 1) {
+    } else if (index == 1) {
       menuPopup.dismiss();
       activityManager.goToSettings();
-    }
-    if (index == 2) {
+    } else if (index == 2) {
       menuPopup.dismiss();
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), nullptr);
-    }
-    if (index == 3) {
+    } else if (index == 3) {
       menuPopup.dismiss();
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, "", true), nullptr);
+    } else if (index == 4 && !selectedEpubPath.empty()) {
+      menuPopup.dismiss();
+      startActivityForResult(std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, selectedEpubPath),
+                             nullptr);
+    } else if (index == 5 && !selectedEpubPath.empty()) {
+      menuPopup.dismiss();
+      startActivityForResult(std::make_unique<EpubReaderClippingListActivity>(
+                                renderer, mappedInput, selectedEpubPath, "Selected book"),
+                            nullptr);
     }
   });
   requestUpdate();
@@ -255,11 +273,15 @@ void RecentBooksActivity::showMenu() {
 
 void RecentBooksActivity::showBookActions() {
   if (visibleBookCount == 0 || selectorIndex >= visibleBookCount) return;
-  const char* actions[] = {tr(STR_OPEN),           tr(STR_MARK_READING),
-                           tr(STR_MARK_ON_HOLD),   tr(STR_FINISHED),
-                           tr(STR_RESET_PROGRESS), tr(STR_REFRESH_BOOK_CACHE),
-                           tr(STR_REMOVE_FROM_LIST), tr(STR_READ_FULL_SYNOPSIS), "Book Statistics"};
-  bookActionsPopup.show(tr(STR_BOOK_ACTIONS), actions, 9, 0, [this](const int action) {
+  const RecentBook selectedBook = recentBooks[selectedRecentIndex()];
+  std::vector<std::string> actions = {tr(STR_OPEN), tr(STR_MARK_READING), tr(STR_MARK_ON_HOLD), tr(STR_FINISHED),
+                                      tr(STR_RESET_PROGRESS), tr(STR_REFRESH_BOOK_CACHE),
+                                      tr(STR_REMOVE_FROM_LIST), tr(STR_READ_FULL_SYNOPSIS), "Book Statistics"};
+  if (FsHelpers::hasEpubExtension(selectedBook.path)) {
+    actions.emplace_back(tr(STR_BOOKMARKS));
+    actions.emplace_back(tr(STR_CLIPPINGS));
+  }
+  bookActionsPopup.show(StrId::STR_BOOK_ACTIONS, actions, 0, [this](const int action) {
     if (visibleBookCount == 0 || selectorIndex >= visibleBookCount) return;
     const RecentBook selected = recentBooks[selectedRecentIndex()];
     if (action == 0) {
@@ -302,6 +324,17 @@ void RecentBooksActivity::showBookActions() {
     }
     if (action == 8) {
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, selected.path), nullptr);
+      return;
+    }
+    if (action == 9 && FsHelpers::hasEpubExtension(selected.path)) {
+      startActivityForResult(
+          std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, selected.path), nullptr);
+      return;
+    }
+    if (action == 10 && FsHelpers::hasEpubExtension(selected.path)) {
+      startActivityForResult(std::make_unique<EpubReaderClippingListActivity>(
+                                renderer, mappedInput, selected.path, selected.title),
+                            nullptr);
       return;
     }
     loadRecentBooks();
@@ -783,7 +816,9 @@ void RecentBooksActivity::render(RenderLock&&) {
     renderer.drawText(UI_10_FONT_ID, detailX, contentTop + 55, author.c_str());
     const char* synopsisText = selected.synopsis.empty() ? tr(STR_NO_SYNOPSIS) : selected.synopsis.c_str();
     const int synopsisY = contentTop + 79;
-    const int progressTextY = contentTop + detailHeight - 54;
+    // Keep the state row and progress bar at the bottom of the featured
+    // panel, leaving enough vertical room for five synopsis lines above it.
+    const int progressTextY = contentTop + detailHeight - 37;
     constexpr int SYNOPSIS_PROGRESS_GAP_PX = 2;
     const int synopsisLineHeight = std::max(1, renderer.getLineHeight(SMALL_FONT_ID));
     const int synopsisMaxLines = std::clamp(
@@ -802,7 +837,7 @@ void RecentBooksActivity::render(RenderLock&&) {
              selected.progressPercent, static_cast<unsigned long>(readingMinutes), selected.readingSessions);
     const std::string stateText = renderer.truncatedText(SMALL_FONT_ID, state, detailWidth);
     renderer.drawText(SMALL_FONT_ID, detailX, progressTextY, stateText.c_str());
-    const int progressY = contentTop + detailHeight - 28;
+    const int progressY = contentTop + detailHeight - 14;
     renderer.drawRect(detailX, progressY, detailWidth, 12);
     const int fill = (detailWidth - 2) * selected.progressPercent / 100;
     if (fill > 0) renderer.fillRect(detailX + 1, progressY + 1, fill, 10);

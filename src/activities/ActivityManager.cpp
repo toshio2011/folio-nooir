@@ -68,8 +68,18 @@ void ActivityManager::renderTaskLoop() {
 }
 
 void ActivityManager::loop() {
-  if (suppressNextInputFrame) {
-    suppressNextInputFrame = false;
+  if (suppressRestoredReaderInput) {
+    const auto button = [this](const MappedInputManager::Button input) {
+      return mappedInput.isPressed(input) || mappedInput.wasReleased(input);
+    };
+    const bool closingInput = button(MappedInputManager::Button::Back) ||
+                              button(MappedInputManager::Button::Confirm) ||
+                              button(MappedInputManager::Button::Power) ||
+                              button(MappedInputManager::Button::Left) ||
+                              button(MappedInputManager::Button::Right) ||
+                              button(MappedInputManager::Button::Up) ||
+                              button(MappedInputManager::Button::Down);
+    if (!closingInput) suppressRestoredReaderInput = false;
     return;
   }
 
@@ -114,7 +124,7 @@ void ActivityManager::loop() {
         stackActivities.pop_back();
         LOG_DBG("ACT", "Popped from activity stack, new size = %zu", stackActivities.size());
         if (currentActivity->isReaderActivity()) {
-          suppressNextInputFrame = true;
+          suppressRestoredReaderInput = true;
         }
         // Handle result if necessary
         if (currentActivity->resultHandler) {

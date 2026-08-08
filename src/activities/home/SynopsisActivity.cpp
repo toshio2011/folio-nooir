@@ -53,11 +53,13 @@ std::string SynopsisActivity::stripHtml(const std::string& source) {
 void SynopsisActivity::onEnter() {
   Activity::onEnter();
   // Shelf entries intentionally keep a small synopsis cache for boot and
-  // scrolling speed. If it looks like that cache was truncated, retrieve the
-  // original EPUB description only when the user explicitly asks to read it.
-  if (FsHelpers::hasEpubExtension(bookPath) && (synopsis.empty() || synopsis.size() >= 384)) {
+  // scrolling speed. This activity is the explicit full-text view, so always
+  // reload the EPUB metadata and replace the preview when a complete OPF
+  // description is available. This also handles short previews that were
+  // truncated at a paragraph boundary.
+  if (FsHelpers::hasEpubExtension(bookPath)) {
     Epub epub(bookPath, "/.crosspoint");
-    if (epub.loadMetadataOnly() && epub.getDescription().size() > synopsis.size()) {
+    if (epub.loadMetadataOnly() && !epub.getDescription().empty()) {
       synopsis = epub.getDescription();
     }
   }

@@ -115,11 +115,16 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   // Language -- managed by LanguageSelectActivity, not in SettingsList.
   // Stored as ISO code string ("EN", "DE", ...) for stability across enum reorders.
   doc["language"] = (language < getLanguageCount()) ? LANGUAGE_CODES[language] : "EN";
+  // Sleep modes 8+ were simplified in Folio Nooir 1.5.2. Keep a small
+  // layout marker so settings written by this firmware are not mistaken for
+  // legacy values during the next boot.
+  doc["sleepModeLayoutVersion"] = 1;
 }
 
 bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   CrossPointSettings& s = *this;
   bool needsResave = false;
+  const bool currentSleepModeLayout = (doc["sleepModeLayoutVersion"] | (uint8_t)0) == 1;
 
   auto clamp = [](uint8_t val, uint8_t maxVal, uint8_t def) -> uint8_t { return val < maxVal ? val : def; };
 
@@ -164,8 +169,25 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     } else {
       const uint8_t fieldDefault = s.*(info.valuePtr);  // struct-initializer default, read before we overwrite it
       uint8_t v = doc[info.key] | fieldDefault;
+      // Older Folio Nooir builds exposed two cover/overlay variants. Collapse
+      // both legacy values into the single current Cover + Overlay mode. The
+      // marker keeps new values stable across subsequent boots.
+      if (info.key && strcmp(info.key, "sleepScreen") == 0 && !currentSleepModeLayout) {
+        const uint8_t legacyValue = v;
+        if (legacyValue == 8 || legacyValue == 9) {
+          v = COVER_OVERLAY;
+        } else if (legacyValue == 10) {
+          v = READING_STATS_SLEEP;
+        } else if (legacyValue == 11) {
+          v = MINIMAL_STATS;
+        } else if (legacyValue == 12) {
+          v = CLIPPING_COVER;
+        }
+        if (v != legacyValue) needsResave = true;
+      }
       if (info.type == SettingType::ENUM) {
-        v = clamp(v, (uint8_t)info.enumValues.size(), fieldDefault);
+        const auto optionCount = info.enumStringValues.empty() ? info.enumValues.size() : info.enumStringValues.size();
+        v = clamp(v, (uint8_t)optionCount, fieldDefault);
       } else if (info.type == SettingType::TOGGLE) {
         v = clamp(v, (uint8_t)2, fieldDefault);
       } else if (info.type == SettingType::VALUE) {
@@ -177,6 +199,8 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
       s.*(info.valuePtr) = v;
     }
   }
+
+  if (!currentSleepModeLayout) needsResave = true;
 
   if (doc["sleepTimeoutMinutes"].isNull() && !doc["sleepTimeout"].isNull()) {
     const uint8_t legacyValue =

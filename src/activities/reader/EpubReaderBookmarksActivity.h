@@ -2,6 +2,7 @@
 #include <Epub.h>
 
 #include <memory>
+#include <utility>
 
 #include "../../BookmarkEntry.h"
 #include "../Activity.h"
@@ -21,6 +22,10 @@ class EpubReaderBookmarksActivity final : public Activity {
   explicit EpubReaderBookmarksActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                        const std::shared_ptr<Epub>& epub, const std::string& epubPath)
       : Activity("EpubReaderBookmarks", renderer, mappedInput), epub(epub), epubPath(epubPath) {}
+  // Home-shelf entry point. The full EPUB cache is loaded only when the user
+  // explicitly opens bookmark management, keeping shelf navigation light.
+  EpubReaderBookmarksActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string epubPath)
+      : Activity("EpubReaderBookmarks", renderer, mappedInput), epubPath(std::move(epubPath)) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;

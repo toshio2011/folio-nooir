@@ -55,6 +55,10 @@ bool save(const std::string& bookPath, const std::vector<ClippingEntry>& clippin
     item["spine"] = clipping.spineIndex;
     item["page"] = clipping.page;
     item["date"] = clipping.dateKey;
+    if (clipping.hasWordRange) {
+      item["firstWord"] = clipping.firstWord;
+      item["lastWord"] = clipping.lastWord;
+    }
   }
 
   Storage.mkdir(CLIPPINGS_DIR);
@@ -97,10 +101,28 @@ bool load(const std::string& bookPath, std::vector<ClippingEntry>& clippings) {
     clipping.spineIndex = item["spine"] | static_cast<uint16_t>(0);
     clipping.page = item["page"] | static_cast<uint16_t>(0);
     clipping.dateKey = item["date"] | static_cast<uint32_t>(0);
+    if (!item["firstWord"].isNull() && !item["lastWord"].isNull()) {
+      clipping.firstWord = item["firstWord"] | static_cast<uint16_t>(0);
+      clipping.lastWord = item["lastWord"] | static_cast<uint16_t>(0);
+      clipping.hasWordRange = clipping.firstWord <= clipping.lastWord;
+    }
     clippings.push_back(std::move(clipping));
     if (clippings.size() >= MAX_CLIPPINGS) break;
   }
   return true;
+}
+
+bool replace(const std::string& bookPath, const std::vector<ClippingEntry>& clippings) {
+  std::vector<ClippingEntry> bounded;
+  bounded.reserve(std::min(clippings.size(), MAX_CLIPPINGS));
+  for (const auto& clipping : clippings) {
+    if (clipping.text.empty()) continue;
+    ClippingEntry copy = clipping;
+    copy.text.resize(std::min(copy.text.size(), MAX_CLIP_BYTES));
+    bounded.push_back(std::move(copy));
+    if (bounded.size() >= MAX_CLIPPINGS) break;
+  }
+  return save(bookPath, bounded);
 }
 
 bool append(const std::string& bookPath, const std::string& bookTitle, ClippingEntry clipping) {

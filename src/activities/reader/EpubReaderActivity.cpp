@@ -13,6 +13,8 @@
 #include <esp_system.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cstring>
 #include <functional>
 #include <iterator>
 #include <limits>
@@ -80,6 +82,97 @@ struct ProgressRange {
   float start;
   float end;
 };
+
+// The clipping selector and the reader use the same selectable-word model.
+// Keeping the small renderer-side copy here lets saved highlights be resolved
+// without allocating a second Page or reparsing the EPUB.
+struct HighlightWord {
+  int16_t x = 0;
+  int16_t y = 0;
+  int16_t width = 0;
+  uint16_t row = 0;
+  const char* text = nullptr;
+  EpdFontFamily::Style style = EpdFontFamily::REGULAR;
+};
+
+bool isSelectableHighlightToken(const char* text) {
+  if (!text) return false;
+  for (const uint8_t* p = reinterpret_cast<const uint8_t*>(text); *p != 0; p++) {
+    if (*p < 0x80) {
+      if (std::isalnum(*p)) return true;
+    } else {
+      return true;
+    }
+  }
+  return false;
+}
+
+void collectHighlightWords(const Page& page, GfxRenderer& renderer, const int fontId, const int marginLeft,
+                           const int marginTop, std::vector<HighlightWord>& words) {
+  words.clear();
+  words.reserve(128);
+  uint16_t row = 0;
+  for (const auto& element : page.elements) {
+    if (element->getTag() != TAG_PageLine) continue;
+    const auto* line = static_cast<const PageLine*>(element.get());
+    const auto& block = line->getBlock();
+    if (!block || !block->valid()) continue;
+
+    bool rowHasWords = false;
+    for (uint16_t i = 0; i < block->wordCount(); ++i) {
+      const char* text = block->wordText(i);
+      if (!isSelectableHighlightToken(text)) continue;
+      HighlightWord word;
+      word.x = static_cast<int16_t>(line->xPos + block->wordXpos(i) + marginLeft);
+      word.y = static_cast<int16_t>(line->yPos + marginTop);
+      word.width = static_cast<int16_t>(renderer.getTextAdvanceX(fontId, text, block->wordStyle(i)));
+      word.row = row;
+      word.text = text;
+      word.style = block->wordStyle(i);
+      words.push_back(word);
+      rowHasWords = true;
+    }
+    if (rowHasWords) ++row;
+  }
+}
+
+std::string buildHighlightText(const std::vector<HighlightWord>& words, const int first, const int last) {
+  if (first < 0 || last < first || last >= static_cast<int>(words.size())) return {};
+  std::string text;
+  text.reserve(256);
+  for (int i = first; i <= last; ++i) {
+    if (i > first) {
+      if (words[i].row != words[i - 1].row) {
+        text.push_back('\n');
+      } else if (words[i].x > words[i - 1].x + words[i - 1].width + 1) {
+        text.push_back(' ');
+      }
+    }
+    if (text.size() >= 1024) break;
+    const size_t remaining = 1024 - text.size();
+    text.append(words[i].text, std::min(remaining, strlen(words[i].text)));
+  }
+  while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) text.pop_back();
+  return text;
+}
+
+bool findHighlightTextRange(const std::vector<HighlightWord>& words, const std::string& text, int& first, int& last) {
+  if (text.empty() || words.empty()) return false;
+  for (int start = 0; start < static_cast<int>(words.size()); ++start) {
+    for (int end = start; end < static_cast<int>(words.size()); ++end) {
+      const std::string candidate = buildHighlightText(words, start, end);
+      if (candidate == text) {
+        first = start;
+        last = end;
+        return true;
+      }
+      // Once the assembled text is materially longer than the saved clip,
+      // extending this candidate cannot produce a match.
+      if (candidate.size() > text.size() + 16) break;
+    }
+  }
+  return false;
+}
 
 ProgressRange getPageProgressRange(const std::shared_ptr<Epub>& epub, const int spineIndex, const int page,
                                    const int pageCount) {
@@ -309,6 +402,7 @@ void EpubReaderActivity::openReaderOptions() {
         // visible on the first reader loop after the child activity pops.
         // Consume that one frame so it cannot navigate out of the book.
         skipNextButtonCheck = true;
+        readerOptionsReturnGuard = true;
         longPowerShortcutFired = false;
         ignoreNextConfirmRelease = false;
         requestUpdate();
@@ -334,6 +428,65 @@ void EpubReaderActivity::refreshAfterReaderSettings() {
   idlePrewarmPage = -1;
   partialRebuildStartFailed = false;
   pagesUntilFullRefresh = 1;
+}
+
+void EpubReaderActivity::renderSavedHighlights(const Page& page, const int fontId, const int marginLeft,
+                                               const int marginTop) {
+  if (!section || cachedClippings.empty()) return;
+
+  std::vector<HighlightWord> words;
+  collectHighlightWords(page, renderer, fontId, marginLeft, marginTop, words);
+  if (words.empty()) return;
+
+  const int currentPage = section->currentPage;
+  const int lineHeight = renderer.getLineHeight(fontId);
+  const bool darkMode = renderer.isDarkMode();
+
+  for (const auto& clipping : cachedClippings) {
+    if (clipping.spineIndex != currentSpineIndex || clipping.page != currentPage) continue;
+
+    int first = -1;
+    int last = -1;
+    bool matched = false;
+    if (clipping.hasWordRange && clipping.firstWord <= clipping.lastWord &&
+        clipping.lastWord < words.size()) {
+      first = clipping.firstWord;
+      last = clipping.lastWord;
+      // Verify the range against the saved text.  This handles stale ranges
+      // after a cache rebuild while keeping the fast path allocation-free.
+      matched = buildHighlightText(words, first, last) == clipping.text;
+    }
+    if (!matched) {
+      matched = findHighlightTextRange(words, clipping.text, first, last);
+    }
+    if (!matched) continue;
+
+    // The normal reader is monochrome.  Inverting the selected words gives a
+    // clear, durable e-ink highlight and matches the temporary selection UI.
+    // Draw all backgrounds first, then redraw the glyphs in the opposite ink
+    // color so the text remains readable.
+    if (darkMode) {
+      for (int i = first; i <= last; ++i) {
+        const auto& word = words[i];
+        renderer.fillRect(word.x - 2, word.y - 2, word.width + 4, lineHeight + 4, false);
+      }
+      renderer.setDarkMode(false);
+      for (int i = first; i <= last; ++i) {
+        const auto& word = words[i];
+        renderer.drawText(fontId, word.x, word.y, word.text, true, word.style);
+      }
+      renderer.setDarkMode(true);
+    } else {
+      for (int i = first; i <= last; ++i) {
+        const auto& word = words[i];
+        renderer.fillRect(word.x - 2, word.y - 2, word.width + 4, lineHeight + 4, true);
+      }
+      for (int i = first; i <= last; ++i) {
+        const auto& word = words[i];
+        renderer.drawText(fontId, word.x, word.y, word.text, false, word.style);
+      }
+    }
+  }
 }
 
 bool EpubReaderActivity::buildTickHeapGate() {
@@ -412,6 +565,20 @@ void EpubReaderActivity::openClipSelection() {
 }
 
 void EpubReaderActivity::loop() {
+  if (readerOptionsReturnGuard) {
+    const auto closingButton = [this](MappedInputManager::Button button) {
+      return mappedInput.isPressed(button) || mappedInput.wasReleased(button);
+    };
+    const bool closingInput = closingButton(MappedInputManager::Button::Back) ||
+                              closingButton(MappedInputManager::Button::Confirm) ||
+                              closingButton(MappedInputManager::Button::Power) ||
+                              closingButton(MappedInputManager::Button::Left) ||
+                              closingButton(MappedInputManager::Button::Right) ||
+                              closingButton(MappedInputManager::Button::Up) ||
+                              closingButton(MappedInputManager::Button::Down);
+    if (!closingInput) readerOptionsReturnGuard = false;
+    return;
+  }
   if (skipNextButtonCheck) {
     skipNextButtonCheck = false;
     return;
@@ -1036,7 +1203,13 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       if (epub) {
         startActivityForResult(
             std::make_unique<EpubReaderClippingListActivity>(renderer, mappedInput, epub->getPath(), epub->getTitle()),
-            [this](const ActivityResult&) { requestUpdate(); });
+            [this](const ActivityResult&) {
+              // The clipping manager can edit or delete entries. Refresh the
+              // in-memory highlight set before the reader renders again.
+              cachedClippings.clear();
+              if (epub) ClipFile::load(epub->getPath(), cachedClippings);
+              requestUpdate();
+            });
       }
       break;
     }
@@ -1706,12 +1879,14 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   auto renderGrayscalePass = [&]() {
     if (needsTextGrayscale) {
       page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
+      renderSavedHighlights(*page, fontId, orientedMarginLeft, orientedMarginTop);
     } else {
       page->renderImages(renderer, fontId, orientedMarginLeft, orientedMarginTop);
     }
   };
 
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
+  renderSavedHighlights(*page, fontId, orientedMarginLeft, orientedMarginTop);
   renderStatusBar();
   const auto tBwRender = millis();
 

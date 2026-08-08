@@ -13,7 +13,11 @@ class SleepActivity final : public Activity {
   void renderDefaultSleepScreen() const;
   void renderCustomSleepScreen() const;
   bool renderCustomImage(const std::string& path) const;
-  void renderCoverSleepScreen() const;
+  void renderCoverSleepScreen(const std::string& bookPath = {}) const;
+  void renderCoverOverlaySleepScreen() const;
+  void renderReadingStatsSleepScreen() const;
+  void renderMinimalStatsSleepScreen() const;
+  void renderClippingCoverSleepScreen() const;
   void renderBitmapSleepScreen(const Bitmap& bitmap) const;
   void renderLastScreenSleepScreen() const;
   void renderBlankSleepScreen() const;

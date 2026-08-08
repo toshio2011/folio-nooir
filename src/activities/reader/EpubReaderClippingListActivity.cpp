@@ -6,6 +6,8 @@
 #include <algorithm>
 
 #include "MappedInputManager.h"
+#include "activities/home/SynopsisActivity.h"
+#include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/ClipFile.h"
@@ -38,6 +40,52 @@ void EpubReaderClippingListActivity::onEnter() {
   requestUpdate();
 }
 
+void EpubReaderClippingListActivity::showActions() {
+  if (clippings.empty() || selectedIndex >= static_cast<int>(clippings.size())) return;
+  const char* options[] = {"Cancel", "Read full", "Edit clipping", tr(STR_DELETE)};
+  actionsPopup.show("Clipping actions", options, 4, 0, [this](const int action) {
+    if (action == 1) {
+      const auto& clipping = clippings[selectedIndex];
+      startActivityForResult(std::make_unique<SynopsisActivity>(renderer, mappedInput, "Clipping", bookTitle,
+                                                               clipping.text),
+                             nullptr);
+    } else if (action == 2) {
+      editSelected();
+    } else if (action == 3) {
+      const char* confirm[] = {tr(STR_CANCEL), tr(STR_DELETE)};
+      confirmPopup.show("Delete clipping?", confirm, 2, 0, [this](const int choice) {
+        if (choice == 1) deleteSelected();
+        requestUpdate();
+      });
+    }
+    requestUpdate();
+  });
+  requestUpdate();
+}
+
+void EpubReaderClippingListActivity::editSelected() {
+  if (selectedIndex >= static_cast<int>(clippings.size())) return;
+  const int index = selectedIndex;
+  startActivityForResult(
+      std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, "Edit clipping", clippings[index].text, 1024),
+      [this, index](const ActivityResult& result) {
+        if (result.isCancelled || !std::holds_alternative<KeyboardResult>(result.data)) return;
+        const std::string& text = std::get<KeyboardResult>(result.data).text;
+        if (text.empty() || index < 0 || index >= static_cast<int>(clippings.size())) return;
+        clippings[index].text = text;
+        ClipFile::replace(bookPath, clippings);
+        requestUpdate(true);
+      });
+}
+
+void EpubReaderClippingListActivity::deleteSelected() {
+  if (selectedIndex >= static_cast<int>(clippings.size())) return;
+  clippings.erase(clippings.begin() + selectedIndex);
+  ClipFile::replace(bookPath, clippings);
+  if (selectedIndex >= static_cast<int>(clippings.size()) && selectedIndex > 0) --selectedIndex;
+  requestUpdate(true);
+}
+
 int EpubReaderClippingListActivity::listTop() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   return metrics.topPadding + metrics.headerHeight + TITLE_HEIGHT;
@@ -48,6 +96,8 @@ int EpubReaderClippingListActivity::listHeight() const {
 }
 
 void EpubReaderClippingListActivity::loop() {
+  if (actionsPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
+  if (confirmPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     finish();
     return;
@@ -57,6 +107,7 @@ void EpubReaderClippingListActivity::loop() {
   const int height = listHeight();
   switch (handleListTouch(selectedIndex, static_cast<int>(clippings.size()), listTop(), height, true)) {
     case ListTouchResult::Activated:
+      showActions();
       return;
     case ListTouchResult::Consumed:
       return;
@@ -73,6 +124,11 @@ void EpubReaderClippingListActivity::loop() {
   if (swipe == MappedInputManager::SwipeDir::Down) {
     selectedIndex = ButtonNavigator::previousPageIndex(selectedIndex, clippings.size(), GUI.getListPageItems(height, true));
     requestUpdate();
+    return;
+  }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    showActions();
     return;
   }
 
@@ -109,7 +165,11 @@ void EpubReaderClippingListActivity::render(RenderLock&&) {
         });
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  if (confirmPopup.processRender(renderer, mappedInput)) return;
+  if (actionsPopup.processRender(renderer, mappedInput)) return;
+
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), clippings.empty() ? "" : tr(STR_SELECT),
+                                            tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }

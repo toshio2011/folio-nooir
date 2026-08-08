@@ -66,11 +66,11 @@ class ActivityManager {
   // This variable must only be set by the main loop, to avoid race conditions
   std::atomic<bool> requestedUpdate{false};
 
-  // A button or edge-swipe can still be reported for one frame after a modal
-  // activity finishes.  Drop that frame before it reaches the restored reader
-  // (or its parent activity), otherwise closing Reader Options can immediately
-  // be interpreted as Home/Back and leave the book.
-  bool suppressNextInputFrame = false;
+  // A button can still be held (or report its release edge) when a modal
+  // activity finishes.  Keep the restored reader input-gated until that
+  // closing gesture is idle, otherwise Reader Options can immediately be
+  // interpreted as Home/Back and leave the book.
+  bool suppressRestoredReaderInput = false;
 
  public:
   explicit ActivityManager(GfxRenderer& renderer, MappedInputManager& mappedInput)

@@ -14,6 +14,10 @@ constexpr char MEDIA_TYPE_NCX[] = "application/x-dtbncx+xml";
 constexpr char MEDIA_TYPE_CSS[] = "text/css";
 constexpr char MEDIA_TYPE_IMAGE_PREFIX[] = "image/";
 constexpr char itemCacheFile[] = "/.items.bin";
+// Keep enough of the OPF description for the explicit "Read full synopsis"
+// view.  The shelf still stores a short 384-byte preview, so this only
+// affects metadata loading and does not make the home screen heavier.
+constexpr size_t MAX_DESCRIPTION_BYTES = 8192;
 
 // EPUB descriptions frequently contain an escaped HTML fragment. Convert it
 // to bounded plain text in place so markup is interpreted instead of shown on
@@ -168,7 +172,8 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
   // Preserve separation between text nodes when dc:description contains real
   // nested XHTML rather than escaped markup.
   if (self->state == IN_BOOK_DESCRIPTION) {
-    if (!self->description.empty() && self->description.back() != ' ' && self->description.size() < 512) {
+    if (!self->description.empty() && self->description.back() != ' ' &&
+        self->description.size() < MAX_DESCRIPTION_BYTES) {
       self->description.push_back(' ');
     }
     return;
@@ -439,7 +444,6 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
   }
 
   if (self->state == IN_BOOK_DESCRIPTION) {
-    constexpr size_t MAX_DESCRIPTION_BYTES = 512;
     const size_t room = MAX_DESCRIPTION_BYTES - std::min(MAX_DESCRIPTION_BYTES, self->description.size());
     self->description.append(s, std::min(static_cast<size_t>(len), room));
     return;

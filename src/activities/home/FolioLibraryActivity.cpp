@@ -20,6 +20,8 @@
 #include "fontIds.h"
 #include "activities/home/SynopsisActivity.h"
 #include "activities/home/ReadingStatsActivity.h"
+#include "activities/reader/EpubReaderBookmarksActivity.h"
+#include "activities/reader/EpubReaderClippingListActivity.h"
 #include "activities/util/BmpViewerActivity.h"
 #include "util/BookCacheUtils.h"
 
@@ -281,9 +283,18 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
 }
 
 void FolioLibraryActivity::showMenu() {
-  const char* options[] = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), "Reading Statistics",
-                           "Reading Calendar", "Retrieve All Book Details"};
-  menuPopup.show(tr(STR_MENU), options, 5, 0, [this](const int index) {
+  std::vector<std::string> options = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), "Reading Statistics",
+                                      "Reading Calendar", "Retrieve All Book Details"};
+  std::string selectedEpubPath;
+  if (selectorIndex < files.size() && (files[selectorIndex].empty() || files[selectorIndex].back() != '/')) {
+    const std::string selectedPath = fullPath(selectorIndex);
+    if (FsHelpers::hasEpubExtension(selectedPath)) {
+      selectedEpubPath = selectedPath;
+      options.emplace_back("Bookmarks (selected book)");
+      options.emplace_back("Clippings (selected book)");
+    }
+  }
+  menuPopup.show(StrId::STR_MENU, options, 0, [this, selectedEpubPath](const int index) {
     if (index == 0) {
       menuPopup.dismiss();
       activityManager.goToFileTransfer();
@@ -299,6 +310,15 @@ void FolioLibraryActivity::showMenu() {
     } else if (index == 4) {
       menuPopup.dismiss();
       startRetrieveAllBooks();
+    } else if (index == 5 && !selectedEpubPath.empty()) {
+      menuPopup.dismiss();
+      startActivityForResult(std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, selectedEpubPath),
+                             nullptr);
+    } else if (index == 6 && !selectedEpubPath.empty()) {
+      menuPopup.dismiss();
+      startActivityForResult(std::make_unique<EpubReaderClippingListActivity>(
+                                renderer, mappedInput, selectedEpubPath, "Selected book"),
+                            nullptr);
     }
   });
   requestUpdate();
@@ -306,11 +326,15 @@ void FolioLibraryActivity::showMenu() {
 
 void FolioLibraryActivity::showBookActions() {
   if (selectorIndex >= files.size() || (!files[selectorIndex].empty() && files[selectorIndex].back() == '/')) return;
-  const char* actions[] = {tr(STR_OPEN),           tr(STR_MARK_READING),
-                           tr(STR_MARK_ON_HOLD),   tr(STR_FINISHED),
-                           tr(STR_RESET_PROGRESS), tr(STR_REFRESH_BOOK_CACHE),
-                           tr(STR_READ_FULL_SYNOPSIS), "Book Statistics"};
-  bookActionsPopup.show(tr(STR_BOOK_ACTIONS), actions, 8, 0, [this](const int action) {
+  const std::string selectedPath = fullPath(selectorIndex);
+  std::vector<std::string> actions = {tr(STR_OPEN), tr(STR_MARK_READING), tr(STR_MARK_ON_HOLD), tr(STR_FINISHED),
+                                      tr(STR_RESET_PROGRESS), tr(STR_REFRESH_BOOK_CACHE),
+                                      tr(STR_READ_FULL_SYNOPSIS), "Book Statistics"};
+  if (FsHelpers::hasEpubExtension(selectedPath)) {
+    actions.emplace_back(tr(STR_BOOKMARKS));
+    actions.emplace_back(tr(STR_CLIPPINGS));
+  }
+  bookActionsPopup.show(StrId::STR_BOOK_ACTIONS, actions, 0, [this](const int action) {
     const std::string path = fullPath(selectorIndex);
     const size_t slot = selectorIndex - previewPageStart;
     if (slot >= PAGE_SIZE) return;
@@ -355,6 +379,13 @@ void FolioLibraryActivity::showBookActions() {
       return;
     } else if (action == 7) {
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, path), nullptr);
+      return;
+    } else if (action == 8 && FsHelpers::hasEpubExtension(path)) {
+      startActivityForResult(std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, path), nullptr);
+      return;
+    } else if (action == 9 && FsHelpers::hasEpubExtension(path)) {
+      startActivityForResult(
+          std::make_unique<EpubReaderClippingListActivity>(renderer, mappedInput, path, preview.title), nullptr);
       return;
     }
     requestUpdate(true);
@@ -709,7 +740,9 @@ void FolioLibraryActivity::render(RenderLock&&) {
                       renderer.truncatedText(UI_10_FONT_ID, selected->author.c_str(), textWidth).c_str());
   const char* synopsis = selected && !selected->synopsis.empty() ? selected->synopsis.c_str() : tr(STR_NO_SYNOPSIS);
   const int synopsisY = featuredTop + 79;
-  const int progressTextY = featuredTop + featuredHeight - 54;
+  // Keep the state row and progress bar at the bottom of the featured
+  // panel, leaving enough vertical room for five synopsis lines above it.
+  const int progressTextY = featuredTop + featuredHeight - 37;
   constexpr int SYNOPSIS_PROGRESS_GAP_PX = 2;
   const int synopsisLineHeight = std::max(1, renderer.getLineHeight(SMALL_FONT_ID));
   const int synopsisMaxLines = std::clamp(
@@ -741,7 +774,7 @@ void FolioLibraryActivity::render(RenderLock&&) {
              static_cast<unsigned long>((seconds + 30) / 60), sessions);
     const std::string progressText = renderer.truncatedText(SMALL_FONT_ID, progressLine, textWidth);
     renderer.drawText(SMALL_FONT_ID, textX, progressTextY, progressText.c_str());
-    const int progressY = featuredTop + featuredHeight - 28;
+    const int progressY = featuredTop + featuredHeight - 14;
     renderer.drawRect(textX, progressY, textWidth, 12);
     const int fill = (textWidth - 2) * progress / 100;
     if (fill > 0) renderer.fillRect(textX + 1, progressY + 1, fill, 10);
@@ -761,9 +794,16 @@ void FolioLibraryActivity::render(RenderLock&&) {
   if (menuPopup.processRender(renderer, mappedInput)) return;
   if (bookActionsPopup.processRender(renderer, mappedInput)) return;
   if (retrievingMetadata && retrievingMetadataIndex == selectorIndex) {
-    GUI.drawPopup(renderer, tr(STR_RETRIEVING_BOOK_DETAILS));
-    retrievingPopupRendered = true;
-    return;
+    // A selection must remain still for the full debounce interval before a
+    // retrieval popup is allowed to appear. The guard also prevents a stale
+    // render task from briefly showing the previous book's popup immediately
+    // after the highlight moves.
+    constexpr unsigned long SELECTION_DEBOUNCE_MS = 1500;
+    if (millis() - selectionChangedMs >= SELECTION_DEBOUNCE_MS) {
+      GUI.drawPopup(renderer, tr(STR_RETRIEVING_BOOK_DETAILS));
+      retrievingPopupRendered = true;
+      return;
+    }
   }
   const auto labels = mappedInput.mapLabels(basepath == "/" ? tr(STR_MENU) : tr(STR_DIR_UP), tr(STR_OPEN),
                                             tr(STR_RECENT), tr(STR_FINISHED));

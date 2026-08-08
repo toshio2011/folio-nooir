@@ -39,6 +39,9 @@ class EpubReaderActivity final : public Activity {
   uint8_t pageLoadRetryCount = 0;
   static constexpr uint8_t MAX_PAGE_LOAD_RETRIES = 3;
   bool skipNextButtonCheck = false;  // Skip button processing for one frame after subactivity exit
+  // Keep the button release that closes Reader Options from being interpreted
+  // as a Back/Home action by the restored reader.
+  bool readerOptionsReturnGuard = false;
   bool automaticPageTurnActive = false;
   bool showBookmarkMessage = false;
   // "No dictionary set" popup, shown when a lookup is triggered without a configured dictionary.
@@ -95,6 +98,7 @@ class EpubReaderActivity final : public Activity {
 
   void renderContents(std::unique_ptr<Page> page, int orientedMarginTop, int orientedMarginRight,
                       int orientedMarginBottom, int orientedMarginLeft);
+  void renderSavedHighlights(const Page& page, int fontId, int marginLeft, int marginTop);
   void renderStatusBar() const;
   // Pages laid out per incremental-build pump: on the render path (catching up to the page
   // being shown) and per loop() tick (background build of a large chapter). Kept small so a

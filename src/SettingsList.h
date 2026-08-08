@@ -389,6 +389,16 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
   }();
 
   std::vector<SettingInfo> v = baseList;
+  // Build the extended sleep labels per call so a language change is reflected
+  // without regenerating the translation table. Legacy mode values are
+  // migrated by CrossPointSettings when the settings file is loaded.
+  if (!v.empty() && v.front().nameId == StrId::STR_SLEEP_SCREEN) {
+    v.front().enumStringValues = {
+        I18N.get(StrId::STR_DARK), I18N.get(StrId::STR_LIGHT), I18N.get(StrId::STR_CUSTOM),
+        I18N.get(StrId::STR_COVER), I18N.get(StrId::STR_COVER_CUSTOM), I18N.get(StrId::STR_NONE_OPT),
+        I18N.get(StrId::STR_QUICK_RESUME), I18N.get(StrId::STR_PAGE_OVERLAY),
+        "Cover + Overlay", "Reading Stats", "Minimal Stats", "Clipping + Cover"};
+  }
   if (!BoardConfig::hasTouch()) {
     v.erase(std::remove_if(v.begin(), v.end(),
                            [](const SettingInfo& s) { return s.nameId == StrId::STR_TOUCH_READER_CONTROLS; }),

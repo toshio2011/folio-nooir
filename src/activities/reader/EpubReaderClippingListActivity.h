@@ -6,6 +6,7 @@
 
 #include "../../ClippingEntry.h"
 #include "../Activity.h"
+#include "components/OptionPopup.h"
 #include "util/ButtonNavigator.h"
 
 // Lightweight list of saved clippings for the current EPUB. Selecting a row
@@ -29,7 +30,12 @@ class EpubReaderClippingListActivity final : public Activity {
   std::vector<ClippingEntry> clippings;
   int selectedIndex = 0;
   ButtonNavigator buttonNavigator;
+  OptionPopup actionsPopup;
+  OptionPopup confirmPopup;
 
   int listTop() const;
   int listHeight() const;
+  void showActions();
+  void editSelected();
+  void deleteSelected();
 };

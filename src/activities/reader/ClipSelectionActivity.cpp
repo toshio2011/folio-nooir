@@ -154,6 +154,13 @@ bool ClipSelectionActivity::saveSelection() {
   clipping.percentage = std::clamp(percentage, 0.0f, 1.0f);
   clipping.spineIndex = static_cast<uint16_t>(std::max(0, spineIndex));
   clipping.page = static_cast<uint16_t>(std::max(0, pageNumber));
+  const int first = std::min(startIndex, selected);
+  const int last = std::max(startIndex, selected);
+  if (first >= 0 && last >= first && last <= static_cast<int>(UINT16_MAX)) {
+    clipping.firstWord = static_cast<uint16_t>(first);
+    clipping.lastWord = static_cast<uint16_t>(last);
+    clipping.hasWordRange = true;
+  }
   return ClipFile::append(bookPath, bookTitle, std::move(clipping));
 }
 

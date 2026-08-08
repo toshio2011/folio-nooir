@@ -21,7 +21,11 @@ void EpubReaderBookmarksActivity::onEnter() {
   Activity::onEnter();
 
   if (!epub) {
-    return;
+    epub = std::make_shared<Epub>(epubPath, "/.crosspoint");
+    if (!epub->load(false, true)) {
+      epub.reset();
+      return;
+    }
   }
 
   if (!BookmarkFile::load(epubPath, bookmarks)) {
