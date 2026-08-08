@@ -35,6 +35,7 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Compact 4 x 2 cover grid with percentage progress ribbons.
 - Cover cache warm-up with visible retrieval feedback, cache reuse, and invalid/blank-BMP recovery.
 - Long-press actions for opening, status changes, progress reset, cache refresh, full synopsis, book statistics, and removing a book from the list without deleting the file.
+- Bookmark and clipping managers are available from the home menu and book actions; selecting a bookmark opens its book and jumps to the saved location.
 - Automatic movement to Finished when a book reaches 100%.
 
 ### Reader and typography
@@ -84,7 +85,7 @@ When the device is connected to the same network, the built-in web interface pro
 
 - Custom PNG/BMP sleep images.
 - Random sleep images from `/.sleep/`.
-- Transparent PNG page-overlay sleep mode that keeps the last reader page visible beneath the overlay.
+- Transparent PNG page-overlay sleep mode that keeps the last reader page visible beneath the overlay, rendered with the full four-level grayscale pipeline.
 - `Cover + Overlay`: use the current/recent book cover as the background and composite the transparent page overlay above it.
 - `Reading Stats`, `Minimal Stats`, and `Clipping + Cover` sleep modes.
 - Ghosting mitigation and clean refreshes when leaving books or entering sleep.
@@ -123,7 +124,7 @@ Use a numeric release tag such as `1.5.2`. Devices running an older build that s
 
 ## Custom sleep images
 
-Choose **Custom** or **Cover + Custom** in sleep-screen settings, then use either:
+Choose **Custom** in sleep-screen settings, then use either:
 
 - `/sleep.png` or `/sleep.bmp` for one fixed image; or
 - multiple `.png` and `.bmp` files inside `/.sleep/` for randomized sleep images.
