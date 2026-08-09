@@ -37,10 +37,12 @@ If CrossInk is already installed and working on your device, you can safely igno
 Folio Nooir is an interface and feature layer on top of CrossPoint rather than a replacement reader. The existing CrossPoint workflows remain available:
 
 - EPUB, XTC/XTCH, TXT, Markdown, and PDF/file-browser workflows.
+- EPUB chapter navigation, footnotes, bookmarks, go-to-percent, auto page turn, orientation control, screenshots, and custom fonts.
+- Image preview from the file browser, plus the existing X3 tilt-page-turn path where supported.
 - Wi-Fi setup, browser-based file transfer, and the built-in web server.
 - OPDS browsing, KOReader Sync, and OTA update support.
 - Sleep cover, battery/status screens, SD-card firmware update, and recovery tools.
-- Existing input mappings, themes/settings storage, and device configuration.
+- Existing input mappings, themes/settings storage, status-bar controls, localization, and device configuration.
 
 ### Folio Nooir bookshelf
 
@@ -52,7 +54,7 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Compact 4 x 2 cover grid with percentage progress ribbons.
 - Cover cache warm-up with visible retrieval feedback, cache reuse, and invalid/blank-BMP recovery.
 - Long-press actions for opening, status changes, progress reset, cache refresh, full synopsis, book statistics, and removing a book from the list without deleting the file.
-- Bookmark and clipping managers are available from the home menu and book actions; selecting a bookmark opens its book and jumps to the saved location.
+- Bookmark, clipping, and highlight managers are available from the home menu and book actions; entries can be reviewed, edited, or deleted, and selecting a bookmark opens its book at the saved location.
 - Automatic movement to Finished when a book reaches 100%.
 
 ### Reader and typography
@@ -75,6 +77,42 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Dictionary font and dictionary font-size settings are available independently from reading typography.
 - Reader Options can be opened while reading from the reader menu, mapped front button, long-press menu, or configured power-button action.
 - Bluetooth HID/page-turner support is present in the codebase but remains experimental and is not considered stable for release yet.
+
+#### Dictionary setup and use
+
+Folio Nooir uses StarDict-format dictionaries stored on the SD card. A dictionary
+folder must contain exactly one index stem and its matching data file:
+
+```text
+/dictionaries/<folder>/<stem>.idx
+/dictionaries/<folder>/<stem>.dict     (or <stem>.dict.dz)
+```
+
+The hidden `/.dictionaries/<folder>/` root is also supported. Folders with no
+data file, multiple `.idx` stems, or unsupported 64-bit index offsets are not
+listed. The firmware creates a small `.qidx` sidecar next to the index; it is a
+rebuildable cache and does not change the dictionary source files.
+
+1. Copy a complete dictionary folder to `/dictionaries/` or `/.dictionaries/`.
+2. Open **Settings > Reader > Dictionary Settings** and select the primary
+   dictionary, dictionary font, and dictionary font size.
+3. The primary dictionary may prepare its index automatically on its first
+   lookup. This is a one-time SD-card scan; later lookups use the sidecar.
+4. Prepare additional dictionaries ahead of time from **Settings > Reader >
+   Prepare Dictionary Indexes**. Select a dictionary marked **Needs index** to
+   see a percentage progress bar. Press **Back** to cancel; the partial index is
+   saved as **Paused**, and selecting it again resumes from its checkpoint.
+5. While viewing a definition, the source dictionary is shown below the
+   headword. Open the dictionary action to switch to another prepared source or
+   choose **Search all prepared dictionaries** for source-labelled combined
+   results. Only current prepared sidecars participate in alternate/search-all
+   lookups, so a missing word cannot trigger several long scans or freeze the
+   reader.
+
+If no valid dictionary folders are found, the index screen explains that a
+dictionary must be added before indexes can be prepared. If a dictionary is
+copied or replaced, rerun **Prepare Dictionary Indexes**; stale `.qidx` files
+are rebuilt automatically.
 
 ### Reading statistics
 
