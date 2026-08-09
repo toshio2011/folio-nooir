@@ -92,7 +92,7 @@ When the device is connected to the same network, the built-in web interface pro
 
 Some sleep-overlay, display-compatibility, and reader usability ideas were reviewed against the open-source [CrossInk](https://github.com/uxjulia/CrossInk) project and adapted where they fit Folio Nooir's CrossPoint base.
 
-📖 Dictionary
+### 📖 Dictionary
 
 Nooir supports offline StarDict dictionaries for word lookup while reading.
 
