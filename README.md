@@ -94,6 +94,8 @@ Some sleep-overlay, display-compatibility, and reader usability ideas were revie
 
 ### 📖 Dictionary
 
+Already using CrossPoint? You can use the same StarDict dictionary folder and files with Nooir. 📚
+
 Nooir supports offline StarDict dictionaries for word lookup while reading.
 
 Setup
