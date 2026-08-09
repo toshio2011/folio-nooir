@@ -92,6 +92,65 @@ When the device is connected to the same network, the built-in web interface pro
 
 Some sleep-overlay, display-compatibility, and reader usability ideas were reviewed against the open-source [CrossInk](https://github.com/uxjulia/CrossInk) project and adapted where they fit Folio Nooir's CrossPoint base.
 
+📖 Dictionary
+
+Nooir supports offline StarDict dictionaries for word lookup while reading.
+
+Setup
+
+1. Create a dictionary folder on your SD card:
+
+/dictionaries/
+
+You can also use the hidden folder:
+
+/.dictionaries/
+
+2. Put each dictionary inside its own folder:
+
+/dictionaries/
+└── English/
+    ├── english.idx
+    ├── english.dict.dz
+    └── english.ifo
+
+Required files:
+
+- ".idx" — required and must be uncompressed
+- ".dict" or ".dict.dz" — required
+- ".ifo" — optional
+
+«Keep only one dictionary per folder.»
+
+3. On Nooir, go to:
+
+Settings → Reader → Dictionary
+
+Select the dictionary you want to use.
+
+How to Use
+
+While reading:
+
+1. Open the Reader Menu and select Look Up.
+2. A word on the page will be highlighted.
+3. Use Left / Right to move between words.
+4. Use Side Up / Down to move between lines.
+5. Press Confirm to look up the selected word.
+6. Press Back when you're done.
+
+Quick Dictionary Access
+
+You can also assign Dictionary to:
+
+Settings → Controls → Long-press Menu → Dictionary
+
+Then simply long-press Confirm while reading to start word lookup.
+
+«💡 The first lookup may take a little longer while Nooir indexes the dictionary. After that, lookups should be much faster.»
+
+Everything works offline once your dictionary is installed. 📚
+
 ## Installation
 
 1. Download a release from this repository's **Releases** page.
