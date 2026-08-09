@@ -92,6 +92,43 @@ When the device is connected to the same network, the built-in web interface pro
 
 Some sleep-overlay, display-compatibility, and reader usability ideas were reviewed against the open-source [CrossInk](https://github.com/uxjulia/CrossInk) project and adapted where they fit Folio Nooir's CrossPoint base.
 
+### 🔄 KOReader Progress Sync
+
+Nooir supports KOReader-compatible progress sync, allowing you to continue reading between Nooir and KOReader on another device.
+
+Using the Public KOReader Server
+
+If you already use KOReader Progress Sync, go to:
+
+Settings → System → KOReader Sync
+
+Enter:
+
+- Sync Server URL: "https://sync.koreader.rocks"
+- Username: Your KOReader Sync username
+- Password: Your KOReader Sync password
+
+Then select Authenticate.
+
+«💡 Make sure you use the same server, username and password that you use in KOReader.»
+
+Sync Your Reading Progress
+
+While reading:
+
+Reader Menu → Sync Progress
+
+You can then choose:
+
+- Apply Remote → Continue from the progress stored on the sync server.
+- Upload Local → Send your current Nooir reading position to the sync server.
+
+Important
+
+If you previously used KOReader with "sync.koreader.rocks", make sure the Sync Server URL is entered explicitly.
+
+Your account belongs to the server where it was created, so an account created on the public KOReader server is separate from an account on another KOReader-compatible sync server.
+
 ### 📖 Dictionary
 
 Already using CrossPoint? You can use the same StarDict dictionary folder and files with Nooir. 📚
