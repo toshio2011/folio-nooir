@@ -219,19 +219,6 @@ firmware.bin
 
 Use a numeric release tag such as `1.5.1`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
 
-## Custom sleep images
-
-Choose **Custom** or **Cover + Custom** in sleep-screen settings, then use either:
-
-- `/sleep.png` or `/sleep.bmp` for one fixed image; or
-- multiple `.png` and `.bmp` files inside `/.sleep/` for randomized sleep images.
-
-If both root files exist, `/sleep.bmp` takes priority.
-
-### Page overlay
-
-Choose **Page Overlay** and place a transparent PNG at `/sleep-overlay.png`. Folder alternatives `/.sleep/overlay.png` and `/sleep/overlay.png` are also supported. If the named overlay is absent, Folio Nooir selects a PNG randomly from `/.sleep/` or `/sleep/`.
-
 ## Building
 
 Folio Nooir uses PlatformIO. From the repository root:
