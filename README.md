@@ -2,7 +2,20 @@
 
 # Folio Nooir
 
-Current development release: **v1.5.2**.
+Current development release: **v1.5.3**.
+
+## v1.5.3 changes
+
+- Refresh Book Cache rereads the cover, title, author, and synopsis used by the featured-book panel.
+- Metadata refresh preserves reading progress, status, bookmarks, and clippings.
+- Refresh uses the lightweight metadata-only path and keeps Recent and Library responsive.
+- Full synopsis now decodes HTML entities and preserves paragraph, heading, list, and line-break structure while paging.
+- Long-press actions can be reopened after returning from an action; menu transitions close before opening Settings or another activity.
+- Clipping + Cover sleep cards show the saved clipping text with a compact book-title/page attribution.
+- Front, side, Menu, and Power controls share reader actions, including Reader Options, statistics, screenshot, sleep, bookmark, dictionary, dark mode, and KOReader Sync where supported.
+- UI Scale applies to menus and reader controls while keeping reading typography, cover geometry, and the 4 x 2 shelf grid fixed; Recent and Finished stay on the fast fixed-font path.
+- Library search provides current-folder filename filtering plus an optional cancellable recursive Search All Folders scan without metadata retrieval.
+- Recent and Finished open from cached metadata immediately; missing data uses a title/filename fallback and refresh remains manual.
 
 Folio Nooir is an experimental, bookshelf-focused e-reader firmware for Xteink devices. It is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), keeping the core reader, wireless transfer, sleep, and settings features while adding a Folio Nooir interface and reading tools.
 
@@ -14,7 +27,7 @@ The current display-driver direction follows the compatible X3/X4 work described
 
 This does not repair physical screen damage, factory firmware locks, damaged cables, or other hardware faults. Keep a working recovery firmware before flashing. An incompatible panel or board can leave the display unusable and may require recovery through the SD-card firmware picker.
 
-If CrossInk or CrossPoint is installed and working, use the recovery instructions and keep a known-good image before switching.
+If CrossInk is already installed and working on your device, you can safely ignore this firmware. If CrossPoint is installed and working, use the recovery instructions and keep a known-good image before switching.
 
 ## Features
 
@@ -35,6 +48,7 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Folio Nooir boot logo and visual theme.
 - Three bookshelf views: **Library**, **Recent**, and **Finished**.
 - Library acts as a folder/file browser and loads metadata lazily as books are highlighted.
+- Library search is available from the menu and performs fast, case-insensitive filename filtering in the current folder.
 - Featured-book panel with cover, title, author, HTML synopsis, progress, status, reading minutes, and session count.
 - Compact 4 x 2 cover grid with percentage progress ribbons.
 - Cover cache warm-up with visible retrieval feedback, cache reuse, and invalid/blank-BMP recovery.
@@ -52,8 +66,9 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Point-based margin controls and line-spacing controls with fine percentage steps.
 - UI scale controls for menus and reader controls; bookshelf geometry remains fixed.
 - Reader dark mode.
-- Multi-dictionary lookup with dictionary history and preferred-dictionary reuse.
-- Text clipping: select text, save clips, and review saved clips from the reader.
+- Multi-dictionary lookup with dictionary history and preferred-dictionary reuse; the selected dictionary may build its index on first use, while alternate dictionaries are searched only when their sidecar is current. Definition pages show the source dictionary, allow switching, and can search all prepared dictionaries with source-labelled results.
+- Reader settings include **Prepare Dictionary Indexes** with percentage progress, Back-to-cancel, resumable checkpoints, and guidance when no dictionaries are installed.
+- Text clipping/highlighting: select a continuous word range, save clips, and review saved clips from the reader.
 - Reader shortcuts and existing CrossPoint input mappings remain available.
 - CrossInk-inspired controls: short/long power actions, separate reader front-button remapping,
   side-button layout and long-press actions, plus Reader Options shortcuts while reading.
@@ -125,7 +140,9 @@ When the device is connected to the same network, the built-in web interface pro
 
 - Custom PNG/BMP sleep images.
 - Random sleep images from `/.sleep/`.
-- Transparent PNG page-overlay sleep mode that keeps the last reader page visible beneath the overlay.
+- Transparent PNG page-overlay sleep mode that keeps the last reader page visible beneath the overlay, rendered with the full four-level grayscale pipeline.
+- `Cover + Overlay`: use the current/recent book cover as the background and composite the transparent page overlay above it.
+- `Reading Stats`, `Minimal Stats`, and `Clipping + Cover` sleep modes.
 - Ghosting mitigation and clean refreshes when leaving books or entering sleep.
 - Conservative X3/X4 display-driver detection for the supported C3 family.
 
@@ -256,7 +273,23 @@ Each compatible GitHub release must contain an asset named exactly:
 firmware.bin
 ```
 
-Use a numeric release tag such as `1.5.1`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
+Use a numeric release tag such as `1.5.3`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
+
+## Custom sleep images
+
+Choose **Custom** in sleep-screen settings, then use either:
+
+- `/sleep.png` or `/sleep.bmp` for one fixed image; or
+- multiple `.png` and `.bmp` files inside `/.sleep/` for randomized sleep images.
+
+If both root files exist, `/sleep.bmp` takes priority.
+
+`Clipping + Cover` selects a random saved clipping from the current/recent book
+and renders it in a quote card over that book's cover when the device sleeps.
+
+### Page overlay
+
+Choose **Page Overlay** or **Cover + Overlay** and place PNG artwork in `/.sleep/` or `/sleep/`; one image is selected randomly for each sleep screen. Both modes preserve transparent artwork in grayscale; Cover + Overlay tries the next image when the random choice is opaque, then shows an opaque image only if no transparent artwork is available. A single `/sleep-overlay.png` (or `overlay.png`) is also supported as a fixed fallback. Transparent PNGs are recommended so the cover or reader page remains visible underneath.
 
 ## Building
 
