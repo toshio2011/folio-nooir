@@ -2,13 +2,18 @@
 
 # Folio Nooir
 
-Current development release: **v1.5.3**.
+Current release: **v1.5.3**.
 
 ## v1.5.3 changes
 
 - Refresh Book Cache rereads the cover, title, author, and synopsis used by the featured-book panel.
 - Metadata refresh preserves reading progress, status, bookmarks, and clippings.
 - Refresh uses the lightweight metadata-only path and keeps Recent and Library responsive.
+- Manual refresh rereads metadata even when an older thumbnail is still present, then regenerates the cover when needed.
+- The refresh path uses the shared X3/X4 code path; X3 remains supported pending additional hardware testing.
+- Multi-dictionary lookup shows the source dictionary, supports switching/history and searching all prepared dictionaries, and avoids blocking on unprepared alternate dictionaries.
+- Dictionary indexes can be prepared one at a time with percentage progress, Back-to-cancel, and resumable checkpoints; stale or replaced dictionary sidecars are detected and rebuilt.
+- Dictionary font and dictionary font-size settings remain independent from reading typography.
 - Full synopsis now decodes HTML entities and preserves paragraph, heading, list, and line-break structure while paging.
 - Long-press actions can be reopened after returning from an action; menu transitions close before opening Settings or another activity.
 - Clipping + Cover sleep cards show the saved clipping text with a compact book-title/page attribution.
@@ -23,7 +28,7 @@ Folio Nooir is an experimental, bookshelf-focused e-reader firmware for Xteink d
 
 **Folio Nooir has been physically tested only on the older Xteink X4 hardware revision.** That is the only device currently available to the maintainer.
 
-The current display-driver direction follows the compatible X3/X4 work described by [CrossInk v1.5.0-rc-3](https://github.com/uxjulia/CrossInk/releases/tag/v1.5.0-rc-3), which reports fixes for all known X3/X4 display variants and support for the latest X4 battery latch. This should address the known panel/driver compatibility problems, but newer hardware still needs real-device validation with Folio Nooir. X3 should also work with the compatible driver path, but X3 testing is still pending. X4 Pro/S3 hardware is not supported by this build.
+The current display-driver path includes X3/X4 panel detection and support for newer X4 battery-latch hardware. This should address the known panel/driver compatibility problems, but newer hardware still needs real-device validation with Folio Nooir. X3 should work through the shared driver path, but X3 testing is still pending. X4 Pro/S3 hardware is not supported by this build.
 
 This does not repair physical screen damage, factory firmware locks, damaged cables, or other hardware faults. Keep a working recovery firmware before flashing. An incompatible panel or board can leave the display unusable and may require recovery through the SD-card firmware picker.
 
@@ -48,7 +53,7 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Folio Nooir boot logo and visual theme.
 - Three bookshelf views: **Library**, **Recent**, and **Finished**.
 - Library acts as a folder/file browser and loads metadata lazily as books are highlighted.
-- Library search is available from the menu and performs fast, case-insensitive filename filtering in the current folder.
+- Library search is available from the menu and performs fast, case-insensitive filename filtering in the current folder, with an optional recursive **Search All Folders** mode.
 - Featured-book panel with cover, title, author, HTML synopsis, progress, status, reading minutes, and session count.
 - Compact 4 x 2 cover grid with percentage progress ribbons.
 - Cover cache warm-up with visible retrieval feedback, cache reuse, and invalid/blank-BMP recovery.
