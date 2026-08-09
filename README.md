@@ -133,7 +133,7 @@ Your account belongs to the server where it was created, so an account created o
 
 Already using CrossPoint? You can use the same StarDict dictionary folder and files with Nooir. 📚
 
-Nooir supports offline StarDict dictionaries for word lookup while reading.
+Nooir supports offline StarDict dictionaries for word lookup while reading.or you can download it from https://inky.crossink.dev/#downloads
 
 Setup
 
