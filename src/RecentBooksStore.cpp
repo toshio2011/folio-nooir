@@ -124,6 +124,28 @@ void RecentBooksStore::updateBook(const std::string& path, const std::string& ti
   }
 }
 
+void RecentBooksStore::refreshBookMetadata(const std::string& path, const std::string& title,
+                                           const std::string& author, const std::string& coverBmpPath,
+                                           const std::string& synopsis) {
+  auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
+                         [&](const RecentBook& book) { return book.path == path; });
+  if (it == recentBooks.end()) return;
+
+  RecentBook& book = *it;
+  // Unlike updateBook(), an explicit cache refresh must be able to clear a
+  // synopsis that was removed from the source metadata.
+  const std::string boundedSynopsis = synopsis.substr(0, 384);
+  if (book.title == title && book.author == author && book.coverBmpPath == coverBmpPath &&
+      book.synopsis == boundedSynopsis) {
+    return;
+  }
+  book.title = title;
+  book.author = author;
+  book.coverBmpPath = coverBmpPath;
+  book.synopsis = boundedSynopsis;
+  if (!saveToFile()) LOG_ERR("RBS", "Failed to persist refreshed metadata: %s", path.c_str());
+}
+
 bool RecentBooksStore::updateMetadata(const std::string& path, const std::string& title, const std::string& author,
                                       const std::string& synopsis) {
   auto it = std::find_if(recentBooks.begin(), recentBooks.end(),

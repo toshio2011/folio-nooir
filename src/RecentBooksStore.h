@@ -43,6 +43,10 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
 
   void updateBook(const std::string& path, const std::string& title, const std::string& author,
                   const std::string& coverBmpPath, const std::string& synopsis = {});
+  // Replace all presentation metadata, including an intentionally empty
+  // synopsis. Used by Refresh Book Cache after rereading the source file.
+  void refreshBookMetadata(const std::string& path, const std::string& title, const std::string& author,
+                           const std::string& coverBmpPath, const std::string& synopsis);
   bool updateMetadata(const std::string& path, const std::string& title, const std::string& author,
                       const std::string& synopsis);
   bool resetReading(const std::string& path);

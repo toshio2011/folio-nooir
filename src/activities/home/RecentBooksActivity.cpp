@@ -166,7 +166,10 @@ void RecentBooksActivity::generateNextCover() {
     const std::string thumbPath = book.coverBmpPath.empty()
                                       ? std::string()
                                       : UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
-    if (!metadataMissing && !thumbPath.empty() && isValidBookThumbnail(thumbPath)) continue;
+    // A manual Refresh Book Cache must reread metadata even when an old
+    // thumbnail survived the cache cleanup. Warmup can still skip entries
+    // whose metadata and cover are already complete.
+    if (!forceRebuild && !metadataMissing && !thumbPath.empty() && isValidBookThumbnail(thumbPath)) continue;
     if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) Storage.remove(thumbPath.c_str());
 
     bool attempted = false;
@@ -178,14 +181,13 @@ void RecentBooksActivity::generateNextCover() {
         const std::string title = epub.getTitle().empty() ? book.title : epub.getTitle();
         const std::string author = epub.getAuthor();
         const std::string cover = epub.getThumbBmpPath();
-        const std::string synopsis = epub.getDescription();
-        if (book.title != title || book.author != author || book.coverBmpPath != cover ||
-            (!synopsis.empty() && book.synopsis != synopsis)) {
+        const std::string synopsis = epub.getDescription().substr(0, 384);
+        if (book.title != title || book.author != author || book.coverBmpPath != cover || book.synopsis != synopsis) {
           book.title = title;
           book.author = author;
           book.coverBmpPath = cover;
-          if (!synopsis.empty()) book.synopsis = synopsis.substr(0, 384);
-          RECENT_BOOKS.updateBook(book.path, book.title, book.author, book.coverBmpPath, book.synopsis);
+          book.synopsis = synopsis;
+          RECENT_BOOKS.refreshBookMetadata(book.path, book.title, book.author, book.coverBmpPath, book.synopsis);
         }
         if (!book.coverBmpPath.empty()) {
           const std::string thumb = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);

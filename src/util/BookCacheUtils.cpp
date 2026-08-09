@@ -59,6 +59,9 @@ bool isBookCacheDirectoryName(const char* name) {
 }
 
 void clearBookCache(const std::string& path) {
+  // Book caches live in their own per-book directories. Bookmark and clipping
+  // files live under /.crosspoint/bookmarks/ and /.crosspoint/clippings/;
+  // clearing the cache must never remove either reading annotation store.
   if (FsHelpers::hasEpubExtension(path)) {
     Epub book(path, "/.crosspoint");
     clearCachePreservingProgress(book.getCachePath(), 6, [&book] { return book.clearCache(); },

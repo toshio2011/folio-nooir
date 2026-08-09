@@ -479,6 +479,10 @@ void FolioLibraryActivity::loadSelectedMetadata() {
           preview.coverBmpPath.clear();
         }
       }
+      // Refresh Book Cache must update the shelf's featured metadata too,
+      // including clearing a synopsis that was removed from the EPUB. This
+      // only touches presentation metadata; reading state is stored separately.
+      RECENT_BOOKS.refreshBookMetadata(path, preview.title, preview.author, preview.coverBmpPath, preview.synopsis);
       // Metadata can be shown immediately.  Thumbnail conversion is deferred
       // only for already-cached entries; the metadata-only path above keeps
       // this selected featured book self-contained.
