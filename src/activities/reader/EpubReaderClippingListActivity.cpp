@@ -140,6 +140,7 @@ int EpubReaderClippingListActivity::listHeight() const {
 }
 
 void EpubReaderClippingListActivity::loop() {
+  renderer.setUiScaleTextEnabled(true);
   if (actionsPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
   if (confirmPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
   if (swallowInitialConfirmRelease) {
@@ -193,6 +194,7 @@ void EpubReaderClippingListActivity::loop() {
 }
 
 void EpubReaderClippingListActivity::render(RenderLock&&) {
+  renderer.setUiScaleTextEnabled(true);
   renderer.clearScreen();
   const auto& metrics = UITheme::getInstance().getMetrics();
   const Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);

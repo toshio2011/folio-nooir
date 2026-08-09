@@ -3,6 +3,7 @@
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <Memory.h>
 
 #include <algorithm>
 #include <cctype>
@@ -37,12 +38,25 @@ void ClipSelectionActivity::onEnter() {
   Activity::onEnter();
   fontId = SETTINGS.getReaderFontId();
   lineHeight = renderer.getLineHeight(fontId);
+  // The page snapshot is allocated after the first render, when font/page
+  // allocations have finished. This avoids taking a large contiguous block
+  // away from the EPUB renderer during its memory-sensitive prewarm pass.
+  pageSnapshotSize = 0;
+  pageSnapshot.reset();
+  pageSnapshotValid = false;
   extractWords();
   if (!words.empty()) {
     selected = closestInRow(rowCount / 2, renderer.getScreenWidth() / 2);
     if (selected < 0) selected = 0;
   }
   requestUpdate();
+}
+
+void ClipSelectionActivity::onExit() {
+  pageSnapshot.reset();
+  pageSnapshotSize = 0;
+  pageSnapshotValid = false;
+  Activity::onExit();
 }
 
 void ClipSelectionActivity::extractWords() {
@@ -204,36 +218,67 @@ void ClipSelectionActivity::loop() {
     return;
   }
 
-  if (mappedInput.wasPressed(MappedInputManager::Button::Left) && selected > 0) {
-    selected--;
-    requestUpdate();
-  } else if (mappedInput.wasPressed(MappedInputManager::Button::Right) &&
-             selected + 1 < static_cast<int>(words.size())) {
-    selected++;
-    requestUpdate();
-  } else if (mappedInput.wasPressed(MappedInputManager::Button::Up)) {
-    moveVertical(-1);
-  } else if (mappedInput.wasPressed(MappedInputManager::Button::Down)) {
-    moveVertical(1);
-  }
+  using Button = MappedInputManager::Button;
+  buttonNavigator.onRelease({Button::Left}, [this] {
+    if (selected > 0) {
+      selected--;
+      requestUpdate();
+    }
+  });
+  buttonNavigator.onContinuous({Button::Left}, [this] {
+    if (selected > 0) {
+      selected--;
+      requestUpdate();
+    }
+  });
+  buttonNavigator.onRelease({Button::Right}, [this] {
+    if (selected + 1 < static_cast<int>(words.size())) {
+      selected++;
+      requestUpdate();
+    }
+  });
+  buttonNavigator.onContinuous({Button::Right}, [this] {
+    if (selected + 1 < static_cast<int>(words.size())) {
+      selected++;
+      requestUpdate();
+    }
+  });
+  buttonNavigator.onRelease({Button::Up}, [this] { moveVertical(-1); });
+  buttonNavigator.onContinuous({Button::Up}, [this] { moveVertical(-1); });
+  buttonNavigator.onRelease({Button::Down}, [this] { moveVertical(1); });
+  buttonNavigator.onContinuous({Button::Down}, [this] { moveVertical(1); });
 }
 
 void ClipSelectionActivity::drawSelection() {
   if (words.empty()) return;
   const int first = startIndex < 0 ? selected : std::min(startIndex, selected);
   const int last = startIndex < 0 ? selected : std::max(startIndex, selected);
-  for (int i = first; i <= last; i++) {
-    const auto& word = words[i];
-    if (renderer.isDarkMode()) {
-      // Dark reader pages use a black base with white glyphs.  For a visible
-      // selection, temporarily paint a white chip and draw black text on it;
-      // the normal dark-mode font path intentionally always paints white ink.
-      renderer.fillRect(word.x - 2, word.y - 2, word.width + 4, lineHeight + 4, false);
-      renderer.setDarkMode(false);
+  const bool darkMode = renderer.isDarkMode();
+
+  // Paint one continuous span per line, rather than a separate chip around
+  // every word. This makes a multi-word selection visibly read as one range,
+  // including the spaces between words, while preserving line breaks.
+  int lineStart = first;
+  for (int i = first; i <= last; ++i) {
+    if (i != last && words[i + 1].row == words[i].row) continue;
+    const auto& startWord = words[lineStart];
+    const auto& endWord = words[i];
+    const int spanX = startWord.x - 2;
+    const int spanRight = endWord.x + endWord.width + 2;
+    renderer.fillRect(spanX, startWord.y - 2, std::max(1, spanRight - spanX), lineHeight + 4, !darkMode);
+    lineStart = i + 1;
+  }
+
+  if (darkMode) {
+    renderer.setDarkMode(false);
+    for (int i = first; i <= last; ++i) {
+      const auto& word = words[i];
       renderer.drawText(fontId, word.x, word.y, word.text, true, word.style);
-      renderer.setDarkMode(true);
-    } else {
-      renderer.fillRect(word.x - 2, word.y - 2, word.width + 4, lineHeight + 4, true);
+    }
+    renderer.setDarkMode(true);
+  } else {
+    for (int i = first; i <= last; ++i) {
+      const auto& word = words[i];
       renderer.drawText(fontId, word.x, word.y, word.text, false, word.style);
     }
   }
@@ -246,15 +291,30 @@ void ClipSelectionActivity::drawHints() const {
 }
 
 void ClipSelectionActivity::render(RenderLock&&) {
-  renderer.clearScreen();
-  if (page) {
+  renderer.setUiScaleTextEnabled(true);
+  const bool canRestoreSnapshot = pageSnapshotValid && pageSnapshot && pageSnapshotSize == renderer.getBufferSize();
+  if (canRestoreSnapshot) {
+    memcpy(renderer.getFrameBuffer(), pageSnapshot.get(), pageSnapshotSize);
+  } else if (page) {
+    renderer.clearScreen();
     auto* fcm = renderer.getFontCacheManager();
     auto scope = fcm->createPrewarmScope();
     page->render(renderer, fontId, marginLeft, marginTop);
     scope.endScanAndPrewarm();
     page->render(renderer, fontId, marginLeft, marginTop);
+    if (!pageSnapshot && pageSnapshotSize == 0) {
+      pageSnapshotSize = renderer.getBufferSize();
+      pageSnapshot = makeUniqueNoThrow<uint8_t[]>(pageSnapshotSize);
+    }
+    if (pageSnapshot && pageSnapshotSize == renderer.getBufferSize()) {
+      memcpy(pageSnapshot.get(), renderer.getFrameBuffer(), pageSnapshotSize);
+      pageSnapshotValid = true;
+    }
     drawSelection();
+  } else {
+    renderer.clearScreen();
   }
+  if (canRestoreSnapshot) drawSelection();
   drawHints();
   if (saveFailed) GUI.drawPopup(renderer, "Could not save clipping");
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);

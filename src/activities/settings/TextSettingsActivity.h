@@ -19,7 +19,7 @@
 // names for the Font/Style tabs.)
 class TextSettingsActivity final : public Activity {
  public:
-  enum class Tab : uint8_t { Family, Size, Layout, Style, Dictionary, Count };
+  enum class Tab : uint8_t { Family, Size, Layout, Style, Dictionary, Controls, Count };
 
   TextSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const SdCardFontRegistry* registry,
                        Tab initialTab = Tab::Family);
@@ -35,6 +35,7 @@ class TextSettingsActivity final : public Activity {
   // silently confused with a StyleRow of equal value.
   enum class LayoutRow { LineSpacing, ParaSpacing, Alignment, ScreenMargin, Count };
   enum class StyleRow { FocusReading, Hyphenation, EmbeddedStyle, AntiAliasing, Count };
+  enum class ControlRow { FrontLongPress, SideLongPress, MenuLongPress, PowerLongPress, Count };
 
   void applyFamily(int listIndex);
   void applySize(int listIndex);
@@ -42,6 +43,7 @@ class TextSettingsActivity final : public Activity {
   void applyDictionarySize(int listIndex);
   void confirmLayoutRow(int row);
   void confirmStyleRow(int row);
+  void activateControlRow(int row);
   // Applies the row at the given list index for the active tab (Confirm and tap share this).
   void activateRow(int row);
 
@@ -59,6 +61,7 @@ class TextSettingsActivity final : public Activity {
   PaneGeometry paneGeometry() const;
   std::string layoutValueText(int row) const;
   std::string styleValueText(int row) const;
+  std::string controlValueText(int row) const;
   // True when the focused list row is a setting the preview cannot reflect.
   bool focusedRowHasNoPreview() const;
   void switchTab(int direction = 1);

@@ -12,6 +12,11 @@ Current development release: **v1.5.3**.
 - Full synopsis now decodes HTML entities and preserves paragraph, heading, list, and line-break structure while paging.
 - Long-press book actions can be opened repeatedly after returning from an action; menu transitions now close the popup before opening Settings or another activity.
 - Clipping + Cover sleep cards now show only the saved clipping text and a compact `- Book title, page N` attribution.
+- Reader control parity: front and side long-press actions both support OFF, chapter skip, font-size cycling, and orientation change; Menu and Power long-press pickers expose the shared reader actions (Reader Options, statistics, screenshot, sleep, bookmark, dictionary, dark mode, and KOReader Sync where supported).
+- A new Controls tab in Reader Options lets these front, side, Menu, and Power actions be changed without leaving the book; Menu sleep uses the normal sleep-screen/deep-sleep path.
+- UI Scale now applies to Library text, tabs, menus, book actions, synopsis, book/reading statistics, calendar, clipping/bookmark lists, and Reader Options while leaving reading-page typography, bookshelf cover geometry, and the 4 x 2 grid independent. Recent and Finished remain entirely on the fixed-font shelf path for faster navigation.
+- Library search offers an instant current-folder filename filter or an explicit recursive Search All Folders mode. The recursive scan is processed in small batches, never parses EPUBs or retrieves covers, and can be cancelled with Back; the same menu entry clears the search.
+- Recent/Finished startup no longer validates every thumbnail or retrieves partial caches in the background. Existing metadata is shown immediately with a title/filename fallback; first-time empty caches use a visible one-book-at-a-time warm-up, and refresh remains manual.
 
 Folio Nooir is an experimental, bookshelf-focused e-reader firmware for Xteink devices. It is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), keeping the core reader, wireless transfer, sleep, and settings features while adding a Folio Nooir interface and reading tools.
 
@@ -42,6 +47,7 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Folio Nooir boot logo and visual theme.
 - Three bookshelf views: **Library**, **Recent**, and **Finished**.
 - Library acts as a folder/file browser and loads metadata lazily as books are highlighted.
+- Library search is available from the menu and performs fast, case-insensitive filename filtering in the current folder.
 - Featured-book panel with cover, title, author, HTML synopsis, progress, status, reading minutes, and session count.
 - Compact 4 x 2 cover grid with percentage progress ribbons.
 - Cover cache warm-up with visible retrieval feedback, cache reuse, and invalid/blank-BMP recovery.
@@ -59,8 +65,9 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Point-based margin controls and line-spacing controls with fine percentage steps.
 - UI scale controls for menus and reader controls; bookshelf geometry remains fixed.
 - Reader dark mode.
-- Multi-dictionary lookup with dictionary history and preferred-dictionary reuse.
-- Text clipping: select text, save clips, and review saved clips from the reader.
+- Multi-dictionary lookup with dictionary history and preferred-dictionary reuse; the selected dictionary may build its index on first use, while alternate dictionaries are searched only when their sidecar is already current so a miss never blocks on several index builds. Definition pages show the source dictionary, allow switching, and can search all prepared dictionaries with source-labelled results.
+- Reader settings include a one-dictionary-at-a-time **Prepare Dictionary Indexes** screen so larger alternate dictionaries can be prepared before use, with percentage progress, Back-to-cancel, and resumable checkpoints; dictionaries with no installed set show setup guidance instead of a blank screen.
+- Text clipping/highlighting: select a continuous word range (with held-button navigation), save clips, and review saved clips from the reader.
 - Reader shortcuts and existing CrossPoint input mappings remain available.
 - CrossInk-inspired controls: short/long power actions, separate reader front-button remapping,
   side-button layout and long-press actions, plus Reader Options shortcuts while reading.

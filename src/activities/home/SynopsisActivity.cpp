@@ -14,6 +14,7 @@
 #include "util/HtmlToPlainText.h"
 
 void SynopsisActivity::buildLines() {
+  renderer.setUiScaleTextEnabled(true);
   lines.clear();
   const std::string plainText = htmlToPlainText(synopsis);
   const int width = renderer.getScreenWidth() - 24;
@@ -62,6 +63,7 @@ void SynopsisActivity::onEnter() {
 }
 
 void SynopsisActivity::movePage(const int direction) {
+  renderer.setUiScaleTextEnabled(true);
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int top = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing + 24;
   const int bottom = renderer.getScreenHeight() - metrics.buttonHintsHeight - metrics.verticalSpacing;
@@ -101,6 +103,7 @@ void SynopsisActivity::loop() {
 }
 
 void SynopsisActivity::render(RenderLock&&) {
+  renderer.setUiScaleTextEnabled(true);
   renderer.clearScreen();
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int side = metrics.contentSidePadding;

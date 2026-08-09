@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -18,9 +19,27 @@
 #include "fontIds.h"
 
 namespace {
-// Tab labels for Font | Size | Layout | Style | Dictionary (shared by render and loop touch hit-testing).
+// Tab labels for Font | Size | Layout | Style | Dictionary | Controls (shared by render and loop touch hit-testing).
 constexpr StrId TAB_NAME_IDS[] = {StrId::STR_FONT, StrId::STR_SIZE, StrId::STR_LAYOUT, StrId::STR_STYLE,
-                                  StrId::STR_DICTIONARY};
+                                  StrId::STR_DICTIONARY, StrId::STR_CAT_CONTROLS};
+
+constexpr StrId CONTROL_ROW_NAME_IDS[] = {StrId::STR_LONG_PRESS_BEHAVIOR, StrId::STR_SIDE_LONG_PRESS_ACTION,
+                                          StrId::STR_LONG_PRESS_MENU, StrId::STR_LONG_PWR_BTN};
+
+constexpr StrId FRONT_LONG_PRESS_OPTIONS[] = {
+    StrId::STR_LONG_PRESS_BEHAVIOR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
+    StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION, StrId::STR_SIDE_LONG_PRESS_FONT_SIZE};
+constexpr StrId SIDE_LONG_PRESS_OPTIONS[] = {StrId::STR_SIDE_LONG_PRESS_OFF, StrId::STR_SIDE_LONG_PRESS_CHAPTER,
+                                             StrId::STR_SIDE_LONG_PRESS_FONT_SIZE,
+                                             StrId::STR_SIDE_LONG_PRESS_ORIENTATION};
+constexpr StrId MENU_LONG_PRESS_OPTIONS[] = {
+    StrId::STR_KOSYNC, StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION, StrId::STR_DICTIONARY, StrId::STR_DARK,
+    StrId::STR_LONG_PRESS_MENU_READER_OPTIONS, StrId::STR_LONG_PWR_SLEEP, StrId::STR_LONG_PWR_READING_STATS,
+    StrId::STR_LONG_PWR_SCREENSHOT};
+constexpr StrId POWER_LONG_PRESS_OPTIONS[] = {
+    StrId::STR_LONG_PWR_SLEEP, StrId::STR_LONG_PWR_READER_OPTIONS, StrId::STR_LONG_PWR_READING_STATS,
+    StrId::STR_LONG_PWR_SCREENSHOT, StrId::STR_LONG_PWR_IGNORE, StrId::STR_BOOKMARK_OPTION, StrId::STR_DICTIONARY,
+    StrId::STR_DARK, StrId::STR_KOSYNC};
 
 int findCurrentFontIndex(const SdCardFontRegistry* registry, const char* sdFontFamilyName, uint8_t fontFamily) {
   if (sdFontFamilyName[0] != '\0' && registry) {
@@ -187,6 +206,7 @@ bool TextSettingsActivity::handleTouch() {
 }
 
 void TextSettingsActivity::loop() {
+  renderer.setUiScaleTextEnabled(true);
   if (optionPopup_.handleInput(mappedInput, [this] { requestUpdate(); })) return;  // picker owns input while open
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
@@ -223,6 +243,7 @@ void TextSettingsActivity::loop() {
 }
 
 void TextSettingsActivity::render(RenderLock&&) {
+  renderer.setUiScaleTextEnabled(true);
   if (optionPopup_.processRender(renderer, mappedInput)) return;  // picker draws over everything
 
   renderer.clearScreen();
@@ -312,6 +333,16 @@ void TextSettingsActivity::render(RenderLock&&) {
       break;
     }
 
+    case Tab::Controls: {
+      constexpr int CONTROL_ROWS = static_cast<int>(ControlRow::Count);
+      GUI.drawList(
+          renderer, listRect, CONTROL_ROWS, selectedItem,
+          [](int index) { return std::string(I18N.get(CONTROL_ROW_NAME_IDS[index])); }, nullptr, nullptr,
+          [this](int index) { return controlValueText(index); }, true);
+      confirmLabel = onTabBar ? tr(STR_FONT) : tr(STR_SELECT);
+      break;
+    }
+
     default:
       break;
   }
@@ -389,6 +420,9 @@ void TextSettingsActivity::activateRow(int row) {
         });
       }
       requestUpdate();
+      break;
+    case Tab::Controls:
+      activateControlRow(row);
       break;
     default:
       break;
@@ -517,11 +551,88 @@ std::string TextSettingsActivity::styleValueText(int row) const {
   }
 }
 
+void TextSettingsActivity::activateControlRow(const int row) {
+  const auto show = [this](StrId title, const StrId* ids, const size_t count, const uint8_t current,
+                           const std::function<void(uint8_t)>& setter) {
+    std::vector<std::string> options;
+    options.reserve(count);
+    for (size_t i = 0; i < count; ++i) options.emplace_back(I18N.get(ids[i]));
+    optionPopup_.show(title, options, std::min<int>(current, static_cast<int>(count) - 1),
+                      [setter](const int index) {
+                        setter(static_cast<uint8_t>(index));
+                        SETTINGS.saveToFile();
+                      });
+  };
+
+  switch (static_cast<ControlRow>(row)) {
+    case ControlRow::FrontLongPress:
+      show(StrId::STR_LONG_PRESS_BEHAVIOR, FRONT_LONG_PRESS_OPTIONS, std::size(FRONT_LONG_PRESS_OPTIONS),
+           SETTINGS.longPressButtonBehavior, [](const uint8_t value) { SETTINGS.longPressButtonBehavior = value; });
+      break;
+    case ControlRow::SideLongPress:
+      show(StrId::STR_SIDE_LONG_PRESS_ACTION, SIDE_LONG_PRESS_OPTIONS, std::size(SIDE_LONG_PRESS_OPTIONS),
+           SETTINGS.sideLongPressAction, [](const uint8_t value) { SETTINGS.sideLongPressAction = value; });
+      break;
+    case ControlRow::MenuLongPress:
+      show(StrId::STR_LONG_PRESS_MENU, MENU_LONG_PRESS_OPTIONS, std::size(MENU_LONG_PRESS_OPTIONS),
+           SETTINGS.longPressMenuFunction, [](const uint8_t value) { SETTINGS.longPressMenuFunction = value; });
+      break;
+    case ControlRow::PowerLongPress:
+      show(StrId::STR_LONG_PWR_BTN, POWER_LONG_PRESS_OPTIONS, std::size(POWER_LONG_PRESS_OPTIONS), SETTINGS.longPwrBtn,
+           [](const uint8_t value) { SETTINGS.longPwrBtn = value; });
+      break;
+    default:
+      return;
+  }
+  requestUpdate();
+}
+
+std::string TextSettingsActivity::controlValueText(const int row) const {
+  const auto value = [row]() -> uint8_t {
+    switch (static_cast<ControlRow>(row)) {
+      case ControlRow::FrontLongPress:
+        return SETTINGS.longPressButtonBehavior;
+      case ControlRow::SideLongPress:
+        return SETTINGS.sideLongPressAction;
+      case ControlRow::MenuLongPress:
+        return SETTINGS.longPressMenuFunction;
+      case ControlRow::PowerLongPress:
+        return SETTINGS.longPwrBtn;
+      default:
+        return 0;
+    }
+  }();
+  const StrId* options = nullptr;
+  size_t count = 0;
+  switch (static_cast<ControlRow>(row)) {
+    case ControlRow::FrontLongPress:
+      options = FRONT_LONG_PRESS_OPTIONS;
+      count = std::size(FRONT_LONG_PRESS_OPTIONS);
+      break;
+    case ControlRow::SideLongPress:
+      options = SIDE_LONG_PRESS_OPTIONS;
+      count = std::size(SIDE_LONG_PRESS_OPTIONS);
+      break;
+    case ControlRow::MenuLongPress:
+      options = MENU_LONG_PRESS_OPTIONS;
+      count = std::size(MENU_LONG_PRESS_OPTIONS);
+      break;
+    case ControlRow::PowerLongPress:
+      options = POWER_LONG_PRESS_OPTIONS;
+      count = std::size(POWER_LONG_PRESS_OPTIONS);
+      break;
+    default:
+      return {};
+  }
+  return value < count ? I18N.get(options[value]) : I18N.get(options[0]);
+}
+
 // Only Focus Reading shows in the preview (bold prefixes); the other Style rows
 // have no distinct preview.
 bool TextSettingsActivity::focusedRowHasNoPreview() const {
   if (selectedIndex() == 0) return false;
   if (tab_ == Tab::Dictionary) return true;
+  if (tab_ == Tab::Controls) return true;
   if (tab_ != Tab::Style) return false;
   const StyleRow row = static_cast<StyleRow>(selectedIndex() - 1);
   return row == StyleRow::Hyphenation || row == StyleRow::EmbeddedStyle || row == StyleRow::AntiAliasing;
@@ -547,6 +658,8 @@ int TextSettingsActivity::currentListSize() const {
       return static_cast<int>(StyleRow::Count);
     case Tab::Dictionary:
       return 2;
+    case Tab::Controls:
+      return static_cast<int>(ControlRow::Count);
 
     default:
       return 0;

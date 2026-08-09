@@ -132,17 +132,19 @@ void RecentBooksStore::refreshBookMetadata(const std::string& path, const std::s
   if (it == recentBooks.end()) return;
 
   RecentBook& book = *it;
-  // Unlike updateBook(), an explicit cache refresh must be able to clear a
-  // synopsis that was removed from the source metadata.
+  // A device-side refresh must never erase a working synopsis because a
+  // transient metadata pass returned an empty description. Explicit web
+  // metadata edits use updateMetadata() and can still intentionally clear it.
   const std::string boundedSynopsis = synopsis.substr(0, 384);
+  const std::string nextSynopsis = boundedSynopsis.empty() ? book.synopsis : boundedSynopsis;
   if (book.title == title && book.author == author && book.coverBmpPath == coverBmpPath &&
-      book.synopsis == boundedSynopsis) {
+      book.synopsis == nextSynopsis) {
     return;
   }
   book.title = title;
   book.author = author;
   book.coverBmpPath = coverBmpPath;
-  book.synopsis = boundedSynopsis;
+  book.synopsis = nextSynopsis;
   if (!saveToFile()) LOG_ERR("RBS", "Failed to persist refreshed metadata: %s", path.c_str());
 }
 

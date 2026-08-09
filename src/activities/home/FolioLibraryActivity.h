@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <HalStorage.h>
 #include <memory>
 #include <string>
 #include <vector>
@@ -35,6 +36,19 @@ class FolioLibraryActivity final : public Activity {
   OptionPopup menuPopup;
   OptionPopup bookActionsPopup;
   std::string basepath = "/";
+  // Filename-only filter for the current directory. Normal search never opens
+  // books or walks the SD card, so it remains immediate with large libraries.
+  std::string searchQuery;
+  std::string searchQueryFolded;
+  bool recursiveSearchMode = false;
+  bool recursiveSearchActive = false;
+  std::string recursiveSearchRoot;
+  std::vector<std::string> recursiveSearchDirectories;
+  std::vector<std::string> recursiveSearchMatches;
+  size_t recursiveSearchDirectoryIndex = 0;
+  std::string recursiveSearchDirectoryPath;
+  HalFile recursiveSearchDirectory;
+  bool recursiveSearchDirectoryOpen = false;
   std::vector<std::string> allFiles;
   std::vector<std::string> files;
   LibraryFilter libraryFilter = LibraryFilter::All;
@@ -50,6 +64,9 @@ class FolioLibraryActivity final : public Activity {
   size_t retrievingMetadataIndex = SIZE_MAX;
   bool retrievingMetadata = false;
   volatile bool retrievingPopupRendered = false;
+  unsigned long retrievingMetadataStartedMs = 0;
+  bool forceMetadataRefresh = false;
+  size_t forceMetadataRefreshIndex = SIZE_MAX;
   size_t retrieveDirectoryIndex = 0;
   size_t retrieveBookIndex = 0;
   bool retrievingAllBooks = false;
@@ -70,6 +87,10 @@ class FolioLibraryActivity final : public Activity {
   FolioLibrarySummary getLibrarySummary() const;
   std::string fullPath(size_t index) const;
   void showMenu();
+  void launchSearch(bool recursive);
+  void startRecursiveSearch();
+  void processRecursiveSearch();
+  void clearSearch();
   void startRetrieveAllBooks();
   void processRetrieveAllBooks();
   void activateSelected();

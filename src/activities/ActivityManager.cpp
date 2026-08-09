@@ -53,6 +53,10 @@ void ActivityManager::renderTaskLoop() {
     RenderLock lock;
     if (currentActivity) {
       HalPowerManager::Lock powerLock;  // Ensure we don't go into low-power mode while rendering
+      // Each activity starts with UI text scaling enabled. The Folio shelf
+      // activities explicitly disable it for their featured book and grid so
+      // changing UI Scale cannot alter the bookshelf presentation.
+      renderer.setUiScaleTextEnabled(true);
       currentActivity->render(std::move(lock));
     }
     // Notify any task blocked in requestUpdateAndWait() that the render is done.
@@ -303,6 +307,14 @@ void ActivityManager::popActivity() {
 }
 
 bool ActivityManager::preventAutoSleep() const { return currentActivity && currentActivity->preventAutoSleep(); }
+
+void ActivityManager::requestSleep() { sleepRequested = true; }
+
+bool ActivityManager::consumeSleepRequest() {
+  const bool requested = sleepRequested;
+  sleepRequested = false;
+  return requested;
+}
 
 bool ActivityManager::isReaderActivity() const {
   return std::any_of(stackActivities.begin(), stackActivities.end(),

@@ -68,62 +68,9 @@ const ThemeMetrics& UITheme::getMetrics() const {
     if (touch) {
       adjustedMetrics.buttonHintsHeight = 0;
     }
-    // Scale generic UI chrome only. Folio Nooir intentionally keeps its shelf
-    // geometry fixed so a scale change cannot disturb the 4x2 covers, feature
-    // panel, or Recent/Finished navigation. Its reader typography has its own
-    // point-size controls.
-    if (SETTINGS.uiTheme != CrossPointSettings::UI_THEME::FOLIO_NOOIR && SETTINGS.uiScalePercent != 100) {
-      const int percent = std::clamp<int>(SETTINGS.uiScalePercent, 80, 120);
-      const auto scale = [percent](int& value) {
-        if (value <= 0) return;
-        value = std::max(1, (value * percent + 50) / 100);
-      };
-      scale(adjustedMetrics.batteryWidth);
-      scale(adjustedMetrics.batteryHeight);
-      scale(adjustedMetrics.topPadding);
-      scale(adjustedMetrics.batteryBarHeight);
-      scale(adjustedMetrics.headerHeight);
-      scale(adjustedMetrics.verticalSpacing);
-      scale(adjustedMetrics.previewPadding);
-      scale(adjustedMetrics.contentSidePadding);
-      scale(adjustedMetrics.listRowHeight);
-      scale(adjustedMetrics.listWithSubtitleRowHeight);
-      scale(adjustedMetrics.menuRowHeight);
-      scale(adjustedMetrics.menuSpacing);
-      scale(adjustedMetrics.tabSpacing);
-      scale(adjustedMetrics.tabBarHeight);
-      scale(adjustedMetrics.scrollBarWidth);
-      scale(adjustedMetrics.scrollBarRightOffset);
-      scale(adjustedMetrics.homeTopPadding);
-      scale(adjustedMetrics.homeCoverHeight);
-      scale(adjustedMetrics.homeCoverTileHeight);
-      scale(adjustedMetrics.buttonHintsHeight);
-      scale(adjustedMetrics.sideButtonHintsWidth);
-      scale(adjustedMetrics.progressBarHeight);
-      scale(adjustedMetrics.progressBarMarginTop);
-      scale(adjustedMetrics.statusBarHorizontalMargin);
-      scale(adjustedMetrics.statusBarVerticalMargin);
-      scale(adjustedMetrics.keyboardKeyHeight);
-      scale(adjustedMetrics.keyboardKeySpacing);
-      scale(adjustedMetrics.keyboardVerticalOffset);
-      scale(adjustedMetrics.popupMarginX);
-      scale(adjustedMetrics.popupMarginY);
-      scale(adjustedMetrics.popupFrameThickness);
-      scale(adjustedMetrics.popupCornerRadius);
-      scale(adjustedMetrics.popupTextBaselineOffsetY);
-      scale(adjustedMetrics.popupProgressBarHeight);
-      scale(adjustedMetrics.optionPopupItemSpacing);
-      scale(adjustedMetrics.optionPopupInnerPadding);
-      scale(adjustedMetrics.optionPopupSelectionHPadding);
-      scale(adjustedMetrics.optionPopupSelectionVPadding);
-      scale(adjustedMetrics.optionPopupTitleGap);
-      scale(adjustedMetrics.optionPopupSelectionRadius);
-      scale(adjustedMetrics.optionPopupDialogSideMargin);
-      scale(adjustedMetrics.textFieldHorizontalPadding);
-      scale(adjustedMetrics.textFieldNormalThickness);
-      scale(adjustedMetrics.textFieldCursorThickness);
-      scale(adjustedMetrics.textFieldLineEndOffset);
-    }
+    // UI Scale changes font selection in GfxRenderer only. Keep all metrics
+    // unchanged so the bookshelf, settings rows, and button positions remain
+    // stable at every scale choice.
     metricsForTouch = touch;
     metricsScalePercent = SETTINGS.uiScalePercent;
     metricsValid = true;

@@ -72,6 +72,7 @@ class ActivityManager {
   // closing gesture is idle, otherwise Reader Options can immediately be
   // interpreted as Home/Back and leave the book.
   bool suppressRestoredReaderInput = false;
+  bool sleepRequested = false;
 
  public:
   explicit ActivityManager(GfxRenderer& renderer, MappedInputManager& mappedInput)
@@ -113,6 +114,10 @@ class ActivityManager {
   void popActivity();
 
   bool preventAutoSleep() const;
+  // Activities request a real deep sleep through the main loop so the normal
+  // reader-exit, sleep-screen, and hardware shutdown sequence is preserved.
+  void requestSleep();
+  bool consumeSleepRequest();
   bool isReaderActivity() const;
   bool bluetoothShouldBeActive() const;
   bool skipLoopDelay() const;

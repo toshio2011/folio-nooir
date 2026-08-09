@@ -311,6 +311,7 @@ void setup() {
   HalSystem::checkPanic();
 
   SETTINGS.loadFromFile();
+  renderer.setUiScalePercent(SETTINGS.uiScalePercent);
   APP_STATE.loadFromFile();
   RECENT_BOOKS.loadFromFile();
   BOOK_STATES.loadFromFile();
@@ -486,6 +487,7 @@ void loop() {
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
 
   renderer.setFadingFix(SETTINGS.fadingFix);
+  renderer.setUiScalePercent(SETTINGS.uiScalePercent);
 
   if (Serial && millis() - lastMemPrint >= 10000) {
     LOG_INF("MEM", "Free: %d bytes, Total: %d bytes, Min Free: %d bytes, MaxAlloc: %d bytes", ESP.getFreeHeap(),
@@ -580,6 +582,14 @@ void loop() {
   const unsigned long activityStartTime = millis();
   activityManager.loop();
   const unsigned long activityDuration = millis() - activityStartTime;
+
+  // A reader shortcut may request sleep after it has handled the button hold.
+  // Consume it here so the normal SleepActivity/deep-sleep sequence runs from
+  // the main task instead of leaving a static sleep screen on the panel.
+  if (activityManager.consumeSleepRequest()) {
+    enterDeepSleep();
+    return;
+  }
 
   const unsigned long loopDuration = millis() - loopStartTime;
   if (loopDuration > maxLoopDuration) {

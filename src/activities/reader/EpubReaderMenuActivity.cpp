@@ -70,6 +70,10 @@ bool EpubReaderMenuActivity::handleHomeGesture() {
 }
 
 void EpubReaderMenuActivity::loop() {
+  // OptionPopup measures its rows on the main task. Keep UI text scaling
+  // active here as well as during render so Reader Menu/Reader Options use
+  // the configured size consistently.
+  renderer.setUiScaleTextEnabled(true);
   if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) {
     // The popup acts on button press; if that input closed it, the trailing
     // release must be swallowed below (Back would close the menu, Confirm
@@ -165,6 +169,7 @@ void EpubReaderMenuActivity::loop() {
 }
 
 void EpubReaderMenuActivity::render(RenderLock&&) {
+  renderer.setUiScaleTextEnabled(true);
   if (optionPopup.processRender(renderer, mappedInput)) return;
 
   renderer.clearScreen();

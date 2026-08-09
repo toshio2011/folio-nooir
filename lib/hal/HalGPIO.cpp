@@ -241,12 +241,15 @@ void HalGPIO::begin() {
                             : x3IsUc8279  ? BoardConfig::Board::XteinkX3Uc8279
                                           : BoardConfig::Board::XteinkX3);
 
-  // Newer C3 X4 batches may carry an UltraChip sibling (UC8179/UC8279) rather
-  // than SSD1677. The SDK promotes the active profile only on a confirmed
-  // bus fingerprint; old X4 panels remain on the existing SSD1677 path.
-  if (deviceIsX4()) {
-    freeink::applyXteinkDisplayController();
-  }
+  // Keep the original X4/SSD1677 path by default. The X3 compatibility work
+  // added a shared X4 controller probe, but older X4 units are known-good with
+  // SSD1677 and can become slower or less crisp if a marginal bus read
+  // promotes them to an unneeded UltraChip waveform. Newer X4 batches can
+  // opt in explicitly with -DFREEINK_ENABLE_X4_CONTROLLER_PROBE=1 after their
+  // panel has been validated.
+#if defined(FREEINK_ENABLE_X4_CONTROLLER_PROBE) && FREEINK_ENABLE_X4_CONTROLLER_PROBE
+  if (deviceIsX4()) freeink::applyXteinkDisplayController();
+#endif
 
   SPI.begin(EPD_SCLK, SPI_MISO, EPD_MOSI, EPD_CS);
 

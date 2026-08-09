@@ -30,6 +30,7 @@ namespace {
 constexpr char FOLIO_HOME_SNAPSHOT[] = "/.crosspoint/folio_home.bin";
 constexpr uint32_t FOLIO_HOME_MAGIC = 0x464E484D;  // "FNHM"
 constexpr uint16_t FOLIO_HOME_VERSION = 2;
+constexpr unsigned long RETRIEVE_POPUP_TIMEOUT_MS = 2500;
 
 bool isClippingsExport(const std::string& path) {
   std::string name = path;
@@ -54,9 +55,22 @@ void RecentBooksActivity::loadRecentBooks() { recentBooks = RECENT_BOOKS.getBook
 bool RecentBooksActivity::hasMissingRecentCache() const {
   for (const auto& book : recentBooks) {
     if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path)) continue;
-    if (book.title.empty() || book.coverBmpPath.empty()) return true;
-    const std::string thumb = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
-    if (!isValidBookThumbnail(thumb)) return true;
+    // Do not touch the SD card while entering Recent/Finished. A title is
+    // enough to render a cached entry (the shelf will use a filename/title
+    // placeholder when its cover is missing). Invalid thumbnails are fixed
+    // only by the explicit Refresh Book Cache action.
+    if (book.title.empty()) return true;
+  }
+  return false;
+}
+
+bool RecentBooksActivity::hasAnyRecentCache() const {
+  for (const auto& book : recentBooks) {
+    if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path)) continue;
+    // A title with or without a cover path is a valid metadata-only cache.
+    // This is intentionally an in-memory check: checking every thumbnail on
+    // SD during boot was the remaining source of the post-boot hitch.
+    if (!book.title.empty()) return true;
   }
   return false;
 }
@@ -170,8 +184,6 @@ void RecentBooksActivity::generateNextCover() {
     // thumbnail survived the cache cleanup. Warmup can still skip entries
     // whose metadata and cover are already complete.
     if (!forceRebuild && !metadataMissing && !thumbPath.empty() && isValidBookThumbnail(thumbPath)) continue;
-    if (!thumbPath.empty() && Storage.exists(thumbPath.c_str())) Storage.remove(thumbPath.c_str());
-
     bool attempted = false;
     if (FsHelpers::hasEpubExtension(book.path)) {
       Epub epub(book.path, "/.crosspoint");
@@ -181,7 +193,18 @@ void RecentBooksActivity::generateNextCover() {
         const std::string title = epub.getTitle().empty() ? book.title : epub.getTitle();
         const std::string author = epub.getAuthor();
         const std::string cover = epub.getThumbBmpPath();
-        const std::string synopsis = epub.getDescription().substr(0, 384);
+        // Some EPUBs expose their description through a metadata variant that
+        // the lightweight pass cannot see. Never erase a working shelf synopsis
+        // just because this refresh returned an empty description.
+        std::string parsedSynopsis = epub.getDescription();
+        // If the fresh lightweight OPF pass did not expose a description,
+        // reuse the existing book.bin metadata when available. This recovers
+        // a synopsis that was cached before a transient/partial refresh.
+        if (parsedSynopsis.empty() && metadataOnly) {
+          Epub cached(book.path, "/.crosspoint");
+          if (cached.loadCachedMetadataOnly()) parsedSynopsis = cached.getDescription();
+        }
+        const std::string synopsis = parsedSynopsis.empty() ? book.synopsis : parsedSynopsis.substr(0, 384);
         if (book.title != title || book.author != author || book.coverBmpPath != cover || book.synopsis != synopsis) {
           book.title = title;
           book.author = author;
@@ -194,8 +217,7 @@ void RecentBooksActivity::generateNextCover() {
           if (!isValidBookThumbnail(thumb)) {
             Storage.remove(thumb.c_str());
             if (!epub.generateThumbBmp(BOOKSHELF_COVER_HEIGHT) || !isValidBookThumbnail(thumb)) {
-              book.coverBmpPath.clear();
-              RECENT_BOOKS.updateBook(book.path, book.title, book.author, "", book.synopsis);
+              LOG_ERR("SHELF", "Could not regenerate EPUB thumbnail: %s", book.path.c_str());
             }
           }
         }
@@ -217,12 +239,15 @@ void RecentBooksActivity::generateNextCover() {
         if (!isValidBookThumbnail(thumb)) {
           Storage.remove(thumb.c_str());
           if (!xtc.generateThumbBmp(BOOKSHELF_COVER_HEIGHT) || !isValidBookThumbnail(thumb)) {
-            book.coverBmpPath.clear();
-            RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+            LOG_ERR("SHELF", "Could not regenerate XTC thumbnail: %s", book.path.c_str());
           }
         }
       }
     }
+    // A manual refresh targets one highlighted book. If its source cannot be
+    // opened, stop here instead of scanning every Recent entry and making the
+    // shelf appear locked for a long time.
+    if (forceRebuild && !attempted) break;
     if (attempted) {
       snapshotRestored = false;
       if (Storage.exists(FOLIO_HOME_SNAPSHOT)) Storage.remove(FOLIO_HOME_SNAPSHOT);
@@ -309,15 +334,16 @@ void RecentBooksActivity::showBookActions() {
       RECENT_BOOKS.recordReading(selected.path, 0, 0);
     }
     if (action == 5) {
-      clearBookCache(selected.path);
-      // Clearing a cache removes the thumbnail as well. Show feedback first,
-      // then make this selected book the next (and only immediate) extraction.
+      // Refresh only the lightweight bookshelf metadata and thumbnail. Do not
+      // clear the reader cache: progress, bookmarks, clippings, and cached
+      // reading pages must remain usable while the EPUB is reread.
       nextCoverToGenerate = selectedRecentIndex();
       coverGenerationActive = false;
       coverGenerationRequested = false;
       retrievingBookCache = true;
       retrievingBookCacheIndex = selectorIndex;
       retrievingBookCachePopupRendered = false;
+      retrievingBookCacheStartedMs = millis();
     }
     if (action == 6) {
       RECENT_BOOKS.removeByPath(selected.path);
@@ -377,7 +403,17 @@ void RecentBooksActivity::onEnter() {
   retrievingBookCache = false;
   retrievingBookCacheIndex = SIZE_MAX;
   retrievingBookCachePopupRendered = false;
-  recentCacheWarmupActive = hasMissingRecentCache();
+  retrievingBookCacheStartedMs = 0;
+  // A pending write belongs to the previous shelf frame. Never carry it into
+  // a new activity instance, where it could write unrelated framebuffer data
+  // during the first interaction after boot.
+  snapshotWritePending = false;
+  snapshotWriteRequestedMs = 0;
+  // Do not rescan Recent/Finished in the background on every visit. Once any
+  // valid shelf cache exists, missing entries use the title/filename fallback
+  // until the user explicitly chooses Refresh Book Cache. Only a completely
+  // empty cache (first install or a full cache clear) gets the one-time warmup.
+  recentCacheWarmupActive = hasMissingRecentCache() && !hasAnyRecentCache();
   recentCacheWarmupPopupRendered = false;
   coverGenerationRequested = recentCacheWarmupActive;
   snapshotRestored = restoreSnapshot();
@@ -403,9 +439,44 @@ void RecentBooksActivity::loop() {
   const auto& folioTheme = static_cast<const FolioNooirTheme&>(GUI);
   const FolioShelfLayout layout = folioTheme.shelfLayout(renderer, metrics);
 
-  if (snapshotWritePending) {
+  // Snapshot persistence is an optimization, not part of showing the shelf.
+  // Defer the SD write until the user has been idle so the first boot render
+  // and the first button press do not wait behind a 48 KB filesystem write.
+  if (snapshotWritePending && millis() - snapshotWriteRequestedMs >= 500 &&
+      !mappedInput.wasAnyPressed() && !mappedInput.wasAnyReleased() && !mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      !mappedInput.isPressed(MappedInputManager::Button::Back) && !menuPopup.isActive() &&
+      !bookActionsPopup.isActive() && !retrievingBookCache && !recentCacheWarmupActive) {
     snapshotWritePending = false;
+    RenderLock lock;
+    // The on-screen frame has a focus outline, but the persisted base frame
+    // must not contain it (or a popup overlay). Erase only that outline while
+    // writing, then restore it in the in-memory framebuffer without another
+    // panel refresh.
+    bool focusOutlineErased = false;
+    if (visibleBookCount > 0) {
+      const int columns = layout.columns;
+      const int gap = layout.gridGap;
+      const int cardWidth = layout.cardWidth;
+      const int cardHeight = layout.cardHeight;
+      const size_t slot = selectorIndex % BOOKS_PER_PAGE;
+      const int x = gap + static_cast<int>(slot % columns) * (cardWidth + gap);
+      const int y = layout.gridTop + static_cast<int>(slot / columns) * cardHeight;
+      const int coverHeight = std::max(40, std::min(cardHeight - 27, cardWidth * 3 / 2));
+      renderer.drawRect(x - 3, y - 3, cardWidth + 6, coverHeight + 6, false);
+      focusOutlineErased = true;
+    }
     writeSnapshot();
+    if (focusOutlineErased && visibleBookCount > 0) {
+      const int columns = layout.columns;
+      const int gap = layout.gridGap;
+      const int cardWidth = layout.cardWidth;
+      const int cardHeight = layout.cardHeight;
+      const size_t slot = selectorIndex % BOOKS_PER_PAGE;
+      const int x = gap + static_cast<int>(slot % columns) * (cardWidth + gap);
+      const int y = layout.gridTop + static_cast<int>(slot / columns) * cardHeight;
+      const int coverHeight = std::max(40, std::min(cardHeight - 27, cardWidth * 3 / 2));
+      renderer.drawRect(x - 3, y - 3, cardWidth + 6, coverHeight + 6);
+    }
   }
 
   const bool bookPopupActive = bookActionsPopup.isActive();
@@ -431,10 +502,14 @@ void RecentBooksActivity::loop() {
   }
 
   if (retrievingBookCache) {
-    if (!retrievingBookCachePopupRendered) return;
+    if (!retrievingBookCachePopupRendered && millis() - retrievingBookCacheStartedMs < RETRIEVE_POPUP_TIMEOUT_MS) return;
     retrievingBookCache = false;
     retrievingBookCachePopupRendered = false;
     coverGenerationRequested = true;
+    // Keep the retrieval dialog as the last complete frame while the
+    // synchronous ZIP/thumbnail work runs. This prevents slower X3 panels
+    // from appearing frozen or showing an empty cover during extraction.
+    generateNextCover();
     requestUpdate();
     return;
   }
@@ -709,6 +784,9 @@ void RecentBooksActivity::render(RenderLock&&) {
 #endif
 
 void RecentBooksActivity::render(RenderLock&&) {
+  // Keep the Folio bookshelf's featured book and 4x2 grid typography fixed;
+  // UI Scale applies to the surrounding application screens instead.
+  renderer.setUiScaleTextEnabled(false);
   // Popups are drawn over the shelf framebuffer. Once the popup closes, force
   // one clean shelf render; otherwise its dialog pixels would remain behind
   // the next selection.
@@ -726,6 +804,20 @@ void RecentBooksActivity::render(RenderLock&&) {
   const int pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
   const size_t currentPageStart = (selectorIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE;
+
+  // The shelf frame is already on the panel and in the renderer framebuffer
+  // when a menu/long-press popup opens. Do not redraw all covers, synopsis
+  // lines, statistics, and progress badges just to place the dialog on top.
+  // OptionPopup::processRender() performs the single required display update.
+  const bool popupOnlyRender =
+      (menuPopup.isActive() || bookActionsPopup.isActive()) && snapshotRestored && !initialRenderPending &&
+      lastRenderedSelectorIndex == selectorIndex && lastRenderedPageStart == currentPageStart;
+  if (popupOnlyRender) {
+    if (menuPopup.processRender(renderer, mappedInput) || bookActionsPopup.processRender(renderer, mappedInput)) {
+      overlayFrameShown = true;
+      return;
+    }
+  }
 
   // The snapshot is restored once in onEnter. Keep the framebuffer in RAM
   // while moving the selection; re-reading the full 48 KB snapshot from SD on
@@ -908,7 +1000,13 @@ void RecentBooksActivity::render(RenderLock&&) {
   // Persist the base frame before adding the current selection outline. The
   // next button press restores this clean frame and draws one outline only.
   if (!renderedFromSnapshot && (initialRenderPending || snapshotPageStart != currentPageStart)) {
-    writeSnapshot();
+    // Persist after the frame has become interactive; see the idle write in
+    // loop(). Keeping the old snapshot invalid until then prevents a stale
+    // page from being treated as the current one during rapid navigation.
+    snapshotWritePending = true;
+    snapshotWriteRequestedMs = millis();
+    snapshotRestored = false;
+    snapshotPageStart = SIZE_MAX;
   }
   if (visibleBookCount > 0) {
     const int columns = layout.columns;
@@ -951,9 +1049,11 @@ void RecentBooksActivity::render(RenderLock&&) {
   }
   lastRenderedSelectorIndex = selectorIndex;
   lastRenderedPageStart = currentPageStart;
-  snapshotRestored = Storage.exists(FOLIO_HOME_SNAPSHOT);
-  if (snapshotRestored) {
-    snapshotPageStart = currentPageStart;
-    snapshotSelectorIndex = selectorIndex;
-  }
+  // The framebuffer is already a valid in-memory base frame even when its
+  // optional SD snapshot is still waiting for the idle write. Keep using it
+  // for immediate button navigation; otherwise the first button press after
+  // boot would decode all eight covers again before the deferred write.
+  snapshotRestored = true;
+  snapshotPageStart = currentPageStart;
+  snapshotSelectorIndex = selectorIndex;
 }

@@ -53,6 +53,7 @@ const RecentBook* findRecent(const std::string& path) {
 }  // namespace
 
 void ReadingStatsActivity::buildLines() {
+  renderer.setUiScaleTextEnabled(true);
   lines.clear();
   firstLine = 0;
 
@@ -196,6 +197,7 @@ void ReadingStatsActivity::onEnter() {
 }
 
 void ReadingStatsActivity::movePage(const int direction) {
+  renderer.setUiScaleTextEnabled(true);
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int top = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int bottom = renderer.getScreenHeight() - metrics.buttonHintsHeight - metrics.verticalSpacing;
@@ -227,6 +229,7 @@ void ReadingStatsActivity::loop() {
 }
 
 void ReadingStatsActivity::render(RenderLock&&) {
+  renderer.setUiScaleTextEnabled(true);
   renderer.clearScreen();
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int side = metrics.contentSidePadding;

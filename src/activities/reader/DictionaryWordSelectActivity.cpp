@@ -180,25 +180,40 @@ void DictionaryWordSelectActivity::performLookup() {
   // as the fast path, then try the other discovered StarDict folders when the
   // word is absent. This lets a compact primary dictionary cover common words
   // while a specialist dictionary supplies names, technical terms, or a second
-  // language without changing the reader gesture.
+  // language without changing the reader gesture.  Never build an alternate
+  // index on this reader path: a miss must stay bounded even when several
+  // large dictionaries are installed. Alternate indexes are intentionally
+  // not built here; they must be prepared separately before they participate.
   if (!found) {
-    std::vector<DictionaryEntry> entries;
-    DictionaryRegistry::discover(entries);
-    for (const auto& entry : entries) {
-      // Skip only the dictionary already tried.  If a remembered dictionary
-      // was removed from the card, the configured primary dictionary must
-      // still be part of the fallback set.
-      if (entry.name == activeDictionaryName) continue;
+    if (!fallbackDictionaryCacheReady) {
+      std::vector<DictionaryEntry> entries;
+      DictionaryRegistry::discover(entries);
+      readyFallbackDictionaryNames.clear();
+      readyFallbackDictionaryNames.reserve(entries.size());
+      for (const auto& entry : entries) {
+        Dictionary alternate;
+        if (!alternate.open(entry.name.c_str())) continue;
+        // Building a sidecar can take seconds (and used to happen once for
+        // every dictionary after a miss).  Only dictionaries with a ready,
+        // current sidecar participate in automatic fallback.
+        if (!alternate.needsIndex()) readyFallbackDictionaryNames.push_back(entry.name);
+      }
+      fallbackDictionaryCacheReady = true;
+    }
+
+    for (const auto& dictionaryName : readyFallbackDictionaryNames) {
+      // Skip the dictionary already tried. If a remembered dictionary was
+      // removed from the card, open() below simply rejects its stale name.
+      if (dictionaryName == activeDictionaryName) continue;
       Dictionary alternate;
-      if (!alternate.open(entry.name.c_str())) continue;
-      if (alternate.needsIndex() && !alternate.buildIndex(&indexBuildYield)) continue;
+      if (!alternate.open(dictionaryName.c_str())) continue;
       if (alternate.lookup(words[selected].text, definition, headword)) {
         found = true;
         // Keep the successful dictionary warm for the next word on this
         // page; otherwise activeDictionaryName would point at the alternate
         // while `dict` still held the failed primary instance.
         dict = std::move(alternate);
-        activeDictionaryName = entry.name;
+        activeDictionaryName = dictionaryName;
         break;
       }
     }
@@ -208,7 +223,8 @@ void DictionaryWordSelectActivity::performLookup() {
     DICTIONARY_HISTORY.remember(cleanedWord, activeDictionaryName);
     popup = Popup::None;
     startActivityForResult(std::make_unique<DictionaryDefinitionActivity>(renderer, mappedInput, std::move(headword),
-                                                                          std::move(definition)),
+                                                                          std::move(definition), activeDictionaryName,
+                                                                          std::string(words[selected].text)),
                            [this](const ActivityResult&) { requestUpdate(); });
     return;
   }

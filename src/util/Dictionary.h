@@ -22,6 +22,8 @@ struct DictLocation {
 // index is held in RAM.
 class Dictionary {
  public:
+  using IndexProgressFn = bool (*)(void* ctx, uint32_t processedBytes, uint32_t totalBytes);
+
   // Resolve the dictionary folder and validate its files. Rejects
   // dictionaries with 64-bit index offsets (idxoffsetbits=64 in .ifo).
   bool open(const char* folderName);
@@ -32,8 +34,14 @@ class Dictionary {
   bool needsIndex();
 
   // One streaming pass over .idx writing the .qidx sidecar. yieldFn (optional)
-  // is called every ~64KB consumed to feed the watchdog / repaint the UI.
-  bool buildIndex(void (*yieldFn)(void*) = nullptr, void* ctx = nullptr);
+  // is called every ~64KB consumed to feed the watchdog. progressFn is used
+  // by the Settings indexer to report progress and request cancellation; when
+  // supplied, a small checkpoint file makes a later attempt resume.
+  bool buildIndex(void (*yieldFn)(void*) = nullptr, void* ctx = nullptr,
+                  IndexProgressFn progressFn = nullptr);
+
+  // True when a cancelled Settings build has a valid checkpoint to resume.
+  bool hasIndexResume();
 
   // Clean the word, look it up, and on a miss retry mini stem variants
   // (-'s/-s/-es/-ies/-ed/-ing). On a hit fills the definition text (capped at

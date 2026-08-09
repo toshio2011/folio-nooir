@@ -480,15 +480,20 @@ void EpubReaderActivity::renderSavedHighlights(const Page& page, const int fontI
     }
     if (!matched) continue;
 
-    // The normal reader is monochrome.  Inverting the selected words gives a
-    // clear, durable e-ink highlight and matches the temporary selection UI.
-    // Draw all backgrounds first, then redraw the glyphs in the opposite ink
-    // color so the text remains readable.
+    // The normal reader is monochrome. Paint one continuous band per line
+    // rather than a separate box around every word, then redraw the glyphs in
+    // the opposite ink color so the saved highlight remains readable.
+    int lineStart = first;
+    for (int i = first; i <= last; ++i) {
+      if (i != last && words[i + 1].row == words[i].row) continue;
+      const auto& startWord = words[lineStart];
+      const auto& endWord = words[i];
+      const int spanX = startWord.x - 2;
+      const int spanRight = endWord.x + endWord.width + 2;
+      renderer.fillRect(spanX, startWord.y - 2, std::max(1, spanRight - spanX), lineHeight + 4, !darkMode);
+      lineStart = i + 1;
+    }
     if (darkMode) {
-      for (int i = first; i <= last; ++i) {
-        const auto& word = words[i];
-        renderer.fillRect(word.x - 2, word.y - 2, word.width + 4, lineHeight + 4, false);
-      }
       renderer.setDarkMode(false);
       for (int i = first; i <= last; ++i) {
         const auto& word = words[i];
@@ -496,10 +501,6 @@ void EpubReaderActivity::renderSavedHighlights(const Page& page, const int fontI
       }
       renderer.setDarkMode(true);
     } else {
-      for (int i = first; i <= last; ++i) {
-        const auto& word = words[i];
-        renderer.fillRect(word.x - 2, word.y - 2, word.width + 4, lineHeight + 4, true);
-      }
       for (int i = first; i <= last; ++i) {
         const auto& word = words[i];
         renderer.drawText(fontId, word.x, word.y, word.text, false, word.style);
@@ -629,6 +630,23 @@ void EpubReaderActivity::loop() {
       case CrossPointSettings::LP_PWR_SCREENSHOT:
         pendingScreenshot = true;
         requestUpdate();
+        break;
+      case CrossPointSettings::LP_PWR_BOOKMARK:
+        addBookmark();
+        showBookmarkMessage = true;
+        bookmarkMessageTime = millis();
+        requestUpdate();
+        break;
+      case CrossPointSettings::LP_PWR_DICTIONARY:
+        openDictionaryWordSelect();
+        break;
+      case CrossPointSettings::LP_PWR_DARK_MODE:
+        SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
+        SETTINGS.saveToFile();
+        requestUpdate();
+        break;
+      case CrossPointSettings::LP_PWR_KOSYNC:
+        launchKOReaderSync();
         break;
       case CrossPointSettings::LP_PWR_SLEEP:
       case CrossPointSettings::LP_PWR_IGNORE:
@@ -897,6 +915,30 @@ void EpubReaderActivity::loop() {
           return;
         }
         break;
+      case CrossPointSettings::LP_MENU_SLEEP:
+        if (mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS) {
+          ignoreNextConfirmRelease = true;
+          activityManager.requestSleep();
+          return;
+        }
+        break;
+      case CrossPointSettings::LP_MENU_READING_STATS:
+        if (mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS) {
+          ignoreNextConfirmRelease = true;
+          startActivityForResult(
+              std::make_unique<ReadingStatsActivity>(renderer, mappedInput, epub ? epub->getPath() : std::string{}),
+              [this](const ActivityResult&) { requestUpdate(); });
+          return;
+        }
+        break;
+      case CrossPointSettings::LP_MENU_SCREENSHOT:
+        if (mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS) {
+          ignoreNextConfirmRelease = true;
+          pendingScreenshot = true;
+          requestUpdate();
+          return;
+        }
+        break;
       case CrossPointSettings::LP_MENU_DISABLED:
       default:
         break;
@@ -1006,6 +1048,16 @@ void EpubReaderActivity::loop() {
     // Rebuild the current chapter with the new typography while retaining the
     // approximate page position. The normal cached-position reconciliation in
     // render() corrects the page when the new pagination is known.
+    nextPageNumber = section ? section->currentPage : nextPageNumber;
+    cachedChapterTotalPageCount = section ? section->estimatedTotalPages() : cachedChapterTotalPageCount;
+    section.reset();
+    requestUpdate();
+    return;
+  }
+
+  if (longPress && !fromSide && SETTINGS.longPressButtonBehavior == CrossPointSettings::CHANGE_FONT_SIZE) {
+    SETTINGS.fontSize = static_cast<uint8_t>((SETTINGS.fontSize + 1) % CrossPointSettings::FONT_SIZE_COUNT);
+    SETTINGS.saveToFile();
     nextPageNumber = section ? section->currentPage : nextPageNumber;
     cachedChapterTotalPageCount = section ? section->estimatedTotalPages() : cachedChapterTotalPageCount;
     section.reset();

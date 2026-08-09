@@ -161,6 +161,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LP_MENU_DICTIONARY = 3,
     LP_MENU_DARK_MODE = 4,
     LP_MENU_READER_OPTIONS = 5,
+    LP_MENU_SLEEP = 6,
+    LP_MENU_READING_STATS = 7,
+    LP_MENU_SCREENSHOT = 8,
     LONG_PRESS_MENU_FUNCTION_COUNT
   };
 
@@ -171,6 +174,10 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LP_PWR_READING_STATS = 2,
     LP_PWR_SCREENSHOT = 3,
     LP_PWR_IGNORE = 4,
+    LP_PWR_BOOKMARK = 5,
+    LP_PWR_DICTIONARY = 6,
+    LP_PWR_DARK_MODE = 7,
+    LP_PWR_KOSYNC = 8,
     LONG_PWRBTN_COUNT
   };
 
@@ -182,6 +189,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     OFF = 0,
     CHAPTER_SKIP = 1,
     ORIENTATION_CHANGE = 2,
+    CHANGE_FONT_SIZE = 3,
     LONG_PRESS_BUTTON_BEHAVIOR_COUNT
   };
 
@@ -320,8 +328,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t longPressMenuFunction = LP_MENU_DISABLED;
   // UI Theme
   uint8_t uiTheme = FOLIO_NOOIR;
-  // General UI chrome scale. Folio Nooir keeps its shelf geometry fixed so the
-  // Recent/Finished/library layout remains stable at every scale choice.
+  // UI text scale. Folio Nooir keeps its shelf text and geometry fixed so the
+  // featured book and Recent/Finished/library grid remain stable.
   uint8_t uiScalePercent = 100;
   // Sunlight fading compensation
   uint8_t fadingFix = 0;

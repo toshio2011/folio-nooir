@@ -177,6 +177,11 @@ void XtcReaderActivity::loop() {
     } else if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_SCREENSHOT) {
       RenderLock lock(*this);
       ScreenshotUtil::takeScreenshot(renderer);
+    } else if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_DARK_MODE) {
+      SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
+      SETTINGS.saveToFile();
+      darkShortcutFired = true;
+      requestUpdate();
     }
     return;
   }
@@ -207,6 +212,27 @@ void XtcReaderActivity::loop() {
     SETTINGS.saveToFile();
     darkShortcutFired = true;
     requestUpdate();
+    return;
+  }
+  if ((SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_SLEEP ||
+       SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_READING_STATS ||
+       SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_SCREENSHOT) &&
+      mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && !darkShortcutFired) {
+    darkShortcutFired = true;
+    if (SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_SLEEP) {
+      activityManager.requestSleep();
+    } else if (SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_READING_STATS) {
+      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, xtc->getPath()),
+                             [this](const ActivityResult&) {
+                               darkShortcutFired = false;
+                               skipNextButtonCheck = true;
+                               requestUpdate();
+                             });
+    } else {
+      RenderLock lock(*this);
+      ScreenshotUtil::takeScreenshot(renderer);
+    }
     return;
   }
 
@@ -291,6 +317,13 @@ void XtcReaderActivity::loop() {
                                : static_cast<uint8_t>((SETTINGS.orientation + 1) % CrossPointSettings::ORIENTATION_COUNT);
     SETTINGS.saveToFile();
     ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+    requestUpdate();
+    return;
+  }
+  if (!fromTilt && !fromSide && longPressBehavior == CrossPointSettings::CHANGE_FONT_SIZE &&
+      heldMs > ReaderUtils::SKIP_HOLD_MS) {
+    SETTINGS.fontSize = static_cast<uint8_t>((SETTINGS.fontSize + 1) % CrossPointSettings::FONT_SIZE_COUNT);
+    SETTINGS.saveToFile();
     requestUpdate();
     return;
   }

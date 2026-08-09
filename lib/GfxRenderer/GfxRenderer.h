@@ -44,6 +44,11 @@ class GfxRenderer {
   RenderMode renderMode;
   Orientation orientation;
   bool fadingFix;
+  // UI scale changes select the nearest built-in UI font size. Reader fonts
+  // (Noto Serif/Sans 12–18 pt) remain controlled by the separate reader font
+  // size setting.
+  uint8_t uiScalePercent = 100;
+  bool uiScaleTextEnabled = true;
   // Reader polarity. When enabled, BW and four-level grayscale rendering
   // map source white to black and source black to white. Activities toggle
   // this only for their page render and restore it on exit.
@@ -91,6 +96,7 @@ class GfxRenderer {
   // fontId unchanged. The whole string is routed as a unit so each draw/measure
   // call stays single-font (consistent bit depth, metrics, wrapping).
   int resolveTextFontId(int fontId, const char* text, EpdFontFamily::Style style) const;
+  int scaleUiFontId(int fontId) const;
 
   void renderChar(const EpdFontFamily& fontFamily, uint32_t cp, int* x, int* y, bool pixelState,
                   EpdFontFamily::Style style) const;
@@ -152,6 +158,11 @@ class GfxRenderer {
 
   // Fading fix control
   void setFadingFix(const bool enabled) { fadingFix = enabled; }
+
+  // Apply the Settings > Display > UI Scale value to UI text only. This is
+  // deliberately separate from ThemeMetrics so layout geometry stays stable.
+  void setUiScalePercent(const uint8_t percent) { uiScalePercent = percent; }
+  void setUiScaleTextEnabled(const bool enabled) { uiScaleTextEnabled = enabled; }
 
   void setDarkMode(const bool enabled) { darkMode = enabled; }
   bool isDarkMode() const { return darkMode; }

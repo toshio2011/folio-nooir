@@ -1,5 +1,6 @@
 #include "DictionaryDefinitionActivity.h"
 
+#include <Arduino.h>
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
@@ -18,6 +19,10 @@ namespace {
 // Longest measurable/drawable span. Wrapped lines stay under the screen width
 // (far below this); only pathological unbreakable tokens are split at this cap.
 constexpr size_t MAX_LINE_BYTES = 191;
+constexpr size_t MAX_ALL_DICTIONARY_RESULTS = 4;
+constexpr size_t MAX_COMBINED_DICTIONARY_BYTES = 48 * 1024;
+constexpr unsigned long DICTIONARY_MESSAGE_DURATION_MS = 1500;
+constexpr const char* ALL_DICTIONARIES_LABEL = "All dictionaries";
 
 // Body text left/right inset, matching the reader's default feel.
 constexpr int SIDE_PADDING = 20;
@@ -30,6 +35,149 @@ void DictionaryDefinitionActivity::onEnter() {
   // C-string font APIs below both see the whole definition.
   std::replace(definition.begin(), definition.end(), '\0', '\n');
   definition = htmlToPlainText(definition);
+  dictionaryOptionsReady = false;
+  searchAllOptionIndex = -1;
+  showingAllResults = false;
+  suppressBackRelease = false;
+  showDictionaryError = false;
+  wrapText();
+  requestUpdate();
+}
+
+void DictionaryDefinitionActivity::refreshDictionaryOptions() {
+  if (dictionaryOptionsReady) return;
+
+  dictionaryOptions.clear();
+  searchAllOptionIndex = -1;
+  std::vector<DictionaryEntry> entries;
+  DictionaryRegistry::discover(entries);
+  for (const auto& entry : entries) {
+    Dictionary dictionary;
+    // Never build an index from this screen. The explicit Settings action is
+    // the only place that prepares alternate dictionaries.
+    if (dictionary.open(entry.name.c_str()) && !dictionary.needsIndex()) {
+      dictionaryOptions.push_back(entry.name);
+    }
+  }
+
+  // Keep the active source visible even if its sidecar became stale after
+  // this definition was opened. A switch back to it will simply report an
+  // error rather than performing an unexpected long scan.
+  if (!showingAllResults && !dictionaryName.empty() &&
+      std::find(dictionaryOptions.begin(), dictionaryOptions.end(), dictionaryName) == dictionaryOptions.end()) {
+    dictionaryOptions.insert(dictionaryOptions.begin(), dictionaryName);
+  }
+  if (dictionaryOptions.size() > 1) {
+    searchAllOptionIndex = static_cast<int>(dictionaryOptions.size());
+    dictionaryOptions.emplace_back(I18N.get(StrId::STR_DICT_SEARCH_ALL));
+  }
+  dictionaryOptionsReady = true;
+}
+
+void DictionaryDefinitionActivity::openDictionaryMenu() {
+  refreshDictionaryOptions();
+  if (dictionaryOptions.size() <= 1) return;
+
+  int currentIndex = 0;
+  const auto current = std::find(dictionaryOptions.begin(), dictionaryOptions.end(), dictionaryName);
+  if (current != dictionaryOptions.end()) currentIndex = static_cast<int>(current - dictionaryOptions.begin());
+  dictionaryPopup.show(StrId::STR_DICTIONARY, dictionaryOptions, currentIndex, [this](int index) {
+    if (index == searchAllOptionIndex) {
+      searchAllPreparedDictionaries();
+    } else if (index >= 0 && index < static_cast<int>(dictionaryOptions.size())) {
+      loadFromDictionary(dictionaryOptions[index]);
+    }
+  });
+  requestUpdate();
+}
+
+void DictionaryDefinitionActivity::showDictionaryMessage(const StrId message) {
+  dictionaryMessage = message;
+  dictionaryMessageTime = millis();
+  showDictionaryError = true;
+}
+
+void DictionaryDefinitionActivity::loadFromDictionary(const std::string& name) {
+  if (name.empty() || name == dictionaryName) return;
+
+  dictionaryBusy = true;
+  showDictionaryError = false;
+  requestUpdateAndWait();
+
+  Dictionary dictionary;
+  std::string nextDefinition;
+  std::string nextHeadword;
+  const bool ok = dictionary.open(name.c_str()) && !dictionary.needsIndex() &&
+                  dictionary.lookup(lookupWord.c_str(), nextDefinition, nextHeadword);
+  if (!ok) {
+    dictionaryBusy = false;
+    showDictionaryMessage(StrId::STR_DICT_NOT_FOUND);
+    requestUpdate();
+    return;
+  }
+
+  std::replace(nextDefinition.begin(), nextDefinition.end(), '\0', '\n');
+  nextDefinition = htmlToPlainText(nextDefinition);
+  dictionaryName = name;
+  showingAllResults = false;
+  headword = std::move(nextHeadword);
+  definition = std::move(nextDefinition);
+  currentPage = 0;
+  wrapText();
+  dictionaryBusy = false;
+  requestUpdate();
+}
+
+void DictionaryDefinitionActivity::searchAllPreparedDictionaries() {
+  refreshDictionaryOptions();
+  dictionaryBusy = true;
+  showDictionaryError = false;
+  requestUpdateAndWait();
+
+  // The ready list is bounded by the dictionaries installed on the card, and
+  // each lookup uses a qidx binary search. Build one bounded result directly
+  // instead of retaining several full definition copies at once.
+  std::string combined;
+  combined.reserve(MAX_COMBINED_DICTIONARY_BYTES);
+  size_t resultCount = 0;
+  for (size_t i = 0; i < dictionaryOptions.size(); ++i) {
+    if (static_cast<int>(i) == searchAllOptionIndex) continue;
+    Dictionary dictionary;
+    if (!dictionary.open(dictionaryOptions[i].c_str()) || dictionary.needsIndex()) continue;
+
+    std::string resultDefinition;
+    std::string resultHeadword;
+    if (!dictionary.lookup(lookupWord.c_str(), resultDefinition, resultHeadword)) continue;
+    if (resultCount >= MAX_ALL_DICTIONARY_RESULTS) break;
+    if (!combined.empty()) combined += "\n\n";
+    combined += "--- ";
+    combined += dictionaryOptions[i];
+    combined += " ---\n";
+    const size_t remaining = MAX_COMBINED_DICTIONARY_BYTES > combined.size()
+                                 ? MAX_COMBINED_DICTIONARY_BYTES - combined.size()
+                                 : 0;
+    if (remaining == 0) break;
+    combined.append(resultDefinition, 0, std::min(remaining, resultDefinition.size()));
+    resultCount++;
+    if (combined.size() >= MAX_COMBINED_DICTIONARY_BYTES) break;
+  }
+
+  dictionaryBusy = false;
+  if (resultCount == 0) {
+    showDictionaryMessage(StrId::STR_DICT_NOT_FOUND);
+    requestUpdate();
+    return;
+  }
+
+  dictionaryName = ALL_DICTIONARIES_LABEL;
+  showingAllResults = true;
+  headword = lookupWord;
+  definition = std::move(combined);
+  std::replace(definition.begin(), definition.end(), '\0', '\n');
+  definition = htmlToPlainText(definition);
+  currentPage = 0;
+  searchAllOptionIndex = -1;
+  dictionaryOptionsReady = false;
   wrapText();
   requestUpdate();
 }
@@ -159,6 +307,33 @@ void DictionaryDefinitionActivity::wrapText() {
 }
 
 void DictionaryDefinitionActivity::loop() {
+  if (dictionaryBusy) return;
+
+  // OptionPopup closes on the Back press edge. Consume the matching release
+  // so it cannot immediately bubble into this activity and exit the
+  // definition page as well.
+  if (suppressBackRelease) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) suppressBackRelease = false;
+    return;
+  }
+
+  if (showDictionaryError && millis() - dictionaryMessageTime >= DICTIONARY_MESSAGE_DURATION_MS) {
+    showDictionaryError = false;
+    requestUpdate();
+  }
+
+  if (dictionaryPopup.isActive()) {
+    const bool backPressed = mappedInput.wasPressed(MappedInputManager::Button::Back);
+    dictionaryPopup.handleInput(mappedInput, [this] { requestUpdate(); });
+    if (backPressed && !dictionaryPopup.isActive()) suppressBackRelease = true;
+    return;
+  }
+
+  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+    openDictionaryMenu();
+    return;
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     finish();
     return;
@@ -226,9 +401,15 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
   const int contentWidth = renderer.getScreenWidth() - hintGutterWidth;
   const int contentY = isInverted ? metrics.buttonHintsHeight : 0;
 
-  // Header: matched headword left, page counter right.
+  // Header: matched headword and source dictionary left, page counter right.
   const int headerY = contentY + metrics.topPadding + 10;
   renderer.drawText(UI_12_FONT_ID, contentX + SIDE_PADDING, headerY, headword.c_str(), true, EpdFontFamily::BOLD);
+  if (!dictionaryName.empty()) {
+    const int dictionaryMaxWidth = std::max(0, contentWidth - 2 * SIDE_PADDING - 70);
+    const std::string displayName = renderer.truncatedText(UI_10_FONT_ID, dictionaryName.c_str(), dictionaryMaxWidth);
+    renderer.drawText(UI_10_FONT_ID, contentX + SIDE_PADDING, headerY + renderer.getLineHeight(UI_10_FONT_ID),
+                      displayName.c_str());
+  }
   if (totalPages > 1) {
     char counter[16];
     snprintf(counter, sizeof(counter), "%d/%d", currentPage + 1, totalPages);
@@ -247,8 +428,22 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
   scope.endScanAndPrewarm();
   drawBody(fontId, contentX + SIDE_PADDING, bodyStartY);
 
-  const auto labels =
-      mappedInput.mapLabels(tr(STR_BACK), "", (currentPage > 0 ? "<" : ""), (currentPage + 1 < totalPages ? ">" : ""));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DICTIONARY),
+                                            (currentPage > 0 ? "<" : ""),
+                                            (currentPage + 1 < totalPages ? ">" : ""));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+
+  if (dictionaryPopup.isActive()) {
+    dictionaryPopup.processRender(renderer, mappedInput);
+    return;
+  }
+  if (dictionaryBusy) {
+    GUI.drawPopup(renderer, tr(STR_DICT_LOOKING_UP));
+    return;
+  }
+  if (showDictionaryError) {
+    GUI.drawPopup(renderer, I18N.get(dictionaryMessage));
+    return;
+  }
   renderer.displayBuffer();
 }

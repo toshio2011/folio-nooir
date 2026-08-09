@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "activities/Activity.h"
+#include "util/ButtonNavigator.h"
 
 // Select a contiguous span of words on the current EPUB page. Confirm once to
 // mark the start, move to the end, then Confirm again to save the clipping.
@@ -26,6 +27,7 @@ class ClipSelectionActivity final : public Activity {
         percentage(percentage) {}
 
   void onEnter() override;
+  void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
 
@@ -60,6 +62,10 @@ class ClipSelectionActivity final : public Activity {
   int fontId = 0;
   int lineHeight = 0;
   std::vector<WordBox> words;
+  ButtonNavigator buttonNavigator;
+  std::unique_ptr<uint8_t[]> pageSnapshot;
+  size_t pageSnapshotSize = 0;
+  bool pageSnapshotValid = false;
   uint16_t rowCount = 0;
   int selected = 0;
   int startIndex = -1;

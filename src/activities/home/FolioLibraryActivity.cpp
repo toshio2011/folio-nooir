@@ -24,11 +24,16 @@
 #include "activities/reader/EpubReaderBookmarksActivity.h"
 #include "activities/reader/EpubReaderClippingListActivity.h"
 #include "activities/util/BmpViewerActivity.h"
+#include "activities/util/KeyboardEntryActivity.h"
 #include "util/BookCacheUtils.h"
 
 namespace {
 constexpr char RETRIEVE_ALL_BOOKS_MESSAGE[] = "Retrieve all books details. Please be patient.";
 constexpr char RETRIEVE_ALL_BOOKS_DONE_MESSAGE[] = "All book details retrieved.";
+constexpr char SEARCH_ALL_FOLDERS_LABEL[] = "Search All Folders";
+constexpr char SEARCHING_FOLDERS_MESSAGE[] = "Searching folders. Please be patient.";
+constexpr unsigned long RETRIEVE_POPUP_TIMEOUT_MS = 2500;
+constexpr size_t SEARCH_ENTRIES_PER_STEP = 24;
 
 bool isLibraryBook(const std::string& path) {
   std::string filename = path;
@@ -47,6 +52,43 @@ std::string joinLibraryPath(const std::string& basepath, const std::string& name
   path += name;
   if (!path.empty() && path.back() == '/') path.pop_back();
   return path;
+}
+
+std::string relativeLibraryPath(const std::string& root, const std::string& path) {
+  if (root.empty() || root == "/") {
+    return !path.empty() && path.front() == '/' ? path.substr(1) : path;
+  }
+  if (path.compare(0, root.size(), root) == 0) {
+    size_t start = root.size();
+    if (start < path.size() && path[start] == '/') ++start;
+    return path.substr(start);
+  }
+  return path;
+}
+
+std::string foldLibrarySearchTerm(const std::string& query) {
+  std::string folded = query;
+  std::transform(folded.begin(), folded.end(), folded.begin(), [](const unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  return folded;
+}
+
+bool containsLibrarySearchTerm(const std::string& name, const std::string& foldedQuery) {
+  if (foldedQuery.empty()) return true;
+  if (foldedQuery.size() > name.size()) return false;
+  for (size_t offset = 0; offset + foldedQuery.size() <= name.size(); ++offset) {
+    bool match = true;
+    for (size_t i = 0; i < foldedQuery.size(); ++i) {
+      const char foldedChar = static_cast<char>(std::tolower(static_cast<unsigned char>(name[offset + i])));
+      if (foldedChar != foldedQuery[i]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) return true;
+  }
+  return false;
 }
 
 enum class LibraryBookState : uint8_t { Reading, Unread, OnHold, Finished };
@@ -94,6 +136,7 @@ void FolioLibraryActivity::loadFiles() {
 }
 
 bool FolioLibraryActivity::matchesLibraryFilter(const std::string& name) const {
+  if (!searchQueryFolded.empty() && !containsLibrarySearchTerm(name, searchQueryFolded)) return false;
   if (libraryFilter == LibraryFilter::All || (!name.empty() && name.back() == '/')) return true;
   const std::string path = joinLibraryPath(basepath, name);
   if (!isLibraryBook(path)) return false;
@@ -124,6 +167,9 @@ void FolioLibraryActivity::applyLibraryFilter() {
   retrievingMetadata = false;
   retrievingMetadataIndex = SIZE_MAX;
   retrievingPopupRendered = false;
+  retrievingMetadataStartedMs = 0;
+  forceMetadataRefresh = false;
+  forceMetadataRefreshIndex = SIZE_MAX;
   resetPreviews();
 }
 
@@ -290,9 +336,12 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
 }
 
 void FolioLibraryActivity::showMenu() {
-  std::vector<std::string> options = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), "Reading Statistics",
-                                      "Reading Calendar", "Retrieve All Book Details", "Bookmarks (all books)",
-                                      "Clippings (all books)"};
+    std::vector<std::string> options = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), "Reading Statistics",
+                                        "Reading Calendar", "Retrieve All Book Details", "Bookmarks (all books)",
+                                        "Clippings (all books)",
+                                        searchQuery.empty() ? std::string(tr(STR_SEARCH))
+                                                            : std::string(tr(STR_CLEAR_BUTTON)) + " " + tr(STR_SEARCH),
+                                        SEARCH_ALL_FOLDERS_LABEL};
   menuPopup.show(StrId::STR_MENU, options, 0, [this](const int index) {
     // Always close the menu before starting another activity. This prevents
     // the popup from surviving a Settings replacement or a child activity.
@@ -321,9 +370,134 @@ void FolioLibraryActivity::showMenu() {
       startActivityForResult(std::make_unique<EpubReaderClippingListActivity>(
                                 renderer, mappedInput, std::string{}, "All books", true),
                             nullptr);
+    } else if (index == 7) {
+      if (searchQuery.empty()) {
+        launchSearch(false);
+      } else {
+        clearSearch();
+        requestUpdate(true);
+      }
+    } else if (index == 8) {
+      launchSearch(true);
     }
   });
   requestUpdate();
+}
+
+void FolioLibraryActivity::launchSearch(const bool recursive) {
+  auto keyboard = std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SEARCH));
+  startActivityForResult(std::move(keyboard), [this, recursive](const ActivityResult& result) {
+    if (result.isCancelled) {
+      requestUpdate();
+      return;
+    }
+    const auto* keyboardResult = std::get_if<KeyboardResult>(&result.data);
+    if (!keyboardResult) return;
+    searchQuery = keyboardResult->text;
+    searchQueryFolded = foldLibrarySearchTerm(searchQuery);
+    if (searchQuery.empty()) {
+      clearSearch();
+    } else if (recursive) {
+      startRecursiveSearch();
+    } else {
+      // Search is deliberately filename-only and local to the current folder.
+      // Applying it is an in-memory filter; no metadata or cover extraction runs.
+      recursiveSearchMode = false;
+      applyLibraryFilter();
+    }
+    requestUpdate(true);
+  });
+}
+
+void FolioLibraryActivity::startRecursiveSearch() {
+  recursiveSearchMode = true;
+  recursiveSearchActive = true;
+  recursiveSearchRoot = basepath.empty() ? "/" : basepath;
+  if (recursiveSearchRoot.size() > 1 && recursiveSearchRoot.back() == '/') recursiveSearchRoot.pop_back();
+  recursiveSearchDirectories.clear();
+  recursiveSearchMatches.clear();
+  recursiveSearchDirectories.push_back(recursiveSearchRoot);
+  recursiveSearchDirectoryIndex = 0;
+  recursiveSearchDirectoryPath.clear();
+  if (recursiveSearchDirectoryOpen) recursiveSearchDirectory.close();
+  recursiveSearchDirectoryOpen = false;
+  allFiles.clear();
+  files.clear();
+  selectorIndex = 0;
+  resetPreviews();
+}
+
+void FolioLibraryActivity::processRecursiveSearch() {
+  if (!recursiveSearchActive) return;
+  if (!fileNameBuffer) {
+    recursiveSearchActive = false;
+    recursiveSearchMode = false;
+    requestUpdate(true);
+    return;
+  }
+
+  size_t operations = 0;
+  while (operations < SEARCH_ENTRIES_PER_STEP) {
+    ++operations;
+    if (!recursiveSearchDirectoryOpen) {
+      if (recursiveSearchDirectoryIndex >= recursiveSearchDirectories.size()) {
+        recursiveSearchActive = false;
+        allFiles = std::move(recursiveSearchMatches);
+        FsHelpers::sortFileList(allFiles);
+        applyLibraryFilter();
+        requestUpdate(true);
+        return;
+      }
+      recursiveSearchDirectoryPath = recursiveSearchDirectories[recursiveSearchDirectoryIndex++];
+      recursiveSearchDirectory = Storage.open(recursiveSearchDirectoryPath.c_str());
+      if (!recursiveSearchDirectory || !recursiveSearchDirectory.isDirectory()) continue;
+      recursiveSearchDirectory.rewindDirectory();
+      recursiveSearchDirectoryOpen = true;
+    }
+
+    HalFile entry = recursiveSearchDirectory.openNextFile();
+    if (!entry) {
+      recursiveSearchDirectory.close();
+      recursiveSearchDirectoryOpen = false;
+      continue;
+    }
+    entry.getName(fileNameBuffer.get(), NAME_BUFFER_SIZE);
+    const std::string name(fileNameBuffer.get());
+    if (name.empty() || (!SETTINGS.showHiddenFiles && name.front() == '/') ||
+        (!SETTINGS.showHiddenFiles && name.front() == '.') || name == "System Volume Information") {
+      continue;
+    }
+
+    const std::string childPath = joinLibraryPath(recursiveSearchDirectoryPath, name);
+    if (entry.isDirectory()) {
+      recursiveSearchDirectories.push_back(childPath);
+      continue;
+    }
+    const std::string_view extensionName(name);
+    if (!(FsHelpers::hasEpubExtension(extensionName) || FsHelpers::hasXtcExtension(extensionName) ||
+          FsHelpers::hasTxtExtension(extensionName) || FsHelpers::hasMarkdownExtension(extensionName) ||
+          FsHelpers::hasBmpExtension(extensionName) || FsHelpers::hasPngExtension(extensionName) ||
+          FsHelpers::hasJpgExtension(extensionName))) {
+      continue;
+    }
+    if (containsLibrarySearchTerm(name, searchQueryFolded)) {
+      recursiveSearchMatches.push_back(relativeLibraryPath(recursiveSearchRoot, childPath));
+    }
+  }
+}
+
+void FolioLibraryActivity::clearSearch() {
+  if (recursiveSearchDirectoryOpen) recursiveSearchDirectory.close();
+  recursiveSearchDirectoryOpen = false;
+  recursiveSearchActive = false;
+  recursiveSearchMode = false;
+  recursiveSearchRoot.clear();
+  recursiveSearchDirectories.clear();
+  recursiveSearchMatches.clear();
+  recursiveSearchDirectoryPath.clear();
+  searchQuery.clear();
+  searchQueryFolded.clear();
+  loadFiles();
 }
 
 void FolioLibraryActivity::showBookActions() {
@@ -367,12 +541,20 @@ void FolioLibraryActivity::showBookActions() {
       RECENT_BOOKS.recordReading(path, 0, 0);
       preview.progressPercent = 0;
     } else if (action == 5) {
-      clearBookCache(path);
-      preview = Preview{};
-      nextPreviewSlot = slot;
-      observedSelectorIndex = SIZE_MAX;
+      // Refresh the source metadata without deleting the reader cache. This
+      // preserves progress, bookmarks, clippings, and cached reading pages.
+      // Keep the current preview visible while the replacement is being read;
+      // blanking it first made X3 look permanently stuck when extraction was
+      // slow or the source EPUB had a malformed cover.
+      preview.metadataAttempted = false;
+      preview.loaded = true;
+      observedSelectorIndex = selectorIndex;
+      selectionChangedMs = millis() - 1500;
       retrievingMetadata = false;
       retrievingPopupRendered = false;
+      retrievingMetadataStartedMs = 0;
+      forceMetadataRefresh = true;
+      forceMetadataRefreshIndex = selectorIndex;
     } else if (action == 6) {
       startActivityForResult(
           std::make_unique<SynopsisActivity>(renderer, mappedInput, preview.title, preview.author, preview.synopsis,
@@ -428,12 +610,15 @@ void FolioLibraryActivity::loadSelectedMetadata() {
   // A complete cached header is safe to read after the debounce and does not
   // need a retrieval popup. Only a cache miss (or a missing thumbnail that
   // needs extraction) enters the visible retrieval path.
-  if (!retrievingMetadata && FsHelpers::hasEpubExtension(path)) {
+  const bool forceRefresh = forceMetadataRefresh && forceMetadataRefreshIndex == selectorIndex;
+  if (!forceRefresh && !retrievingMetadata && FsHelpers::hasEpubExtension(path)) {
     Epub epub(path, "/.crosspoint");
     if (epub.loadCachedMetadataOnly()) {
       preview.title = epub.getTitle().empty() ? files[selectorIndex] : epub.getTitle();
       preview.author = epub.getAuthor();
-      preview.synopsis = epub.getDescription();
+      // This is the non-blocking cached shelf path. Keep the synopsis already
+      // loaded from RecentBooksStore; a missing one is recovered only during
+      // the selected-item retrieval pass, never on every button loop.
       preview.coverBmpPath = epub.getThumbBmpPath();
       const std::string thumb = UITheme::getCoverThumbPath(preview.coverBmpPath, FolioNooirTheme::COVER_HEIGHT);
       if (preview.coverBmpPath.empty() || isValidBookThumbnail(thumb)) {
@@ -448,17 +633,22 @@ void FolioLibraryActivity::loadSelectedMetadata() {
     retrievingMetadata = true;
     retrievingMetadataIndex = selectorIndex;
     retrievingPopupRendered = false;
-    // Do not let the next loop begin EPUB/XTC extraction until the busy
-    // message has actually reached the panel.  On the slower X3 this small
-    // synchronization prevents the device from appearing frozen while the
-    // first uncached book is being opened.
-    requestUpdateAndWait();
+    retrievingMetadataStartedMs = millis();
+    // Queue the busy frame without blocking the main task. The next loop will
+    // wait for the render acknowledgement (with a timeout) before starting the
+    // synchronous ZIP/thumbnail work. This keeps X3 input responsive even if a
+    // panel refresh is delayed.
+    requestUpdate(true);
     return;
   }
-  if (retrievingMetadataIndex != selectorIndex || !retrievingPopupRendered) return;
+  if (retrievingMetadataIndex != selectorIndex) return;
+  if (!retrievingPopupRendered && millis() - retrievingMetadataStartedMs < RETRIEVE_POPUP_TIMEOUT_MS) return;
 
   retrievingMetadata = false;
   retrievingPopupRendered = false;
+  retrievingMetadataStartedMs = 0;
+  forceMetadataRefresh = false;
+  forceMetadataRefreshIndex = SIZE_MAX;
   preview.metadataAttempted = true;
   bool changed = false;
   if (FsHelpers::hasEpubExtension(path)) {
@@ -466,7 +656,18 @@ void FolioLibraryActivity::loadSelectedMetadata() {
     if (epub.loadMetadataOnly()) {
       preview.title = epub.getTitle().empty() ? files[selectorIndex] : epub.getTitle();
       preview.author = epub.getAuthor();
-      preview.synopsis = epub.getDescription();
+      // A lightweight EPUB metadata pass can legitimately return no
+      // description (for example while an EPUB package is still being
+      // opened). Keep the existing preview instead of turning that
+      // temporary empty result into "No synopsis".
+      std::string parsedSynopsis = epub.getDescription();
+      if (parsedSynopsis.empty()) {
+        // Prefer the existing reader metadata cache when a lightweight OPF
+        // pass returns an empty description during a refresh.
+        Epub cached(path, "/.crosspoint");
+        if (cached.loadCachedMetadataOnly()) parsedSynopsis = cached.getDescription();
+      }
+      if (!parsedSynopsis.empty()) preview.synopsis = parsedSynopsis;
       preview.coverBmpPath = epub.getThumbBmpPath();
       const std::string thumb = UITheme::getCoverThumbPath(preview.coverBmpPath, FolioNooirTheme::COVER_HEIGHT);
       if (!isValidBookThumbnail(thumb)) {
@@ -475,9 +676,9 @@ void FolioLibraryActivity::loadSelectedMetadata() {
           preview.coverBmpPath.clear();
         }
       }
-      // Refresh Book Cache must update the shelf's featured metadata too,
-      // including clearing a synopsis that was removed from the EPUB. This
-      // only touches presentation metadata; reading state is stored separately.
+      // Refresh Book Cache updates presentation metadata only; an empty
+      // lightweight description must not erase the existing shelf synopsis.
+      // Reading state is stored separately.
       RECENT_BOOKS.refreshBookMetadata(path, preview.title, preview.author, preview.coverBmpPath, preview.synopsis);
       // Metadata can be shown immediately.  Thumbnail conversion is deferred
       // only for already-cached entries; the metadata-only path above keeps
@@ -499,6 +700,9 @@ void FolioLibraryActivity::loadSelectedMetadata() {
 void FolioLibraryActivity::activateSelected() {
   if (selectorIndex >= files.size()) return;
   if (!files[selectorIndex].empty() && files[selectorIndex].back() == '/') {
+    searchQuery.clear();
+    searchQueryFolded.clear();
+    recursiveSearchMode = false;
     basepath = fullPath(selectorIndex);
     loadFiles();
     requestUpdate();
@@ -538,6 +742,11 @@ void FolioLibraryActivity::onEnter() {
 }
 
 void FolioLibraryActivity::onExit() {
+  if (recursiveSearchDirectoryOpen) recursiveSearchDirectory.close();
+  recursiveSearchDirectoryOpen = false;
+  recursiveSearchActive = false;
+  recursiveSearchDirectories.clear();
+  recursiveSearchMatches.clear();
   previews = {};
   allFiles.clear();
   files.clear();
@@ -553,12 +762,28 @@ void FolioLibraryActivity::loop() {
   const int listHeight = renderer.getScreenHeight() - listTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
   const size_t pageStart = (selectorIndex / PAGE_SIZE) * PAGE_SIZE;
   if (pageStart != previewPageStart) resetPreviews();
+
+  if (recursiveSearchActive) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+      clearSearch();
+      requestUpdate(true);
+      return;
+    }
+    // Search in bounded batches. This keeps the input task responsive even
+    // when the SD card contains many nested folders.
+    processRecursiveSearch();
+    return;
+  }
+
   if (selectorIndex != observedSelectorIndex) {
     observedSelectorIndex = selectorIndex;
     selectionChangedMs = millis();
     retrievingMetadata = false;
     retrievingMetadataIndex = SIZE_MAX;
     retrievingPopupRendered = false;
+    retrievingMetadataStartedMs = 0;
+    forceMetadataRefresh = false;
+    forceMetadataRefreshIndex = SIZE_MAX;
   }
 
   if (retrieveAllComplete) {
@@ -624,9 +849,15 @@ void FolioLibraryActivity::loop() {
     return;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    if (basepath == "/") {
+    if (!searchQuery.empty() || recursiveSearchMode) {
+      clearSearch();
+      requestUpdate();
+    } else if (basepath == "/") {
       showMenu();
     } else {
+      searchQuery.clear();
+      searchQueryFolded.clear();
+      recursiveSearchMode = false;
       basepath = FsHelpers::extractFolderPath(basepath);
       if (basepath.empty()) basepath = "/";
       loadFiles();
@@ -687,12 +918,22 @@ void FolioLibraryActivity::loop() {
 }
 
 void FolioLibraryActivity::render(RenderLock&&) {
+  // Keep the featured book and cover geometry stable. UI Scale is enabled
+  // only for the file-browser list, controls, and popups below.
+  renderer.setUiScaleTextEnabled(false);
   renderer.clearScreen();
+  if (recursiveSearchActive) {
+    renderer.setUiScaleTextEnabled(true);
+    GUI.drawPopup(renderer, SEARCHING_FOLDERS_MESSAGE);
+    return;
+  }
   if (retrieveAllComplete) {
+    renderer.setUiScaleTextEnabled(true);
     GUI.drawPopup(renderer, RETRIEVE_ALL_BOOKS_DONE_MESSAGE);
     return;
   }
   if (retrievingAllBooks) {
+    renderer.setUiScaleTextEnabled(true);
     // Render the message before any Library list or cover work.  This makes
     // the operation visibly start even on the slower X3 display path.
     GUI.drawPopup(renderer, RETRIEVE_ALL_BOOKS_MESSAGE);
@@ -702,7 +943,9 @@ void FolioLibraryActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto& theme = static_cast<const FolioNooirTheme&>(GUI);
   const FolioShelfLayout layout = theme.shelfLayout(renderer, metrics);
+  renderer.setUiScaleTextEnabled(true);
   theme.drawShelfTabs(renderer, layout, 0);
+  renderer.setUiScaleTextEnabled(false);
 
   const int detailTop = layout.contentTop;
   const int detailHeight = layout.detailHeight;
@@ -750,7 +993,16 @@ void FolioLibraryActivity::render(RenderLock&&) {
   }
   if (!drewCover) {
     renderer.drawRect(coverX + 8, coverY, coverWidth - 16, coverHeight);
-    if (selected && selected->directory) renderer.drawCenteredText(UI_12_FONT_ID, coverY + coverHeight / 2, "/", true);
+    if (selected && selected->directory) {
+      renderer.drawCenteredText(UI_12_FONT_ID, coverY + coverHeight / 2, "/", true);
+    } else {
+      const char* fallbackTitle = selected && selected->loaded
+                                      ? selected->title.c_str()
+                                      : (files.empty() ? "" : files[selectorIndex].c_str());
+      const std::string label = renderer.truncatedText(UI_10_FONT_ID, fallbackTitle, coverWidth - 20);
+      renderer.drawText(UI_10_FONT_ID, coverX + (coverWidth - renderer.getTextWidth(UI_10_FONT_ID, label.c_str())) / 2,
+                        coverY + coverHeight / 2, label.c_str(), true);
+    }
   }
   const int textX = detailPadding * 2 + detailCoverWidth;
   const int textWidth = renderer.getScreenWidth() - textX - detailPadding;
@@ -806,6 +1058,7 @@ void FolioLibraryActivity::render(RenderLock&&) {
 
   const int listTop = detailTop + detailHeight;
   const int listHeight = renderer.getScreenHeight() - listTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+  renderer.setUiScaleTextEnabled(true);
   GUI.drawList(renderer, Rect{0, listTop, renderer.getScreenWidth(), listHeight}, files.size(), selectorIndex,
                [this](int index) {
                  std::string name = files[index];

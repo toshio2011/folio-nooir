@@ -82,6 +82,7 @@ int EpubReaderBookmarksActivity::getListHeight(const GfxRenderer& renderer) {
 }
 
 void EpubReaderBookmarksActivity::loop() {
+  renderer.setUiScaleTextEnabled(true);
   auto openBookmark = [this] {
     if (bookmarks.empty()) {
       return;
@@ -267,6 +268,7 @@ void EpubReaderBookmarksActivity::deleteSelectedBookmark() {
 }
 
 void EpubReaderBookmarksActivity::render(RenderLock&&) {
+  renderer.setUiScaleTextEnabled(true);
   renderer.clearScreen();
 
   const auto pageWidth = renderer.getScreenWidth();

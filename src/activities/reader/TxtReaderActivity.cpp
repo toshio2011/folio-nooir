@@ -113,6 +113,11 @@ void TxtReaderActivity::loop() {
     } else if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_SCREENSHOT) {
       RenderLock lock(*this);
       ScreenshotUtil::takeScreenshot(renderer);
+    } else if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_DARK_MODE) {
+      SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
+      SETTINGS.saveToFile();
+      darkShortcutFired = true;
+      requestUpdate();
     }
     return;
   }
@@ -149,6 +154,27 @@ void TxtReaderActivity::loop() {
     requestUpdate();
     return;
   }
+  if ((SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_SLEEP ||
+       SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_READING_STATS ||
+       SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_SCREENSHOT) &&
+      mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && !darkShortcutFired) {
+    darkShortcutFired = true;
+    if (SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_SLEEP) {
+      activityManager.requestSleep();
+    } else if (SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_READING_STATS) {
+      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, txt->getPath()),
+                             [this](const ActivityResult&) {
+                               darkShortcutFired = false;
+                               skipNextButtonCheck = true;
+                               requestUpdate();
+                             });
+    } else {
+      RenderLock lock(*this);
+      ScreenshotUtil::takeScreenshot(renderer);
+    }
+    return;
+  }
   if (ReaderUtils::handleBackNavigation(mappedInput, activityManager, txt ? txt->getPath().c_str() : "",
                                         {this, [](void* ctx) { static_cast<TxtReaderActivity*>(ctx)->onGoHome(); }})) {
     return;
@@ -161,7 +187,6 @@ void TxtReaderActivity::loop() {
   if (!prevTriggered && !nextTriggered) {
     return;
   }
-
   const unsigned long heldMs = (touch.prev || touch.next) ? touch.heldMs : mappedInput.getHeldTime();
   const auto longPressBehavior = fromSide
                                      ? (SETTINGS.sideLongPressAction == CrossPointSettings::SIDE_LONG_CHAPTER_SKIP
@@ -192,6 +217,17 @@ void TxtReaderActivity::loop() {
   }
   if (!fromTilt && fromSide && heldMs > ReaderUtils::SKIP_HOLD_MS &&
       SETTINGS.sideLongPressAction == CrossPointSettings::SIDE_LONG_FONT_SIZE) {
+    SETTINGS.fontSize = static_cast<uint8_t>((SETTINGS.fontSize + 1) % CrossPointSettings::FONT_SIZE_COUNT);
+    SETTINGS.saveToFile();
+    initialized = false;
+    pageOffsets.clear();
+    currentPageLines.clear();
+    requestUpdate();
+    return;
+  }
+
+  if (!fromTilt && !fromSide && heldMs > ReaderUtils::SKIP_HOLD_MS &&
+      SETTINGS.longPressButtonBehavior == CrossPointSettings::CHANGE_FONT_SIZE) {
     SETTINGS.fontSize = static_cast<uint8_t>((SETTINGS.fontSize + 1) % CrossPointSettings::FONT_SIZE_COUNT);
     SETTINGS.saveToFile();
     initialized = false;

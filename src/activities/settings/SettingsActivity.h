@@ -27,6 +27,7 @@ enum class SettingAction {
   DownloadFonts,
   TextSettings,
   DictionarySettings,
+  DictionaryIndexes,
   Bluetooth,
 };
 
