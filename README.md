@@ -1,6 +1,14 @@
 # Folio Nooir
 
-Current development release: **v1.5.2**.
+Current development release: **v1.5.3**.
+
+## v1.5.3 changes
+
+- Refresh Book Cache now rereads the book cover, title, author, and synopsis used by the featured-book panel.
+- Refreshing metadata preserves reading progress, status, bookmarks, and clippings; an intentionally removed synopsis can also be cleared.
+- Metadata refresh uses the lightweight metadata-only path, processes one book at a time, and skips unnecessary writes to keep Recent and Library responsive.
+- Manual refresh always rereads metadata even when an older thumbnail is still present, then regenerates the cover when needed.
+- The refresh path uses the shared X3/X4 code path and adds no X4-only behavior; X3 remains supported pending additional hardware testing.
 
 Folio Nooir is an experimental, bookshelf-focused e-reader firmware for Xteink devices. It is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), keeping the core reader, wireless transfer, sleep, and settings features while adding a Folio Nooir interface and reading tools.
 
@@ -120,7 +128,7 @@ Each compatible GitHub release must contain an asset named exactly:
 firmware.bin
 ```
 
-Use a numeric release tag such as `1.5.2`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
+Use a numeric release tag such as `1.5.3`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
 
 ## Custom sleep images
 
