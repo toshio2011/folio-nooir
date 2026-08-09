@@ -113,6 +113,10 @@ dictionary must be added before indexes can be prepared. If a dictionary is
 copied or replaced, rerun **Prepare Dictionary Indexes**; stale `.qidx` files
 are rebuilt automatically.
 
+Already using CrossPoint? You can use the same StarDict dictionary folder and files with Nooir. 📚
+
+Nooir supports offline StarDict dictionaries for word lookup while reading.or you can download it from https://inky.crossink.dev/#downloads
+
 ### Reading statistics
 
 - Persistent per-book reading time, session count, progress, status, and dates.
@@ -185,66 +189,6 @@ If you previously used KOReader with "sync.koreader.rocks", make sure the Sync S
 
 Your account belongs to the server where it was created, so an account created on the public KOReader server is separate from an account on another KOReader-compatible sync server.
 
-### 📖 Dictionary
-
-Already using CrossPoint? You can use the same StarDict dictionary folder and files with Nooir. 📚
-
-Nooir supports offline StarDict dictionaries for word lookup while reading.or you can download it from https://inky.crossink.dev/#downloads
-
-Setup
-
-1. Create a dictionary folder on your SD card:
-
-/dictionaries/
-
-You can also use the hidden folder:
-
-/.dictionaries/
-
-2. Put each dictionary inside its own folder:
-
-/dictionaries/
-└── English/
-    ├── english.idx
-    ├── english.dict.dz
-    └── english.ifo
-
-Required files:
-
-- ".idx" — required and must be uncompressed
-- ".dict" or ".dict.dz" — required
-- ".ifo" — optional
-
-«Keep only one dictionary per folder.»
-
-3. On Nooir, go to:
-
-Settings → Reader → Dictionary
-
-Select the dictionary you want to use.
-
-How to Use
-
-While reading:
-
-1. Open the Reader Menu and select Look Up.
-2. A word on the page will be highlighted.
-3. Use Left / Right to move between words.
-4. Use Side Up / Down to move between lines.
-5. Press Confirm to look up the selected word.
-6. Press Back when you're done.
-
-Quick Dictionary Access
-
-You can also assign Dictionary to:
-
-Settings → Controls → Long-press Menu → Dictionary
-
-Then simply long-press Confirm while reading to start word lookup.
-
-«💡 The first lookup may take a little longer while Nooir indexes the dictionary. After that, lookups should be much faster.»
-
-Everything works offline once your dictionary is installed. 📚
 
 ## Installation
 
