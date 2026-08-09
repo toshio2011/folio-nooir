@@ -294,23 +294,20 @@ void FolioLibraryActivity::showMenu() {
                                       "Reading Calendar", "Retrieve All Book Details", "Bookmarks (all books)",
                                       "Clippings (all books)"};
   menuPopup.show(StrId::STR_MENU, options, 0, [this](const int index) {
+    // Always close the menu before starting another activity. This prevents
+    // the popup from surviving a Settings replacement or a child activity.
+    menuPopup.dismiss();
     if (index == 0) {
-      menuPopup.dismiss();
       activityManager.goToFileTransfer();
     } else if (index == 1) {
-      menuPopup.dismiss();
       activityManager.goToSettings();
     } else if (index == 2) {
-      menuPopup.dismiss();
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), nullptr);
     } else if (index == 3) {
-      menuPopup.dismiss();
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, "", true), nullptr);
     } else if (index == 4) {
-      menuPopup.dismiss();
       startRetrieveAllBooks();
     } else if (index == 5) {
-      menuPopup.dismiss();
       startActivityForResult(
           std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, std::string{}, true),
           [this](const ActivityResult& result) {
@@ -321,7 +318,6 @@ void FolioLibraryActivity::showMenu() {
             }
           });
     } else if (index == 6) {
-      menuPopup.dismiss();
       startActivityForResult(std::make_unique<EpubReaderClippingListActivity>(
                                 renderer, mappedInput, std::string{}, "All books", true),
                             nullptr);
@@ -599,6 +595,15 @@ void FolioLibraryActivity::loop() {
   if (swallowBackRelease) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) swallowBackRelease = false;
     return;
+  }
+
+  // Child activities may consume the Confirm release that opened them. Reset
+  // the guard as soon as the library is active again so long press works
+  // repeatedly without requiring an extra tap.
+  if (!bookActionsPopup.isActive() && !mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      !mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    longPressActionShown = false;
+    swallowConfirmRelease = false;
   }
 
   if (mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= 1000 &&

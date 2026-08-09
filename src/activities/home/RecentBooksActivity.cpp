@@ -249,20 +249,18 @@ void RecentBooksActivity::showMenu() {
   std::vector<std::string> options = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), "Reading Statistics",
                                       "Reading Calendar", "Bookmarks (all books)", "Clippings (all books)"};
   menuPopup.show(StrId::STR_MENU, options, 0, [this](const int index) {
+    // Always close the menu before starting another activity. This is
+    // especially important for Settings, which replaces the shelf activity.
+    menuPopup.dismiss();
     if (index == 0) {
-      menuPopup.dismiss();
       activityManager.goToFileTransfer();
     } else if (index == 1) {
-      menuPopup.dismiss();
       activityManager.goToSettings();
     } else if (index == 2) {
-      menuPopup.dismiss();
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), nullptr);
     } else if (index == 3) {
-      menuPopup.dismiss();
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, "", true), nullptr);
     } else if (index == 4) {
-      menuPopup.dismiss();
       startActivityForResult(
           std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, std::string{}, true),
           [this](const ActivityResult& result) {
@@ -273,7 +271,6 @@ void RecentBooksActivity::showMenu() {
             }
           });
     } else if (index == 5) {
-      menuPopup.dismiss();
       startActivityForResult(std::make_unique<EpubReaderClippingListActivity>(
                                 renderer, mappedInput, std::string{}, "All books", true),
                             nullptr);
@@ -422,6 +419,15 @@ void RecentBooksActivity::loop() {
   if (swallowBookBackRelease) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) swallowBookBackRelease = false;
     return;
+  }
+
+  // A child activity can consume the Confirm release that opened it. Clear
+  // the long-press guard when the shelf becomes active again, otherwise the
+  // next long press is incorrectly treated as the original one.
+  if (!bookActionsPopup.isActive() && !mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      !mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    longPressActionShown = false;
+    swallowBookConfirmRelease = false;
   }
 
   if (retrievingBookCache) {

@@ -10,6 +10,7 @@ Current development release: **v1.5.3**.
 - Manual refresh always rereads metadata even when an older thumbnail is still present, then regenerates the cover when needed.
 - The refresh path uses the shared X3/X4 code path and adds no X4-only behavior; X3 remains supported pending additional hardware testing.
 - Full synopsis now decodes HTML entities and preserves paragraph, heading, list, and line-break structure while paging.
+- Long-press book actions can be opened repeatedly after returning from an action; menu transitions now close the popup before opening Settings or another activity.
 
 Folio Nooir is an experimental, bookshelf-focused e-reader firmware for Xteink devices. It is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), keeping the core reader, wireless transfer, sleep, and settings features while adding a Folio Nooir interface and reading tools.
 
