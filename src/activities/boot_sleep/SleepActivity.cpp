@@ -444,29 +444,28 @@ void drawClippingSleepCard(GfxRenderer& renderer, const std::string& text, const
   const int panelY = pageHeight - 306;
   const int panelWidth = pageWidth - panelX * 2;
   const int panelHeight = 286;
+  // A quiet quote card keeps the clipping itself as the focus. The small
+  // accent and generous whitespace make it feel like a bookmark rather than
+  // another settings/status panel.
   renderer.fillRoundedRect(panelX, panelY, panelWidth, panelHeight, 12, Color::White);
   renderer.drawRoundedRect(panelX, panelY, panelWidth, panelHeight, 2, 12, true);
+  renderer.drawRoundedRect(panelX + 8, panelY + 8, panelWidth - 16, panelHeight - 16, 1, 8, true);
+  renderer.drawLine(panelX + 18, panelY + 26, panelX + 18, panelY + panelHeight - 28);
 
-  renderer.drawText(SMALL_FONT_ID, panelX + 18, panelY + 24, "FROM YOUR CLIPPINGS", true, EpdFontFamily::BOLD);
-  renderer.drawLine(panelX + 18, panelY + 38, panelX + panelWidth - 18, panelY + 38);
-
-  const int quoteX = panelX + 18;
-  const int quoteY = panelY + 60;
-  renderer.drawText(UI_12_FONT_ID, quoteX, quoteY, "\"", true, EpdFontFamily::BOLD);
-  const int textX = quoteX + 22;
-  const int textWidth = panelWidth - 42;
-  const auto lines = renderer.wrappedText(UI_10_FONT_ID, text.c_str(), textWidth, 5);
+  const int textX = panelX + 34;
+  const int textY = panelY + 28;
+  const int textWidth = panelWidth - 52;
+  const auto lines = renderer.wrappedText(UI_10_FONT_ID, text.c_str(), textWidth, 8);
   const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
   for (size_t i = 0; i < lines.size(); ++i) {
-    renderer.drawText(UI_10_FONT_ID, textX, quoteY + static_cast<int>(i) * lineHeight, lines[i].c_str());
+    renderer.drawText(UI_10_FONT_ID, textX, textY + static_cast<int>(i) * lineHeight, lines[i].c_str());
   }
 
   const int footerY = panelY + panelHeight - 42;
   renderer.drawLine(panelX + 18, footerY - 10, panelX + panelWidth - 18, footerY - 10);
   const std::string attribution = renderer.truncatedText(
-      SMALL_FONT_ID, (title + "  ·  page " + std::to_string(static_cast<unsigned>(page) + 1)).c_str(), textWidth);
+      SMALL_FONT_ID, ("- " + title + ", page " + std::to_string(static_cast<unsigned>(page) + 1)).c_str(), textWidth);
   renderer.drawText(SMALL_FONT_ID, textX, footerY, attribution.c_str(), true, EpdFontFamily::BOLD);
-  renderer.drawText(SMALL_FONT_ID, panelX + panelWidth - 82, footerY, "RANDOM", true, EpdFontFamily::REGULAR);
 }
 
 }  // namespace
