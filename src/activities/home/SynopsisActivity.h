@@ -24,7 +24,7 @@ class SynopsisActivity final : public Activity {
   void render(RenderLock&&) override;
 
  private:
-  static std::string stripHtml(const std::string& source);
+  void buildLines();
   void movePage(int direction);
 
   std::string title;

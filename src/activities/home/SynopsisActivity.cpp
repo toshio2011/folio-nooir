@@ -11,43 +11,33 @@
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/HtmlToPlainText.h"
 
-std::string SynopsisActivity::stripHtml(const std::string& source) {
-  std::string result;
-  result.reserve(source.size());
-  bool inTag = false;
-  for (size_t i = 0; i < source.size(); ++i) {
-    const char c = source[i];
-    if (c == '<') {
-      inTag = true;
-      continue;
-    }
-    if (inTag) {
-      if (c == '>') {
-        inTag = false;
-        if (!result.empty() && result.back() != ' ') result.push_back(' ');
-      }
-      continue;
-    }
-    if (c == '\r' || c == '\n' || c == '\t') {
-      if (!result.empty() && result.back() != ' ') result.push_back(' ');
+void SynopsisActivity::buildLines() {
+  lines.clear();
+  const std::string plainText = htmlToPlainText(synopsis);
+  const int width = renderer.getScreenWidth() - 24;
+  size_t start = 0;
+
+  // Keep block-level HTML structure (paragraphs, headings, list items and
+  // <br>) while wrapping each block with the normal e-ink font metrics. The
+  // synopsis remains lightweight; this is not a full browser/CSS engine.
+  while (start <= plainText.size()) {
+    const size_t end = plainText.find('\n', start);
+    const std::string paragraph = plainText.substr(start, end == std::string::npos ? std::string::npos : end - start);
+    if (paragraph.empty()) {
+      if (!lines.empty()) lines.emplace_back();
     } else {
-      result.push_back(c);
+      const size_t maxLineCount = std::min(paragraph.size() + 1, static_cast<size_t>(std::numeric_limits<int>::max()));
+      const auto wrapped = renderer.wrappedText(SMALL_FONT_ID, paragraph.c_str(), width,
+                                                 static_cast<int>(maxLineCount));
+      lines.insert(lines.end(), wrapped.begin(), wrapped.end());
     }
+    if (end == std::string::npos) break;
+    start = end + 1;
   }
-  // Keep the page compact when HTML contains indentation or repeated spaces.
-  std::string compact;
-  compact.reserve(result.size());
-  bool previousSpace = false;
-  for (const char c : result) {
-    const bool space = c == ' ';
-    if (space && previousSpace) continue;
-    compact.push_back(c);
-    previousSpace = space;
-  }
-  while (!compact.empty() && compact.front() == ' ') compact.erase(compact.begin());
-  while (!compact.empty() && compact.back() == ' ') compact.pop_back();
-  return compact;
+
+  if (lines.empty()) lines.emplace_back(tr(STR_NO_SYNOPSIS));
 }
 
 void SynopsisActivity::onEnter() {
@@ -63,13 +53,10 @@ void SynopsisActivity::onEnter() {
       synopsis = epub.getDescription();
     }
   }
-  synopsis = stripHtml(synopsis);
-  if (synopsis.empty()) synopsis = tr(STR_NO_SYNOPSIS);
   // The shelf cache is bounded, but this view must not silently truncate a
-  // longer description. wrappedText only stores the lines that actually fit.
-  const size_t maxLineCount = std::min(synopsis.size() + 1, static_cast<size_t>(std::numeric_limits<int>::max()));
-  lines = renderer.wrappedText(SMALL_FONT_ID, synopsis.c_str(), renderer.getScreenWidth() - 24,
-                               static_cast<int>(maxLineCount));
+  // longer description. Build all wrapped lines after converting the HTML
+  // fragment while preserving paragraph and list structure.
+  buildLines();
   firstLine = 0;
   requestUpdate();
 }
