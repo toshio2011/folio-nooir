@@ -225,7 +225,7 @@ bool Dictionary::buildIndex(void (*yieldFn)(void*), void* ctx, const IndexProgre
       Storage.remove(statePath.c_str());
       out = Storage.open(partPath.c_str(), O_WRITE | O_CREAT | O_TRUNC);
     } else {
-      out = Storage.openFileForWrite("DICT", qidxPath, out);
+      if (!Storage.openFileForWrite("DICT", qidxPath, out)) return false;
     }
     if (!out) return false;
   }
