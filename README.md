@@ -2,13 +2,23 @@
 
 # Folio Nooir
 
-Current release: **v1.5.3**.
+Current release: **v1.5.4**.
+
+## v1.5.4 changes
+
+- EPUB image rendering now warms missing image caches before font prewarming, reducing failures caused by fragmented heap memory.
+- Added a bounded TJpgDec fallback for valid baseline JPEGs that JPEGDEC cannot decode because of long AC Huffman tables. Normal JPEGs remain on the faster JPEGDEC path.
+- Added safer lazy image extraction, invalid-cache cleanup, one-time source refresh, and failure memoization so a broken image cannot repeatedly stall page rendering.
+- Problematic EPUB images are cached in the compact pixel-cache format after successful decoding, making later visits fast and avoiding repeated SD/decoder work.
+- Improved XTC/XTCH streaming by retaining the rendered black-and-white plane in small framebuffer chunks, reducing full-page rereads while keeping low-memory fallback behavior.
+- Reduced redundant Recent-book SD writes and corrected featured-cover invalidation when the selected book changes, improving home-screen responsiveness.
+- Updated the firmware version to **1.5.4**. These changes use the shared X3/X4 code path; real-device validation remains recommended on every hardware revision.
 
 ## v1.5.3 changes
 
 - Refresh Book Cache rereads the cover, title, author, and synopsis used by the featured-book panel.
-- Metadata refresh preserves reading progress, status, bookmarks, and clippings.
-- Refresh uses the lightweight metadata-only path and keeps Recent and Library responsive.
+- Metadata refresh preserves reading progress, status, bookmarks, and clippings; an intentionally removed synopsis can also be cleared.
+- Refresh uses the lightweight metadata-only path, processes one book at a time, and keeps Recent and Library responsive.
 - Manual refresh rereads metadata even when an older thumbnail is still present, then regenerates the cover when needed.
 - The refresh path uses the shared X3/X4 code path; X3 remains supported pending additional hardware testing.
 - Multi-dictionary lookup shows the source dictionary, supports switching/history and searching all prepared dictionaries, and avoids blocking on unprepared alternate dictionaries.
@@ -18,6 +28,7 @@ Current release: **v1.5.3**.
 - Long-press actions can be reopened after returning from an action; menu transitions close before opening Settings or another activity.
 - Clipping + Cover sleep cards show the saved clipping text with a compact book-title/page attribution.
 - Front, side, Menu, and Power controls share reader actions, including Reader Options, statistics, screenshot, sleep, bookmark, dictionary, dark mode, and KOReader Sync where supported.
+- Reader Options includes a Controls tab for changing front, side, Menu, and Power actions without leaving the book.
 - UI Scale applies to menus and reader controls while keeping reading typography, cover geometry, and the 4 x 2 shelf grid fixed; Recent and Finished stay on the fast fixed-font path.
 - Library search provides current-folder filename filtering plus an optional cancellable recursive Search All Folders scan without metadata retrieval.
 - Recent and Finished open from cached metadata immediately; missing data uses a title/filename fallback and refresh remains manual.
@@ -54,6 +65,7 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Three bookshelf views: **Library**, **Recent**, and **Finished**.
 - Library acts as a folder/file browser and loads metadata lazily as books are highlighted.
 - Library search is available from the menu and performs fast, case-insensitive filename filtering in the current folder, with an optional recursive **Search All Folders** mode.
+- **Retrieve All Book Details** can warm the metadata needed by the featured book and shelf; it reports progress and runs as a deliberate manual action.
 - Featured-book panel with cover, title, author, HTML synopsis, progress, status, reading minutes, and session count.
 - Compact 4 x 2 cover grid with percentage progress ribbons.
 - Cover cache warm-up with visible retrieval feedback, cache reuse, and invalid/blank-BMP recovery.
@@ -65,7 +77,7 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 
 - CrossPoint reader engine retained for EPUB, XTC/XTCH, TXT, and Markdown workflows.
 - Improved EPUB CSS handling, HTML tables/cells, images, metadata, and memory safety.
-- Large images are fitted to the display instead of producing empty squares where possible.
+- Large images are fitted to the display instead of producing empty squares where possible; unsupported JPEGs use the bounded TJpgDec fallback described in the 1.5.4 notes.
 - XTC/XTCH cover and page rendering improvements.
 - Reader font size in points rather than only Small/Medium/Large presets.
 - Point-based margin controls and line-spacing controls with fine percentage steps.
@@ -222,7 +234,7 @@ Each compatible GitHub release must contain an asset named exactly:
 firmware.bin
 ```
 
-Use a numeric release tag such as `1.5.3`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
+Use a numeric release tag such as `1.5.4`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
 
 ## Custom sleep images
 
