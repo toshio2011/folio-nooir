@@ -90,6 +90,12 @@ class Page {
 
   void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset) const;
   void renderImages(GfxRenderer& renderer, int fontId, int xOffset, int yOffset) const;
+  // Decode missing image caches before font prewarming. JPEGDEC/PNGdec need a
+  // large contiguous heap block; doing this after the font scan can fragment
+  // the heap and turn a valid EPUB image into the outlined fallback rectangle.
+  // The decoder paints as a side effect, so the caller clears the framebuffer
+  // before the real page render begins.
+  void warmImageCaches(GfxRenderer& renderer, int xOffset, int yOffset) const;
   void blankImages(GfxRenderer& renderer, int xOffset, int yOffset) const;
   void renderWithImagePlaceholders(GfxRenderer& renderer, int fontId, int xOffset, int yOffset) const;
   bool serialize(HalFile& file) const;

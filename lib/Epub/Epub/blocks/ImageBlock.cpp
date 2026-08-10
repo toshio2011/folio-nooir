@@ -1,5 +1,6 @@
 #include "ImageBlock.h"
 
+#include <Arduino.h>
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <Logging.h>
@@ -12,6 +13,7 @@
 
 #include "Epub/converters/DirectPixelWriter.h"
 #include "Epub/converters/ImageDecoderFactory.h"
+#include "Epub/converters/TjpgdToFramebufferConverter.h"
 
 // Cache file format:
 // - uint16_t width
@@ -205,6 +207,13 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
   uint16_t cachedWidth, cachedHeight;
   if (!readValidCacheHeader(cacheFile, expectedWidth, expectedHeight, cachedWidth, cachedHeight)) {
     LOG_ERR("IMG", "Invalid image cache: %s", cachePath.c_str());
+    // A truncated cache can survive an interrupted decode and would otherwise
+    // be retried on every page render. Close it before removing so SdFat can
+    // reclaim the file reliably on X3 and X4.
+    cacheFile.close();
+    if (!Storage.remove(cachePath.c_str())) {
+      LOG_ERR("IMG", "Failed to remove invalid image cache: %s", cachePath.c_str());
+    }
     return false;
   }
 
@@ -302,7 +311,9 @@ bool ImageBlock::hasValidCache() const {
   }
 
   uint16_t cachedWidth, cachedHeight;
-  return readValidCacheHeader(cacheFile, width, height, cachedWidth, cachedHeight);
+  const bool valid = readValidCacheHeader(cacheFile, width, height, cachedWidth, cachedHeight);
+  cacheFile.close();
+  return valid;
 }
 
 bool ImageBlock::needsDecode() const { return !imageFailedThisSession(imagePath) && !hasValidCache(); }
@@ -356,38 +367,71 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
 
   // Try to render from cache first
   std::string cachePath = getCachePath(imagePath);
+  const bool cacheExistedBeforeRender = Storage.exists(cachePath.c_str());
   if (renderFromCache(renderer, cachePath, x, y, width, height)) {
     return;  // Successfully rendered from cache
   }
+  // renderFromCache() removes a malformed cache. Remember that fact so a
+  // decode failure can receive one controlled retry from the original image.
+  const bool staleCacheWasRemoved = cacheExistedBeforeRender && !Storage.exists(cachePath.c_str());
 
   // The build only header-probed the image for dimensions; pull the actual
-  // file out of the book now, on first visit to the page.
-  if (!srcPath.empty() && extractFn && !Storage.exists(imagePath.c_str())) {
-    LOG_DBG("IMG", "Lazy-extracting %s -> %s", srcPath.c_str(), imagePath.c_str());
+  // file out of the book now, on first visit to the page.  A failed/partial
+  // SD write can leave the destination present but empty.  Treat that exactly
+  // like a missing file so the page gets one clean extraction retry instead of
+  // permanently showing the placeholder.
+  auto extractSource = [&](const bool replaceExisting) {
+    if (srcPath.empty() || !extractFn) return false;
+    if (replaceExisting) Storage.remove(imagePath.c_str());
+    LOG_DBG("IMG", "%s %s -> %s", replaceExisting ? "Refreshing" : "Lazy-extracting", srcPath.c_str(),
+            imagePath.c_str());
     if (!extractFn(extractCtx, srcPath.c_str(), imagePath.c_str())) {
-      LOG_ERR("IMG", "Lazy extraction failed: %s", srcPath.c_str());
+      LOG_ERR("IMG", "Image extraction failed: %s", srcPath.c_str());
+      return false;
+    }
+    // E-ink X3/X4 units can report a just-closed SdFat file before the card has
+    // finished committing the final sectors. CrossLink waits after extraction
+    // for this reason; keep the delay on the first-extraction/error path only,
+    // never on cached page turns.
+    delay(50);
+    HalFile extracted;
+    const bool readable = Storage.openFileForRead("IMG", imagePath, extracted) && extracted.size() > 16;
+    if (extracted) extracted.close();
+    if (!readable) {
+      LOG_ERR("IMG", "Image extraction produced no usable data: %s", srcPath.c_str());
+      Storage.remove(imagePath.c_str());
+    }
+    return readable;
+  };
+
+  if (!Storage.exists(imagePath.c_str())) {
+    extractSource(false);
+  }
+
+  // No cache - need to decode the image.  Verify the extracted source before
+  // handing it to JPEGDEC/PNGdec; retry once when a previous interrupted write
+  // left a zero-byte or tiny file behind.
+  size_t fileSize = 0;
+  {
+    HalFile file;
+    if (Storage.openFileForRead("IMG", imagePath, file)) {
+      fileSize = file.size();
+      file.close();
     }
   }
-
-  // No cache - need to decode the image
-  // Check if image file exists
-  HalFile file;
-  if (!Storage.openFileForRead("IMG", imagePath, file)) {
-    LOG_ERR("IMG", "Image file not found: %s", imagePath.c_str());
+  if (fileSize <= 16 && extractSource(true)) {
+    HalFile refreshed;
+    if (Storage.openFileForRead("IMG", imagePath, refreshed)) {
+      fileSize = refreshed.size();
+      refreshed.close();
+    }
+  }
+  if (fileSize <= 16) {
+    LOG_ERR("IMG", "Image source is missing or empty: %s", imagePath.c_str());
     rememberImageFailure(imagePath);
     renderPlaceholder(renderer, x, y);
     return;
   }
-  size_t fileSize = file.size();
-  file.close();
-
-  if (fileSize == 0) {
-    LOG_ERR("IMG", "Image file is empty: %s", imagePath.c_str());
-    rememberImageFailure(imagePath);
-    renderPlaceholder(renderer, x, y);
-    return;
-  }
-
   LOG_DBG("IMG", "Decoding and caching: %s", imagePath.c_str());
 
   RenderConfig config;
@@ -411,9 +455,57 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
 
   LOG_DBG("IMG", "Using %s decoder", decoder->getFormatName());
 
-  bool success = decoder->decodeToFramebuffer(imagePath, renderer, config);
+  // JPEGDEC is the fast path, but it intentionally rejects a small class of
+  // valid baseline JPEGs with >10-bit AC Huffman codes. Route those images to
+  // the bounded TJpgDec fallback before JPEGDEC can touch the unsupported
+  // entropy tables. Ordinary EPUB JPEGs are unaffected.
+  TjpgdToFramebufferConverter tjpgd;
+  const bool useTjpgd = strcmp(decoder->getFormatName(), "JPEG") == 0 &&
+                        TjpgdToFramebufferConverter::requiresFallback(imagePath);
+  if (useTjpgd) LOG_DBG("IMG", "Using TJpgDec fallback for long-Huffman JPEG: %s", imagePath.c_str());
+
+  auto decodeImage = [&](const RenderConfig& decodeConfig) {
+    return useTjpgd ? tjpgd.decodeToFramebuffer(imagePath, renderer, decodeConfig)
+                    : decoder->decodeToFramebuffer(imagePath, renderer, decodeConfig);
+  };
+
+  bool success = decodeImage(config);
+  if (!success && !sourceRefreshAttempted && !srcPath.empty() && extractFn) {
+    // A failed first extraction can leave a non-empty but truncated source on
+    // the SD card. The old recovery only refreshed when a malformed .pxc had
+    // already been detected, so a bad source with no cache stayed broken for
+    // the whole reader session. Refresh the EPUB entry once for every decode
+    // failure; this is a failure-only path and never adds work to normal page
+    // turns.
+    sourceRefreshAttempted = true;
+    LOG_DBG("IMG", "Refreshing source after decode failure%s: %s",
+            staleCacheWasRemoved ? " (stale cache was removed)" : "", srcPath.c_str());
+    Storage.remove(imagePath.c_str());
+    Storage.remove(cachePath.c_str());
+    if (!extractSource(true)) {
+      LOG_ERR("IMG", "Could not re-extract image source: %s", srcPath.c_str());
+    } else if (Storage.exists(imagePath.c_str())) {
+      LOG_DBG("IMG", "Retrying decode after source refresh: %s", imagePath.c_str());
+      success = decodeImage(config);
+    }
+  }
+  if (!success) {
+    // Pixel-cache allocation is deliberately opportunistic. If the image was
+    // decoded correctly but the cache writer ran out of fragmented heap, retry
+    // once without a .pxc target so the image can still reach the framebuffer.
+    // Subsequent page passes will use the normal streaming path or rebuild the
+    // cache on the next visit; this avoids showing an empty outlined rectangle.
+    RenderConfig directConfig = config;
+    directConfig.cachePath.clear();
+    LOG_DBG("IMG", "Retrying decode without pixel cache: %s", imagePath.c_str());
+    success = decodeImage(directConfig);
+  }
   if (!success) {
     LOG_ERR("IMG", "Failed to decode image: %s", imagePath.c_str());
+    // Do not retry a known unsupported/corrupt image on every BW/grayscale
+    // pass. That loop can keep the reader busy for seconds and repeatedly
+    // enters a decoder that has already rejected the source. A new reader
+    // session clears this bounded failure record and permits another attempt.
     rememberImageFailure(imagePath);
     renderPlaceholder(renderer, x, y);
     return;

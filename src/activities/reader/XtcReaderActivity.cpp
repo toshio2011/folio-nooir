@@ -34,11 +34,9 @@
 namespace {
 enum class XtchRenderPass { Base, Lsb, Msb };
 
-// XTCH stores two 2-bit planes in column-major order. Stream one 1 KB chunk at
-// a time so a page never needs a contiguous ~96 KB allocation. The raw reader
-// framebuffer is used as the small working area between planes: the LSB pass
-// leaves candidates white, and the MSB pass toggles pixels that belong to the
-// second grayscale bit.
+// XTCH stores two 2-bit planes in column-major order. Keep the page itself out
+// of heap memory, but use a larger SD chunk and preserve the B/W framebuffer in
+// GfxRenderer's non-contiguous 8 KB chunks so the base plane is not reread.
 bool streamXtchRenderPass(const Xtc& xtc, const uint32_t pageIndex, const uint16_t pageWidth,
                           const uint16_t pageHeight, GfxRenderer& renderer, const XtchRenderPass pass) {
   const size_t planeSize = (static_cast<size_t>(pageWidth) * pageHeight + 7) / 8;
@@ -60,11 +58,9 @@ bool streamXtchRenderPass(const Xtc& xtc, const uint32_t pageIndex, const uint16
             const bool bitSet = ((data[i] >> (7 - bit)) & 1U) != 0;
             switch (pass) {
               case XtchRenderPass::Base:
-                // XTH value 0 is white; values 1..3 are black.
                 if (bitSet) renderer.drawPixel(x, y, true);
                 break;
               case XtchRenderPass::Lsb:
-                // Starting black, value 1 (bit1=0, bit2=1) is white.
                 if (!secondPlane) {
                   if (!bitSet) renderer.drawPixel(x, y, false);
                 } else if (!bitSet) {
@@ -72,7 +68,6 @@ bool streamXtchRenderPass(const Xtc& xtc, const uint32_t pageIndex, const uint16
                 }
                 break;
               case XtchRenderPass::Msb:
-                // Starting black, values 1 and 2 are white (bit1 XOR bit2).
                 if (!secondPlane && bitSet) {
                   renderer.drawPixel(x, y, false);
                 } else if (secondPlane && bitSet) {
@@ -82,7 +77,8 @@ bool streamXtchRenderPass(const Xtc& xtc, const uint32_t pageIndex, const uint16
             }
           }
         }
-      });
+      },
+      8192);
   if (error == xtc::XtcError::OK) return true;
   LOG_ERR("XTR", "Failed to stream XTCH page %lu: %s", pageIndex, xtc::errorToString(error));
   return false;
@@ -464,9 +460,6 @@ void XtcReaderActivity::renderPage() {
       renderer.displayBuffer();
     };
 
-    // Stream each XTCH plane through the parser's small scratch chunk. This
-    // avoids the old contiguous two-plane allocation while preserving the
-    // existing grayscale waveform and refresh cadence.
     renderer.clearScreen();
     if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Base)) {
       showStreamError();
@@ -482,8 +475,13 @@ void XtcReaderActivity::renderPage() {
       pagesUntilFullRefresh--;
     }
 
+    // Preserve the already-rendered B/W base in small non-contiguous chunks.
+    // This removes the fourth full SD read used by the old streaming path.
+    const bool storedBw = renderer.storeBwBuffer();
+
     renderer.clearScreen(0x00);
     if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Lsb)) {
+      if (storedBw) renderer.restoreBwBuffer();
       showStreamError();
       return;
     }
@@ -491,19 +489,22 @@ void XtcReaderActivity::renderPage() {
 
     renderer.clearScreen(0x00);
     if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Msb)) {
+      if (storedBw) renderer.restoreBwBuffer();
       showStreamError();
       return;
     }
     renderer.copyGrayscaleMsbBuffers();
     renderer.displayGrayBuffer();
 
-    // Rebuild the BW framebuffer for the next differential page turn.
-    renderer.clearScreen();
-    if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Base)) {
-      showStreamError();
-      return;
+    if (storedBw) {
+      renderer.restoreBwBuffer();
+    } else {
+      // Very low-memory devices can still fall back to the final base pass.
+      renderer.clearScreen();
+      if (streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Base)) {
+        renderer.cleanupGrayscaleWithFrameBuffer();
+      }
     }
-    renderer.cleanupGrayscaleWithFrameBuffer();
     return;
   }
 
@@ -563,16 +564,6 @@ void XtcReaderActivity::renderPage() {
 
     // Optimized grayscale rendering without storeBwBuffer (saves 48KB peak memory)
     // Flow: BW display → LSB/MSB passes → grayscale display → re-render BW for next frame
-
-    // Count pixel distribution for debugging
-    uint32_t pixelCounts[4] = {0, 0, 0, 0};
-    for (uint16_t y = 0; y < pageHeight; y++) {
-      for (uint16_t x = 0; x < pageWidth; x++) {
-        pixelCounts[getPixelValue(x, y)]++;
-      }
-    }
-    LOG_DBG("XTR", "Pixel distribution: White=%lu, DarkGrey=%lu, LightGrey=%lu, Black=%lu", pixelCounts[0],
-            pixelCounts[1], pixelCounts[2], pixelCounts[3]);
 
     // Pass 1: BW buffer - draw all non-white pixels as black
     for (uint16_t y = 0; y < pageHeight; y++) {

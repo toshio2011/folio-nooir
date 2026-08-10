@@ -59,7 +59,7 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
 void RecentBooksStore::addBook(const std::string& path, const std::string& title, const std::string& author,
                                const std::string& coverBmpPath, const std::string& synopsis) {
   // Drop stale entries first so a new add can't evict a valid book in their stead.
-  pruneMissing();
+  const bool pruned = pruneMissing();
 
   // Remove existing entry if present
   auto it =
@@ -73,6 +73,18 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
     entry.dailyReadingSeconds = it->dailyReadingSeconds;
     entry.dailyReadingDateKey = it->dailyReadingDateKey;
     entry.readingSessions = it->readingSessions;
+
+    // Reopening the same book is common. If it is already at the front and
+    // none of its cached presentation fields changed, there is nothing to
+    // persist. This avoids an SD JSON write on every reader entry.
+    const bool unchanged = it == recentBooks.begin() && it->title == entry.title && it->author == entry.author &&
+                           it->coverBmpPath == entry.coverBmpPath && it->synopsis == entry.synopsis &&
+                           it->progressPercent == entry.progressPercent && it->readingSeconds == entry.readingSeconds &&
+                           it->lastSessionSeconds == entry.lastSessionSeconds &&
+                           it->dailyReadingSeconds == entry.dailyReadingSeconds &&
+                           it->dailyReadingDateKey == entry.dailyReadingDateKey &&
+                           it->readingSessions == entry.readingSessions;
+    if (unchanged && !pruned) return;
     recentBooks.erase(it);
   }
 
@@ -91,7 +103,11 @@ void RecentBooksStore::recordReading(const std::string& path, uint8_t progress, 
   auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
                          [&](const RecentBook& book) { return book.path == path; });
   if (it == recentBooks.end()) return;
-  it->progressPercent = std::min<uint8_t>(progress, 100);
+  const uint8_t nextProgress = std::min<uint8_t>(progress, 100);
+  // A reader opened and closed without advancing or spending time does not
+  // change Recent data, so skip the filesystem write entirely.
+  if (elapsedSeconds == 0 && it->progressPercent == nextProgress) return;
+  it->progressPercent = nextProgress;
   if (elapsedSeconds > 0) {
     const uint32_t room = UINT32_MAX - it->readingSeconds;
     it->readingSeconds += std::min(elapsedSeconds, room);

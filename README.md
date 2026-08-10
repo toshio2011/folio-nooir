@@ -1,6 +1,16 @@
 # Folio Nooir
 
-Current release: **v1.5.3**.
+Current release: **v1.5.4**.
+
+## v1.5.4 changes
+
+- EPUB image rendering now warms missing image caches before font prewarming, reducing failures caused by fragmented heap memory.
+- Added a bounded TJpgDec fallback for valid baseline JPEGs that JPEGDEC cannot decode because of long AC Huffman tables. Normal JPEGs remain on the faster JPEGDEC path.
+- Added safer lazy image extraction, invalid-cache cleanup, one-time source refresh, and failure memoization so a broken image cannot repeatedly stall page rendering.
+- Problematic EPUB images are now cached in the same compact pixel-cache format after successful decoding, making later visits fast and avoiding repeated SD/decoder work.
+- Improved XTC/XTCH streaming by retaining the rendered black-and-white plane in small framebuffer chunks, reducing full-page rereads while keeping low-memory fallback behavior.
+- Reduced redundant Recent-book SD writes and invalidated the featured-cover snapshot correctly when the selected book changes, improving home-screen responsiveness.
+- Updated the firmware version to **1.5.4**. The changes use the shared X3/X4 code path; real-device validation remains recommended on every hardware revision.
 
 ## v1.5.3 changes
 
@@ -179,7 +189,7 @@ Each compatible GitHub release must contain an asset named exactly:
 firmware.bin
 ```
 
-Use a numeric release tag such as `1.5.3`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
+Use a numeric release tag such as `1.5.4`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
 
 ## Custom sleep images
 

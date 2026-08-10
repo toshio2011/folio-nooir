@@ -39,6 +39,11 @@ class RecentBooksActivity final : public Activity {
   size_t snapshotSelectorIndex = SIZE_MAX;
   size_t lastRenderedSelectorIndex = SIZE_MAX;
   size_t lastRenderedPageStart = SIZE_MAX;
+  // The selector can point to a different book after Recent reorders entries
+  // when a reader closes. Track the actual featured book instead of relying on
+  // its numeric position in the shelf snapshot.
+  std::string lastFeaturedPath;
+  std::string lastFeaturedCoverPath;
   bool overlayFrameShown = false;
   bool snapshotWritePending = false;
   unsigned long snapshotWriteRequestedMs = 0;

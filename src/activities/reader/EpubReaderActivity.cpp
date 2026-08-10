@@ -1932,6 +1932,18 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
 
   // Font prewarm: scan pass accumulates text, then prewarm, then real render
   auto* fcm = renderer.getFontCacheManager();
+
+  // Decode missing EPUB image caches while the heap is still at its peak.  The
+  // font prewarm below can fragment the largest free block enough for JPEGDEC
+  // or PNGdec to fail even though the source image is valid.  ImageBlock writes
+  // the pixel cache and framebuffer during this pass; clear those pixels before
+  // beginning the actual BW/gray render.  Cached images are skipped, so normal
+  // page turns retain the fast path.
+  if (page->hasImagesNeedingDecode()) {
+    page->warmImageCaches(renderer, orientedMarginLeft, orientedMarginTop);
+    renderer.clearScreen();
+  }
+
   auto scope = fcm->createPrewarmScope();
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);  // scan pass
   scope.endScanAndPrewarm();

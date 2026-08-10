@@ -423,6 +423,8 @@ void RecentBooksActivity::onEnter() {
   }
   lastRenderedSelectorIndex = SIZE_MAX;
   lastRenderedPageStart = SIZE_MAX;
+  lastFeaturedPath.clear();
+  lastFeaturedCoverPath.clear();
   overlayFrameShown = false;
   initialRenderPending = true;
   requestUpdate();
@@ -570,6 +572,8 @@ void RecentBooksActivity::loop() {
     snapshotSelectorIndex = SIZE_MAX;
     lastRenderedSelectorIndex = SIZE_MAX;
     lastRenderedPageStart = SIZE_MAX;
+    lastFeaturedPath.clear();
+    lastFeaturedCoverPath.clear();
     overlayFrameShown = false;
     initialRenderPending = true;
     requestUpdate();
@@ -919,11 +923,14 @@ void RecentBooksActivity::render(RenderLock&&) {
     const int detailCoverHeight = detailHeight - 20;
     renderer.fillRect(detailPadding * 2 + detailCoverWidth, contentTop + 1,
                       pageWidth - detailPadding * 3 - detailCoverWidth, detailHeight - 2, false);
-    const bool detailFromSnapshot = renderedFromSnapshot && snapshotSelectorIndex == selectorIndex;
-    if (!detailFromSnapshot) {
+    const bool featuredCoverCached = renderedFromSnapshot && lastFeaturedPath == selected.path &&
+                                     lastFeaturedCoverPath == selected.coverBmpPath;
+    if (!featuredCoverCached) {
       renderer.fillRect(detailPadding, contentTop + 1, detailCoverWidth, detailHeight - 2, false);
     }
-    drawCover(selected, detailPadding, contentTop + 7, detailCoverWidth, detailCoverHeight, !detailFromSnapshot);
+    drawCover(selected, detailPadding, contentTop + 7, detailCoverWidth, detailCoverHeight, !featuredCoverCached);
+    lastFeaturedPath = selected.path;
+    lastFeaturedCoverPath = selected.coverBmpPath;
     const int detailX = detailPadding * 2 + detailCoverWidth;
     const int detailWidth = pageWidth - detailX - detailPadding;
     const std::string title = renderer.truncatedText(UI_12_FONT_ID, selected.title.c_str(), detailWidth);

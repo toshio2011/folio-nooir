@@ -48,6 +48,9 @@ class ImageBlock final : public Block {
   std::string srcPath;  // book-internal source href; empty once known-extracted
   int16_t width;
   int16_t height;
+  // Prevent repeated EPUB re-inflation across the BW and grayscale passes when
+  // a decoder failure persists for this deserialized page image.
+  bool sourceRefreshAttempted = false;
 
   static void* extractCtx;
   static ExtractFn extractFn;

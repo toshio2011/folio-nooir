@@ -138,6 +138,18 @@ void Page::renderImages(GfxRenderer& renderer, const int fontId, const int xOffs
                              [](const PageElement& element) { return element.getTag() == TAG_PageImage; });
 }
 
+void Page::warmImageCaches(GfxRenderer& renderer, const int xOffset, const int yOffset) const {
+  for (const auto& element : elements) {
+    if (element->getTag() != TAG_PageImage) continue;
+    auto& image = static_cast<PageImage&>(*element);
+    if (image.getImageBlock().hasValidCache()) continue;
+    // This is intentionally a single decode pass.  ImageBlock's cache path
+    // makes subsequent BW/gray passes stream from the completed .pxc instead
+    // of allocating another decoder or re-reading the EPUB entry.
+    image.render(renderer, 0, xOffset, yOffset);
+  }
+}
+
 void Page::blankImages(GfxRenderer& renderer, const int xOffset, const int yOffset) const {
   for (const auto& element : elements) {
     if (element->getTag() != TAG_PageImage) continue;
