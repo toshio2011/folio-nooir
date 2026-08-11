@@ -2,7 +2,17 @@
 
 # Folio Nooir
 
-Current release: **v1.5.4**.
+Current release: **v1.5.5**.
+
+## v1.5.5 changes
+
+- Added lightweight page-turn statistics for EPUB, XTC/XTCH, and TXT readers. Counters are saved when leaving a book, so normal page turns do not add SD-card writes or slow rendering.
+- Added per-book and daily pages turned, pages-per-minute pace, current reading streak, and best streak statistics on-device and in the web dashboard.
+- Extended the reading calendar and web JSON export with page counts and pace data while keeping older statistics files compatible.
+- Improved **Retrieve All Book Details** with a streaming SD-card queue, valid-cache skipping, visible book/progress feedback, and a responsive **Stop for now** action.
+- Retrieve All and per-book retrieval refresh only the affected shelf entry instead of rebuilding the entire bookshelf.
+- Changed retrieval progress dialogs to a light-gray, black-text style to reduce black-popup ghosting.
+- Kept the default 1.5.5 build non-BLE; Bluetooth remains isolated and experimental.
 
 ## v1.5.4 changes
 
@@ -70,6 +80,7 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Compact 4 x 2 cover grid with percentage progress ribbons.
 - Cover cache warm-up with visible retrieval feedback, cache reuse, and invalid/blank-BMP recovery.
 - Long-press actions for opening, status changes, progress reset, cache refresh, full synopsis, book statistics, and removing a book from the list without deleting the file.
+- **Retrieve All Book Details** from the Library menu, with streaming progress, valid-cache skipping, and **Stop for now** support for large SD-card libraries.
 - Bookmark, clipping, and highlight managers are available from the home menu and book actions; entries can be reviewed, edited, or deleted, and selecting a bookmark opens its book at the saved location.
 - Automatic movement to Finished when a book reaches 100%.
 
@@ -86,6 +97,8 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Multi-dictionary lookup with dictionary history and preferred-dictionary reuse; the selected dictionary may build its index on first use, while alternate dictionaries are searched only when their sidecar is current. Definition pages show the source dictionary, allow switching, and can search all prepared dictionaries with source-labelled results.
 - Reader settings include **Prepare Dictionary Indexes** with percentage progress, Back-to-cancel, resumable checkpoints, and guidance when no dictionaries are installed.
 - Text clipping/highlighting: select a continuous word range, save clips, and review saved clips from the reader.
+- Saved clippings are rendered back as continuous highlights with selectable black, dark-gray, light-gray, or white highlight backgrounds.
+- Bookmark, clipping, and highlight lists can be opened from the reader, Recent/Finished actions, and the Library menu; entries support viewing, editing, and deletion.
 - Reader shortcuts and existing CrossPoint input mappings remain available.
 - CrossInk-inspired controls: short/long power actions, separate reader front-button remapping,
   side-button layout and long-press actions, plus Reader Options shortcuts while reading.
@@ -137,9 +150,13 @@ Nooir supports offline StarDict dictionaries for word lookup while reading.or yo
 ### Reading statistics
 
 - Persistent per-book reading time, session count, progress, status, and dates.
+- Persistent page-turn counts for each book and recorded day, plus pages-per-minute pace.
+- Current and best consecutive reading-day streaks.
 - On-device book statistics from the long-press menu.
 - Overall reading statistics from the Recent menu.
 - On-device reading calendar showing the last 30 recorded days.
+- Web statistics cards and JSON export include pages, pace, streaks, and daily page counts.
+- The on-device summary includes total time, sessions, average session, pages, pace, streaks, book states, today, and recent recorded days.
 - Featured-book summary such as `Ongoing - 12% - 18 min - 22 sessions`.
 - Finished, Reading, On Hold, and New state tracking.
 
@@ -150,9 +167,10 @@ When the device is connected to the same network, the built-in web interface pro
 - Folio Nooir-styled device dashboard.
 - Bookshelf with covers and progress.
 - Reading calendar and statistics dashboard at `/stats`.
-- Per-book covers, time, sessions, dates, status, and progress.
+- Per-book covers, time, sessions, pages, pace, dates, status, progress, and synopsis.
 - Web editing for title, author, synopsis, status, progress, start date, and finish date.
 - Reset-reading-data action and JSON statistics export.
+- The web statistics JSON includes daily page counts, current/best streaks, and total pages for external tools.
 - File browsing, image preview, upload, download, rename, move, delete, and folder creation.
 - Existing CrossPoint settings, Wi-Fi, OPDS, font, and typography pages.
 - Network activities keep their existing behavior and are entered without an unconditional reboot; memory-heavy cleanup is performed when leaving the activity.
@@ -234,7 +252,7 @@ Each compatible GitHub release must contain an asset named exactly:
 firmware.bin
 ```
 
-Use a numeric release tag such as `1.5.4`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
+Use a numeric release tag such as `1.5.5`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
 
 ## Custom sleep images
 
