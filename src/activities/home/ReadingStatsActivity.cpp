@@ -23,6 +23,12 @@ std::string durationText(const uint32_t seconds) {
   return std::to_string(hours) + " h " + std::to_string(rest) + " min";
 }
 
+std::string paceText(const uint32_t pages, const uint32_t seconds) {
+  if (pages == 0 || seconds == 0) return "n/a";
+  const uint32_t minutes = std::max<uint32_t>(1, (seconds + 30) / 60);
+  return std::to_string(pages / minutes) + " pages/min";
+}
+
 std::string dateText(const uint32_t key) {
   if (key == 0) return "Unknown date";
   char buf[16];
@@ -71,6 +77,8 @@ void ReadingStatsActivity::buildLines() {
                                                 recent ? recent->readingSeconds : 0);
     const uint16_t sessions = std::max<uint16_t>(state ? state->readingSessions : 0,
                                                  recent ? recent->readingSessions : 0);
+    const uint32_t pages = std::max<uint32_t>(state ? state->pagesTurned : 0,
+                                               recent ? recent->pagesTurned : 0);
     BookStatus displayStatus = state ? state->status : BookStatus::New;
     if (progress >= 100) {
       displayStatus = BookStatus::Finished;
@@ -83,6 +91,8 @@ void ReadingStatsActivity::buildLines() {
     lines.emplace_back(progressLine);
     lines.emplace_back("Reading time: " + durationText(seconds));
     lines.emplace_back("Sessions: " + std::to_string(sessions));
+    lines.emplace_back("Pages turned: " + std::to_string(pages));
+    lines.emplace_back("Pace: " + paceText(pages, seconds));
     lines.emplace_back("Status: " + std::string(statusText(displayStatus)));
     if (state) {
       lines.emplace_back("Started: " + dateText(state->startDate));
@@ -102,13 +112,15 @@ void ReadingStatsActivity::buildLines() {
     const size_t start = days.size() > 30 ? days.size() - 30 : 0;
     uint32_t totalSeconds = 0;
     uint32_t totalSessions = 0;
+    uint32_t totalPages = 0;
     for (size_t i = start; i < days.size(); ++i) {
       totalSeconds += std::min(days[i].seconds, UINT32_MAX - totalSeconds);
       totalSessions += std::min<uint32_t>(days[i].sessions, UINT32_MAX - totalSessions);
+      totalPages += std::min(days[i].pagesTurned, UINT32_MAX - totalPages);
     }
     lines.emplace_back("Last 30 recorded days");
     lines.emplace_back("Reading: " + durationText(totalSeconds) + "   Sessions: " +
-                       std::to_string(totalSessions));
+                       std::to_string(totalSessions) + "   Pages: " + std::to_string(totalPages));
     lines.emplace_back("");
     if (days.empty()) {
       lines.emplace_back("No completed reading sessions yet.");
@@ -121,7 +133,7 @@ void ReadingStatsActivity::buildLines() {
         if (bar.empty()) bar = "-";
         lines.emplace_back(dateText(day.dateKey) + "  " + durationText(day.seconds) + "  " +
                            std::to_string(day.sessions) + " session" + (day.sessions == 1 ? "" : "s") +
-                           "  " + bar);
+                           "  " + std::to_string(day.pagesTurned) + " pages  " + bar);
       }
     }
     lines.emplace_back("");
@@ -132,13 +144,16 @@ void ReadingStatsActivity::buildLines() {
   heading = "Reading Statistics";
   uint32_t bookSeconds = 0;
   uint32_t bookSessions = 0;
+  uint32_t bookPages = 0;
   uint16_t reading = 0;
   uint16_t onHold = 0;
   uint16_t finished = 0;
   uint16_t started = 0;
-  auto accumulateBook = [&](uint8_t progress, BookStatus status, uint32_t seconds, uint16_t sessions) {
+  auto accumulateBook = [&](uint8_t progress, BookStatus status, uint32_t seconds, uint16_t sessions,
+                            uint32_t pages) {
     bookSeconds += std::min(seconds, UINT32_MAX - bookSeconds);
     bookSessions += std::min<uint32_t>(sessions, UINT32_MAX - bookSessions);
+    bookPages += std::min(pages, UINT32_MAX - bookPages);
     if (progress > 0) ++started;
     if (status == BookStatus::Reading) ++reading;
     if (status == BookStatus::OnHold) ++onHold;
@@ -149,31 +164,39 @@ void ReadingStatsActivity::buildLines() {
     const uint8_t progress = std::max<uint8_t>(book.progressPercent, recent ? recent->progressPercent : 0);
     const uint32_t seconds = std::max<uint32_t>(book.readingSeconds, recent ? recent->readingSeconds : 0);
     const uint16_t sessions = std::max<uint16_t>(book.readingSessions, recent ? recent->readingSessions : 0);
+    const uint32_t pages = std::max<uint32_t>(book.pagesTurned, recent ? recent->pagesTurned : 0);
     BookStatus status = book.status;
     if (progress >= 100) status = BookStatus::Finished;
     else if (status == BookStatus::New && progress > 0) status = BookStatus::Reading;
-    accumulateBook(progress, status, seconds, sessions);
+    accumulateBook(progress, status, seconds, sessions, pages);
   }
   for (const auto& recent : RECENT_BOOKS.getBooks()) {
     if (BOOK_STATES.find(recent.path)) continue;
     const BookStatus status = recent.progressPercent >= 100
                                   ? BookStatus::Finished
                                   : (recent.progressPercent > 0 ? BookStatus::Reading : BookStatus::New);
-    accumulateBook(recent.progressPercent, status, recent.readingSeconds, recent.readingSessions);
+    accumulateBook(recent.progressPercent, status, recent.readingSeconds, recent.readingSessions,
+                   recent.pagesTurned);
   }
 
   const uint32_t trackedSeconds = std::max(bookSeconds, READING_STATS.totalSeconds());
   const uint32_t trackedSessions = std::max(bookSessions, READING_STATS.totalSessions());
+  const uint32_t trackedPages = std::max(bookPages, READING_STATS.totalPagesTurned());
   lines.emplace_back("Total reading: " + durationText(trackedSeconds));
   lines.emplace_back("Sessions: " + std::to_string(trackedSessions));
+  lines.emplace_back("Pages turned: " + std::to_string(trackedPages));
+  lines.emplace_back("Pace: " + paceText(trackedPages, trackedSeconds));
   lines.emplace_back("Average session: " +
                      durationText(trackedSessions == 0 ? 0 : trackedSeconds / trackedSessions));
+  lines.emplace_back("Streak: " + std::to_string(READING_STATS.currentStreakDays()) + " days   Best: " +
+                     std::to_string(READING_STATS.longestStreakDays()) + " days");
   lines.emplace_back("Started: " + std::to_string(started) + "   Finished: " + std::to_string(finished));
   lines.emplace_back("Reading: " + std::to_string(reading) + "   On hold: " + std::to_string(onHold));
 
   const uint32_t today = halClock.getDateKey();
   if (today != 0) {
-    lines.emplace_back("Today: " + durationText(READING_STATS.secondsForDate(today)));
+    lines.emplace_back("Today: " + durationText(READING_STATS.secondsForDate(today)) + "   " +
+                       std::to_string(READING_STATS.pagesForDate(today)) + " pages");
   } else {
     lines.emplace_back("Today: unavailable (clock not synced)");
   }
@@ -185,7 +208,8 @@ void ReadingStatsActivity::buildLines() {
   for (size_t i = days.size(); i > start; --i) {
     const auto& day = days[i - 1];
     lines.emplace_back(dateText(day.dateKey) + "  " + durationText(day.seconds) + "  " +
-                       std::to_string(day.sessions) + " session" + (day.sessions == 1 ? "" : "s"));
+                       std::to_string(day.sessions) + " session" + (day.sessions == 1 ? "" : "s") + "  " +
+                       std::to_string(day.pagesTurned) + " pages");
   }
   if (days.empty()) lines.emplace_back("No completed reading sessions yet.");
 }

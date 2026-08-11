@@ -26,6 +26,7 @@ void RecentBooksStore::toJson(JsonDocument& doc) const {
     obj["dailyReadingSeconds"] = book.dailyReadingSeconds;
     obj["dailyReadingDateKey"] = book.dailyReadingDateKey;
     obj["readingSessions"] = book.readingSessions;
+    obj["pagesTurned"] = book.pagesTurned;
   }
 }
 
@@ -49,6 +50,7 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
     book.dailyReadingSeconds = obj["dailyReadingSeconds"] | 0;
     book.dailyReadingDateKey = obj["dailyReadingDateKey"] | 0;
     book.readingSessions = obj["readingSessions"] | 0;
+    book.pagesTurned = obj["pagesTurned"] | 0;
     recentBooks.push_back(book);
   }
 
@@ -73,6 +75,7 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
     entry.dailyReadingSeconds = it->dailyReadingSeconds;
     entry.dailyReadingDateKey = it->dailyReadingDateKey;
     entry.readingSessions = it->readingSessions;
+    entry.pagesTurned = it->pagesTurned;
 
     // Reopening the same book is common. If it is already at the front and
     // none of its cached presentation fields changed, there is nothing to
@@ -83,7 +86,8 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
                            it->lastSessionSeconds == entry.lastSessionSeconds &&
                            it->dailyReadingSeconds == entry.dailyReadingSeconds &&
                            it->dailyReadingDateKey == entry.dailyReadingDateKey &&
-                           it->readingSessions == entry.readingSessions;
+                           it->readingSessions == entry.readingSessions &&
+                           it->pagesTurned == entry.pagesTurned;
     if (unchanged && !pruned) return;
     recentBooks.erase(it);
   }
@@ -99,14 +103,15 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
   saveToFile();
 }
 
-void RecentBooksStore::recordReading(const std::string& path, uint8_t progress, uint32_t elapsedSeconds) {
+void RecentBooksStore::recordReading(const std::string& path, uint8_t progress, uint32_t elapsedSeconds,
+                                     const uint32_t pagesTurned) {
   auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
                          [&](const RecentBook& book) { return book.path == path; });
   if (it == recentBooks.end()) return;
   const uint8_t nextProgress = std::min<uint8_t>(progress, 100);
   // A reader opened and closed without advancing or spending time does not
   // change Recent data, so skip the filesystem write entirely.
-  if (elapsedSeconds == 0 && it->progressPercent == nextProgress) return;
+  if (elapsedSeconds == 0 && pagesTurned == 0 && it->progressPercent == nextProgress) return;
   it->progressPercent = nextProgress;
   if (elapsedSeconds > 0) {
     const uint32_t room = UINT32_MAX - it->readingSeconds;
@@ -123,6 +128,7 @@ void RecentBooksStore::recordReading(const std::string& path, uint8_t progress, 
     }
     if (it->readingSessions < UINT16_MAX) ++it->readingSessions;
   }
+  it->pagesTurned += std::min<uint32_t>(pagesTurned, UINT32_MAX - it->pagesTurned);
   if (!saveToFile()) LOG_ERR("RBS", "Failed to persist reading statistics");
 }
 
@@ -191,6 +197,7 @@ bool RecentBooksStore::resetReading(const std::string& path) {
   it->dailyReadingSeconds = 0;
   it->dailyReadingDateKey = 0;
   it->readingSessions = 0;
+  it->pagesTurned = 0;
   if (!saveToFile()) {
     LOG_ERR("RBS", "Failed to reset reading data: %s", path.c_str());
     return false;

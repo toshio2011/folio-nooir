@@ -17,6 +17,7 @@ struct RecentBook {
   uint32_t dailyReadingSeconds = 0;
   uint32_t dailyReadingDateKey = 0;
   uint16_t readingSessions = 0;
+  uint32_t pagesTurned = 0;
 
   bool operator==(const RecentBook& other) const { return path == other.path; }
 };
@@ -53,7 +54,8 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
 
   // Persist one completed reader session. This is called only when leaving a
   // book, keeping SD writes away from the page-turn path.
-  void recordReading(const std::string& path, uint8_t progressPercent, uint32_t elapsedSeconds);
+  void recordReading(const std::string& path, uint8_t progressPercent, uint32_t elapsedSeconds,
+                     uint32_t pagesTurned = 0);
 
   // Remove the entry whose path matches (used when a book is removed from recents or finished/read).
   // Returns true if an entry was found and removed (no-op + false otherwise).

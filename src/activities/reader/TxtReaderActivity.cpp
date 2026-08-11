@@ -63,9 +63,11 @@ void TxtReaderActivity::onExit() {
   if (txt) {
     const ScreenshotInfo info = getScreenshotInfo();
     const uint32_t elapsedSeconds = (millis() - readingSessionStartedMs) / 1000UL;
-    RECENT_BOOKS.recordReading(txt->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds);
-    BOOK_STATES.recordReading(txt->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds);
-    READING_STATS.recordSession(halClock.getDateKey(), elapsedSeconds);
+    RECENT_BOOKS.recordReading(txt->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds,
+                               sessionPagesTurned);
+    BOOK_STATES.recordReading(txt->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds,
+                              sessionPagesTurned);
+    READING_STATS.recordSession(halClock.getDateKey(), elapsedSeconds, sessionPagesTurned);
   }
 
   ReaderUtils::clearGhostingOnExit(renderer);
@@ -197,7 +199,9 @@ void TxtReaderActivity::loop() {
                                      : SETTINGS.longPressButtonBehavior;
   if (!fromTilt && heldMs > ReaderUtils::SKIP_HOLD_MS && longPressBehavior == CrossPointSettings::CHAPTER_SKIP) {
     if (totalPages <= 0) return;
+    const int oldPage = currentPage;
     currentPage = nextTriggered ? std::min(totalPages - 1, currentPage + 10) : std::max(0, currentPage - 10);
+    if (currentPage != oldPage && sessionPagesTurned < UINT32_MAX) ++sessionPagesTurned;
     requestUpdate();
     return;
   }
@@ -237,6 +241,7 @@ void TxtReaderActivity::loop() {
     return;
   }
 
+  const int oldPage = currentPage;
   if (prevTriggered && currentPage > 0) {
     currentPage--;
     requestUpdate();
@@ -248,6 +253,7 @@ void TxtReaderActivity::loop() {
       onGoHome();
     }
   }
+  if (currentPage != oldPage && sessionPagesTurned < UINT32_MAX) ++sessionPagesTurned;
 }
 
 void TxtReaderActivity::initializeReader() {

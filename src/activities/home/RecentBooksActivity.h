@@ -26,13 +26,16 @@ class RecentBooksActivity final : public Activity {
   size_t nextCoverToGenerate = 0;
   bool coverGenerationActive = false;
   bool coverGenerationRequested = false;
+  bool manualSingleRefresh = false;
   bool retrievingBookCache = false;
+  uint8_t retrievingBookCacheProgress = 0;
   size_t retrievingBookCacheIndex = SIZE_MAX;
   volatile bool retrievingBookCachePopupRendered = false;
   unsigned long retrievingBookCacheStartedMs = 0;
   // First visit after an install/cache clear: build missing recent-book
   // metadata and thumbnails one book at a time while showing feedback.
   bool recentCacheWarmupActive = false;
+  unsigned long recentCacheWarmupNextMs = 0;
   volatile bool recentCacheWarmupPopupRendered = false;
   bool snapshotRestored = false;
   size_t snapshotPageStart = SIZE_MAX;

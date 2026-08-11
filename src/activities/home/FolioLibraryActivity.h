@@ -55,7 +55,25 @@ class FolioLibraryActivity final : public Activity {
   std::unique_ptr<char[]> fileNameBuffer;
   std::array<Preview, PAGE_SIZE> previews;
   std::vector<std::string> retrieveDirectories;
-  std::vector<std::string> retrieveBooks;
+  // Retrieve-all uses a streaming queue on the SD card instead of retaining
+  // every book path in RAM.  Large libraries previously exhausted the X3 heap
+  // before the first cover could be processed.
+  HalFile retrieveQueueFile;
+  HalFile retrieveScanDirectory;
+  bool retrieveQueueOpen = false;
+  bool retrieveQueueReading = false;
+  bool retrieveScanDirectoryOpen = false;
+  std::string retrieveScanDirectoryPath;
+  enum class RetrieveAllStage : uint8_t { Scanning, Processing };
+  RetrieveAllStage retrieveAllStage = RetrieveAllStage::Scanning;
+  uint32_t retrieveAllTotal = 0;
+  uint32_t retrieveAllProcessed = 0;
+  std::string retrieveAllSelectedPath;
+  std::string retrieveAllCurrentPath;
+  bool retrieveAllCurrentReady = false;
+  unsigned long retrieveAllCurrentReadyAtMs = 0;
+  unsigned long retrieveAllNextUiUpdateMs = 0;
+  std::string retrieveAllStatusMessage;
   size_t selectorIndex = 0;
   size_t previewPageStart = SIZE_MAX;
   size_t nextPreviewSlot = 0;
@@ -63,12 +81,13 @@ class FolioLibraryActivity final : public Activity {
   unsigned long selectionChangedMs = 0;
   size_t retrievingMetadataIndex = SIZE_MAX;
   bool retrievingMetadata = false;
+  uint8_t retrievingMetadataProgress = 0;
+  bool retrievingMetadataCleanupOnCancel = false;
   volatile bool retrievingPopupRendered = false;
   unsigned long retrievingMetadataStartedMs = 0;
   bool forceMetadataRefresh = false;
   size_t forceMetadataRefreshIndex = SIZE_MAX;
   size_t retrieveDirectoryIndex = 0;
-  size_t retrieveBookIndex = 0;
   bool retrievingAllBooks = false;
   volatile bool retrievingAllBooksPopupRendered = false;
   bool retrieveAllComplete = false;
@@ -82,6 +101,7 @@ class FolioLibraryActivity final : public Activity {
   void applyLibraryFilter();
   void resetPreviews();
   void loadNextPreview();
+  void refreshSelectedPreviewFromCache(const std::string& path);
   void loadSelectedMetadata();
   bool matchesLibraryFilter(const std::string& name) const;
   FolioLibrarySummary getLibrarySummary() const;
@@ -93,6 +113,8 @@ class FolioLibraryActivity final : public Activity {
   void clearSearch();
   void startRetrieveAllBooks();
   void processRetrieveAllBooks();
+  void cancelRetrieveAllBooks();
+  void finishRetrieveAllBooks(const char* message, bool showCompletion = true);
   void activateSelected();
   void showBookActions();
 

@@ -116,9 +116,11 @@ void XtcReaderActivity::onExit() {
   if (xtc) {
     const ScreenshotInfo info = getScreenshotInfo();
     const uint32_t elapsedSeconds = (millis() - readingSessionStartedMs) / 1000UL;
-    RECENT_BOOKS.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds);
-    BOOK_STATES.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds);
-    READING_STATS.recordSession(halClock.getDateKey(), elapsedSeconds);
+    RECENT_BOOKS.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds,
+                               sessionPagesTurned);
+    BOOK_STATES.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds,
+                              sessionPagesTurned);
+    READING_STATS.recordSession(halClock.getDateKey(), elapsedSeconds, sessionPagesTurned);
   }
 
   ReaderUtils::clearGhostingOnExit(renderer);
@@ -324,6 +326,7 @@ void XtcReaderActivity::loop() {
     return;
   }
   const int skipAmount = skipPages ? 10 : 1;
+  const uint32_t oldPage = currentPage;
 
   if (prevTriggered) {
     if (currentPage >= static_cast<uint32_t>(skipAmount)) {
@@ -339,6 +342,7 @@ void XtcReaderActivity::loop() {
     }
     requestUpdate();
   }
+  if (currentPage != oldPage && sessionPagesTurned < UINT32_MAX) ++sessionPagesTurned;
 }
 
 void XtcReaderActivity::render(RenderLock&&) {

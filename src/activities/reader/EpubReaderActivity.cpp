@@ -349,9 +349,9 @@ void EpubReaderActivity::onExit() {
                            (currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount());
     const uint8_t finalProgress = completed ? 100 : static_cast<uint8_t>(info.progressPercent);
     const uint32_t elapsedSeconds = (millis() - readingSessionStartedMs) / 1000UL;
-    RECENT_BOOKS.recordReading(epub->getPath(), finalProgress, elapsedSeconds);
-    BOOK_STATES.recordReading(epub->getPath(), finalProgress, elapsedSeconds);
-    READING_STATS.recordSession(halClock.getDateKey(), elapsedSeconds);
+    RECENT_BOOKS.recordReading(epub->getPath(), finalProgress, elapsedSeconds, sessionPagesTurned);
+    BOOK_STATES.recordReading(epub->getPath(), finalProgress, elapsedSeconds, sessionPagesTurned);
+    READING_STATS.recordSession(halClock.getDateKey(), elapsedSeconds, sessionPagesTurned);
   }
 
   ReaderUtils::clearGhostingOnExit(renderer);
@@ -460,6 +460,33 @@ void EpubReaderActivity::renderSavedHighlights(const Page& page, const int fontI
   const int currentPage = section->currentPage;
   const int lineHeight = renderer.getLineHeight(fontId);
   const bool darkMode = renderer.isDarkMode();
+  // Keep dark mode's existing white-band/black-text contrast regardless of the
+  // light-mode preference. The default black path remains the same solid fill;
+  // gray preferences use the renderer's existing lightweight dither pattern.
+  Color highlightBackground = Color::Black;
+  bool highlightTextBlack = false;
+  if (darkMode) {
+    highlightBackground = Color::White;
+    highlightTextBlack = true;
+  } else {
+    switch (SETTINGS.highlightColor) {
+      case CrossPointSettings::HIGHLIGHT_DARK_GRAY:
+        highlightBackground = Color::DarkGray;
+        break;
+      case CrossPointSettings::HIGHLIGHT_LIGHT_GRAY:
+        highlightBackground = Color::LightGray;
+        highlightTextBlack = true;
+        break;
+      case CrossPointSettings::HIGHLIGHT_WHITE:
+        highlightBackground = Color::White;
+        highlightTextBlack = true;
+        break;
+      case CrossPointSettings::HIGHLIGHT_BLACK:
+      default:
+        highlightBackground = Color::Black;
+        break;
+    }
+  }
 
   for (const auto& clipping : cachedClippings) {
     if (clipping.spineIndex != currentSpineIndex || clipping.page != currentPage) continue;
@@ -490,20 +517,27 @@ void EpubReaderActivity::renderSavedHighlights(const Page& page, const int fontI
       const auto& endWord = words[i];
       const int spanX = startWord.x - 2;
       const int spanRight = endWord.x + endWord.width + 2;
-      renderer.fillRect(spanX, startWord.y - 2, std::max(1, spanRight - spanX), lineHeight + 4, !darkMode);
+      const int spanWidth = std::max(1, spanRight - spanX);
+      if (highlightBackground == Color::Black) {
+        renderer.fillRect(spanX, startWord.y - 2, spanWidth, lineHeight + 4, true);
+      } else if (highlightBackground == Color::White) {
+        renderer.fillRect(spanX, startWord.y - 2, spanWidth, lineHeight + 4, false);
+      } else {
+        renderer.fillRectDither(spanX, startWord.y - 2, spanWidth, lineHeight + 4, highlightBackground);
+      }
       lineStart = i + 1;
     }
     if (darkMode) {
       renderer.setDarkMode(false);
       for (int i = first; i <= last; ++i) {
         const auto& word = words[i];
-        renderer.drawText(fontId, word.x, word.y, word.text, true, word.style);
+        renderer.drawText(fontId, word.x, word.y, word.text, highlightTextBlack, word.style);
       }
       renderer.setDarkMode(true);
     } else {
       for (int i = first; i <= last; ++i) {
         const auto& word = words[i];
-        renderer.drawText(fontId, word.x, word.y, word.text, false, word.style);
+        renderer.drawText(fontId, word.x, word.y, word.text, highlightTextBlack, word.style);
       }
     }
   }
@@ -1449,6 +1483,8 @@ void EpubReaderActivity::toggleAutoPageTurn(const uint8_t selectedPageTurnOption
 }
 
 void EpubReaderActivity::pageTurn(bool isForwardTurn) {
+  const int oldSpineIndex = currentSpineIndex;
+  const int oldPage = section ? section->currentPage : nextPageNumber;
   if (isForwardTurn) {
     // Advance within the section while there are (or may still be) more pages: either a built
     // page ahead, or the section is still building (windowed), in which case more pages exist
@@ -1479,6 +1515,10 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn) {
         section.reset();
       }
     }
+  }
+  const int newPage = section ? section->currentPage : nextPageNumber;
+  if (oldSpineIndex != currentSpineIndex || oldPage != newPage) {
+    if (sessionPagesTurned < UINT32_MAX) ++sessionPagesTurned;
   }
   lastPageTurnTime = millis();
   requestUpdate();

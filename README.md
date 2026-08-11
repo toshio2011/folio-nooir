@@ -1,6 +1,16 @@
 # Folio Nooir
 
-Current release: **v1.5.4**.
+Current release: **v1.5.5**.
+
+## v1.5.5 changes
+
+- Added lightweight page-turn statistics for EPUB, XTC/XTCH, and TXT readers. Counters are committed when leaving a book, so normal page turns do not add SD-card writes or slow rendering.
+- Added per-book and daily pages turned, pages-per-minute pace, current reading streak, and best streak statistics on-device and in the web statistics dashboard.
+- Extended the reading calendar and web JSON export with page counts and pace data while keeping older statistics files compatible.
+- Improved Retrieve All Book Details with a streaming SD-card queue, valid-cache skipping, visible book/progress feedback, and a responsive **Stop for now** action for large libraries.
+- Retrieve All and per-book retrieval now refresh only the affected shelf entry instead of rebuilding the entire bookshelf.
+- Changed retrieval progress dialogs to a light-gray, black-text style to reduce black-popup ghosting on e-ink displays.
+- Kept the default build non-BLE and based on the stable 1.5.4 baseline; Bluetooth remains isolated and experimental.
 
 ## v1.5.4 changes
 
@@ -130,9 +140,12 @@ are rebuilt automatically.
 ### Reading statistics
 
 - Persistent per-book reading time, session count, progress, status, and dates.
+- Persistent page-turn counts for each book and recorded day, plus pages-per-minute pace.
+- Current and best consecutive reading-day streaks.
 - On-device book statistics from the long-press menu.
 - Overall reading statistics from the Recent menu.
 - On-device reading calendar showing the last 30 recorded days.
+- Web statistics cards and JSON export include pages, pace, streaks, and daily page counts.
 - Featured-book summary such as `Ongoing - 12% - 18 min - 22 sessions`.
 - Finished, Reading, On Hold, and New state tracking.
 

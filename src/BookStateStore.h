@@ -18,6 +18,7 @@ struct BookState {
   uint32_t lastOpenedDate = 0;
   uint32_t readingSeconds = 0;
   uint16_t readingSessions = 0;
+  uint32_t pagesTurned = 0;
 };
 
 class BookStateStore : public PersistableStore<BookStateStore> {
@@ -35,7 +36,7 @@ class BookStateStore : public PersistableStore<BookStateStore> {
   bool fromJson(JsonVariantConst doc);
   const BookState* find(const std::string& path) const;
   const std::vector<BookState>& getBooks() const { return books; }
-  void recordReading(const std::string& path, uint8_t progress, uint32_t elapsedSeconds);
+  void recordReading(const std::string& path, uint8_t progress, uint32_t elapsedSeconds, uint32_t pagesTurned = 0);
   // Update fields exposed by the web book editor. Values are normalized but
   // otherwise kept exactly as supplied so users can correct dates manually.
   bool updateEditable(const std::string& path, BookStatus status, uint8_t progress, uint32_t startDate,

@@ -32,7 +32,8 @@ class SleepActivity final : public Activity {
   bool renderOverlaySleepScreen() const;
   std::vector<std::string> findOverlayPngCandidates() const;
   std::string findOverlayPngPath() const;
-  bool renderOverlayPngPass(const std::string& path, GfxRenderer::RenderMode mode, bool* transparencyDetected) const;
+  bool renderOverlayPngPass(const std::string& path, GfxRenderer::RenderMode mode, bool* transparencyDetected,
+                            bool drawPixels = true) const;
   bool renderOverlayPng(const std::string& path, bool allowOpaque = false) const;
 
   bool fromTimeout = false;

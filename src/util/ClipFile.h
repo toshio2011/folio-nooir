@@ -10,6 +10,12 @@
 // so it can be copied to another device without losing older highlights.
 namespace ClipFile {
 
+// Converts malformed UTF-8 and glyphs that cannot be rendered reliably by
+// the e-ink font set to ordinary spaces. Normal ASCII question marks remain
+// unchanged. This is used at both persistence and display boundaries so an
+// old clipping cannot reintroduce a replacement diamond later.
+std::string normalizeText(const std::string& text);
+
 bool load(const std::string& bookPath, std::vector<ClippingEntry>& clippings);
 
 // Replace the editable on-device list. The append-only My Clippings.txt

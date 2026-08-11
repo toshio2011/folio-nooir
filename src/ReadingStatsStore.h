@@ -12,6 +12,7 @@ struct ReadingDayStat {
   uint32_t dateKey = 0;
   uint32_t seconds = 0;
   uint16_t sessions = 0;
+  uint32_t pagesTurned = 0;
 };
 
 class ReadingStatsStore : public PersistableStore<ReadingStatsStore> {
@@ -31,12 +32,16 @@ class ReadingStatsStore : public PersistableStore<ReadingStatsStore> {
 
   // Commit one completed reader session. This is intentionally called on
   // reader exit/sleep, never from the page-turn path.
-  void recordSession(uint32_t dateKey, uint32_t elapsedSeconds);
+  void recordSession(uint32_t dateKey, uint32_t elapsedSeconds, uint32_t pagesTurned = 0);
 
   uint32_t totalSeconds() const;
   uint32_t totalSessions() const;
+  uint32_t totalPagesTurned() const;
   uint32_t secondsForDate(uint32_t dateKey) const;
   uint16_t sessionsForDate(uint32_t dateKey) const;
+  uint32_t pagesForDate(uint32_t dateKey) const;
+  uint32_t currentStreakDays() const;
+  uint32_t longestStreakDays() const;
   const std::vector<ReadingDayStat>& getDays() const { return days; }
   bool clearAll();
 };

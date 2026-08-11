@@ -108,6 +108,15 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     DICT_FONT_FAMILY_COUNT
   };
   enum LINE_COMPRESSION { TIGHT = 0, NORMAL = 1, WIDE = 2, LINE_COMPRESSION_COUNT };
+  // Saved clipping highlight background in light reader mode. Dark mode keeps
+  // its existing white highlight automatically for reliable contrast.
+  enum HIGHLIGHT_COLOR {
+    HIGHLIGHT_BLACK = 0,
+    HIGHLIGHT_DARK_GRAY = 1,
+    HIGHLIGHT_LIGHT_GRAY = 2,
+    HIGHLIGHT_WHITE = 3,
+    HIGHLIGHT_COLOR_COUNT
+  };
   enum PARAGRAPH_ALIGNMENT {
     JUSTIFIED = 0,
     LEFT_ALIGN = 1,
@@ -340,6 +349,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Reader dark mode: invert the page polarity while preserving four-level
   // grayscale relationships (1 = dark page, 0 = normal page).
   uint8_t readerDarkMode = 0;
+  uint8_t highlightColor = HIGHLIGHT_BLACK;
   // Focus Reading - emphasizes the first part of words with bold
   uint8_t focusReadingEnabled = 0;
   // SD card font family name (empty = use built-in fontFamily)

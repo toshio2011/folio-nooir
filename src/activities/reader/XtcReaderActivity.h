@@ -21,6 +21,7 @@ class XtcReaderActivity final : public Activity {
   uint32_t currentPage = 0;
   int pagesUntilFullRefresh = 0;
   unsigned long readingSessionStartedMs = 0UL;
+  uint32_t sessionPagesTurned = 0;
   bool darkShortcutFired = false;
   bool longPowerShortcutFired = false;
   bool skipNextButtonCheck = false;

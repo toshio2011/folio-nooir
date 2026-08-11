@@ -487,14 +487,24 @@ void CrossPointWebServer::handleStatsData() const {
   // until the aggregate store catches up through the next completed session.
   uint32_t bookSeconds = 0;
   uint32_t bookSessions = 0;
+  uint32_t bookPages = 0;
   for (const auto& book : BOOK_STATES.getBooks()) {
     bookSeconds += std::min(book.readingSeconds, UINT32_MAX - bookSeconds);
     bookSessions += std::min<uint32_t>(book.readingSessions, UINT32_MAX - bookSessions);
+    bookPages += std::min(book.pagesTurned, UINT32_MAX - bookPages);
   }
-  doc["totalSeconds"] = std::max(bookSeconds, READING_STATS.totalSeconds());
-  doc["sessions"] = std::max(bookSessions, READING_STATS.totalSessions());
+  const uint32_t totalSeconds = std::max(bookSeconds, READING_STATS.totalSeconds());
+  const uint32_t totalSessions = std::max(bookSessions, READING_STATS.totalSessions());
+  const uint32_t totalPages = std::max(bookPages, READING_STATS.totalPagesTurned());
+  doc["totalSeconds"] = totalSeconds;
+  doc["sessions"] = totalSessions;
+  doc["pagesTurned"] = totalPages;
+  doc["pagesPerMinute"] = totalSeconds == 0 ? 0 : totalPages / std::max<uint32_t>(1, (totalSeconds + 30) / 60);
+  doc["streak"] = READING_STATS.currentStreakDays();
+  doc["bestStreak"] = READING_STATS.longestStreakDays();
   doc["today"] = today;
   doc["todaySeconds"] = today == 0 ? 0 : READING_STATS.secondsForDate(today);
+  doc["todayPages"] = today == 0 ? 0 : READING_STATS.pagesForDate(today);
 
   JsonArray days = doc["days"].to<JsonArray>();
   const auto& dayRows = READING_STATS.getDays();
@@ -504,6 +514,7 @@ void CrossPointWebServer::handleStatsData() const {
     row["date"] = dayRows[i].dateKey;
     row["seconds"] = dayRows[i].seconds;
     row["sessions"] = dayRows[i].sessions;
+    row["pages"] = dayRows[i].pagesTurned;
   }
 
   JsonArray books = doc["books"].to<JsonArray>();
@@ -514,6 +525,8 @@ void CrossPointWebServer::handleStatsData() const {
                                                 recent ? recent->readingSeconds : 0);
     const uint16_t sessions = std::max<uint16_t>(state ? state->readingSessions : 0,
                                                  recent ? recent->readingSessions : 0);
+    const uint32_t pages = std::max<uint32_t>(state ? state->pagesTurned : 0,
+                                               recent ? recent->pagesTurned : 0);
     uint8_t status = state ? static_cast<uint8_t>(state->status) : static_cast<uint8_t>(BookStatus::New);
     if (progress >= 100) status = static_cast<uint8_t>(BookStatus::Finished);
     else if (status == static_cast<uint8_t>(BookStatus::New) && progress > 0)
@@ -527,6 +540,8 @@ void CrossPointWebServer::handleStatsData() const {
     row["status"] = status;
     row["seconds"] = seconds;
     row["sessions"] = sessions;
+    row["pagesTurned"] = pages;
+    row["pagesPerMinute"] = seconds == 0 ? 0 : pages / std::max<uint32_t>(1, (seconds + 30) / 60);
     row["startDate"] = state ? state->startDate : 0;
     row["finishDate"] = state ? state->finishDate : 0;
     row["lastOpenedDate"] = state ? state->lastOpenedDate : 0;

@@ -40,6 +40,8 @@ constexpr StrId POWER_LONG_PRESS_OPTIONS[] = {
     StrId::STR_LONG_PWR_SLEEP, StrId::STR_LONG_PWR_READER_OPTIONS, StrId::STR_LONG_PWR_READING_STATS,
     StrId::STR_LONG_PWR_SCREENSHOT, StrId::STR_LONG_PWR_IGNORE, StrId::STR_BOOKMARK_OPTION, StrId::STR_DICTIONARY,
     StrId::STR_DARK, StrId::STR_KOSYNC};
+constexpr StrId HIGHLIGHT_COLOR_IDS[] = {StrId::STR_HIGHLIGHT_BLACK, StrId::STR_HIGHLIGHT_DARK_GRAY,
+                                         StrId::STR_HIGHLIGHT_LIGHT_GRAY, StrId::STR_HIGHLIGHT_WHITE};
 
 int findCurrentFontIndex(const SdCardFontRegistry* registry, const char* sdFontFamilyName, uint8_t fontFamily) {
   if (sdFontFamilyName[0] != '\0' && registry) {
@@ -309,12 +311,17 @@ void TextSettingsActivity::render(RenderLock&&) {
     case Tab::Style: {
       constexpr int STYLE_ROWS = static_cast<int>(StyleRow::Count);
       static constexpr StrId ROW_NAME_IDS[STYLE_ROWS] = {StrId::STR_FOCUS_READING, StrId::STR_HYPHENATION,
-                                                         StrId::STR_EMBEDDED_STYLE, StrId::STR_TEXT_AA};
+                                                         StrId::STR_EMBEDDED_STYLE, StrId::STR_TEXT_AA,
+                                                         StrId::STR_HIGHLIGHT_COLOR};
       GUI.drawList(
           renderer, listRect, STYLE_ROWS, selectedItem,
           [](int index) { return std::string(I18N.get(ROW_NAME_IDS[index])); }, nullptr, nullptr,
           [this](int index) { return styleValueText(index); }, true);
-      confirmLabel = onTabBar ? tr(STR_FONT) : tr(STR_TOGGLE);
+      if (onTabBar) {
+        confirmLabel = tr(STR_FONT);
+      } else {
+        confirmLabel = selectedItem == static_cast<int>(StyleRow::HighlightColor) ? tr(STR_SELECT) : tr(STR_TOGGLE);
+      }
       break;
     }
 
@@ -528,6 +535,11 @@ void TextSettingsActivity::confirmStyleRow(int row) {
     case StyleRow::AntiAliasing:
       SETTINGS.textAntiAliasing = !SETTINGS.textAntiAliasing;
       break;
+    case StyleRow::HighlightColor:
+      optionPopup_.show(StrId::STR_HIGHLIGHT_COLOR, HIGHLIGHT_COLOR_IDS, static_cast<int>(std::size(HIGHLIGHT_COLOR_IDS)),
+                        std::min<int>(SETTINGS.highlightColor, static_cast<int>(std::size(HIGHLIGHT_COLOR_IDS)) - 1),
+                        [](const int index) { SETTINGS.highlightColor = static_cast<uint8_t>(index); });
+      break;
 
     default:
       return;
@@ -545,6 +557,9 @@ std::string TextSettingsActivity::styleValueText(int row) const {
       return SETTINGS.embeddedStyle ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
     case StyleRow::AntiAliasing:
       return SETTINGS.textAntiAliasing ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+    case StyleRow::HighlightColor:
+      return I18N.get(HIGHLIGHT_COLOR_IDS[std::min<int>(SETTINGS.highlightColor,
+                                                       static_cast<int>(std::size(HIGHLIGHT_COLOR_IDS)) - 1)]);
 
     default:
       return "";
@@ -635,7 +650,8 @@ bool TextSettingsActivity::focusedRowHasNoPreview() const {
   if (tab_ == Tab::Controls) return true;
   if (tab_ != Tab::Style) return false;
   const StyleRow row = static_cast<StyleRow>(selectedIndex() - 1);
-  return row == StyleRow::Hyphenation || row == StyleRow::EmbeddedStyle || row == StyleRow::AntiAliasing;
+  return row == StyleRow::Hyphenation || row == StyleRow::EmbeddedStyle || row == StyleRow::AntiAliasing ||
+         row == StyleRow::HighlightColor;
 }
 
 void TextSettingsActivity::switchTab(int direction) {

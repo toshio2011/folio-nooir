@@ -217,6 +217,11 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         SettingInfo::Toggle(StrId::STR_DARK, &CrossPointSettings::readerDarkMode, "readerDarkMode",
                             StrId::STR_CAT_READER)
             .withTextSettings(),
+        SettingInfo::Enum(StrId::STR_HIGHLIGHT_COLOR, &CrossPointSettings::highlightColor,
+                          {StrId::STR_HIGHLIGHT_BLACK, StrId::STR_HIGHLIGHT_DARK_GRAY,
+                           StrId::STR_HIGHLIGHT_LIGHT_GRAY, StrId::STR_HIGHLIGHT_WHITE},
+                          "highlightColor", StrId::STR_CAT_READER)
+            .withTextSettings(),
         SettingInfo::Toggle(StrId::STR_FOCUS_READING, &CrossPointSettings::focusReadingEnabled, "focusReadingEnabled",
                             StrId::STR_CAT_READER)
             .withTextSettings(),

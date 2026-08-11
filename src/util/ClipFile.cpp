@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdint>
 #include <utility>
 
 #include "BookmarkUtil.h"
@@ -50,7 +51,7 @@ bool save(const std::string& bookPath, const std::vector<ClippingEntry>& clippin
   JsonArray array = doc["clippings"].to<JsonArray>();
   for (const auto& clipping : clippings) {
     JsonObject item = array.add<JsonObject>();
-    item["text"] = clipping.text;
+    item["text"] = ClipFile::normalizeText(clipping.text).substr(0, MAX_CLIP_BYTES);
     item["percentage"] = clipping.percentage;
     item["spine"] = clipping.spineIndex;
     item["page"] = clipping.page;
@@ -85,6 +86,73 @@ bool appendMaster(const std::string& title, const ClippingEntry& clipping) {
 
 namespace ClipFile {
 
+std::string normalizeText(const std::string& text) {
+  std::string normalized;
+  normalized.reserve(text.size());
+  for (size_t i = 0; i < text.size();) {
+    const uint8_t first = static_cast<uint8_t>(text[i]);
+    if (first < 0x80) {
+      normalized.push_back(first < 0x20 && first != '\n' && first != '\t' ? ' ' : static_cast<char>(first));
+      ++i;
+      continue;
+    }
+
+    int length = 0;
+    uint32_t codepoint = 0;
+    if ((first & 0xE0) == 0xC0) {
+      length = 2;
+      codepoint = first & 0x1F;
+    } else if ((first & 0xF0) == 0xE0) {
+      length = 3;
+      codepoint = first & 0x0F;
+    } else if ((first & 0xF8) == 0xF0) {
+      length = 4;
+      codepoint = first & 0x07;
+    }
+    if (length == 0 || i + static_cast<size_t>(length) > text.size()) {
+      normalized.push_back(' ');
+      ++i;
+      continue;
+    }
+
+    bool valid = true;
+    for (int byte = 1; byte < length; ++byte) {
+      const uint8_t continuation = static_cast<uint8_t>(text[i + byte]);
+      if ((continuation & 0xC0) != 0x80) {
+        valid = false;
+        break;
+      }
+      codepoint = (codepoint << 6) | (continuation & 0x3F);
+    }
+    // Reject malformed, overlong, surrogate, and out-of-range sequences.
+    // These otherwise reach the font renderer as an unknown glyph.
+    const uint32_t minimumCodepoint = length == 2 ? 0x80 : (length == 3 ? 0x800 : 0x10000);
+    const bool invalidCodepoint = codepoint < minimumCodepoint || codepoint > 0x10FFFF ||
+                                  (codepoint >= 0xD800 && codepoint <= 0xDFFF);
+    if (!valid || invalidCodepoint) {
+      normalized.push_back(' ');
+      ++i;
+      continue;
+    }
+
+    // Keep normal Latin letters (including accents), while avoiding the
+    // replacement diamond and symbol/punctuation ranges that are not
+    // available in the device font set.
+    const bool unsupportedGlyph =
+        codepoint == 0x00A0 || codepoint == 0x00AD || codepoint == 0x1680 || codepoint == 0x180E ||
+        codepoint == 0xFFFD ||
+        codepoint == 0x3000 || (codepoint >= 0x2000 && codepoint <= 0x206F) ||
+        (codepoint >= 0x2500 && codepoint <= 0x25FF) || (codepoint >= 0xFFF0 && codepoint <= 0xFFFF);
+    if (unsupportedGlyph) {
+      normalized.push_back(' ');
+    } else {
+      normalized.append(text, i, static_cast<size_t>(length));
+    }
+    i += static_cast<size_t>(length);
+  }
+  return normalized;
+}
+
 bool load(const std::string& bookPath, std::vector<ClippingEntry>& clippings) {
   clippings.clear();
   JsonDocument doc;
@@ -96,7 +164,7 @@ bool load(const std::string& bookPath, std::vector<ClippingEntry>& clippings) {
     const char* text = item["text"] | "";
     if (!text[0]) continue;
     ClippingEntry clipping;
-    clipping.text = std::string(text).substr(0, MAX_CLIP_BYTES);
+    clipping.text = normalizeText(std::string(text)).substr(0, MAX_CLIP_BYTES);
     clipping.percentage = std::clamp(item["percentage"] | 0.0f, 0.0f, 1.0f);
     clipping.spineIndex = item["spine"] | static_cast<uint16_t>(0);
     clipping.page = item["page"] | static_cast<uint16_t>(0);
@@ -118,6 +186,7 @@ bool replace(const std::string& bookPath, const std::vector<ClippingEntry>& clip
   for (const auto& clipping : clippings) {
     if (clipping.text.empty()) continue;
     ClippingEntry copy = clipping;
+    copy.text = normalizeText(copy.text);
     copy.text.resize(std::min(copy.text.size(), MAX_CLIP_BYTES));
     bounded.push_back(std::move(copy));
     if (bounded.size() >= MAX_CLIPPINGS) break;
@@ -127,6 +196,7 @@ bool replace(const std::string& bookPath, const std::vector<ClippingEntry>& clip
 
 bool append(const std::string& bookPath, const std::string& bookTitle, ClippingEntry clipping) {
   if (clipping.text.empty()) return false;
+  clipping.text = normalizeText(clipping.text);
   clipping.text.resize(std::min(clipping.text.size(), MAX_CLIP_BYTES));
   if (clipping.dateKey == 0) clipping.dateKey = halClock.getDateKey();
 
