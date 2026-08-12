@@ -1,3 +1,5 @@
+<img width="324" height="450" alt="Folio Nooir on Xteink X4" src="https://github.com/user-attachments/assets/cf0a9cd3-6783-417a-986c-0ec2fdf89ba4" />
+
 # Folio Nooir
 
 Current release: **v1.5.6**.
@@ -183,6 +185,28 @@ dictionary must be added before indexes can be prepared. If a dictionary is
 copied or replaced, rerun **Prepare Dictionary Indexes**; stale `.qidx` files
 are rebuilt automatically.
 
+Already using CrossPoint? The same complete StarDict dictionary folder can be
+used with Folio Nooir. Nooir supports offline StarDict lookup while reading;
+additional compatible dictionaries are available from
+[CrossInk's dictionary downloads](https://inky.crossink.dev/#downloads).
+
+### KOReader Progress Sync
+
+Nooir supports KOReader-compatible progress sync, allowing reading progress to
+continue between Nooir and KOReader on another device.
+
+To use the public KOReader server, open **Settings → System → KOReader Sync**
+and enter:
+
+- Server URL: `https://sync.koreader.rocks`
+- Your KOReader Sync username
+- Your KOReader Sync password
+
+Select **Authenticate**. While reading, open **Reader Menu → Sync Progress**
+and choose **Apply Remote** to continue from the server or **Upload Local** to
+send the current Nooir position. Use the same server where your KOReader
+account was created; accounts are not shared between different sync servers.
+
 ### Reading statistics
 
 - Persistent per-book reading time, session count, progress, status, and dates.
@@ -256,7 +280,7 @@ Each compatible GitHub release must contain an asset named exactly:
 firmware.bin
 ```
 
-Use a numeric release tag such as `1.5.5`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
+Use a numeric release tag such as `1.5.6`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
 
 ## Custom sleep images
 
