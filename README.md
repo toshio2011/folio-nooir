@@ -1,6 +1,6 @@
 # Folio Nooir
 
-Current development version: **v1.5.6**.
+Current release: **v1.5.6**.
 
 ## v1.5.6 changes
 
