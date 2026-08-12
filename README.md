@@ -103,7 +103,10 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Wi-Fi setup, browser-based file transfer, and the built-in web server.
 - OPDS browsing, KOReader Sync, and OTA update support.
 - Sleep cover, battery/status screens, SD-card firmware update, and recovery tools.
+- One-shot Clock & Weather sync with cached clock/date/weather data; device-started sync powers Wi-Fi back off when finished.
+- Persistent To-Do List storage at `/.crosspoint/todo.json` with on-device add, edit, delete, reorder, complete, priority, and clear-completed actions.
 - Existing input mappings, themes/settings storage, status-bar controls, localization, and device configuration.
+- **Clear Reading Cache** clears Recent entries, Book State records, reading statistics, and the Folio shelf snapshot while preserving covers, thumbnails, `metadata.bin`, `book.bin`, bookmarks, clippings, and highlights.
 
 ### Folio Nooir bookshelf
 
@@ -113,11 +116,13 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Library search is available from the menu and performs fast, case-insensitive filename filtering in the current folder, with an optional recursive **Search All Folders** mode.
 - Featured-book panel with cover, title, author, HTML synopsis, progress, status, reading minutes, and session count.
 - Compact 4 x 2 cover grid with percentage progress ribbons.
+- Right-aligned battery icon and percentage in Library, Recent, and Finished headers, using the existing battery visibility setting.
 - Cover cache warm-up with visible retrieval feedback, cache reuse, and invalid/blank-BMP recovery.
 - **Retrieve All Book Details** from the Library menu, with streaming metadata progress, a resumable missing-thumbnail pass, selected-book priority, valid-cache skipping, and **Stop for now** support for large SD-card libraries.
 - Long-press actions for opening, status changes, progress reset, cache refresh, full synopsis, book statistics, and removing a book from the list without deleting the file.
 - Bookmark, clipping, and highlight managers are available from the home menu and book actions; entries can be reviewed, edited, or deleted, and selecting a bookmark opens its book at the saved location.
 - Automatic movement to Finished when a book reaches 100%.
+- Library menu access to Clock & Weather, To-Do List, Reading Statistics, bookmarks, clippings, and Retrieve All Book Details.
 
 ### Reader and typography
 
@@ -204,6 +209,7 @@ When the device is connected to the same network, the built-in web interface pro
 - Clock/weather card with editable location coordinates, Celsius/Fahrenheit choice, last-sync status, cached conditions, and a one-shot Sync now action.
 - On-device Clock & Weather status page from the home menu, including cached clock/date/weather information and a one-shot refresh button.
 - To-Do List page at `/todo`, synchronized with the device list and supporting quick add, edit, complete, reorder, delete, and clear-completed actions.
+- Web metadata editing for title, author, synopsis, status, progress, start date, and finish date without rewriting the original book file.
 - The web statistics JSON includes daily page counts, current/best streaks, and total pages for external tools.
 - File browsing, image preview, upload, download, rename, move, delete, and folder creation.
 - Existing CrossPoint settings, Wi-Fi, OPDS, font, and typography pages.
@@ -216,8 +222,10 @@ When the device is connected to the same network, the built-in web interface pro
 - Transparent PNG page-overlay sleep mode that keeps the last reader page visible beneath the overlay, rendered with the full four-level grayscale pipeline.
 - `Cover + Overlay`: use the current/recent book cover as the background and composite the transparent page overlay above it.
 - `Reading Stats`, `Minimal Stats`, and `Clipping + Cover` sleep modes.
+- To-Do List sleep mode with Unchecked, Completed, Random, and All task choices; the All mode uses a centered card up to 98% of the display height.
+- Quick Resume and Resume Reader on Wake are separate controls: Quick Resume chooses whether the current page is retained while asleep, while Resume Reader on Wake chooses Reader versus Recent/Library after waking.
 - Ghosting mitigation and clean refreshes when leaving books or entering sleep.
-- Conservative X3/X4 display-driver detection for the supported C3 family.
+- Conservative X3/X4 display-driver detection, including newer X3 UC8279d probing with UC8253 fallback and the known X4 SSD1677 default path.
 
 Some sleep-overlay, display-compatibility, and reader usability ideas were reviewed against the open-source [CrossInk](https://github.com/uxjulia/CrossInk) project and adapted where they fit Folio Nooir's CrossPoint base.
 
