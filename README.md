@@ -4,7 +4,7 @@
 
 Current release: **v1.5.5**.
 ## Hardware warning
-for newer display x3.wait for 1.5.6. am gonna update code and double check it first!
+# **for newer display x3.wait for 1.5.6. am gonna update code and double check it first!**
 
 **Folio Nooir has been physically tested only on the older Xteink X4 hardware revision.** That is the only device currently available to the maintainer.
 
