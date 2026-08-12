@@ -1,6 +1,10 @@
 # Folio Nooir
 
-Current release: **v1.5.5**.
+Current development version: **v1.5.6**.
+
+## v1.5.6 development
+
+This branch starts the next non-BLE development cycle from the stable v1.5.5 baseline. Release notes will be added as each change is implemented and tested.
 
 ## v1.5.5 changes
 
