@@ -2,7 +2,7 @@
 
 Current development version: **v1.5.6**.
 
-## v1.5.6 development
+## v1.5.6 changes
 
 This branch starts the next non-BLE development cycle from the stable v1.5.5 baseline.
 
@@ -39,7 +39,7 @@ These two settings control different parts of sleep:
 
 Quick Resume can be selected as the sleep screen itself, or enabled only for automatic inactivity timeout. Resume Reader on Wake only chooses the destination after wake; it does not keep Wi-Fi or Bluetooth running.
 
-## v1.5.5 changes
+The 1.5.6 non-BLE release carries forward the stable 1.5.5 reader and bookshelf baseline, then adds the changes above and the following maintained features:
 
 - Added lightweight page-turn statistics for EPUB, XTC/XTCH, and TXT readers. Counters are committed when leaving a book, so normal page turns do not add SD-card writes or slow rendering.
 - Added per-book and daily pages turned, pages-per-minute pace, current reading streak, and best streak statistics on-device and in the web statistics dashboard.
@@ -85,7 +85,7 @@ Folio Nooir is an experimental, bookshelf-focused e-reader firmware for Xteink d
 
 **Folio Nooir has been physically tested only on the older Xteink X4 hardware revision.** That is the only device currently available to the maintainer.
 
-The current display-driver path includes X3/X4 panel detection, newer X3 UC8279d-panel detection, and support for newer X4 battery-latch hardware. The X3 probe is conservative: it caches a confirmed controller and falls back to the original UC8253 path when the hardware cannot be identified confidently. This should address the known panel/driver compatibility problems, but newer hardware still needs real-device validation with Folio Nooir. X3 should use the shared compatibility path, but X3 testing is still pending. X4 Pro/S3 hardware is not supported by this build.
+The display-driver path now covers both X3 and X4 through the shared hardware-detection layer. For newer X3 panels, the firmware probes for the UC8279d controller before SPI starts, caches a confirmed result, honors an explicit override, and falls back conservatively to the original UC8253 path when detection is inconclusive. X4 keeps its known SSD1677 path by default, with newer X4 battery-latch handling retained; the optional X4 controller probe is only for separately validated hardware. This improves compatibility but is not a guarantee for every production revision, so keep recovery firmware available and test any newer X3/X4 unit carefully. X4 Pro/S3 hardware is not supported by this build.
 
 This does not repair physical screen damage, factory firmware locks, damaged cables, or other hardware faults. Keep a working recovery firmware before flashing. An incompatible panel or board can leave the display unusable and may require recovery through the SD-card firmware picker.
 
