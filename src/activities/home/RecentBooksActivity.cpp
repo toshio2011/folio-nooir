@@ -19,6 +19,8 @@
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/home/SynopsisActivity.h"
 #include "activities/home/ReadingStatsActivity.h"
+#include "activities/home/ClockWeatherActivity.h"
+#include "activities/home/ToDoListActivity.h"
 #include "activities/reader/EpubReaderBookmarksActivity.h"
 #include "activities/reader/EpubReaderClippingListActivity.h"
 #include "util/BookCacheUtils.h"
@@ -284,8 +286,9 @@ void RecentBooksActivity::generateNextCover() {
 }
 
 void RecentBooksActivity::showMenu() {
-  std::vector<std::string> options = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), "Reading Statistics",
-                                      "Reading Calendar", "Bookmarks (all books)", "Clippings (all books)"};
+  std::vector<std::string> options = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), tr(STR_CLOCK_WEATHER),
+                                      tr(STR_TODO_LIST), "Reading Statistics", "Reading Stats",
+                                      "Bookmarks (all books)", "Clippings (all books)"};
   menuPopup.show(StrId::STR_MENU, options, 0, [this](const int index) {
     // Always close the menu before starting another activity. This is
     // especially important for Settings, which replaces the shelf activity.
@@ -295,10 +298,14 @@ void RecentBooksActivity::showMenu() {
     } else if (index == 1) {
       activityManager.goToSettings();
     } else if (index == 2) {
-      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), nullptr);
+      startActivityForResult(std::make_unique<ClockWeatherActivity>(renderer, mappedInput), nullptr);
     } else if (index == 3) {
-      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, "", true), nullptr);
+      startActivityForResult(std::make_unique<ToDoListActivity>(renderer, mappedInput), nullptr);
     } else if (index == 4) {
+      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), nullptr);
+    } else if (index == 5) {
+      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, "", true), nullptr);
+    } else if (index == 6) {
       startActivityForResult(
           std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, std::string{}, true),
           [this](const ActivityResult& result) {
@@ -308,7 +315,7 @@ void RecentBooksActivity::showMenu() {
               activityManager.goToReaderAtBookmark(bookmark->bookPath, *bookmark);
             }
           });
-    } else if (index == 5) {
+    } else if (index == 7) {
       startActivityForResult(std::make_unique<EpubReaderClippingListActivity>(
                                 renderer, mappedInput, std::string{}, "All books", true),
                             nullptr);
@@ -893,6 +900,7 @@ void RecentBooksActivity::render(RenderLock&&) {
   const auto& folioTheme = static_cast<const FolioNooirTheme&>(GUI);
   const FolioShelfLayout layout = folioTheme.shelfLayout(renderer, metrics);
   folioTheme.drawShelfTabs(renderer, layout, activeTab);
+  folioTheme.drawShelfBattery(renderer, layout, metrics);
 
   const int contentTop = layout.contentTop;
   const int contentHeight = layout.contentHeight;

@@ -29,6 +29,8 @@ enum class SettingAction {
   DictionarySettings,
   DictionaryIndexes,
   Bluetooth,
+  ClockWeatherSync,
+  ToDoList,
 };
 
 struct SettingInfo {

@@ -23,6 +23,7 @@ class SleepActivity final : public Activity {
   void renderReadingStatsSleepScreen() const;
   void renderMinimalStatsSleepScreen() const;
   void renderClippingCoverSleepScreen() const;
+  void renderToDoSleepScreen() const;
   void renderBitmapSleepScreen(const Bitmap& bitmap) const;
   void renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, const std::string& overlayPath) const;
   void renderBitmapSleepScreenWithClipping(const Bitmap& bitmap, const std::string& text, const std::string& title,

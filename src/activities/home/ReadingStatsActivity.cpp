@@ -107,7 +107,7 @@ void ReadingStatsActivity::buildLines() {
   }
 
   if (calendarMode) {
-    heading = "Reading Calendar";
+    heading = "Reading Stats";
     const auto& days = READING_STATS.getDays();
     const size_t start = days.size() > 30 ? days.size() - 30 : 0;
     uint32_t totalSeconds = 0;

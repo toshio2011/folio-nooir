@@ -1043,7 +1043,8 @@
     /* Action button styles */
     .delete-btn,
     .rename-btn,
-    .move-btn {
+    .move-btn,
+    .metadata-btn {
       background: none;
       border: none;
       cursor: pointer;
@@ -1071,8 +1072,31 @@
     .move-btn:hover {
       background-color: #e6f7f4;
     }
+    .metadata-btn {
+      color: #8e5a38;
+    }
+    .metadata-btn:hover {
+      background-color: #f8eee5;
+    }
+    .metadata-edit-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 12px;
+    }
+    .metadata-edit-grid > label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .metadata-edit-grid > label.full-width {
+      grid-column: 1 / -1;
+    }
+    @media (max-width: 560px) {
+      .metadata-edit-grid { grid-template-columns: 1fr; }
+      .metadata-edit-grid > label.full-width { grid-column: auto; }
+    }
     .actions-col {
-      width: 140px;
+      width: 176px;
       text-align: center;
     }
     .action-icon-group {
@@ -1518,7 +1542,7 @@
 </head>
 <body>
 <header class="nooir-header"><h1>Folio <span class="noo">Nooir</span></h1><nav>
-  <a href="/">Device</a><a href="/library">Bookshelf</a><a href="/stats">Reading Stats</a><a href="/files" class="active">Transfer</a><a href="/settings">Settings</a><a href="/fonts">Typography</a>
+  <a href="/">Device</a><a href="/library">Bookshelf</a><a href="/stats">Reading Stats</a><a href="/todo">To-Do List</a><a href="/files" class="active">Transfer</a><a href="/settings">Settings</a><a href="/fonts">Typography</a>
 </nav></header>
 
 <div class="page-header">
@@ -1820,6 +1844,47 @@
   </div>
 </div>
 
+<!-- Book metadata modal -->
+<div class="modal-overlay" id="metadataModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeMetadataModal()">&times;</button>
+    <h3>📝 Edit book metadata</h3>
+    <div class="folder-form">
+      <p class="file-info">Editing <strong id="metadataItemName"></strong></p>
+      <input type="hidden" id="metadataItemPath">
+      <div class="metadata-edit-grid">
+        <label class="file-info" for="metadataTitle">Title
+          <input type="text" id="metadataTitle" class="folder-input" maxlength="192">
+        </label>
+        <label class="file-info" for="metadataAuthor">Author
+          <input type="text" id="metadataAuthor" class="folder-input" maxlength="128">
+        </label>
+        <label class="file-info" for="metadataStatusSelect">Status
+          <select id="metadataStatusSelect" class="folder-input">
+            <option value="0">New</option><option value="1">Reading</option>
+            <option value="2">On hold</option><option value="3">Finished</option>
+          </select>
+        </label>
+        <label class="file-info" for="metadataProgress">Progress %
+          <input type="number" id="metadataProgress" class="folder-input" min="0" max="100" step="1" value="0">
+        </label>
+        <label class="file-info" for="metadataStartDate">Started
+          <input type="date" id="metadataStartDate" class="folder-input">
+        </label>
+        <label class="file-info" for="metadataFinishDate">Finished
+          <input type="date" id="metadataFinishDate" class="folder-input">
+        </label>
+        <label class="file-info full-width" for="metadataSynopsis">Synopsis
+          <textarea id="metadataSynopsis" class="folder-input" rows="7" maxlength="4096" style="resize:vertical"></textarea>
+        </label>
+      </div>
+      <p id="metadataStatus" class="file-info" style="min-height:1.2em"></p>
+      <button class="rename-btn-confirm" id="metadataSaveButton" onclick="saveMetadata()">Save metadata</button>
+      <button class="delete-btn-cancel" onclick="closeMetadataModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- Move Modal -->
 <div class="modal-overlay" id="moveModal">
   <div class="modal">
@@ -1957,6 +2022,7 @@
           if (overlay.id === 'folderModal') return closeFolderModal();
           if (overlay.id === 'deleteModal') return closeDeleteModal();
           if (overlay.id === 'renameModal') return closeRenameModal();
+          if (overlay.id === 'metadataModal') return closeMetadataModal();
           if (overlay.id === 'moveModal') return closeMoveModal();
           if (overlay.id === 'imagePreviewModal') return closeImagePreview();
           overlay.classList.remove('open');
@@ -2082,6 +2148,9 @@
           fileTableContent += file.isEpub ? '<td><span class="epub-badge">EPUB</span></td>' : `<td>${escapeHtml(file.name.split('.').pop().toUpperCase())}</td>`;
           fileTableContent += `<td>${formatFileSize(file.size)}</td>`;
           fileTableContent += `<td class="actions-col"><div class="action-icon-group">`;
+          if (file.isBook) {
+            fileTableContent += `<button class="metadata-btn" onclick="openMetadataModal('${filePath.replaceAll("'", "\\'")}', '${file.name.replaceAll("'", "\\'")}' )" title="Edit book metadata">📝</button>`;
+          }
           fileTableContent += `<button class="move-btn" onclick="openMoveModal('${file.name.replaceAll("'", "\\'")}', '${filePath.replaceAll("'", "\\'")}' )" title="Move file">📂</button>`;
           fileTableContent += `<button class="rename-btn" onclick="openRenameModal('${file.name.replaceAll("'", "\\'")}', '${filePath.replaceAll("'", "\\'")}' )" title="Rename file">✏️</button>`;
           fileTableContent += `<button class="delete-btn" onclick="openDeleteModal('${file.name.replaceAll("'", "\\'")}', '${filePath.replaceAll("'", "\\'")}', false)" title="Delete file">🗑️</button>`;
@@ -2117,6 +2186,88 @@
     document.getElementById('imagePreviewModal').classList.remove('open');
     // Clear src to free the decoded image and avoid showing the stale one on reopen.
     document.getElementById('imagePreviewImg').src = '';
+  }
+
+  async function openMetadataModal(path, name) {
+    const modal = document.getElementById('metadataModal');
+    const status = document.getElementById('metadataStatus');
+    document.getElementById('metadataItemPath').value = path;
+    document.getElementById('metadataItemName').textContent = name;
+    document.getElementById('metadataTitle').value = '';
+    document.getElementById('metadataAuthor').value = '';
+    document.getElementById('metadataSynopsis').value = '';
+    document.getElementById('metadataStatusSelect').value = '0';
+    document.getElementById('metadataProgress').value = '0';
+    document.getElementById('metadataStartDate').value = '';
+    document.getElementById('metadataFinishDate').value = '';
+    document.getElementById('metadataSaveButton').disabled = true;
+    status.textContent = 'Loading metadata…';
+    modal.classList.add('open');
+    try {
+      const response = await fetch('/api/book?path=' + encodeURIComponent(path) + '&_=' + Date.now());
+      if (!response.ok) throw new Error('Metadata unavailable');
+      const book = await response.json();
+      document.getElementById('metadataTitle').value = book.title || '';
+      document.getElementById('metadataAuthor').value = book.author || '';
+      document.getElementById('metadataSynopsis').value = book.synopsis || '';
+      document.getElementById('metadataStatusSelect').value = String(book.status || 0);
+      document.getElementById('metadataProgress').value = String(book.progress || 0);
+      document.getElementById('metadataStartDate').value = dateInputValue(book.startDate);
+      document.getElementById('metadataFinishDate').value = dateInputValue(book.finishDate);
+      status.textContent = book.edited ? 'Saved device override' : 'Edit the fields, then save to the device';
+      document.getElementById('metadataSaveButton').disabled = false;
+    } catch (error) {
+      status.textContent = 'Could not read metadata';
+      console.warn(error);
+    }
+  }
+
+  function closeMetadataModal() {
+    document.getElementById('metadataModal').classList.remove('open');
+  }
+
+  function dateInputValue(key) {
+    const raw = String(key || '').padStart(8, '0');
+    return /^\d{8}$/.test(raw) && raw !== '00000000'
+      ? raw.slice(0, 4) + '-' + raw.slice(4, 6) + '-' + raw.slice(6, 8)
+      : '';
+  }
+
+  function dateNumberValue(value) {
+    const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    return match ? Number(match[1] + match[2] + match[3]) : 0;
+  }
+
+  async function saveMetadata() {
+    const button = document.getElementById('metadataSaveButton');
+    const status = document.getElementById('metadataStatus');
+    const path = document.getElementById('metadataItemPath').value;
+    button.disabled = true;
+    status.textContent = 'Saving metadata…';
+    try {
+      const response = await fetch('/api/book', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          path,
+          title: document.getElementById('metadataTitle').value,
+          author: document.getElementById('metadataAuthor').value,
+          synopsis: document.getElementById('metadataSynopsis').value,
+          status: Number(document.getElementById('metadataStatusSelect').value),
+          progress: Math.max(0, Math.min(100, Number(document.getElementById('metadataProgress').value) || 0)),
+          startDate: dateNumberValue(document.getElementById('metadataStartDate').value),
+          finishDate: dateNumberValue(document.getElementById('metadataFinishDate').value)
+        })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.ok) throw new Error(result.error || 'Save failed');
+      status.textContent = 'Saved on the device';
+      showNotification('Book metadata saved', 'success');
+      setTimeout(closeMetadataModal, 500);
+    } catch (error) {
+      status.textContent = error.message || 'Save failed';
+      button.disabled = false;
+    }
   }
 
   // Modal functions
@@ -5297,7 +5448,7 @@ function uploadFileWebSocket(file, onProgress, onComplete, onError) {
             const buffer = await chunk.arrayBuffer();
 
             // Wait for buffer to clear - more aggressive backpressure
-            while (ws.bufferedAmount > WS_CHUNK_SIZE * 2 && ws.readyState === WebSocket.OPEN) {
+            while (ws.bufferedAmount > WS_CHUNK_SIZE && ws.readyState === WebSocket.OPEN) {
               await new Promise(r => setTimeout(r, 5));
             }
 
@@ -5307,6 +5458,10 @@ function uploadFileWebSocket(file, onProgress, onComplete, onError) {
 
             ws.send(buffer);
             offset += chunkSize;
+            // Let the browser/network stack flush this frame before queuing
+            // another one. This prevents long uploads from building a large
+            // WebSocket burst on slower X3/X4 Wi-Fi links.
+            await new Promise(r => setTimeout(r, 0));
 
             // Update local progress with real transfer progress
             // Server will confirm 100% with DONE message

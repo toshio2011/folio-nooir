@@ -9,6 +9,7 @@
 #include <algorithm>
 
 #include "CrossPointSettings.h"
+#include "ClockWeatherSyncService.h"
 #include "MappedInputManager.h"
 #include "WifiCredentialStore.h"
 #include "activities/util/KeyboardEntryActivity.h"
@@ -397,14 +398,11 @@ void WifiSelectionActivity::checkConnectionStatus() {
             WiFi.RSSI());
 #endif
 
-    // Sync RTC from NTP on the first successful WiFi connection only. The DS3231
-    // drifts ~2 ppm so one sync is enough; users can force a re-sync from
-    // Settings > Customise Status Bar > Sync clock now.
-    if (halClock.isAvailable() && !SETTINGS.clockHasBeenSynced) {
-      if (halClock.syncFromNTP()) {
-        SETTINGS.clockHasBeenSynced = 1;
-        SETTINGS.saveToFile();
-      }
+    // Perform a once-per-day, best-effort sync while the connection is already
+    // being established. This never powers Wi-Fi on by itself and does not
+    // disconnect it: the parent activity may be starting the web server.
+    if (autoSyncClockWeather) {
+      ClockWeatherSyncService::syncDueOnWifiConnection();
     }
 
     // Save this as the last connected network - SD card operations need lock as

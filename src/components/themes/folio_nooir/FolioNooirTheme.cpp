@@ -7,6 +7,7 @@
 #include <cstdio>
 
 #include "fontIds.h"
+#include "CrossPointSettings.h"
 
 namespace {
 void drawSummaryIcon(const GfxRenderer& renderer, const int x, const int y, const int icon) {
@@ -72,6 +73,17 @@ void FolioNooirTheme::drawShelfTabs(const GfxRenderer& renderer, const FolioShel
   }
   renderer.drawLine(0, layout.headerTop + layout.headerHeight, pageWidth - 1,
                     layout.headerTop + layout.headerHeight);
+}
+
+void FolioNooirTheme::drawShelfBattery(const GfxRenderer& renderer, const FolioShelfLayout& layout,
+                                       const ThemeMetrics& metrics) const {
+  // Keep the indicator in the quiet top strip above the tabs so it does not
+  // consume bookshelf space or collide with the Finished tab label.
+  const bool showPercentage =
+      SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS;
+  const int iconX = renderer.getScreenWidth() - 8 - metrics.batteryWidth;
+  const int iconY = std::max(1, layout.headerTop - metrics.topPadding - 2);
+  drawBatteryRight(renderer, Rect{iconX, iconY, metrics.batteryWidth, metrics.batteryHeight}, showPercentage);
 }
 
 void FolioNooirTheme::drawShelfStats(const GfxRenderer& renderer, const FolioShelfLayout& layout,

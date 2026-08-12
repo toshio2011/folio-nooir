@@ -27,7 +27,10 @@
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "BookStateStore.h"
+#include "BookMetadataOverridesStore.h"
 #include "ReadingStatsStore.h"
+#include "WeatherStore.h"
+#include "ToDoStore.h"
 #include "SdCardFontSystem.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
@@ -313,9 +316,17 @@ void setup() {
   SETTINGS.loadFromFile();
   renderer.setUiScalePercent(SETTINGS.uiScalePercent);
   APP_STATE.loadFromFile();
+  BOOK_METADATA_OVERRIDES.loadFromFile();
   RECENT_BOOKS.loadFromFile();
   BOOK_STATES.loadFromFile();
   READING_STATS.loadFromFile();
+  WEATHER_STORE.loadFromFile();
+  TODO_STORE.loadFromFile();
+  if (!halClock.isAvailable() && WEATHER_STORE.lastClockSyncEpoch > 100000) {
+    // X4 has no RTC. Restore the last known UTC time so the clock page is
+    // useful immediately after boot; an explicit Sync now can refresh it.
+    halClock.restoreFromEpoch(WEATHER_STORE.lastClockSyncEpoch);
+  }
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   KOREADER_STORE.loadFromFile();
   OPDS_STORE.loadFromFile();
@@ -416,6 +427,7 @@ void setup() {
     // openEpubPath + lastSleepFromReader from a prior session.
     activityManager.goHome();
   } else if (APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||
+             !SETTINGS.resumeReaderOnWake ||
              mappedInputManager.isPressed(MappedInputManager::Button::Back) || APP_STATE.readerActivityLoadCount > 0) {
     // Boot to home screen if no book is open, last sleep was not from reader, back button is held, or reader activity
     // crashed (indicated by readerActivityLoadCount > 0)

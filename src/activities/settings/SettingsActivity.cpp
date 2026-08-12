@@ -10,6 +10,8 @@
 
 #include "ButtonRemapActivity.h"
 #include "ClearCacheActivity.h"
+#include "../home/ToDoListActivity.h"
+#include "ClockSyncActivity.h"
 #include "CrossPointSettings.h"
 #include "DictionaryIndexActivity.h"
 #include "FontDownloadActivity.h"
@@ -75,6 +77,8 @@ void SettingsActivity::rebuildSettingsLists() {
                                                 SettingAction::RemapReaderFrontButtons));
   }
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_CLOCK_WEATHER_SYNC, SettingAction::ClockWeatherSync));
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_TODO_LIST, SettingAction::ToDoList));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
@@ -401,6 +405,12 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       case SettingAction::Network:
         startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, false), resultHandler);
+        break;
+      case SettingAction::ClockWeatherSync:
+        startActivityForResult(std::make_unique<ClockSyncActivity>(renderer, mappedInput, true), resultHandler);
+        break;
+      case SettingAction::ToDoList:
+        startActivityForResult(std::make_unique<ToDoListActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::ClearCache:
         startActivityForResult(std::make_unique<ClearCacheActivity>(renderer, mappedInput), resultHandler);

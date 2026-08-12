@@ -330,18 +330,22 @@ void CrossPointWebServerActivity::loop() {
       // Reset watchdog BEFORE processing - HTTP header parsing can be slow
       resetTaskWatchdogIfSubscribed();
 
-      // Process HTTP requests in tight loop for maximum throughput
-      // More iterations = more data processed per main loop cycle
-      constexpr int MAX_ITERATIONS = 500;
+      // Keep the server responsive without starving the Wi-Fi/SD background
+      // tasks. A very large tight-loop budget made long uploads appear to
+      // disconnect after a while on some Xteink units because the network
+      // stack did not get enough scheduling points.
+      constexpr int MAX_ITERATIONS = 96;
       for (int i = 0; i < MAX_ITERATIONS && webServer->isRunning(); i++) {
         webServer->handleClient();
-        // Reset watchdog every 32 iterations
-        if ((i & 0x1F) == 0x1F) {
+        // Give the Wi-Fi driver and SD task a short scheduling point during
+        // sustained upload/download traffic.
+        if ((i & 0x07) == 0x07) {
+          delay(1);
           resetTaskWatchdogIfSubscribed();
         }
-        // Yield and check for exit button every 64 iterations
-        if ((i & 0x3F) == 0x3F) {
-          yield();
+        // Check for exit input periodically without waiting for the whole
+        // request budget to finish.
+        if ((i & 0x1F) == 0x1F) {
           // Force trigger an update of which buttons are being pressed so be have accurate state
           // for back button checking
           mappedInput.update();

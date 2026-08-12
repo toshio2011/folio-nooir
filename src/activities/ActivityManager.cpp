@@ -15,6 +15,7 @@
 #include "home/FolioLibraryActivity.h"
 #include "home/HomeActivity.h"
 #include "home/RecentBooksActivity.h"
+#include "home/ToDoListActivity.h"
 #include "home/ReadingStatsActivity.h"
 #include "network/CrossPointWebServerActivity.h"
 #include "reader/ReaderActivity.h"
@@ -233,6 +234,10 @@ void ActivityManager::goToRecentBooks() {
 
 void ActivityManager::goToReadingStats() {
   replaceActivity(std::make_unique<ReadingStatsActivity>(renderer, mappedInput));
+}
+
+void ActivityManager::goToToDoList() {
+  replaceActivity(std::make_unique<ToDoListActivity>(renderer, mappedInput));
 }
 
 void ActivityManager::goToBrowser() {

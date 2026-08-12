@@ -29,7 +29,15 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     READING_STATS_SLEEP = 9,
     MINIMAL_STATS = 10,
     CLIPPING_COVER = 11,
+    TODO_LIST = 12,
     SLEEP_SCREEN_MODE_COUNT
+  };
+  enum TODO_SLEEP_MODE {
+    TODO_UNCHECKED = 0,
+    TODO_COMPLETED = 1,
+    TODO_RANDOM = 2,
+    TODO_ALL = 3,
+    TODO_SLEEP_MODE_COUNT
   };
   enum SLEEP_SCREEN_COVER_MODE { FIT = 0, CROP = 1, SLEEP_SCREEN_COVER_MODE_COUNT };
   enum SLEEP_SCREEN_COVER_FILTER {
@@ -234,6 +242,10 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t sleepScreenCoverMode = FIT;
   // Sleep screen cover filter
   uint8_t sleepScreenCoverFilter = NO_FILTER;
+  // New installations show the complete list so checked tasks remain visible.
+  // Existing saved values remain untouched and can still select Unchecked,
+  // Completed, or Random explicitly.
+  uint8_t todoSleepMode = TODO_ALL;
   // Status bar settings
   uint8_t statusBarChapterPageCount = 1;
   uint8_t statusBarBookProgressPercentage = 1;
@@ -253,6 +265,16 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Set once an NTP sync succeeds. Used to skip re-syncing on every WiFi connect.
   // Resetting to 0 (e.g. via the web UI) forces a re-sync on next WiFi connect.
   uint8_t clockHasBeenSynced = 0;
+  // Automatic one-shot NTP sync when Wi-Fi is connected. The RTC itself keeps
+  // running while this is disabled, so turning this off avoids Wi-Fi work
+  // without breaking reading dates/statistics.
+  uint8_t clockSyncEnabled = 1;
+  // Automatic once-per-day weather refresh when Wi-Fi is connected. Manual
+  // Sync Clock & Weather remains available even when this automatic toggle is off.
+  uint8_t weatherSyncEnabled = 1;
+  // When waking from a normal or quick-resume sleep screen, choose whether to
+  // reopen the last reader or show the bookshelf.
+  uint8_t resumeReaderOnWake = 1;
   // Text rendering settings
   uint8_t extraParagraphSpacing = 1;
   uint8_t textAntiAliasing = 1;

@@ -295,10 +295,12 @@
 </head>
 <body>
   <header class="nooir-header"><h1>Folio <span class="noo">Nooir</span></h1><nav>
-    <a href="/">Device</a><a href="/library">Bookshelf</a><a href="/stats">Reading Stats</a><a href="/files">Transfer</a><a href="/settings" class="active">Settings</a><a href="/fonts">Typography</a>
+    <a href="/">Device</a><a href="/library">Bookshelf</a><a href="/stats">Reading Stats</a><a href="/todo">To-Do List</a><a href="/files">Transfer</a><a href="/settings" class="active">Settings</a><a href="/fonts">Typography</a>
   </nav></header>
 
   <div id="message" class="message"></div>
+
+  <div id="clock-weather-container"></div>
 
   <div id="settings-container">
     <div class="loader-container">
@@ -607,6 +609,83 @@
   }
 
   loadSettings();
+
+  // --- One-shot clock and weather sync ---
+  let clockWeatherState = null;
+
+  function formatSyncDate(dateKey) {
+    if (!dateKey) return 'Never';
+    const raw = String(dateKey).padStart(8, '0');
+    return raw.slice(0, 4) + '-' + raw.slice(4, 6) + '-' + raw.slice(6, 8);
+  }
+
+  function formatSyncDateTime(epoch, dateKey) {
+    if (Number(epoch) > 0) {
+      const d = new Date(Number(epoch) * 1000);
+      if (!isNaN(d.getTime())) return d.toLocaleString();
+    }
+    return formatSyncDate(dateKey);
+  }
+
+  function renderClockWeather() {
+    const container = document.getElementById('clock-weather-container');
+    const s = clockWeatherState || {};
+    const weather = s.hasWeather
+      ? (Number(s.temperature).toFixed(1) + ' ' + (s.fahrenheit ? '°F' : '°C') + ' · ' + escapeHtml(s.description || 'Unknown'))
+      : 'No weather cached';
+    container.innerHTML = '<div class="card"><h2>Clock &amp; Weather</h2>' +
+      '<div class="setting-row"><span class="setting-name">Location</span><span class="setting-control"><input type="text" id="cw-location" value="' + escapeHtml(s.location || '') + '"></span></div>' +
+      '<div class="setting-row"><span class="setting-name">Latitude</span><span class="setting-control"><input type="text" id="cw-latitude" value="' + escapeHtml(s.latitude || '') + '"></span></div>' +
+      '<div class="setting-row"><span class="setting-name">Longitude</span><span class="setting-control"><input type="text" id="cw-longitude" value="' + escapeHtml(s.longitude || '') + '"></span></div>' +
+      '<div class="setting-row"><span class="setting-name">Temperature unit</span><span class="setting-control"><select id="cw-fahrenheit"><option value="0"' + (!s.fahrenheit ? ' selected' : '') + '>Celsius</option><option value="1"' + (s.fahrenheit ? ' selected' : '') + '>Fahrenheit</option></select></span></div>' +
+      '<div class="setting-row"><span class="setting-name">Last clock sync</span><span class="setting-control">' + formatSyncDateTime(s.clockLastSyncEpoch, s.clockLastSyncDate) + '</span></div>' +
+      '<div class="setting-row"><span class="setting-name">Last weather sync</span><span class="setting-control">' + formatSyncDateTime(s.weatherLastSyncEpoch, s.weatherLastSyncDate) + '</span></div>' +
+      '<div class="setting-row"><span class="setting-name">Cached weather</span><span class="setting-control">' + weather + '</span></div>' +
+      '<div class="setting-row"><span class="setting-name">Automatic refresh</span><span class="setting-control"><label><input type="checkbox" id="cw-clock-enabled"' + (s.clockSyncEnabled ? ' checked' : '') + '> clock</label> <label><input type="checkbox" id="cw-weather-enabled"' + (s.weatherSyncEnabled ? ' checked' : '') + '> weather</label></span></div>' +
+      '<div class="opds-actions"><button class="btn-small btn-save-server" onclick="saveClockWeather(false)">Save</button><button class="btn-small btn-add" onclick="saveClockWeather(true)">Sync now</button></div>' +
+      '<p style="color:var(--label-color);font-size:0.9em;margin-bottom:0;">Sync uses Wi-Fi once, stores the result locally, and the device disconnects after a device-initiated sync.</p>' +
+      '</div>';
+  }
+
+  async function loadClockWeather() {
+    try {
+      const response = await fetch('/api/clock-weather');
+      if (!response.ok) throw new Error('Failed to load clock/weather state');
+      clockWeatherState = await response.json();
+      renderClockWeather();
+    } catch (e) {
+      console.error('Clock/weather load error:', e);
+    }
+  }
+
+  async function saveClockWeather(syncNow) {
+    const payload = {
+      location: document.getElementById('cw-location').value.trim(),
+      latitude: document.getElementById('cw-latitude').value.trim(),
+      longitude: document.getElementById('cw-longitude').value.trim(),
+      fahrenheit: document.getElementById('cw-fahrenheit').value === '1',
+      clockSyncEnabled: document.getElementById('cw-clock-enabled').checked,
+      weatherSyncEnabled: document.getElementById('cw-weather-enabled').checked,
+      sync: !!syncNow
+    };
+    try {
+      const response = await fetch('/api/clock-weather', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+      });
+      if (!response.ok) throw new Error(await response.text());
+      const result = await response.json();
+      const syncMessage = result.weatherSynced
+        ? 'Clock and weather synced.'
+        : (result.weatherSkippedNoLocation ? 'Saved. Set a weather location before syncing.'
+          : (result.clockSynced ? 'Clock synced; weather unavailable.' : 'Clock/weather sync failed.'));
+      showMessage(syncNow ? syncMessage : 'Clock/weather settings saved.', !!result.failed);
+      await loadClockWeather();
+    } catch (e) {
+      showMessage('Error: ' + e.message, true);
+    }
+  }
+
+  loadClockWeather();
 
   // --- Wi-Fi Network Management ---
   // Renders an editable list of saved Wi-Fi networks using /api/wifi endpoints.

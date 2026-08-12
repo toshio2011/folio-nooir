@@ -2,13 +2,12 @@
 
 #include "activities/Activity.h"
 
-// Manual NTP resync action. Runs a forced sync (bypassing the once-per-device debounce),
-// reports success/failure, then waits for Back. If WiFi is not connected yet, it reuses the
-// normal WiFi selection flow first.
+// Manual clock/weather sync action. Runs a forced one-shot update, reports the
+// result, then turns off the Wi-Fi radio before showing the result screen.
 class ClockSyncActivity final : public Activity {
  public:
-  explicit ClockSyncActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : Activity("ClockSync", renderer, mappedInput) {}
+  explicit ClockSyncActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool syncWeather = false)
+      : Activity("ClockSync", renderer, mappedInput), syncWeather(syncWeather) {}
 
   void onEnter() override;
   void onExit() override;
@@ -17,9 +16,11 @@ class ClockSyncActivity final : public Activity {
   void render(RenderLock&&) override;
 
  private:
-  enum State { SYNCING, SUCCESS, NO_WIFI, FAILED };
+  enum State { SYNCING, SUCCESS, PARTIAL, NO_LOCATION, NO_WIFI, FAILED };
   State state = SYNCING;
   char syncedTime[16] = {0};
+  char weatherLine[64] = {0};
+  bool syncWeather = false;
   bool shouldTearDownWifiOnExit = false;
 
   void runSync();

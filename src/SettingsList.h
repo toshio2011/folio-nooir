@@ -155,8 +155,12 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         SettingInfo::Enum(StrId::STR_SLEEP_COVER_MODE, &CrossPointSettings::sleepScreenCoverMode,
                           {StrId::STR_FIT, StrId::STR_CROP}, "sleepScreenCoverMode", StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_SLEEP_COVER_FILTER, &CrossPointSettings::sleepScreenCoverFilter,
-                          {StrId::STR_NONE_OPT, StrId::STR_FILTER_CONTRAST, StrId::STR_INVERTED},
-                          "sleepScreenCoverFilter", StrId::STR_CAT_DISPLAY),
+                           {StrId::STR_NONE_OPT, StrId::STR_FILTER_CONTRAST, StrId::STR_INVERTED},
+            "sleepScreenCoverFilter", StrId::STR_CAT_DISPLAY),
+        SettingInfo::Enum(StrId::STR_TODO_SLEEP_MODE, &CrossPointSettings::todoSleepMode,
+                          {StrId::STR_TODO_UNCHECKED, StrId::STR_TODO_COMPLETED, StrId::STR_TODO_RANDOM,
+                           StrId::STR_TODO_ALL},
+                          "todoSleepMode", StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_QUICK_RESUME_TIMEOUT, &CrossPointSettings::quickResumeSleepScreen,
                           {StrId::STR_STATE_OFF, StrId::STR_STATE_ON}, "quickResumeSleepScreen",
                           StrId::STR_CAT_DISPLAY),
@@ -288,6 +292,12 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                             "removeReadBooksFromRecents", StrId::STR_CAT_SYSTEM),
         SettingInfo::Toggle(StrId::STR_MOVE_FINISHED_TO_READ, &CrossPointSettings::moveFinishedToReadFolder,
                             "moveFinishedToReadFolder", StrId::STR_CAT_SYSTEM),
+        SettingInfo::Toggle(StrId::STR_CLOCK_SYNC_ENABLED, &CrossPointSettings::clockSyncEnabled,
+                            "clockSyncEnabled", StrId::STR_CAT_SYSTEM),
+        SettingInfo::Toggle(StrId::STR_WEATHER_SYNC_ENABLED, &CrossPointSettings::weatherSyncEnabled,
+                            "weatherSyncEnabled", StrId::STR_CAT_SYSTEM),
+        SettingInfo::Toggle(StrId::STR_RESUME_READER_ON_WAKE, &CrossPointSettings::resumeReaderOnWake,
+                            "resumeReaderOnWake", StrId::STR_CAT_SYSTEM),
 
         // OPDS download folder: persisted + web-exposed, but category-less so it
         // is hidden from the on-device Settings screen (edited via OPDS UI).
@@ -422,6 +432,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
           return 9;
         case CrossPointSettings::SLEEP_SCREEN_MODE::CLIPPING_COVER:
           return 10;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::TODO_LIST:
+          return 11;
         default:
           return SETTINGS.sleepScreen <= CrossPointSettings::SLEEP_SCREEN_MODE::COVER ? SETTINGS.sleepScreen : 3;
       }
@@ -459,8 +471,11 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
           SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::MINIMAL_STATS;
           break;
         case 10:
-        default:
           SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::CLIPPING_COVER;
+          break;
+        case 11:
+        default:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::TODO_LIST;
           break;
       }
     };
@@ -469,6 +484,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         I18N.get(StrId::STR_COVER), I18N.get(StrId::STR_NONE_OPT), I18N.get(StrId::STR_QUICK_RESUME),
         I18N.get(StrId::STR_PAGE_OVERLAY),
         "Cover + Overlay", "Reading Stats", "Minimal Stats", "Clipping + Cover"};
+  v.front().enumStringValues.push_back(I18N.get(StrId::STR_TODO_LIST));
   }
   if (!BoardConfig::hasTouch()) {
     v.erase(std::remove_if(v.begin(), v.end(),

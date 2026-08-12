@@ -19,8 +19,8 @@
   </style>
 </head>
 <body>
-  <header><h1>Folio <span class="noo">Nooir</span></h1><nav><a href="/">Device</a><a href="/library">Bookshelf</a><a class="active" href="/stats">Reading Stats</a><a href="/files">Transfer</a><a href="/settings">Settings</a><a href="/fonts">Typography</a></nav></header>
-  <main><div class="cards" id="summary"><div class="card">Loading statistics...</div></div><h2>Reading Calendar</h2><p class="muted">Each filled day represents a saved reading session. Unknown-date sessions are shown separately until the device clock is synchronized.</p><section class="calendar" id="calendar"></section><div class="toolbar"><h2 style="margin:0;flex:1">Book Details</h2><a class="button" href="/api/stats/export">Download JSON</a></div><section id="books"></section></main>
+  <header><h1>Folio <span class="noo">Nooir</span></h1><nav><a href="/">Device</a><a href="/library">Bookshelf</a><a class="active" href="/stats">Reading Stats</a><a href="/todo">To-Do List</a><a href="/files">Transfer</a><a href="/settings">Settings</a><a href="/fonts">Typography</a></nav></header>
+  <main><div class="cards" id="summary"><div class="card">Loading statistics...</div></div><h2>Reading Stats</h2><p class="muted">Each filled day represents a saved reading session. Unknown-date sessions are shown separately until the device clock is synchronized.</p><section class="calendar" id="calendar"></section><div class="toolbar"><h2 style="margin:0;flex:1">Book Details</h2><a class="button" href="/api/stats/export">Download JSON</a></div><section id="books"></section></main>
   <script>
     const esc=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const duration=s=>s<60?`${s}s`:s<3600?`${Math.floor(s/60)}m`:`${Math.floor(s/3600)}h ${Math.floor(s%3600/60)}m`;

@@ -13,6 +13,15 @@
 #include "Epub/parsers/TocNavParser.h"
 #include "Epub/parsers/TocNcxParser.h"
 
+namespace {
+// Retrieve All only needs package metadata. Reject pathological metadata
+// before a malformed EPUB can allocate an unbounded buffer or spend minutes
+// inflating a guide page just to find a cover.
+constexpr size_t MAX_CONTAINER_XML_BYTES = 64u * 1024u;
+constexpr size_t MAX_CONTENT_OPF_BYTES = 512u * 1024u;
+constexpr size_t MAX_GUIDE_COVER_PAGE_BYTES = 256u * 1024u;
+}  // namespace
+
 bool Epub::findContentOpfFile(std::string* contentOpfFile) const {
   const auto containerPath = "META-INF/container.xml";
   size_t containerSize;
@@ -20,6 +29,10 @@ bool Epub::findContentOpfFile(std::string* contentOpfFile) const {
   // Get file size without loading it all into heap
   if (!getItemSize(containerPath, &containerSize)) {
     LOG_ERR("EBP", "Could not find or size META-INF/container.xml");
+    return false;
+  }
+  if (containerSize > MAX_CONTAINER_XML_BYTES) {
+    LOG_ERR("EBP", "container.xml is too large (%lu bytes)", static_cast<unsigned long>(containerSize));
     return false;
   }
 
@@ -61,6 +74,10 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
     LOG_ERR("EBP", "Could not get size of content.opf");
     return false;
   }
+  if (contentOpfSize > MAX_CONTENT_OPF_BYTES) {
+    LOG_ERR("EBP", "content.opf is too large (%lu bytes)", static_cast<unsigned long>(contentOpfSize));
+    return false;
+  }
 
   ContentOpfParser opfParser(getCachePath(), getBasePath(), contentOpfSize,
                              writeSpineEntries ? bookMetadataCache.get() : nullptr);
@@ -86,8 +103,15 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   // try extracting the image reference from the guide's cover page XHTML
   if (bookMetadata.coverItemHref.empty() && !opfParser.guideCoverPageHref.empty()) {
     LOG_DBG("EBP", "No cover from metadata, trying guide cover page: %s", opfParser.guideCoverPageHref.c_str());
-    size_t coverPageSize;
-    uint8_t* coverPageData = readItemContentsToBytes(opfParser.guideCoverPageHref, &coverPageSize, true);
+    size_t coverPageSize = 0;
+    uint8_t* coverPageData = nullptr;
+    if (getItemSize(opfParser.guideCoverPageHref, &coverPageSize) &&
+        coverPageSize <= MAX_GUIDE_COVER_PAGE_BYTES) {
+      coverPageData = readItemContentsToBytes(opfParser.guideCoverPageHref, &coverPageSize, true);
+    } else {
+      LOG_DBG("EBP", "Skipping oversized guide cover page (%lu bytes)",
+              static_cast<unsigned long>(coverPageSize));
+    }
     if (coverPageData) {
       const std::string coverPageHtml(reinterpret_cast<char*>(coverPageData), coverPageSize);
       free(coverPageData);
@@ -376,18 +400,24 @@ bool Epub::loadMetadataOnly() {
   if (!parseContentOpf(parsed, false)) return false;
   metadataOnly = std::move(parsed);
   metadataOnlyLoaded = true;
+  // Persist the lightweight metadata pass so Library and Retrieve All can
+  // reuse it without reopening the EPUB. Full reader indexing remains lazy.
+  bookMetadataCache.reset(new BookMetadataCache(cachePath));
+  if (!bookMetadataCache->saveMetadataOnly(metadataOnly)) {
+    LOG_ERR("EBP", "Could not save lightweight metadata cache");
+  }
   return true;
 }
 
 bool Epub::loadCachedMetadataOnly() {
-  // This is the fast shelf path: book.bin already contains the six core
-  // metadata strings at its header. Avoid constructing CssParser or touching
-  // the EPUB ZIP unless the selected item later enters loadMetadataOnly().
+  // This is the fast shelf path: book.bin or the lightweight metadata.bin
+  // contains the six core metadata strings. Avoid constructing CssParser or
+  // touching the EPUB ZIP unless the selected item later enters loadMetadataOnly().
   metadataOnly = {};
   metadataOnlyLoaded = false;
   cssParser.reset();
   bookMetadataCache.reset(new BookMetadataCache(cachePath));
-  if (!bookMetadataCache->load()) {
+  if (!bookMetadataCache->load() && !bookMetadataCache->loadMetadataOnly()) {
     bookMetadataCache.reset();
     return false;
   }
@@ -604,6 +634,13 @@ const std::string& Epub::getDescription() const {
 std::string Epub::getCoverBmpPath(bool cropped) const {
   const auto coverFileName = std::string("cover") + (cropped ? "_crop" : "");
   return cachePath + "/" + coverFileName + ".bmp";
+}
+
+size_t Epub::getCoverImageSize() const {
+  const auto* metadata = activeMetadata();
+  if (!metadata || metadata->coverItemHref.empty()) return 0;
+  size_t size = 0;
+  return getItemSize(metadata->coverItemHref, &size) ? size : 0;
 }
 
 bool Epub::generateCoverBmp(bool cropped) const {

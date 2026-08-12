@@ -22,6 +22,7 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "RecentBooksStore.h"
+#include "ToDoStore.h"
 #include "ReadingStatsStore.h"
 #include "activities/reader/ReaderUtils.h"
 #include "components/UITheme.h"
@@ -565,6 +566,8 @@ void SleepActivity::onEnter() {
       return renderMinimalStatsSleepScreen();
     case (CrossPointSettings::SLEEP_SCREEN_MODE::CLIPPING_COVER):
       return renderClippingCoverSleepScreen();
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::TODO_LIST):
+      return renderToDoSleepScreen();
     default:
       return renderDefaultSleepScreen();
   }
@@ -1324,6 +1327,82 @@ void SleepActivity::renderClippingCoverSleepScreen() const {
     return;
   }
   renderCoverSleepScreen(clipping.path, {}, clipping.text, clipping.title, clipping.page);
+}
+
+void SleepActivity::renderToDoSleepScreen() const {
+  const auto& all = TODO_STORE.getItems();
+  std::vector<const ToDoItem*> visible;
+  for (const auto& item : all) {
+    const bool include = SETTINGS.todoSleepMode == CrossPointSettings::TODO_COMPLETED
+                             ? item.completed
+                             : SETTINGS.todoSleepMode == CrossPointSettings::TODO_UNCHECKED ? !item.completed : true;
+    if (include) visible.push_back(&item);
+  }
+  // Keep the sleep card compact while ensuring important reminders are seen
+  // first. Stable ordering preserves the user's manual order for equal priority.
+  std::stable_sort(visible.begin(), visible.end(), [](const ToDoItem* a, const ToDoItem* b) {
+    return a->priority && !b->priority;
+  });
+  preconditionSleepRefresh(renderer);
+  renderer.clearScreen();
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const int panelX = 18;
+  const int panelWidth = pageWidth - panelX * 2;
+  const int contentWidth = panelWidth - 44;
+  size_t start = 0;
+  if (SETTINGS.todoSleepMode == CrossPointSettings::TODO_RANDOM && !visible.empty()) {
+    start = static_cast<size_t>(millis() % visible.size());
+  }
+  // Show the complete list. The panel may use at most 98% of the display;
+  // for longer lists, step down to the small UI font and tighten row spacing
+  // before allowing the card to reach that limit.
+  const size_t rowCount = SETTINGS.todoSleepMode == CrossPointSettings::TODO_RANDOM
+                              ? std::min<size_t>(1, visible.size())
+                              : visible.size();
+  const int maxPanelHeight = std::max(1, pageHeight * 98 / 100);
+  const int headerHeight = 54;
+  const int footerHeight = 18;
+  const int maxRowsHeight = std::max(1, maxPanelHeight - headerHeight - footerHeight - 16);
+  int textFont = UI_10_FONT_ID;
+  int lineHeight = renderer.getLineHeight(textFont) + 12;
+  if (rowCount > 0 && static_cast<uint64_t>(rowCount) * lineHeight > static_cast<uint64_t>(maxRowsHeight)) {
+    textFont = SMALL_FONT_ID;
+    lineHeight = renderer.getLineHeight(textFont) + 6;
+  }
+  if (rowCount > 0 && static_cast<uint64_t>(rowCount) * lineHeight > static_cast<uint64_t>(maxRowsHeight)) {
+    lineHeight = std::max(renderer.getLineHeight(textFont), maxRowsHeight / static_cast<int>(rowCount));
+  }
+  const int desiredPanelHeight = headerHeight + std::max(1, static_cast<int>(rowCount)) * lineHeight + footerHeight + 16;
+  const int panelHeight = std::min(maxPanelHeight, desiredPanelHeight);
+  const int panelY = std::max(4, (pageHeight - panelHeight) / 2);
+
+  // Use the same centered, layered card treatment as the clipping sleep
+  // screen. The extra inner border keeps the small list legible on e-ink.
+  renderer.fillRoundedRect(panelX, panelY, panelWidth, panelHeight, 12, Color::White);
+  renderer.drawRoundedRect(panelX, panelY, panelWidth, panelHeight, 2, 12, true);
+  renderer.drawRoundedRect(panelX + 8, panelY + 8, panelWidth - 16, panelHeight - 16, 1, 8, true);
+  renderer.drawText(UI_12_FONT_ID, panelX + 22, panelY + 22, "TO-DO LIST", true, EpdFontFamily::BOLD);
+  renderer.drawLine(panelX + 18, panelY + headerHeight, panelX + panelWidth - 18, panelY + headerHeight);
+
+  if (visible.empty()) {
+    renderer.drawCenteredText(UI_10_FONT_ID, panelY + headerHeight + lineHeight / 2, "NO TASKS YET", true,
+                              EpdFontFamily::BOLD);
+  } else {
+    for (size_t row = 0; row < rowCount; ++row) {
+      const ToDoItem& item = *visible[(start + row) % visible.size()];
+      const std::string text = std::string(item.priority ? "! " : "  ") + (item.completed ? "[x] " : "[ ] ") + item.text;
+      const std::string clipped = renderer.truncatedText(textFont, text.c_str(), contentWidth);
+      const int textY = panelY + headerHeight + 12 + static_cast<int>(row) * lineHeight;
+      renderer.drawText(textFont, panelX + 22, textY, clipped.c_str(), true,
+                        item.completed ? EpdFontFamily::REGULAR : EpdFontFamily::BOLD);
+      if (row + 1 < rowCount)
+        renderer.drawLine(panelX + 18, textY + lineHeight - 7, panelX + panelWidth - 18, textY + lineHeight - 7);
+    }
+  }
+  renderer.drawCenteredText(SMALL_FONT_ID, panelY + panelHeight - 22, "FOLIO NOOIR", true,
+                            EpdFontFamily::BOLD);
+  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 }
 
 void SleepActivity::renderLastScreenSleepScreen() const {

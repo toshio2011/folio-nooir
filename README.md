@@ -4,7 +4,40 @@ Current development version: **v1.5.6**.
 
 ## v1.5.6 development
 
-This branch starts the next non-BLE development cycle from the stable v1.5.5 baseline. Release notes will be added as each change is implemented and tested.
+This branch starts the next non-BLE development cycle from the stable v1.5.5 baseline.
+
+- **Search All Folders** now scans from the SD-card root, matches the complete relative path, skips non-book images and internal cache/sleep folders, and reports scanned entries/books found in a compact multiline progress popup.
+- Search results retain their nested paths so opening a result goes to the correct folder. Empty searches show a short completion message instead of leaving a blank/stuck shelf.
+- Library highlighting uses an existing EPUB metadata cache without reopening the EPUB or triggering automatic retrieval. Cached title, author, synopsis, and valid cover data are reused; **Refresh Book Cache** remains the explicit repair path for missing or stale data.
+- Retrieve All now uses two stages: it persists lightweight EPUB `metadata.bin` data for every book, then queues only missing/invalid shelf thumbnails for a small, resumable cover pass. It never builds the full reader index for the whole library.
+- Shortened the Text Settings dictionary tab label to **Dict.** so the Controls tab remains visible on the X3/X4 screen.
+- Retrieve All adds a light panel maintenance refresh every 15 completed books to reduce long-run e-ink ghosting without rebuilding the shelf.
+- Lightweight metadata writes use a temporary file and rename commit, so a reset or power loss cannot leave a half-written cache.
+- Retrieve All identifies the current filename and phase (metadata or thumbnail preparation), prioritizes the highlighted book's missing cover, and keeps completed thumbnails when stopped so the next run resumes quickly.
+- Active Retrieve All and recursive search keep the CPU at full speed and temporarily suppress the global sleep timer until the operation finishes.
+- Valid metadata and thumbnail caches are skipped independently. A missing cover is prepared in the second phase without deleting metadata, progress, bookmarks, or clippings; unsupported or oversized covers remain safe filename/title fallbacks.
+- Added one-shot **Sync Clock & Weather**: NTP/RTC time and cached current weather are refreshed together, automatic refresh runs at most once per RTC day (or once per Wi-Fi session on an X4 without an RTC) when Wi-Fi is already being connected, and a device-started sync powers Wi-Fi back off after completion. Location/unit and a Web UI **Sync now** action are available without keeping Wi-Fi permanently enabled.
+- Added an on-device **Clock & Weather** status page to the Library/Recent menu. It reads the cache instantly and offers an explicit **Sync now** action without adding network work to normal shelf navigation.
+- Added **Resume Reader on Wake**. Turn it off to return to the bookshelf after a normal sleep wake; Quick Resume still returns directly to the reader.
+- Added a small right-aligned battery icon and percentage to the Folio Nooir Library, Recent, and Finished shelf headers. It reuses the existing 1.5-second battery cache and does not change shelf geometry or cover loading.
+- Added a persistent **To-Do List** at `/.crosspoint/todo.json`, with on-device check/add/edit/delete/reorder actions, a Folio Nooir web editor, and selectable unchecked/completed/random/all sleep-screen modes.
+- To-Do presentation now includes open/done counts, lightweight priority markers, priority-aware ordering, and a centered sleep card that fits the selected list within 98% of the screen.
+- To-Do sleep cards follow the selected mode: Unchecked, Completed, Random, or All. The All mode displays every task, including checked `[x]` items, in a centered card that can use up to 98% of the display height.
+- Quick Resume and wake routing are now independent settings. The selected sleep frame controls what is shown while asleep; Resume Reader on Wake controls whether waking opens the last reader or the bookshelf.
+- Improved newer X3 display compatibility with a conservative UC8279d/UC8253 controller probe before SPI starts. The detected controller is cached, an explicit override is respected, and an inconclusive probe falls back to the original UC8253 path. The older X4 SSD1677 path remains the default unless an X4 controller probe is explicitly enabled for validated hardware.
+- Web Transfer now yields regularly during sustained uploads/downloads so the Wi‑Fi and SD tasks keep running; the Bookshelf page no longer parses EPUBs or decodes missing covers while it is open.
+- Added **Edit book metadata** beside EPUB/XTC/TXT/Markdown files in Transfer. Title, author, and synopsis edits are stored in a lightweight device-side override and are applied to Library/Recent without rewriting the book or disturbing reading progress, bookmarks, or clippings.
+
+### Quick Resume and wake behavior
+
+These two settings control different parts of sleep:
+
+- **Quick Resume on + Resume Reader on Wake on:** the current page remains visible during sleep and waking returns quickly to the reader.
+- **Quick Resume on + Resume Reader on Wake off:** the current page remains visible during sleep, but waking goes to Recent/Library.
+- **Quick Resume off + Resume Reader on Wake on:** the configured normal sleep image is shown, then waking reopens the reader.
+- **Quick Resume off + Resume Reader on Wake off:** the configured normal sleep image is shown, then waking goes to Recent/Library.
+
+Quick Resume can be selected as the sleep screen itself, or enabled only for automatic inactivity timeout. Resume Reader on Wake only chooses the destination after wake; it does not keep Wi-Fi or Bluetooth running.
 
 ## v1.5.5 changes
 
@@ -14,7 +47,7 @@ This branch starts the next non-BLE development cycle from the stable v1.5.5 bas
 - Improved Retrieve All Book Details with a streaming SD-card queue, valid-cache skipping, visible book/progress feedback, and a responsive **Stop for now** action for large libraries.
 - Retrieve All and per-book retrieval now refresh only the affected shelf entry instead of rebuilding the entire bookshelf.
 - Changed retrieval progress dialogs to a light-gray, black-text style to reduce black-popup ghosting on e-ink displays.
-- Added filename-first Library search to the 1.5.5 baseline: current-folder filtering is immediate, while **Search All Folders** scans recursively in small batches without opening books or retrieving metadata.
+- Added filename-first Library search to the 1.5.5 baseline: current-folder filtering is immediate and does not open books or retrieve metadata.
 - Kept the default build non-BLE and based on the stable 1.5.4 baseline; Bluetooth remains isolated and experimental.
 
 ## v1.5.4 changes
@@ -52,7 +85,7 @@ Folio Nooir is an experimental, bookshelf-focused e-reader firmware for Xteink d
 
 **Folio Nooir has been physically tested only on the older Xteink X4 hardware revision.** That is the only device currently available to the maintainer.
 
-The current display-driver path includes X3/X4 panel detection and support for newer X4 battery-latch hardware. This should address the known panel/driver compatibility problems, but newer hardware still needs real-device validation with Folio Nooir. X3 should work through the shared driver path, but X3 testing is still pending. X4 Pro/S3 hardware is not supported by this build.
+The current display-driver path includes X3/X4 panel detection, newer X3 UC8279d-panel detection, and support for newer X4 battery-latch hardware. The X3 probe is conservative: it caches a confirmed controller and falls back to the original UC8253 path when the hardware cannot be identified confidently. This should address the known panel/driver compatibility problems, but newer hardware still needs real-device validation with Folio Nooir. X3 should use the shared compatibility path, but X3 testing is still pending. X4 Pro/S3 hardware is not supported by this build.
 
 This does not repair physical screen damage, factory firmware locks, damaged cables, or other hardware faults. Keep a working recovery firmware before flashing. An incompatible panel or board can leave the display unusable and may require recovery through the SD-card firmware picker.
 
@@ -81,7 +114,7 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Featured-book panel with cover, title, author, HTML synopsis, progress, status, reading minutes, and session count.
 - Compact 4 x 2 cover grid with percentage progress ribbons.
 - Cover cache warm-up with visible retrieval feedback, cache reuse, and invalid/blank-BMP recovery.
-- **Retrieve All Book Details** from the Library menu, with streaming progress, valid-cache skipping, and **Stop for now** support for large SD-card libraries.
+- **Retrieve All Book Details** from the Library menu, with streaming metadata progress, a resumable missing-thumbnail pass, selected-book priority, valid-cache skipping, and **Stop for now** support for large SD-card libraries.
 - Long-press actions for opening, status changes, progress reset, cache refresh, full synopsis, book statistics, and removing a book from the list without deleting the file.
 - Bookmark, clipping, and highlight managers are available from the home menu and book actions; entries can be reviewed, edited, or deleted, and selecting a bookmark opens its book at the saved location.
 - Automatic movement to Finished when a book reaches 100%.
@@ -168,6 +201,9 @@ When the device is connected to the same network, the built-in web interface pro
 - Per-book covers, time, sessions, pages, pace, dates, status, progress, and synopsis.
 - Web editing for title, author, synopsis, status, progress, start date, and finish date.
 - Reset-reading-data action and JSON statistics export.
+- Clock/weather card with editable location coordinates, Celsius/Fahrenheit choice, last-sync status, cached conditions, and a one-shot Sync now action.
+- On-device Clock & Weather status page from the home menu, including cached clock/date/weather information and a one-shot refresh button.
+- To-Do List page at `/todo`, synchronized with the device list and supporting quick add, edit, complete, reorder, delete, and clear-completed actions.
 - The web statistics JSON includes daily page counts, current/best streaks, and total pages for external tools.
 - File browsing, image preview, upload, download, rename, move, delete, and folder creation.
 - Existing CrossPoint settings, Wi-Fi, OPDS, font, and typography pages.

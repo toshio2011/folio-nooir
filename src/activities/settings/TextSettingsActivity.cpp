@@ -19,9 +19,16 @@
 #include "fontIds.h"
 
 namespace {
-// Tab labels for Font | Size | Layout | Style | Dictionary | Controls (shared by render and loop touch hit-testing).
+// Tab labels for Font | Size | Layout | Style | Dict. | Controls (shared by
+// render and loop touch hit-testing).
 constexpr StrId TAB_NAME_IDS[] = {StrId::STR_FONT, StrId::STR_SIZE, StrId::STR_LAYOUT, StrId::STR_STYLE,
                                   StrId::STR_DICTIONARY, StrId::STR_CAT_CONTROLS};
+constexpr size_t DICTIONARY_TAB_INDEX = 4;
+constexpr char DICTIONARY_TAB_LABEL[] = "Dict.";
+
+const char* textSettingsTabLabel(const size_t index) {
+  return index == DICTIONARY_TAB_INDEX ? DICTIONARY_TAB_LABEL : I18N.get(TAB_NAME_IDS[index]);
+}
 
 constexpr StrId CONTROL_ROW_NAME_IDS[] = {StrId::STR_LONG_PRESS_BEHAVIOR, StrId::STR_SIDE_LONG_PRESS_ACTION,
                                           StrId::STR_LONG_PRESS_MENU, StrId::STR_LONG_PWR_BTN};
@@ -160,7 +167,7 @@ bool TextSettingsActivity::handleTouch() {
     std::vector<TabInfo> tabs;
     tabs.reserve(static_cast<int>(Tab::Count));
     for (int t = 0; t < static_cast<int>(Tab::Count); t++) {
-      tabs.push_back({I18N.get(TAB_NAME_IDS[t]), tab_ == static_cast<Tab>(t)});
+      tabs.push_back({textSettingsTabLabel(t), tab_ == static_cast<Tab>(t)});
     }
     return tabs;
   };
@@ -268,7 +275,7 @@ void TextSettingsActivity::render(RenderLock&&) {
   std::vector<TabInfo> tabs;
   tabs.reserve(static_cast<int>(Tab::Count));
   for (int t = 0; t < static_cast<int>(Tab::Count); t++) {
-    tabs.push_back({I18N.get(TAB_NAME_IDS[t]), tab_ == static_cast<Tab>(t)});
+    tabs.push_back({textSettingsTabLabel(t), tab_ == static_cast<Tab>(t)});
   }
   GUI.drawTabBar(renderer, Rect{0, geo.tabTop, pageWidth, metrics_.tabBarHeight}, tabs, onTabBar);
 

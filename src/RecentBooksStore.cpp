@@ -10,6 +10,17 @@
 #include <iterator>
 
 #include "HalClock.h"
+#include "BookMetadataOverridesStore.h"
+
+namespace {
+void applyMetadataOverride(RecentBook& book) {
+  const BookMetadataOverride* overrideData = BOOK_METADATA_OVERRIDES.find(book.path);
+  if (!overrideData) return;
+  book.title = overrideData->title;
+  book.author = overrideData->author;
+  book.synopsis = overrideData->synopsis;
+}
+}  // namespace
 
 void RecentBooksStore::toJson(JsonDocument& doc) const {
   JsonArray arr = doc["books"].to<JsonArray>();
@@ -51,6 +62,7 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
     book.dailyReadingDateKey = obj["dailyReadingDateKey"] | 0;
     book.readingSessions = obj["readingSessions"] | 0;
     book.pagesTurned = obj["pagesTurned"] | 0;
+    applyMetadataOverride(book);
     recentBooks.push_back(book);
   }
 
@@ -67,6 +79,7 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
   auto it =
       std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
   RecentBook entry{path, title, author, coverBmpPath, synopsis.substr(0, 384)};
+  applyMetadataOverride(entry);
   if (it != recentBooks.end()) {
     if (entry.synopsis.empty()) entry.synopsis = it->synopsis;
     entry.progressPercent = it->progressPercent;
@@ -142,6 +155,7 @@ void RecentBooksStore::updateBook(const std::string& path, const std::string& ti
     book.author = author;
     book.coverBmpPath = coverBmpPath;
     if (!synopsis.empty()) book.synopsis = synopsis.substr(0, 384);
+    applyMetadataOverride(book);
     saveToFile();
   }
 }
@@ -167,6 +181,7 @@ void RecentBooksStore::refreshBookMetadata(const std::string& path, const std::s
   book.author = author;
   book.coverBmpPath = coverBmpPath;
   book.synopsis = nextSynopsis;
+  applyMetadataOverride(book);
   if (!saveToFile()) LOG_ERR("RBS", "Failed to persist refreshed metadata: %s", path.c_str());
 }
 
@@ -265,16 +280,22 @@ RecentBook RecentBooksStore::getDataFromBook(std::string path) const {
   if (FsHelpers::hasEpubExtension(lastBookFileName)) {
     Epub epub(path, "/.crosspoint");
     epub.load(false, true);
-    return RecentBook{path, epub.getTitle(), epub.getAuthor(), epub.getThumbBmpPath(),
+    RecentBook result{path, epub.getTitle(), epub.getAuthor(), epub.getThumbBmpPath(),
                       epub.getDescription().substr(0, 384)};
+    applyMetadataOverride(result);
+    return result;
   } else if (FsHelpers::hasXtcExtension(lastBookFileName)) {
     // Handle XTC file
     Xtc xtc(path, "/.crosspoint");
     if (xtc.load()) {
-      return RecentBook{path, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath()};
+      RecentBook result{path, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath()};
+      applyMetadataOverride(result);
+      return result;
     }
   } else if (FsHelpers::hasTxtExtension(lastBookFileName) || FsHelpers::hasMarkdownExtension(lastBookFileName)) {
-    return RecentBook{path, lastBookFileName, "", ""};
+    RecentBook result{path, lastBookFileName, "", ""};
+    applyMetadataOverride(result);
+    return result;
   }
   return RecentBook{path, "", "", ""};
 }

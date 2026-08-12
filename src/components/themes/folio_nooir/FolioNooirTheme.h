@@ -43,6 +43,8 @@ class FolioNooirTheme final : public LyraTheme {
 
   FolioShelfLayout shelfLayout(const GfxRenderer& renderer, const ThemeMetrics& metrics) const;
   void drawShelfTabs(const GfxRenderer& renderer, const FolioShelfLayout& layout, uint8_t activeTab) const;
+  void drawShelfBattery(const GfxRenderer& renderer, const FolioShelfLayout& layout,
+                        const ThemeMetrics& metrics) const;
   void drawLibrarySummary(const GfxRenderer& renderer, int x, int y, int width,
                           const FolioLibrarySummary& summary) const;
   void drawShelfStats(const GfxRenderer& renderer, const FolioShelfLayout& layout, uint32_t lastMinutes,

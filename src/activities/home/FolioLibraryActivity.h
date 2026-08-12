@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <HalStorage.h>
 #include <memory>
@@ -49,6 +50,10 @@ class FolioLibraryActivity final : public Activity {
   std::string recursiveSearchDirectoryPath;
   HalFile recursiveSearchDirectory;
   bool recursiveSearchDirectoryOpen = false;
+  uint32_t recursiveSearchScannedEntries = 0;
+  unsigned long recursiveSearchNextUiUpdateMs = 0;
+  bool recursiveSearchNoResults = false;
+  unsigned long recursiveSearchNoResultsUntilMs = 0;
   std::vector<std::string> allFiles;
   std::vector<std::string> files;
   LibraryFilter libraryFilter = LibraryFilter::All;
@@ -59,20 +64,32 @@ class FolioLibraryActivity final : public Activity {
   // every book path in RAM.  Large libraries previously exhausted the X3 heap
   // before the first cover could be processed.
   HalFile retrieveQueueFile;
+  HalFile retrieveThumbnailQueueFile;
   HalFile retrieveScanDirectory;
   bool retrieveQueueOpen = false;
   bool retrieveQueueReading = false;
+  bool retrieveThumbnailQueueWriting = false;
+  bool retrieveThumbnailQueueReading = false;
   bool retrieveScanDirectoryOpen = false;
   std::string retrieveScanDirectoryPath;
-  enum class RetrieveAllStage : uint8_t { Scanning, Processing };
+  enum class RetrieveAllStage : uint8_t { Scanning, Metadata, Thumbnails };
   RetrieveAllStage retrieveAllStage = RetrieveAllStage::Scanning;
   uint32_t retrieveAllTotal = 0;
   uint32_t retrieveAllProcessed = 0;
+  uint32_t retrieveAllThumbnailTotal = 0;
+  uint32_t retrieveAllThumbnailProcessed = 0;
   std::string retrieveAllSelectedPath;
+  bool retrieveAllSelectedNeedsThumbnail = false;
+  bool retrieveAllPriorityPending = false;
+  bool retrieveAllPriorityDone = false;
+  bool retrieveAllCurrentFromPriority = false;
   std::string retrieveAllCurrentPath;
   bool retrieveAllCurrentReady = false;
   unsigned long retrieveAllCurrentReadyAtMs = 0;
   unsigned long retrieveAllNextUiUpdateMs = 0;
+  uint32_t retrieveAllLastHalfRefreshProcessed = 0;
+  unsigned long retrieveAllCurrentStartedMs = 0;
+  std::atomic<bool> retrieveAllProcessingBook{false};
   std::string retrieveAllStatusMessage;
   size_t selectorIndex = 0;
   size_t previewPageStart = SIZE_MAX;
@@ -125,4 +142,8 @@ class FolioLibraryActivity final : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
+  // Retrieval/search is active work, not an idle bookshelf. Keep the C3 at
+  // full speed and prevent the global sleep timer from firing while it runs.
+  bool skipLoopDelay() override { return retrievingAllBooks || recursiveSearchActive || retrievingMetadata; }
+  bool preventAutoSleep() override { return retrievingAllBooks || recursiveSearchActive || retrievingMetadata; }
 };

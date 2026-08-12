@@ -95,6 +95,7 @@ class ActivityManager {
   void goToFolioShelf(uint8_t tab = 1);
   void goToRecentBooks();
   void goToReadingStats();
+  void goToToDoList();
   void goToBrowser();
   void goToReader(std::string path);
   // Open a book and land on a saved bookmark position selected from a

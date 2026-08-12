@@ -110,6 +110,11 @@ class BookMetadataCache {
   // Post-processing to update mappings and sizes
   bool buildBookBin(const std::string& epubPath, const BookMetadata& metadata);
 
+  // Lightweight shelf cache. This stores only the six OPF metadata strings;
+  // it deliberately does not build the reader spine/TOC index.
+  bool saveMetadataOnly(const BookMetadata& metadata);
+  bool loadMetadataOnly();
+
   // Reading phase (read mode)
   bool load();
   SpineEntry getSpineEntry(int index);
