@@ -11,7 +11,7 @@ The current display-driver path includes X3/X4 panel detection and support for n
 
 This does not repair physical screen damage, factory firmware locks, damaged cables, or other hardware faults. Keep a working recovery firmware before flashing. An incompatible panel or board can leave the display unusable and may require recovery through the SD-card firmware picker.
 
-If CrossInk is already installed and working on your device, you can safely ignore this firmware. If CrossPoint is installed and working, use the recovery instructions and keep a known-good image before switching.
+If CrossInk is already installed and working on your device, you can safely ignore this warning. If CrossPoint is installed and working, use the recovery instructions and keep a known-good image before switching.
 
 ## v1.5.5 changes
 
