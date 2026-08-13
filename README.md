@@ -28,10 +28,17 @@ adding a Folio Nooir interface and reading tools.
 
 ## v1.5.7 changes
 
-This is the current non-BLE release. It focuses on fast shelf navigation,
+This is the current non-BLE development build. It focuses on fast shelf navigation,
 cache-first book details, large-library retrieval, sleep/wake controls,
 Clock & Weather, To-Do, and shared X3/X4 display handling.
 
+- Clock & Weather now has a lightweight **Change location** action. Enter a
+  city name only; the device resolves coordinates and the IANA timezone,
+  clears stale weather, syncs the new location, and returns to the existing
+  status screen.
+- Clock cards, dates, and clock/weather sync timestamps use the resolved
+  location's local offset. Sync now continues to use the saved location and
+  never asks for the city again.
 - **Search All Folders** now scans from the SD-card root, matches the complete relative path, skips hidden/non-book images and internal cache/sleep folders, and reports scanned entries/books found in a compact multiline progress popup.
 - Search results retain their nested paths so opening a result goes to the correct folder. Empty searches show a short completion message instead of leaving a blank/stuck shelf.
 - Library highlighting uses an existing EPUB metadata cache without reopening the EPUB or triggering automatic retrieval. Cached title, author, synopsis, and valid cover data are reused; **Refresh Book Cache** remains the explicit repair path for missing or stale data.

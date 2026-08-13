@@ -18,6 +18,11 @@ class WeatherStore final : public PersistableStore<WeatherStore> {
   char location[48] = "Kuala Lumpur";
   char latitude[16] = "3.1390";
   char longitude[16] = "101.6869";
+  // IANA zone returned by the geocoding service (for example,
+  // Asia/Kuala_Lumpur). The current UTC offset is stored separately because
+  // the small e-ink clock only needs a compact numeric conversion at render
+  // time.
+  char timezone[48] = "Asia/Kuala_Lumpur";
   uint8_t fahrenheit = 0;
   int32_t locationUtcOffsetSeconds = 0;
   uint8_t hasLocationTimezone = 0;
@@ -36,6 +41,7 @@ class WeatherStore final : public PersistableStore<WeatherStore> {
   bool fromJson(JsonVariantConst doc);
 
   bool hasLocation() const { return latitude[0] != '\0' && longitude[0] != '\0'; }
+  void clearWeatherCache();
   bool weatherIsFreshToday(uint32_t today) const {
     return today != 0 && lastWeatherSyncDateKey == today && hasWeather != 0;
   }

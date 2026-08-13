@@ -619,10 +619,13 @@
     return raw.slice(0, 4) + '-' + raw.slice(4, 6) + '-' + raw.slice(6, 8);
   }
 
-  function formatSyncDateTime(epoch, dateKey) {
+  function formatSyncDateTime(epoch, dateKey, offsetSeconds) {
     if (Number(epoch) > 0) {
-      const d = new Date(Number(epoch) * 1000);
-      if (!isNaN(d.getTime())) return d.toLocaleString();
+      // Epochs are UTC. Shift them by the device-resolved location offset and
+      // format as UTC text so the browser's own timezone cannot change the
+      // selected location's displayed local time.
+      const d = new Date((Number(epoch) + Number(offsetSeconds || 0)) * 1000);
+      if (!isNaN(d.getTime())) return d.toISOString().slice(0, 16).replace('T', ' ');
     }
     return formatSyncDate(dateKey);
   }
@@ -637,9 +640,10 @@
       '<div class="setting-row"><span class="setting-name">Location</span><span class="setting-control"><input type="text" id="cw-location" value="' + escapeHtml(s.location || '') + '"></span></div>' +
       '<div class="setting-row"><span class="setting-name">Latitude</span><span class="setting-control"><input type="text" id="cw-latitude" value="' + escapeHtml(s.latitude || '') + '"></span></div>' +
       '<div class="setting-row"><span class="setting-name">Longitude</span><span class="setting-control"><input type="text" id="cw-longitude" value="' + escapeHtml(s.longitude || '') + '"></span></div>' +
+      '<div class="setting-row"><span class="setting-name">Timezone</span><span class="setting-control">' + escapeHtml(s.timezone || 'Not resolved') + '</span></div>' +
       '<div class="setting-row"><span class="setting-name">Temperature unit</span><span class="setting-control"><select id="cw-fahrenheit"><option value="0"' + (!s.fahrenheit ? ' selected' : '') + '>Celsius</option><option value="1"' + (s.fahrenheit ? ' selected' : '') + '>Fahrenheit</option></select></span></div>' +
-      '<div class="setting-row"><span class="setting-name">Last clock sync</span><span class="setting-control">' + formatSyncDateTime(s.clockLastSyncEpoch, s.clockLastSyncDate) + '</span></div>' +
-      '<div class="setting-row"><span class="setting-name">Last weather sync</span><span class="setting-control">' + formatSyncDateTime(s.weatherLastSyncEpoch, s.weatherLastSyncDate) + '</span></div>' +
+      '<div class="setting-row"><span class="setting-name">Last clock sync</span><span class="setting-control">' + formatSyncDateTime(s.clockLastSyncEpoch, s.clockLastSyncDate, s.utcOffsetSeconds) + '</span></div>' +
+      '<div class="setting-row"><span class="setting-name">Last weather sync</span><span class="setting-control">' + formatSyncDateTime(s.weatherLastSyncEpoch, s.weatherLastSyncDate, s.utcOffsetSeconds) + '</span></div>' +
       '<div class="setting-row"><span class="setting-name">Cached weather</span><span class="setting-control">' + weather + '</span></div>' +
       '<div class="setting-row"><span class="setting-name">Automatic refresh</span><span class="setting-control"><label><input type="checkbox" id="cw-clock-enabled"' + (s.clockSyncEnabled ? ' checked' : '') + '> clock</label> <label><input type="checkbox" id="cw-weather-enabled"' + (s.weatherSyncEnabled ? ' checked' : '') + '> weather</label></span></div>' +
       '<div class="opds-actions"><button class="btn-small btn-save-server" onclick="saveClockWeather(false)">Save</button><button class="btn-small btn-add" onclick="saveClockWeather(true)">Sync now</button></div>' +

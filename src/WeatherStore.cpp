@@ -14,6 +14,7 @@ void WeatherStore::toJson(JsonDocument& doc) const {
   doc["location"] = location;
   doc["latitude"] = latitude;
   doc["longitude"] = longitude;
+  doc["timezone"] = timezone;
   doc["fahrenheit"] = fahrenheit != 0;
   doc["locationUtcOffsetSeconds"] = locationUtcOffsetSeconds;
   doc["hasLocationTimezone"] = hasLocationTimezone != 0;
@@ -30,6 +31,7 @@ bool WeatherStore::fromJson(JsonVariantConst doc) {
   copyField(location, doc["location"] | "Kuala Lumpur", sizeof(location));
   copyField(latitude, doc["latitude"] | "3.1390", sizeof(latitude));
   copyField(longitude, doc["longitude"] | "101.6869", sizeof(longitude));
+  copyField(timezone, doc["timezone"] | "", sizeof(timezone));
   fahrenheit = doc["fahrenheit"] | static_cast<uint8_t>(0);
   fahrenheit = fahrenheit ? 1 : 0;
   locationUtcOffsetSeconds = doc["locationUtcOffsetSeconds"] | static_cast<int32_t>(0);
@@ -49,4 +51,12 @@ bool WeatherStore::fromJson(JsonVariantConst doc) {
   weatherCode = doc["weatherCode"] | static_cast<int16_t>(-1);
   hasWeather = (doc["hasWeather"] | false) ? 1 : 0;
   return true;
+}
+
+void WeatherStore::clearWeatherCache() {
+  hasWeather = 0;
+  temperatureTenths = 0;
+  weatherCode = -1;
+  lastWeatherSyncDateKey = 0;
+  lastWeatherSyncEpoch = 0;
 }

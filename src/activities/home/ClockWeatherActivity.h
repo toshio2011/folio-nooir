@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "activities/Activity.h"
+#include "activities/home/ClockLocationActivity.h"
 
 // Lightweight on-device view of the persisted clock/weather cache. It does
 // not touch Wi-Fi until the user explicitly chooses Sync now.
@@ -27,4 +28,5 @@ class ClockWeatherActivity final : public Activity {
 
   void rebuildLines();
   void syncNow();
+  void changeLocation();
 };

@@ -2018,6 +2018,8 @@ void CrossPointWebServer::handleGetClockWeather() const {
   doc["location"] = WEATHER_STORE.location;
   doc["latitude"] = WEATHER_STORE.latitude;
   doc["longitude"] = WEATHER_STORE.longitude;
+  doc["timezone"] = WEATHER_STORE.timezone;
+  doc["utcOffsetSeconds"] = WEATHER_STORE.locationUtcOffsetSeconds;
   doc["fahrenheit"] = WEATHER_STORE.fahrenheit != 0;
   doc["clockSyncEnabled"] = SETTINGS.clockSyncEnabled != 0;
   doc["weatherSyncEnabled"] = SETTINGS.weatherSyncEnabled != 0;

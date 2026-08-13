@@ -26,23 +26,19 @@ std::string dateText(const uint32_t key) {
   return buf;
 }
 
-uint8_t displayOffsetQ() {
-  if (!WEATHER_STORE.hasLocationTimezone) return SETTINGS.clockUtcOffsetQ;
-  const int quarterHours = static_cast<int>((WEATHER_STORE.locationUtcOffsetSeconds +
-                                              (WEATHER_STORE.locationUtcOffsetSeconds >= 0 ? 450 : -450)) /
-                                             900);
-  return static_cast<uint8_t>(std::max(0, std::min(104, quarterHours + 48)));
+uint32_t displayDateKey() {
+  return ClockWeatherSyncService::localDateKey();
 }
 
-uint32_t displayDateKey() {
-  if (!WEATHER_STORE.hasLocationTimezone) return halClock.getDateKey();
-  const time_t now = time(nullptr);
-  if (now <= 100000) return halClock.getDateKey();
-  const time_t localNow = now + WEATHER_STORE.locationUtcOffsetSeconds;
+std::string syncDateTimeText(const int64_t epoch, const uint32_t fallbackDate) {
+  if (epoch <= 100000) return dateText(fallbackDate);
+  const time_t local = static_cast<time_t>(epoch + ClockWeatherSyncService::locationOffsetSeconds());
   struct tm timeinfo;
-  gmtime_r(&localNow, &timeinfo);
-  return static_cast<uint32_t>(timeinfo.tm_year + 1900) * 10000UL +
-         static_cast<uint32_t>(timeinfo.tm_mon + 1) * 100UL + static_cast<uint32_t>(timeinfo.tm_mday);
+  gmtime_r(&local, &timeinfo);
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d", timeinfo.tm_year + 1900, timeinfo.tm_mon + 1,
+           timeinfo.tm_mday, timeinfo.tm_hour, timeinfo.tm_min);
+  return buf;
 }
 }  // namespace
 
@@ -59,7 +55,8 @@ void ClockWeatherActivity::rebuildLines() {
   lines.clear();
 
   char time[16] = {};
-  if (halClock.formatTime(time, sizeof(time), displayOffsetQ(), SETTINGS.clockFormat == 1)) {
+  if (halClock.formatTime(time, sizeof(time), ClockWeatherSyncService::locationOffsetQuarterHours(),
+                          SETTINGS.clockFormat == 1)) {
     lines.emplace_back(std::string("Clock: ") + time);
     lines.emplace_back("Date: " + dateText(displayDateKey()));
   } else {
@@ -74,13 +71,15 @@ void ClockWeatherActivity::rebuildLines() {
              ClockWeatherSyncService::weatherDescription(WEATHER_STORE.weatherCode));
     lines.emplace_back(weather);
     lines.emplace_back(std::string("Location: ") + WEATHER_STORE.location);
-    lines.emplace_back("Last weather sync: " + dateText(WEATHER_STORE.lastWeatherSyncDateKey));
+    lines.emplace_back("Last weather sync: " +
+                       syncDateTimeText(WEATHER_STORE.lastWeatherSyncEpoch, WEATHER_STORE.lastWeatherSyncDateKey));
   } else {
     lines.emplace_back("Weather: no cached reading");
     lines.emplace_back(std::string("Location: ") + WEATHER_STORE.location);
     lines.emplace_back("Last weather sync: Never");
   }
-  lines.emplace_back("Last clock sync: " + dateText(WEATHER_STORE.lastClockSyncDateKey));
+  lines.emplace_back("Last clock sync: " +
+                     syncDateTimeText(WEATHER_STORE.lastClockSyncEpoch, WEATHER_STORE.lastClockSyncDateKey));
 
   lines.emplace_back("Wi-Fi auto clock: " + std::string(SETTINGS.clockSyncEnabled ? "On" : "Off"));
   lines.emplace_back("Wi-Fi auto weather: " + std::string(SETTINGS.weatherSyncEnabled ? "On" : "Off"));
@@ -100,6 +99,17 @@ void ClockWeatherActivity::syncNow() {
                                mappedInput.isPressed(MappedInputManager::Button::Back) ||
                                mappedInput.wasReleased(MappedInputManager::Button::Back);
                            requestUpdate();
+  });
+}
+
+void ClockWeatherActivity::changeLocation() {
+  startActivityForResult(std::make_unique<ClockLocationActivity>(renderer, mappedInput),
+                         [this](const ActivityResult&) {
+                           WEATHER_STORE.loadFromFile();
+                           rebuildLines();
+                           suppressBackUntilRelease = mappedInput.isPressed(MappedInputManager::Button::Back) ||
+                                                       mappedInput.wasReleased(MappedInputManager::Button::Back);
+                           requestUpdate(true);
                          });
 }
 
@@ -124,6 +134,10 @@ void ClockWeatherActivity::loop() {
     return;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    changeLocation();
+    return;
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::NavNext)) {
     syncNow();
   }
 }
@@ -179,7 +193,7 @@ void ClockWeatherActivity::render(RenderLock&&) {
     renderer.drawText(UI_10_FONT_ID, side, detailTop + static_cast<int>(i - 4) * lineHeight, line.c_str(), true);
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SYNC_NOW), "", "");
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "Change location", "", tr(STR_SYNC_NOW));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }
