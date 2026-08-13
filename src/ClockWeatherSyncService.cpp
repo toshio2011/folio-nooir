@@ -39,7 +39,7 @@ bool appendResponse(std::string& body, const uint8_t* data, const size_t len) {
 }
 
 std::string urlEncode(const std::string& text) {
-  static constexpr char HEX[] = "0123456789ABCDEF";
+  static constexpr char HEX_DIGITS[] = "0123456789ABCDEF";
   std::string encoded;
   encoded.reserve(text.size() + 16);
   for (const unsigned char c : text) {
@@ -48,8 +48,8 @@ std::string urlEncode(const std::string& text) {
       encoded.push_back(static_cast<char>(c));
     } else if (encoded.size() + 3 <= 512) {
       encoded.push_back('%');
-      encoded.push_back(HEX[c >> 4]);
-      encoded.push_back(HEX[c & 0x0F]);
+      encoded.push_back(HEX_DIGITS[c >> 4]);
+      encoded.push_back(HEX_DIGITS[c & 0x0F]);
     }
   }
   return encoded;
