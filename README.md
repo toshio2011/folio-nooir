@@ -28,9 +28,8 @@ adding a Folio Nooir interface and reading tools.
 
 ## v1.5.7 changes
 
-This is the current non-BLE development build. It focuses on fast shelf navigation,
-cache-first book details, large-library retrieval, sleep/wake controls,
-Clock & Weather, To-Do, and shared X3/X4 display handling.
+This section lists only changes made after the v1.5.7 development baseline.
+The complete firmware feature list remains below.
 
 - Clock & Weather now has a lightweight **Change location** action. Enter a
   city name only; the device resolves coordinates and the IANA timezone,
@@ -39,54 +38,16 @@ Clock & Weather, To-Do, and shared X3/X4 display handling.
 - Clock cards, dates, and clock/weather sync timestamps use the resolved
   location's local offset. Sync now continues to use the saved location and
   never asks for the city again.
-- **Search All Folders** now scans from the SD-card root, matches the complete relative path, skips hidden/non-book images and internal cache/sleep folders, and reports scanned entries/books found in a compact multiline progress popup.
-- Search results retain their nested paths so opening a result goes to the correct folder. Empty searches show a short completion message instead of leaving a blank/stuck shelf.
-- Library highlighting uses an existing EPUB metadata cache without reopening the EPUB or triggering automatic retrieval. Cached title, author, synopsis, and valid cover data are reused; **Refresh Book Cache** remains the explicit repair path for missing or stale data.
-- Retrieve All now uses two stages: it persists lightweight EPUB `metadata.bin` data for every book, then queues only missing/invalid shelf thumbnails for a small, resumable cover pass. It never builds the full reader index for the whole library.
-- Shortened the Text Settings dictionary tab label to **Dict.** so the Controls tab remains visible on the X3/X4 screen.
-- Retrieve All adds a light panel maintenance refresh every 15 completed books to reduce long-run e-ink ghosting without rebuilding the shelf.
-- Lightweight metadata writes use a temporary file and rename commit, so a reset or power loss cannot leave a half-written cache.
-- Retrieve All identifies the current filename and phase (metadata or thumbnail preparation), prioritizes the highlighted book's missing cover, and keeps completed thumbnails when stopped so the next run resumes quickly.
-- Active Retrieve All and recursive search keep the CPU at full speed and temporarily suppress the global sleep timer until the operation finishes.
-- Valid metadata and thumbnail caches are skipped independently. A missing cover is prepared in the second phase without deleting metadata, progress, bookmarks, or clippings; unsupported or oversized covers remain safe filename/title fallbacks.
 - EPUB images with long JPEG Huffman tables now use a bounded streaming pixel cache instead of a large full-image RAM allocation. Cache writes are block-batched, failed cache creation stops cleanly, and later grayscale passes reuse the completed cache instead of decoding the image repeatedly.
 - Image pages redraw the lightweight reader status bar after image restoration, preventing full-page EPUB images from covering the footer during fast/grayscale refreshes.
-- Added one-shot **Sync Clock & Weather**: NTP/RTC time and cached current weather are refreshed together, automatic refresh runs at most once per RTC day (or once per Wi-Fi session on an X4 without an RTC) when Wi-Fi is already being connected, and a device-started sync powers Wi-Fi back off after completion. Location/unit and a Web UI **Sync now** action are available without keeping Wi-Fi permanently enabled.
-- Added an on-device **Clock & Weather** status page to the Library/Recent menu. It reads the cache instantly and offers an explicit **Sync now** action without adding network work to normal shelf navigation.
-- Added **Resume Reader on Wake**. Turn it off to return to the bookshelf after a normal sleep wake; Quick Resume still returns directly to the reader.
-- Added a small right-aligned battery icon and percentage to the Folio Nooir Library, Recent, and Finished shelf headers. It reuses the existing 1.5-second battery cache and does not change shelf geometry or cover loading.
-- Added a persistent **To-Do List** at `/.crosspoint/todo.json`, with on-device check/add/edit/delete/reorder actions, a Folio Nooir web editor, and selectable unchecked/completed/random/all sleep-screen modes.
+- First-install Recent handling now checks lightweight `metadata.bin`/`book.bin` caches once, scans only entries with missing data, and avoids reopening cached books during normal shelf navigation.
+- OPDS browsing now shows loading state before network work, supports cancellable feed fetches and downloads, writes downloads through a temporary file, and avoids large duplicate feed allocations.
+- EPUB formatting now includes optional paragraph indents, improved lists/tables and `<hr>` separators, lightweight strikethrough/redaction handling, and Reader Guide Dots without replacing the existing image pipeline.
 - Added lightweight **Settings Profiles** stored under `/.crosspoint/profiles/`. Profiles save and restore device settings (including reader, controls, typography, sleep, display, and network preferences) without copying book progress, reading statistics, bookmarks, clippings, or runtime sync state.
 - Settings persistence now uses safer temporary-file/rename commits and recovery validation so a reset or interrupted write is less likely to restore defaults or leave a partially written settings file.
 - Favorite sleep images can be selected explicitly; clearing the favorite returns to random sleep-image selection, with recent-image history reducing immediate repeats. Transparent overlays and cover/clipping modes continue to use the selected image policy.
-- To-Do presentation now includes open/done counts, lightweight priority markers, priority-aware ordering, and a centered sleep card that fits the selected list within 98% of the screen.
-- To-Do sleep cards follow the selected mode: Unchecked, Completed, Random, or All. The All mode displays every task, including checked `[x]` items, in a centered card that can use up to 98% of the display height.
-- Quick Resume and wake routing are now independent settings. The selected sleep frame controls what is shown while asleep; Resume Reader on Wake controls whether waking opens the last reader or the bookshelf.
-- Improved newer X3 display compatibility with a conservative UC8279d/UC8253 controller probe before SPI starts. The detected controller is cached, an explicit override is respected, and an inconclusive probe falls back to the original UC8253 path. The older X4 SSD1677 path remains the default unless an X4 controller probe is explicitly enabled for validated hardware.
 - Web Transfer now yields regularly during sustained uploads/downloads so the Wi‑Fi and SD tasks keep running; the Bookshelf page no longer parses EPUBs or decodes missing covers while it is open.
 - Added **Edit book metadata** beside EPUB/XTC/TXT/Markdown files in Transfer. Title, author, and synopsis edits are stored in a lightweight device-side override and are applied to Library/Recent without rewriting the book or disturbing reading progress, bookmarks, or clippings.
-
-### Quick Resume and wake behavior
-
-These two settings control different parts of sleep:
-
-- **Quick Resume on + Resume Reader on Wake on:** the current page remains visible during sleep and waking returns quickly to the reader.
-- **Quick Resume on + Resume Reader on Wake off:** the current page remains visible during sleep, but waking goes to Recent/Library.
-- **Quick Resume off + Resume Reader on Wake on:** the configured normal sleep image is shown, then waking reopens the reader.
-- **Quick Resume off + Resume Reader on Wake off:** the configured normal sleep image is shown, then waking goes to Recent/Library.
-
-Quick Resume can be selected as the sleep screen itself, or enabled only for automatic inactivity timeout. Resume Reader on Wake only chooses the destination after wake; it does not keep Wi-Fi or Bluetooth running.
-
-Further v1.5.7 reliability and performance changes:
-
-- Added lightweight page-turn statistics for EPUB, XTC/XTCH, and TXT readers. Counters are committed when leaving a book, so normal page turns do not add SD-card writes or slow rendering.
-- Added per-book and daily pages turned, pages-per-minute pace, current reading streak, and best streak statistics on-device and in the web statistics dashboard.
-- Extended the reading calendar and web JSON export with page counts and pace data while keeping older statistics files compatible.
-- Improved Retrieve All Book Details with a streaming SD-card queue, valid-cache skipping, visible book/progress feedback, and a responsive **Stop for now** action for large libraries.
-- Retrieve All and per-book retrieval now refresh only the affected shelf entry instead of rebuilding the entire bookshelf.
-- Changed retrieval progress dialogs to a light-gray, black-text style to reduce black-popup ghosting on e-ink displays.
-- Added filename-first Library search: current-folder filtering is immediate and does not open books or retrieve metadata.
-- The default build is non-BLE; Bluetooth remains isolated and experimental.
 
 ## Features
 
