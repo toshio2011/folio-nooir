@@ -11,11 +11,13 @@
 #include <algorithm>
 
 #include "CrossPointSettings.h"
+#include "CrossPointState.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
 namespace {
 constexpr char PNG_VIEWER_CACHE[] = "/.crosspoint/.image-viewer.bmp";
+constexpr char FAVORITE_SLEEP_BMP[] = "/.crosspoint/.favorite-sleep.bmp";
 }
 
 BmpViewerActivity::BmpViewerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string path)
@@ -149,7 +151,8 @@ void BmpViewerActivity::onEnter() {
                       currentImageIndex < static_cast<int>(siblingImages.size()) - 1);
 
       const auto labels =
-          mappedInput.mapLabels(tr(STR_BACK), tr(STR_SET_SLEEP_COVER), (hasPrevious ? "<" : ""), (hasNext ? ">" : ""));
+          mappedInput.mapLabels(tr(STR_BACK), tr(STR_SET_FAVORITE_SLEEP), (hasPrevious ? "<" : ""),
+                                (hasNext ? ">" : ""));
 
       GUI.fillPopupProgress(renderer, popupRect, 50);
 
@@ -195,8 +198,9 @@ void BmpViewerActivity::doSetSleepCover() {
 
   bool success = false;
   HalFile inFile, outFile;
+  Storage.ensureDirectoryExists("/.crosspoint");
   if (Storage.openFileForRead("BMP", renderPath, inFile)) {
-    if (Storage.openFileForWrite("BMP", "/sleep.bmp", outFile)) {
+    if (Storage.openFileForWrite("BMP", FAVORITE_SLEEP_BMP, outFile)) {
       char buffer[2048];
       int bytesRead;
       success = true;
@@ -212,6 +216,12 @@ void BmpViewerActivity::doSetSleepCover() {
   }
 
   if (success) {
+    // Keep the original source path for transparent overlay use, while the
+    // rendered BMP cache makes normal custom sleep fast and format-agnostic.
+    APP_STATE.favoriteSleepImagePath = filePath;
+    APP_STATE.favoriteSleepImageBmpPath = FAVORITE_SLEEP_BMP;
+    APP_STATE.legacySleepImageDisabled = false;
+    APP_STATE.saveToFile();
     SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM;
     SETTINGS.saveToFile();
     GUI.drawPopup(renderer, tr(STR_DONE));

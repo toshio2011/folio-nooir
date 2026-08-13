@@ -1962,6 +1962,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
                                         const int orientedMarginLeft) {
   const auto t0 = millis();
   const int fontId = SETTINGS.getReaderFontId();
+  const bool guideDots = SETTINGS.guideDots != 0;
 
   // The image pixel-cache RAM slot lives for exactly one page render (it feeds
   // the BW double-refresh and every grayscale band pass); release it on every
@@ -1985,7 +1986,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   }
 
   auto scope = fcm->createPrewarmScope();
-  page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);  // scan pass
+  page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop, guideDots);  // scan pass
   scope.endScanAndPrewarm();
   const auto tPrewarm = millis();
 
@@ -2001,14 +2002,18 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const bool overlapRefresh = tiledGrayscale && renderer.supportsAsyncRefresh() && !pageHasImages;
   auto renderGrayscalePass = [&]() {
     if (needsTextGrayscale) {
-      page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
+      page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop, guideDots);
       renderSavedHighlights(*page, fontId, orientedMarginLeft, orientedMarginTop);
     } else {
       page->renderImages(renderer, fontId, orientedMarginLeft, orientedMarginTop);
+      // Image-only grayscale passes draw after the normal page/status-bar pass.
+      // Redraw the lightweight status bar last so a full-page EPUB image cannot
+      // paint over the footer on X3/X4 panels.
+      renderStatusBar();
     }
   };
 
-  page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
+  page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop, guideDots);
   renderSavedHighlights(*page, fontId, orientedMarginLeft, orientedMarginTop);
   renderStatusBar();
   const auto tBwRender = millis();
@@ -2025,6 +2030,9 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     // Restore only the image rectangles. Text and status-bar pixels were not
     // blanked, so avoid another full page/font render here.
     page->renderImages(renderer, fontId, orientedMarginLeft, orientedMarginTop);
+    // The image is restored after the first status-bar draw. Keep the footer
+    // visible and deterministic without another full-screen refresh.
+    renderStatusBar();
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     // The image's own page is handled above and doesn't count toward the full
     // refresh cadence. But the grayscale pass below leaves gray charge in the

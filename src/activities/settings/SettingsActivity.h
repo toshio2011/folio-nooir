@@ -31,6 +31,8 @@ enum class SettingAction {
   Bluetooth,
   ClockWeatherSync,
   ToDoList,
+  SettingsProfiles,
+  ClearFavoriteSleepImage,
 };
 
 struct SettingInfo {

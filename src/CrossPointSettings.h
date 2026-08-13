@@ -374,6 +374,13 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t highlightColor = HIGHLIGHT_BLACK;
   // Focus Reading - emphasizes the first part of words with bold
   uint8_t focusReadingEnabled = 0;
+  // Force a modest first-line indent for paragraph-like blocks that do not
+  // provide one themselves. This is a layout option and invalidates EPUB
+  // section caches when changed.
+  uint8_t forceParagraphIndents = 0;
+  // Draw small guide dots between words at render time. This intentionally
+  // does not change pagination or section-cache size.
+  uint8_t guideDots = 0;
   // SD card font family name (empty = use built-in fontFamily)
   char sdFontFamilyName[32] = "";
   // Dictionary folder name under /dictionaries (empty = no dictionary)

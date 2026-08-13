@@ -456,12 +456,12 @@ int ParsedText::resolveFirstLineIndent(const bool isFirstLine, const GfxRenderer
     return 0;
   }
   if (blockStyle.textIndentDefined) {
-    if (blockStyle.textIndent < 0 || !extraParagraphSpacing) {
+    if (blockStyle.textIndent < 0 || !extraParagraphSpacing || blockStyle.forceParagraphIndent) {
       return blockStyle.textIndent;
     }
     return 0;
   }
-  if (!extraParagraphSpacing) {
+  if (!extraParagraphSpacing || blockStyle.forceParagraphIndent) {
     return renderer.getSpaceWidth(fontId, EpdFontFamily::REGULAR) * 3;
   }
   return 0;

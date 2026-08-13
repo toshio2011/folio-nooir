@@ -470,7 +470,15 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   };
 
   bool success = decodeImage(config);
-  if (!success && !sourceRefreshAttempted && !srcPath.empty() && extractFn) {
+  // A full-size image can take a noticeable amount of time to decode.  Do not
+  // blindly inflate and decode it a second time when the decoder rejects a
+  // valid-but-unsupported image: that was the source of pages that appeared
+  // frozen for several seconds.  A retry is still useful for a malformed
+  // cache or a tiny/truncated extracted source, which are the cases where a
+  // second extraction can actually repair the input.
+  const bool sourceLooksTruncated = fileSize <= 4096;
+  if (!success && !sourceRefreshAttempted && !srcPath.empty() && extractFn &&
+      (staleCacheWasRemoved || sourceLooksTruncated)) {
     // A failed first extraction can leave a non-empty but truncated source on
     // the SD card. The old recovery only refreshed when a malformed .pxc had
     // already been detected, so a bad source with no cache stayed broken for
@@ -488,17 +496,6 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
       LOG_DBG("IMG", "Retrying decode after source refresh: %s", imagePath.c_str());
       success = decodeImage(config);
     }
-  }
-  if (!success) {
-    // Pixel-cache allocation is deliberately opportunistic. If the image was
-    // decoded correctly but the cache writer ran out of fragmented heap, retry
-    // once without a .pxc target so the image can still reach the framebuffer.
-    // Subsequent page passes will use the normal streaming path or rebuild the
-    // cache on the next visit; this avoids showing an empty outlined rectangle.
-    RenderConfig directConfig = config;
-    directConfig.cachePath.clear();
-    LOG_DBG("IMG", "Retrying decode without pixel cache: %s", imagePath.c_str());
-    success = decodeImage(directConfig);
   }
   if (!success) {
     LOG_ERR("IMG", "Failed to decode image: %s", imagePath.c_str());

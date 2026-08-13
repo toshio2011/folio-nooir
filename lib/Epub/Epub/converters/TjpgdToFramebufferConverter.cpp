@@ -11,6 +11,7 @@
 #include <new>
 
 #include "DirectPixelWriter.h"
+#include "PixelCache.h"
 #include "DitherUtils.h"
 
 extern "C" {
@@ -21,8 +22,6 @@ namespace {
 
 constexpr size_t TJPGD_WORK_BYTES = 8 * 1024;
 constexpr size_t TJPGD_SKIP_BYTES = 512;
-constexpr size_t MAX_FALLBACK_CACHE_BYTES = 96 * 1024;
-constexpr size_t FALLBACK_CACHE_HEADROOM = 24 * 1024;
 
 struct TjpgdFileContext {
   HalFile file;
@@ -40,8 +39,8 @@ struct TjpgdDecodeContext {
   int dstWidth = 0;
   int dstHeight = 0;
   bool dither = true;
-  std::unique_ptr<uint8_t[]> cache;
-  int cacheBytesPerRow = 0;
+  PixelCache cache;
+  bool caching = false;
 };
 
 size_t tjpgdInput(JDEC* jd, uint8_t* buffer, size_t length) {
@@ -64,14 +63,6 @@ size_t tjpgdInput(JDEC* jd, uint8_t* buffer, size_t length) {
   return total;
 }
 
-inline void setCachePixel(TjpgdDecodeContext& ctx, const int x, const int y, const uint8_t value) {
-  if (!ctx.cache || x < 0 || y < 0 || x >= ctx.dstWidth || y >= ctx.dstHeight) return;
-  const int byteIndex = x >> 2;
-  const int bitShift = 6 - (x & 3) * 2;
-  uint8_t& cell = ctx.cache[static_cast<size_t>(y) * ctx.cacheBytesPerRow + byteIndex];
-  cell = static_cast<uint8_t>((cell & ~(0x03u << bitShift)) | ((value & 0x03u) << bitShift));
-}
-
 int tjpgdOutput(JDEC* jd, void* bitmap, JRECT* rect) {
   auto* ctx = static_cast<TjpgdDecodeContext*>(jd->device);
   if (ctx == nullptr || ctx->renderer == nullptr || bitmap == nullptr || rect == nullptr) return 0;
@@ -81,6 +72,21 @@ int tjpgdOutput(JDEC* jd, void* bitmap, JRECT* rect) {
   const int rectHeight = static_cast<int>(rect->bottom - rect->top + 1);
   DirectPixelWriter writer;
   writer.init(*ctx->renderer);
+  DirectCacheWriter cacheWriter{};
+  int cacheOriginY = 0;
+  if (ctx->caching) {
+    int firstDestY = (static_cast<int>(rect->top) * ctx->dstHeight) / std::max(1, ctx->srcHeight);
+    if (firstDestY >= ctx->dstHeight) firstDestY = ctx->dstHeight - 1;
+    if (firstDestY < 0) firstDestY = 0;
+    if (!ctx->cache.advanceTo(firstDestY)) {
+      LOG_ERR("IMG", "TJpgDec pixel cache stream failed at block row %d", firstDestY);
+      ctx->cache.abort();
+      ctx->caching = false;
+      return 0;
+    }
+    cacheWriter.init(ctx->cache.buffer, ctx->cache.bytesPerRow, ctx->cache.bandRows, ctx->cache.originX);
+    cacheOriginY = ctx->cache.originY + ctx->cache.bandStart;
+  }
 
   for (int row = 0; row < rectHeight; row++) {
     const int sourceY = static_cast<int>(rect->top) + row;
@@ -88,6 +94,9 @@ int tjpgdOutput(JDEC* jd, void* bitmap, JRECT* rect) {
     if (destY >= ctx->dstHeight) destY = ctx->dstHeight - 1;
     if (destY < 0) continue;
     writer.beginRow(ctx->y + destY);
+    if (ctx->caching) {
+      cacheWriter.beginRow(ctx->y + destY, cacheOriginY);
+    }
 
     for (int col = 0; col < rectWidth; col++) {
       const int sourceX = static_cast<int>(rect->left) + col;
@@ -100,7 +109,7 @@ int tjpgdOutput(JDEC* jd, void* bitmap, JRECT* rect) {
                                 ? applyBayerDither4Level(gray, ctx->x + destX, ctx->y + destY)
                                 : static_cast<uint8_t>(gray / 85u > 3u ? 3u : gray / 85u);
       writer.writePixel(ctx->x + destX, level);
-      setCachePixel(*ctx, destX, destY, level);
+      if (ctx->caching) cacheWriter.writePixel(ctx->x + destX, level);
     }
   }
   return 1;
@@ -185,28 +194,6 @@ bool hasLongAcHuffmanCode(const std::string& imagePath) {
   return false;
 }
 
-bool writePixelCache(const std::string& cachePath, TjpgdDecodeContext& ctx) {
-  if (!ctx.cache) return true;
-  HalFile file;
-  if (!Storage.openFileForWrite("IMG", cachePath, file)) {
-    LOG_ERR("IMG", "TJpgDec cache open failed: %s", cachePath.c_str());
-    return false;
-  }
-  const uint16_t width = static_cast<uint16_t>(ctx.dstWidth);
-  const uint16_t height = static_cast<uint16_t>(ctx.dstHeight);
-  const size_t payloadBytes = static_cast<size_t>(ctx.cacheBytesPerRow) * ctx.dstHeight;
-  if (file.write(&width, 2) != 2 || file.write(&height, 2) != 2 ||
-      file.write(ctx.cache.get(), payloadBytes) != payloadBytes) {
-    file.close();
-    Storage.remove(cachePath.c_str());
-    LOG_ERR("IMG", "TJpgDec cache write failed: %s", cachePath.c_str());
-    return false;
-  }
-  file.close();
-  LOG_DBG("IMG", "TJpgDec cache written: %s (%dx%d)", cachePath.c_str(), ctx.dstWidth, ctx.dstHeight);
-  return true;
-}
-
 }  // namespace
 
 bool TjpgdToFramebufferConverter::requiresFallback(const std::string& imagePath) {
@@ -255,15 +242,6 @@ bool TjpgdToFramebufferConverter::decodeToFramebuffer(const std::string& imagePa
   ctx.srcHeight = decoder.height;
   if (!validateImageDimensions(ctx.srcWidth, ctx.srcHeight, "TJpgDec JPEG")) return false;
 
-  if (!config.cachePath.empty()) {
-    ctx.cacheBytesPerRow = (ctx.dstWidth + 3) / 4;
-    const size_t cacheBytes = static_cast<size_t>(ctx.cacheBytesPerRow) * ctx.dstHeight;
-    if (cacheBytes <= MAX_FALLBACK_CACHE_BYTES && ESP.getFreeHeap() > cacheBytes + FALLBACK_CACHE_HEADROOM) {
-      ctx.cache.reset(new (std::nothrow) uint8_t[cacheBytes]);
-      if (ctx.cache) memset(ctx.cache.get(), 0, cacheBytes);
-    }
-  }
-
   uint8_t scale = 0;
   while (scale < 3 && (ctx.srcWidth >> (scale + 1)) >= ctx.dstWidth &&
          (ctx.srcHeight >> (scale + 1)) >= ctx.dstHeight) {
@@ -273,12 +251,39 @@ bool TjpgdToFramebufferConverter::decodeToFramebuffer(const std::string& imagePa
   // space, not the original JPEG coordinate space.
   ctx.srcWidth = std::max(1, ctx.srcWidth >> scale);
   ctx.srcHeight = std::max(1, ctx.srcHeight >> scale);
+
+  // Use the same bounded streaming cache as the normal JPEG decoder. The old
+  // fallback allocated the complete 2bpp image (often 80–96 KB) and silently
+  // disabled caching when the heap was fragmented. A successful decode then
+  // ran again for every grayscale strip. A small band keeps the heap stable
+  // and leaves a persistent .pxc for all later passes/page turns.
+  if (!config.cachePath.empty()) {
+    // TJpgDec emits at most one JPEG MCU row per callback. A 4:2:0 MCU is
+    // 16 source rows high; account for the decoder's 1/2, 1/4 and 1/8 scale
+    // modes so the cache band is no larger than necessary.
+    constexpr int MAX_MCU_ROWS = 16;
+    const int scaleFactor = 1 << scale;
+    const int maxBlockDstRows = std::max(1, (MAX_MCU_ROWS + scaleFactor - 1) / scaleFactor);
+    ctx.caching = ctx.cache.begin(config.cachePath, ctx.dstWidth, ctx.dstHeight, config.x, config.y,
+                                  maxBlockDstRows);
+    if (!ctx.caching) {
+      // A direct decode would look correct for the first BW pass but would be
+      // repeated for every grayscale pass because there is no cache to reuse.
+      // Fail fast instead of turning one image into a multi-second render loop.
+      LOG_ERR("IMG", "TJpgDec cache stream unavailable; skipping uncached decode");
+      return false;
+    }
+  }
   const JRESULT result = jd_decomp(&decoder, tjpgdOutput, scale);
-  if (ctx.io.ioError || (result != JDR_OK && result != JDR_INTR)) {
+  if (ctx.io.ioError || result != JDR_OK) {
     LOG_ERR("JPG", "TJpgDec decode failed (%d): %s", static_cast<int>(result), imagePath.c_str());
-    if (!config.cachePath.empty()) Storage.remove(config.cachePath.c_str());
+    if (ctx.caching) ctx.cache.abort();
     return false;
   }
 
-  return writePixelCache(config.cachePath, ctx);
+  if (ctx.caching && !ctx.cache.finalize()) {
+    LOG_ERR("IMG", "TJpgDec cache finalize failed: %s", config.cachePath.c_str());
+    return false;
+  }
+  return true;
 }

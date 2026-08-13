@@ -108,7 +108,8 @@ TextBlock::TextBlock(const std::vector<std::string>& words, const std::vector<in
   }
 }
 
-void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int x, const int y) const {
+void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int x, const int y,
+                       const bool guideDots) const {
   if (!isValid) {
     LOG_ERR("TXB", "Render skipped: invalid block");
     return;
@@ -168,6 +169,21 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
       wordY += ascender / 4;
     }
 
+    const bool redacted = (currentStyle & EpdFontFamily::REDACTION) != 0;
+    const auto baseStyle = static_cast<EpdFontFamily::Style>(currentStyle & ~EpdFontFamily::REDACTION);
+
+    if (redacted) {
+      // Redaction is deliberately a render-time black bar. The original text
+      // remains in the cached layout so wrapping stays deterministic, while no
+      // unsupported glyph or font allocation is needed to display it.
+      if (!scanning) {
+        const int width = std::max(2, renderer.getTextWidth(fontId, word, baseStyle));
+        const int height = std::max(2, ascender - 2);
+        renderer.fillRect(wordX, wordY + 1, width, height, true);
+      }
+      continue;
+    }
+
     if (boundary > 0) {
       // Focus split: draw bold prefix, then the regular suffix at a pre-computed x offset.
       // The bold prefix is bounded to 9 codepoints by the clamp on targetBoldChars in
@@ -191,6 +207,20 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
 
     if (scanning) {
       continue;
+    }
+
+    if (guideDots && i + 1 < numWords) {
+      const char* nextWord = wordText(static_cast<uint16_t>(i + 1));
+      const int currentWidth = renderer.getTextAdvanceX(fontId, word, baseStyle);
+      const int nextX = xposArr[i + 1] + x;
+      const int gap = nextX - (wordX + currentWidth);
+      // A one-pixel dot is enough on e-ink and costs no layout/cache space.
+      // Require a real gap so punctuation/continued fragments are untouched.
+      if (gap >= 2 && nextWord[0] != '\0') {
+        const int dotX = wordX + currentWidth + gap / 2;
+        const int dotY = wordY + ascender / 2;
+        renderer.drawPixel(dotX, dotY, true);
+      }
     }
 
     if (EpdFontFamily::hasTextDecoration(currentStyle)) {

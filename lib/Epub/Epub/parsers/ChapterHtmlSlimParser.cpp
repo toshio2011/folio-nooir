@@ -52,6 +52,28 @@ constexpr const char* SKIP_TAGS[] = {"head"};
 
 bool isWhitespace(const char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t'; }
 
+// Common EPUB redactions use a `.black`/`.redact` span containing a blank, or
+// an inline black background. Keep detection deliberately narrow so ordinary
+// black text styles are not hidden.
+bool isRedactionStyle(const std::string& classAttr, const std::string& styleAttr) {
+  const auto hasClassToken = [&classAttr](const char* wanted) {
+    size_t start = 0;
+    while (start < classAttr.size()) {
+      while (start < classAttr.size() && isWhitespace(classAttr[start])) start++;
+      size_t end = start;
+      while (end < classAttr.size() && !isWhitespace(classAttr[end])) end++;
+      if (classAttr.compare(start, end - start, wanted) == 0) return true;
+      start = end;
+    }
+    return false;
+  };
+  const bool classMatch = hasClassToken("black") || hasClassToken("redact") || hasClassToken("redaction") ||
+                          hasClassToken("censor") || hasClassToken("censored");
+  const bool styleMatch = styleAttr.find("background-color") != std::string::npos &&
+                          (styleAttr.find("black") != std::string::npos || styleAttr.find("#000") != std::string::npos);
+  return classMatch || styleMatch;
+}
+
 bool matches(const char* tag_name, const char* const* possible_tags, size_t count) {
   for (size_t i = 0; i < count; i++) {
     if (strcmp(tag_name, possible_tags[i]) == 0) {
@@ -155,6 +177,7 @@ void ChapterHtmlSlimParser::updateEffectiveInlineStyle() {
   effectiveDirection = currentCssStyle.direction;
   effectiveSup = false;
   effectiveSub = false;
+  effectiveRedaction = false;
 
   // Apply inline style stack in order
   for (const auto& entry : inlineStyleStack) {
@@ -181,6 +204,13 @@ void ChapterHtmlSlimParser::updateEffectiveInlineStyle() {
       effectiveSub = entry.sub;
       if (entry.sub) effectiveSup = false;
     }
+    if (entry.hasRedaction) {
+      effectiveRedaction = entry.redaction;
+    }
+  }
+
+  if (!effectiveRedaction) {
+    redactionWhitespaceAdded = false;
   }
 
   // Keep inherited direction in the active empty text block so upcoming block starts
@@ -244,6 +274,10 @@ void ChapterHtmlSlimParser::flushPartWordBuffer() {
     fontStyle = static_cast<EpdFontFamily::Style>(fontStyle | EpdFontFamily::SUP);
   } else if (effectiveSub) {
     fontStyle = static_cast<EpdFontFamily::Style>(fontStyle | EpdFontFamily::SUB);
+  }
+  if (effectiveRedaction) {
+    fontStyle = static_cast<EpdFontFamily::Style>(fontStyle | EpdFontFamily::REDACTION);
+    redactionWhitespaceAdded = true;
   }
 
   // flush the buffer
@@ -385,6 +419,9 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   if (strcmp(name, "li") == 0) {
     self->xpathListItemIndex++;
   }
+  if (strcmp(name, "ul") == 0 || strcmp(name, "ol") == 0) {
+    self->listDepth = static_cast<uint8_t>(std::min<int>(self->listDepth + 1, 8));
+  }
 
   // Extract class, style, id, and dir attributes for CSS/RTL processing
   std::string classAttr;
@@ -439,6 +476,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       cssStyle.applyOver(inlineStyle);
     }
   }
+  const bool redactionRequested = isRedactionStyle(classAttr, styleAttr);
 
   // HTML dir attribute overrides CSS direction (case-insensitive per HTML spec)
   if (!dirAttr.empty()) {
@@ -892,8 +930,20 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   }
 
   const float emSize = static_cast<float>(self->renderer.getFontAscenderSize(self->fontId));
-  const auto userAlignmentBlockStyle = BlockStyle::fromCssStyle(
+  auto userAlignmentBlockStyle = BlockStyle::fromCssStyle(
       cssStyle, emSize, static_cast<CssTextAlign>(self->paragraphAlignment), self->viewportWidth);
+
+  // Some EPUBs flatten paragraphs into consecutive block elements without
+  // spacing or indentation. Keep the fallback small and only opt it in for
+  // paragraph-like tags; headings and list bullets remain untouched.
+  if (self->forceParagraphIndents &&
+      (strcmp(name, "p") == 0 || strcmp(name, "div") == 0 || strcmp(name, "blockquote") == 0)) {
+    userAlignmentBlockStyle.forceParagraphIndent = true;
+  }
+  if (strcmp(name, "li") == 0 && self->listDepth > 0) {
+    userAlignmentBlockStyle.marginLeft = static_cast<int16_t>(
+        std::min<int>(userAlignmentBlockStyle.marginLeft + static_cast<int>(self->listDepth) * 12, 48));
+  }
 
   if (strcmp(name, "hr") == 0) {
     auto hrBlockStyle = BlockStyle::fromCssStyle(cssStyle, emSize, CssTextAlign::Left, self->viewportWidth);
@@ -950,6 +1000,15 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       self->blockStyleStack.push_back(accumulated);
       self->startNewTextBlock(accumulated.withoutBottom());
       if (self->allocationFailed_) return;
+
+      if (redactionRequested) {
+        StyleStackEntry entry;
+        entry.depth = self->depth;
+        entry.hasRedaction = true;
+        entry.redaction = true;
+        self->inlineStyleStack.push_back(entry);
+        self->redactionWhitespaceAdded = false;
+      }
       self->updateEffectiveInlineStyle();
 
       if (strcmp(name, "li") == 0) {
@@ -1030,7 +1089,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   } else if (strcmp(name, "span") == 0 || !isHeaderOrBlock(name)) {
     // Handle span and other inline elements for CSS styling
     if (cssStyle.hasFontWeight() || cssStyle.hasFontStyle() || cssStyle.hasTextDecoration() ||
-        cssStyle.hasDirection() || cssStyle.hasVerticalAlign()) {
+        cssStyle.hasDirection() || cssStyle.hasVerticalAlign() || redactionRequested) {
       // Flush buffer before style change so preceding text gets current style
       if (self->partWordBufferIndex > 0) {
         self->flushPartWordBuffer();
@@ -1056,6 +1115,11 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
           entry.hasSub = true;
           entry.sub = true;
         }
+      }
+      if (redactionRequested) {
+        entry.hasRedaction = true;
+        entry.redaction = true;
+        self->redactionWhitespaceAdded = false;
       }
       self->inlineStyleStack.push_back(entry);
       self->updateEffectiveInlineStyle();
@@ -1113,6 +1177,10 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
       // Currently looking at whitespace, if there's anything in the partWordBuffer, flush it
       if (self->partWordBufferIndex > 0) {
         self->flushPartWordBuffer();
+      }
+      if (self->effectiveRedaction && !self->redactionWhitespaceAdded) {
+        self->currentTextBlock->addWord("\xe2\x80\x83", EpdFontFamily::REDACTION, false, false);
+        self->redactionWhitespaceAdded = true;
       }
       // Whitespace is a real word boundary — reset continuation state
       self->nextWordContinues = false;
@@ -1301,6 +1369,10 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
   }
 
   self->depth -= 1;
+
+  if (strcmp(name, "ul") == 0 || strcmp(name, "ol") == 0) {
+    if (self->listDepth > 0) self->listDepth--;
+  }
 
   // Closing a footnote link — create entry from collected text and href
   if (self->insideFootnoteLink && self->depth == self->footnoteLinkDepth) {

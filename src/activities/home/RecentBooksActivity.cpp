@@ -31,9 +31,17 @@
 
 namespace {
 constexpr char FOLIO_HOME_SNAPSHOT[] = "/.crosspoint/folio_home.bin";
+// This marker makes the cache probe a one-time migration step.  Recent is
+// opened often, so checking every EPUB/thumbnail on every visit would bring
+// back the post-boot hitch this activity was designed to avoid.
+constexpr char RECENT_CACHE_BOOTSTRAP_MARKER[] = "/.crosspoint/recent_cache_bootstrap_v1";
 constexpr uint32_t FOLIO_HOME_MAGIC = 0x464E484D;  // "FNHM"
 constexpr uint16_t FOLIO_HOME_VERSION = 2;
 constexpr unsigned long RETRIEVE_POPUP_TIMEOUT_MS = 2500;
+// Keep the X3 bootstrap bounded when an EPUB embeds a pathological cover.
+// Retrieve All uses the same limit; the shelf can safely show its title
+// placeholder when the source is larger than this.
+constexpr size_t MAX_RECENT_THUMBNAIL_SOURCE_BYTES = 512u * 1024u;
 
 bool isClippingsExport(const std::string& path) {
   std::string name = path;
@@ -58,22 +66,25 @@ void RecentBooksActivity::loadRecentBooks() { recentBooks = RECENT_BOOKS.getBook
 bool RecentBooksActivity::hasMissingRecentCache() const {
   for (const auto& book : recentBooks) {
     if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path)) continue;
-    // Do not touch the SD card while entering Recent/Finished. A title is
-    // enough to render a cached entry (the shelf will use a filename/title
-    // placeholder when its cover is missing). Invalid thumbnails are fixed
-    // only by the explicit Refresh Book Cache action.
+    // RecentBook can survive a firmware update/cache deletion, so a non-empty
+    // title alone does not prove that the lightweight cache still exists.
+    // Probe only the at-most-ten Recent entries during the one-time bootstrap;
+    // normal visits never run this path.
     if (book.title.empty()) return true;
-  }
-  return false;
-}
 
-bool RecentBooksActivity::hasAnyRecentCache() const {
-  for (const auto& book : recentBooks) {
-    if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path)) continue;
-    // A title with or without a cover path is a valid metadata-only cache.
-    // This is intentionally an in-memory check: checking every thumbnail on
-    // SD during boot was the remaining source of the post-boot hitch.
-    if (!book.title.empty()) return true;
+    if (FsHelpers::hasEpubExtension(book.path)) {
+      Epub epub(book.path, "/.crosspoint");
+      if (!epub.loadCachedMetadataOnly()) return true;
+      const std::string thumbPath = UITheme::getCoverThumbPath(
+          book.coverBmpPath.empty() ? epub.getThumbBmpPath() : book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
+      if (!isValidBookThumbnail(thumbPath)) return true;
+    } else if (!book.coverBmpPath.empty()) {
+      // XTC has no metadata.bin. Its stored presentation path plus a valid
+      // thumbnail is the equivalent cache check. An empty path is allowed:
+      // some XTC files legitimately have no cover image.
+      const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
+      if (!isValidBookThumbnail(thumbPath)) return true;
+    }
   }
   return false;
 }
@@ -174,7 +185,10 @@ void RecentBooksActivity::generateNextCover() {
   // First-run warmup and manual Refresh Book Cache only need the lightweight
   // bookshelf metadata path.  Do not build the reader's spine/TOC cache here;
   // that work is deferred until the user opens the book.
-  const bool forceRebuild = coverGenerationRequested;
+  // Warm-up must process only entries whose cache probe found a gap. Manual
+  // Refresh Book Cache is the only path that intentionally forces a reread of
+  // the selected book even when its files already exist.
+  const bool forceRebuild = coverGenerationRequested && !recentCacheWarmupActive;
   const bool metadataOnly = forceRebuild || recentCacheWarmupActive;
   while (nextCoverToGenerate < recentBooks.size()) {
     RecentBook& book = recentBooks[nextCoverToGenerate++];
@@ -190,7 +204,13 @@ void RecentBooksActivity::generateNextCover() {
     bool attempted = false;
     if (FsHelpers::hasEpubExtension(book.path)) {
       Epub epub(book.path, "/.crosspoint");
-      const bool loaded = metadataOnly ? epub.loadMetadataOnly() : epub.load(false, true);
+      // During the one-time bootstrap, reuse metadata.bin/book.bin whenever
+      // possible. Only books whose lightweight cache is absent are parsed
+      // from the EPUB package; manual Refresh remains an explicit source
+      // reread.
+      bool loaded = false;
+      if (recentCacheWarmupActive && !metadataMissing) loaded = epub.loadCachedMetadataOnly();
+      if (!loaded) loaded = metadataOnly ? epub.loadMetadataOnly() : epub.load(false, true);
       if (loaded) {
         attempted = true;
         const std::string title = epub.getTitle().empty() ? book.title : epub.getTitle();
@@ -218,9 +238,19 @@ void RecentBooksActivity::generateNextCover() {
         if (!book.coverBmpPath.empty()) {
           const std::string thumb = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
           if (!isValidBookThumbnail(thumb)) {
-            Storage.remove(thumb.c_str());
-            if (!epub.generateThumbBmp(BOOKSHELF_COVER_HEIGHT) || !isValidBookThumbnail(thumb)) {
-              LOG_ERR("SHELF", "Could not regenerate EPUB thumbnail: %s", book.path.c_str());
+            const size_t coverBytes = epub.getCoverImageSize();
+            if (coverBytes > MAX_RECENT_THUMBNAIL_SOURCE_BYTES) {
+              LOG_DBG("SHELF", "Skipping oversized Recent thumbnail source (%lu bytes): %s",
+                      static_cast<unsigned long>(coverBytes), book.path.c_str());
+            } else if (coverBytes == 0) {
+              // No cover reference (or an unresolvable reference). Keep the
+              // lightweight metadata and let the shelf use its placeholder.
+              LOG_DBG("SHELF", "No usable EPUB cover for Recent: %s", book.path.c_str());
+            } else {
+              Storage.remove(thumb.c_str());
+              if (!epub.generateThumbBmp(BOOKSHELF_COVER_HEIGHT) || !isValidBookThumbnail(thumb)) {
+                LOG_ERR("SHELF", "Could not regenerate EPUB thumbnail: %s", book.path.c_str());
+              }
             }
           }
         }
@@ -281,6 +311,9 @@ void RecentBooksActivity::generateNextCover() {
   if (recentCacheWarmupActive) {
     recentCacheWarmupActive = false;
     recentCacheWarmupPopupRendered = false;
+    // Do not repeat the SD probe on every Recent visit. A failed/missing
+    // source is still safe to retry through the explicit Refresh action.
+    Storage.writeFile(RECENT_CACHE_BOOTSTRAP_MARKER, String("1"));
   }
   requestUpdate();
 }
@@ -433,14 +466,20 @@ void RecentBooksActivity::onEnter() {
   // during the first interaction after boot.
   snapshotWritePending = false;
   snapshotWriteRequestedMs = 0;
-  // Do not rescan Recent/Finished in the background on every visit. Once any
-  // valid shelf cache exists, missing entries use the title/filename fallback
-  // until the user explicitly chooses Refresh Book Cache. Only a completely
-  // empty cache (first install or a full cache clear) gets the one-time warmup.
-  recentCacheWarmupActive = hasMissingRecentCache() && !hasAnyRecentCache();
+  // Probe the persisted cache only once after install/update. This catches a
+  // retained recent.json whose title fields survived while metadata.bin or a
+  // thumbnail was removed, without adding SD work to ordinary Recent visits.
+  const bool cacheBootstrapPending = !Storage.exists(RECENT_CACHE_BOOTSTRAP_MARKER);
+  // Defer the potentially blocking probe until the shelf has rendered its
+  // feedback popup. An empty Recent list has nothing to bootstrap.
+  recentCacheBootstrapProbePending = cacheBootstrapPending && !recentBooks.empty();
+  recentCacheWarmupActive = recentCacheBootstrapProbePending;
+  if (cacheBootstrapPending && !recentCacheBootstrapProbePending) {
+    Storage.writeFile(RECENT_CACHE_BOOTSTRAP_MARKER, String("1"));
+  }
   recentCacheWarmupNextMs = 0;
   recentCacheWarmupPopupRendered = false;
-  coverGenerationRequested = recentCacheWarmupActive;
+  coverGenerationRequested = false;
   snapshotRestored = restoreSnapshot();
   if (!snapshotRestored) {
     snapshotPageStart = SIZE_MAX;
@@ -716,6 +755,27 @@ void RecentBooksActivity::loop() {
 
   if (recentCacheWarmupActive) {
     if (!recentCacheWarmupPopupRendered) return;
+    // The first frame must be visible before probing the SD card. Otherwise
+    // the initial cache check can make the device look frozen with no feedback.
+    if (recentCacheBootstrapProbePending) {
+      if (mappedInput.wasAnyPressed() || mappedInput.wasAnyReleased()) {
+        recentCacheWarmupNextMs = millis() + 500;
+        return;
+      }
+      recentCacheBootstrapProbePending = false;
+      recentCacheWarmupActive = hasMissingRecentCache();
+      if (!recentCacheWarmupActive) {
+        coverGenerationRequested = false;
+        Storage.writeFile(RECENT_CACHE_BOOTSTRAP_MARKER, String("1"));
+        recentCacheWarmupPopupRendered = false;
+        requestUpdate(true);
+        return;
+      }
+      coverGenerationRequested = true;
+      recentCacheWarmupNextMs = millis() + 500;
+      requestUpdate(true);
+      return;
+    }
     if (mappedInput.wasAnyPressed() || mappedInput.wasAnyReleased()) {
       recentCacheWarmupNextMs = millis() + 500;
       return;

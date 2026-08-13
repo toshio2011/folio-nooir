@@ -24,6 +24,11 @@ void PageLine::render(GfxRenderer& renderer, const int fontId, const int xOffset
   block->render(renderer, fontId, xPos + xOffset, yPos + yOffset);
 }
 
+void PageLine::renderWithGuideDots(GfxRenderer& renderer, const int fontId, const int xOffset,
+                                   const int yOffset) const {
+  block->render(renderer, fontId, xPos + xOffset, yPos + yOffset, true);
+}
+
 bool PageLine::serialize(HalFile& file) {
   serialization::writePod(file, xPos);
   serialization::writePod(file, yPos);
@@ -129,8 +134,15 @@ std::unique_ptr<PageHorizontalRule> PageHorizontalRule::deserialize(HalFile& fil
   return std::unique_ptr<PageHorizontalRule>(rule);
 }
 
-void Page::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset) const {
-  renderFilteredPageElements(elements, renderer, fontId, xOffset, yOffset, [](const PageElement&) { return true; });
+void Page::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset,
+                  const bool guideDots) const {
+  for (const auto& element : elements) {
+    if (guideDots && element->getTag() == TAG_PageLine) {
+      static_cast<const PageLine&>(*element).renderWithGuideDots(renderer, fontId, xOffset, yOffset);
+    } else {
+      element->render(renderer, fontId, xOffset, yOffset);
+    }
+  }
 }
 
 void Page::renderImages(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset) const {
@@ -160,10 +172,12 @@ void Page::blankImages(GfxRenderer& renderer, const int xOffset, const int yOffs
 }
 
 void Page::renderWithImagePlaceholders(GfxRenderer& renderer, const int fontId, const int xOffset,
-                                       const int yOffset) const {
+                                       const int yOffset, const bool guideDots) const {
   for (const auto& element : elements) {
     if (element->getTag() == TAG_PageImage) {
       static_cast<const PageImage&>(*element).renderPlaceholder(renderer, xOffset, yOffset);
+    } else if (guideDots && element->getTag() == TAG_PageLine) {
+      static_cast<const PageLine&>(*element).renderWithGuideDots(renderer, fontId, xOffset, yOffset);
     } else {
       element->render(renderer, fontId, xOffset, yOffset);
     }

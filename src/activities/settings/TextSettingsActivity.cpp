@@ -303,7 +303,8 @@ void TextSettingsActivity::render(RenderLock&&) {
     case Tab::Layout: {
       constexpr int LAYOUT_ROWS = static_cast<int>(LayoutRow::Count);
       static constexpr StrId ROW_NAME_IDS[LAYOUT_ROWS] = {StrId::STR_LINE_SPACING, StrId::STR_EXTRA_SPACING,
-                                                          StrId::STR_ALIGNMENT, StrId::STR_SCREEN_MARGIN};
+                                                          StrId::STR_FORCE_PARAGRAPH_INDENTS, StrId::STR_ALIGNMENT,
+                                                          StrId::STR_SCREEN_MARGIN};
       GUI.drawList(
           renderer, listRect, LAYOUT_ROWS, selectedItem,
           [](int index) { return std::string(I18N.get(ROW_NAME_IDS[index])); }, nullptr, nullptr,
@@ -311,15 +312,18 @@ void TextSettingsActivity::render(RenderLock&&) {
       if (onTabBar)
         confirmLabel = tr(STR_STYLE);
       else  // Extra Paragraph Spacing toggles; the rest open a picker
-        confirmLabel = (selectedItem == static_cast<int>(LayoutRow::ParaSpacing)) ? tr(STR_TOGGLE) : tr(STR_SELECT);
+        confirmLabel = (selectedItem == static_cast<int>(LayoutRow::ParaSpacing) ||
+                        selectedItem == static_cast<int>(LayoutRow::ForceIndents))
+                            ? tr(STR_TOGGLE)
+                            : tr(STR_SELECT);
       break;
     }
 
     case Tab::Style: {
       constexpr int STYLE_ROWS = static_cast<int>(StyleRow::Count);
-      static constexpr StrId ROW_NAME_IDS[STYLE_ROWS] = {StrId::STR_FOCUS_READING, StrId::STR_HYPHENATION,
-                                                         StrId::STR_EMBEDDED_STYLE, StrId::STR_TEXT_AA,
-                                                         StrId::STR_HIGHLIGHT_COLOR};
+      static constexpr StrId ROW_NAME_IDS[STYLE_ROWS] = {StrId::STR_FOCUS_READING, StrId::STR_GUIDE_DOTS,
+                                                         StrId::STR_HYPHENATION, StrId::STR_EMBEDDED_STYLE,
+                                                         StrId::STR_TEXT_AA, StrId::STR_HIGHLIGHT_COLOR};
       GUI.drawList(
           renderer, listRect, STYLE_ROWS, selectedItem,
           [](int index) { return std::string(I18N.get(ROW_NAME_IDS[index])); }, nullptr, nullptr,
@@ -471,6 +475,10 @@ void TextSettingsActivity::confirmLayoutRow(int row) {
       SETTINGS.extraParagraphSpacing = !SETTINGS.extraParagraphSpacing;
       requestUpdate();
       break;
+    case LayoutRow::ForceIndents:
+      SETTINGS.forceParagraphIndents = !SETTINGS.forceParagraphIndents;
+      requestUpdate();
+      break;
     case LayoutRow::LineSpacing:
       startActivityForResult(
           std::make_unique<IntervalSelectionActivity>(
@@ -516,6 +524,8 @@ std::string TextSettingsActivity::layoutValueText(int row) const {
     }
     case LayoutRow::ParaSpacing:
       return SETTINGS.extraParagraphSpacing ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+    case LayoutRow::ForceIndents:
+      return SETTINGS.forceParagraphIndents ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
     case LayoutRow::Alignment: {
       const uint8_t v = SETTINGS.paragraphAlignment;
       return v < std::size(ALIGNMENT_IDS) ? I18N.get(ALIGNMENT_IDS[v]) : I18N.get(StrId::STR_JUSTIFY);
@@ -532,6 +542,9 @@ void TextSettingsActivity::confirmStyleRow(int row) {
   switch (static_cast<StyleRow>(row)) {
     case StyleRow::FocusReading:
       SETTINGS.focusReadingEnabled = !SETTINGS.focusReadingEnabled;
+      break;
+    case StyleRow::GuideDots:
+      SETTINGS.guideDots = !SETTINGS.guideDots;
       break;
     case StyleRow::Hyphenation:
       SETTINGS.hyphenationEnabled = !SETTINGS.hyphenationEnabled;
@@ -558,6 +571,8 @@ std::string TextSettingsActivity::styleValueText(int row) const {
   switch (static_cast<StyleRow>(row)) {
     case StyleRow::FocusReading:
       return SETTINGS.focusReadingEnabled ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+    case StyleRow::GuideDots:
+      return SETTINGS.guideDots ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
     case StyleRow::Hyphenation:
       return SETTINGS.hyphenationEnabled ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
     case StyleRow::EmbeddedStyle:
@@ -657,8 +672,8 @@ bool TextSettingsActivity::focusedRowHasNoPreview() const {
   if (tab_ == Tab::Controls) return true;
   if (tab_ != Tab::Style) return false;
   const StyleRow row = static_cast<StyleRow>(selectedIndex() - 1);
-  return row == StyleRow::Hyphenation || row == StyleRow::EmbeddedStyle || row == StyleRow::AntiAliasing ||
-         row == StyleRow::HighlightColor;
+  return row == StyleRow::GuideDots || row == StyleRow::Hyphenation || row == StyleRow::EmbeddedStyle ||
+         row == StyleRow::AntiAliasing || row == StyleRow::HighlightColor;
 }
 
 void TextSettingsActivity::switchTab(int direction) {

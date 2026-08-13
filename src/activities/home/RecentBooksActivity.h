@@ -32,9 +32,10 @@ class RecentBooksActivity final : public Activity {
   size_t retrievingBookCacheIndex = SIZE_MAX;
   volatile bool retrievingBookCachePopupRendered = false;
   unsigned long retrievingBookCacheStartedMs = 0;
-  // First visit after an install/cache clear: build missing recent-book
+  // One-time post-install/update bootstrap: build missing recent-book
   // metadata and thumbnails one book at a time while showing feedback.
   bool recentCacheWarmupActive = false;
+  bool recentCacheBootstrapProbePending = false;
   unsigned long recentCacheWarmupNextMs = 0;
   volatile bool recentCacheWarmupPopupRendered = false;
   bool snapshotRestored = false;
@@ -64,7 +65,6 @@ class RecentBooksActivity final : public Activity {
   void rebuildVisibleBooks();
   size_t selectedRecentIndex() const;
   bool hasMissingRecentCache() const;
-  bool hasAnyRecentCache() const;
   void generateNextCover();
   void showMenu();
   void showBookActions();

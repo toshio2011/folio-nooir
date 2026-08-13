@@ -75,7 +75,11 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
           if (sink.total == 0 && http.hasContentLength()) sink.total = http.getContentLength();
           if (!sink.write(data, len)) return false;
           sink.downloaded += len;
-          if (sink.progress && sink.total > 0) sink.progress(sink.downloaded, sink.total);
+          // Call progress even for chunked responses (total == 0).  The
+          // consumer can still repaint an indeterminate status and, more
+          // importantly, poll its cancel flag while the server streams a
+          // body without Content-Length.
+          if (sink.progress) sink.progress(sink.downloaded, sink.total);
           return true;
         },
         [&sink]() { return sink.cancelFlag && *sink.cancelFlag; });
@@ -203,7 +207,10 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
       return HttpDownloader::FILE_ERROR;
     }
     sink.downloaded += read;
-    if (sink.progress && sink.total > 0) sink.progress(sink.downloaded, sink.total);
+    // Chunked OPDS downloads have no known total, but still need progress
+    // callbacks so the UI can remain responsive and cancellation is checked
+    // between network reads.
+    if (sink.progress) sink.progress(sink.downloaded, sink.total);
   }
 
   const bool complete = esp_http_client_is_complete_data_received(client);
@@ -251,10 +258,11 @@ bool HttpDownloader::fetchUrl(const std::string& url, std::string& outContent, c
 }
 
 bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData, const std::string& username,
-                              const std::string& password) {
+                              const std::string& password, bool* cancelFlag) {
   LOG_DBG("HTTP", "Fetching: %s", url.c_str());
   Sink sink;
   sink.write = onData;
+  sink.cancelFlag = cancelFlag;
   return runGetSecure(url, username, password, sink) == OK;
 }
 

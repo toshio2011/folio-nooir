@@ -14,6 +14,15 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   static constexpr uint8_t SLEEP_RECENT_COUNT = 16;
 
   std::string openEpubPath;
+  // User-selected sleep artwork. The source path is kept separate from the
+  // optional rendered BMP cache so transparent PNGs can still be used for
+  // overlays without decoding them during normal custom sleep.
+  std::string favoriteSleepImagePath;
+  std::string favoriteSleepImageBmpPath;
+  // True after the user explicitly clears the legacy /sleep.bmp favorite.
+  // Keeping the file allows older installations to migrate without deleting
+  // user data while still making Clear Favorite return to random mode.
+  bool legacySleepImageDisabled = false;
   uint16_t recentSleepImages[SLEEP_RECENT_COUNT] = {};  // circular buffer of recent wallpaper indices
   uint8_t recentSleepPos = 0;                           // next write slot
   uint8_t recentSleepFill = 0;                          // valid entries (0..SLEEP_RECENT_COUNT)

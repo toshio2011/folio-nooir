@@ -53,6 +53,8 @@ void OpdsBookBrowserActivity::onEnter() {
   selectorIndex = 0;
   consumeConfirm = false;
   consumeBack = false;
+  cancelDownload = false;
+  cancelFetch = false;
   errorMessage.clear();
   statusMessage = tr(STR_CHECKING_WIFI);
   requestUpdate();
@@ -91,10 +93,7 @@ void OpdsBookBrowserActivity::loop() {
     int ty = 0;
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || mappedInput.wasScreenTapped(tx, ty)) {
       if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
-        state = BrowserState::LOADING;
-        statusMessage = tr(STR_LOADING);
-        requestUpdate();
-        fetchFeed(currentPath);
+        showLoadingBeforeFetch(currentPath);
       } else {
         launchWifiSelection();
       }
@@ -111,6 +110,9 @@ void OpdsBookBrowserActivity::loop() {
     return;
   }
 
+  // The download itself is synchronous, but the progress callback polls the
+  // mapped input.  Consume the release here so the Back press used to stop a
+  // transfer is not interpreted as "go up" after it finishes.
   if (state == BrowserState::DOWNLOADING) return;
 
   if (state == BrowserState::BROWSING) {
@@ -231,6 +233,8 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
       GUI.drawProgressBar(renderer, Rect{50, pageHeight / 2 + 20, pageWidth - 100, 20}, downloadProgress,
                           downloadTotal);
     }
+    const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), "", "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     renderer.displayBuffer();
     return;
   }
@@ -270,11 +274,26 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   std::string url = UrlUtils::buildUrl(server.url, path);
   LOG_DBG("OPDS", "Fetching: %s", url.c_str());
   OpdsParser parser;
+  cancelFetch = false;
   {
     OpdsParserStream stream{parser};
-    if (!HttpDownloader::fetchUrl(url, stream, server.username, server.password)) {
+    // Feed fetches are synchronous too.  Stream through the parser while
+    // polling the mapped input so Back can abort a slow catalog just like a
+    // book download, without buffering the entire XML document.
+    const bool fetched = HttpDownloader::fetchUrl(
+        url,
+        [this, &stream](const uint8_t* data, const size_t length) {
+          mappedInput.update();
+          if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasHomeGesture()) {
+            cancelFetch = true;
+            consumeBack = true;
+          }
+          return stream.write(data, length) == length;
+        },
+        server.username, server.password, &cancelFetch);
+    if (!fetched) {
       state = BrowserState::ERROR;
-      errorMessage = tr(STR_FETCH_FEED_FAILED);
+      errorMessage = cancelFetch ? tr(STR_CANCEL) : tr(STR_FETCH_FEED_FAILED);
       requestUpdate();
       return;
     }
@@ -292,8 +311,9 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   const auto& prevUrl = parser.getPrevPageUrl();
   const bool feedTruncated = parser.truncated();
   entries = std::move(parser).getEntries();
-
-  entries.reserve(entries.size() + (prevUrl.empty() ? 0 : 1) + (nextUrl.empty() ? 0 : 1));
+  // OpdsParser already reserves its fixed maximum (62 entries plus the two
+  // paging rows).  Avoid a second reserve here: on a fragmented heap this can
+  // otherwise allocate and copy the complete feed just before rendering it.
   if (!prevUrl.empty()) {
     entries.insert(entries.begin(), OpdsEntry{OpdsEntryType::NAVIGATION, tr(STR_PREV_PAGE), "", prevUrl, ""});
   }
@@ -310,6 +330,15 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   requestUpdate();
 }
 
+void OpdsBookBrowserActivity::showLoadingBeforeFetch(const std::string& path) {
+  state = BrowserState::LOADING;
+  statusMessage = tr(STR_LOADING);
+  // Feed parsing and network I/O are synchronous.  Paint the loading state
+  // first so a slow server never looks like a frozen device.
+  requestUpdateAndWait();
+  fetchFeed(path);
+}
+
 void OpdsBookBrowserActivity::releaseEntries() { std::vector<OpdsEntry>().swap(entries); }
 
 void OpdsBookBrowserActivity::navigateToEntry(const OpdsEntry& entry) {
@@ -322,8 +351,7 @@ void OpdsBookBrowserActivity::navigateToEntry(const OpdsEntry& entry) {
   statusMessage = tr(STR_LOADING);
   releaseEntries();
   selectorIndex = 0;
-  requestUpdate(true);
-  fetchFeed(currentPath);
+  showLoadingBeforeFetch(currentPath);
 }
 
 void OpdsBookBrowserActivity::navigateBack() {
@@ -336,8 +364,7 @@ void OpdsBookBrowserActivity::navigateBack() {
     statusMessage = tr(STR_LOADING);
     releaseEntries();
     selectorIndex = 0;
-    requestUpdate();
-    fetchFeed(currentPath);
+    showLoadingBeforeFetch(currentPath);
   }
 }
 
@@ -345,7 +372,11 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   state = BrowserState::DOWNLOADING;
   statusMessage = book.title;
   downloadProgress = downloadTotal = 0;
-  requestUpdate(true);
+  cancelDownload = false;
+  // Paint the download screen before opening the network connection.  Without
+  // this wait, a slow server can make the old catalog remain visible and the
+  // user has no indication that Back will cancel the transfer.
+  requestUpdateAndWait();
 
   // Build full download URL relative to the current feed, not the root server URL
   const std::string feedUrl = UrlUtils::buildUrl(server.url, currentPath);
@@ -370,13 +401,25 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   if (haveFolder) filename += folder;
   filename += '/';
   filename += opdsBookFilename(book.author, book.title, static_cast<OpdsFilenameFormat>(SETTINGS.opdsFilenameFormat));
+  // Keep the existing book intact until the new transfer is complete.  The
+  // downloader removes its destination on abort/error, so the temporary path
+  // must be used here rather than the final book name.
+  const std::string tempFilename = filename + ".part";
   LOG_DBG("OPDS", "Downloading: %s -> %s", downloadUrl.c_str(), filename.c_str());
 
   int lastRenderedPercent = -1;
   unsigned long lastProgressUpdateMs = 0;
   const auto result = HttpDownloader::downloadToFile(
-      downloadUrl, filename,
+      downloadUrl, tempFilename,
       [this, &lastRenderedPercent, &lastProgressUpdateMs](const size_t downloaded, const size_t total) {
+        // Network reads happen outside the normal activity loop.  Poll the
+        // GPIO here so Back can stop a large/slow OPDS transfer without a
+        // second task or an always-running UI timer.
+        mappedInput.update();
+        if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasHomeGesture()) {
+          cancelDownload = true;
+          consumeBack = true;
+        }
         downloadProgress = downloaded;
         downloadTotal = total;
         const int percent = total > 0 ? static_cast<int>(static_cast<uint64_t>(downloaded) * 100 / total) : 0;
@@ -389,11 +432,28 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
           requestUpdate(true);
         }
       },
-      nullptr, server.username, server.password);
+      &cancelDownload, server.username, server.password);
 
   if (result == HttpDownloader::OK) {
-    clearBookCache(filename);
+    // Commit atomically at the filesystem level after the complete file has
+    // been written.  A same-named existing book is removed only at this final
+    // commit point, never when the transfer starts.
+    bool committed = true;
+    if (Storage.exists(filename.c_str())) committed = Storage.remove(filename.c_str());
+    if (committed) committed = Storage.rename(tempFilename.c_str(), filename.c_str());
+    if (committed) {
+      clearBookCache(filename);
+      state = BrowserState::BROWSING;
+    } else {
+      Storage.remove(tempFilename.c_str());
+      LOG_ERR("OPDS", "Could not commit downloaded book: %s", filename.c_str());
+      state = BrowserState::ERROR;
+      errorMessage = tr(STR_DOWNLOAD_FAILED);
+    }
+  } else if (result == HttpDownloader::ABORTED) {
+    // HttpDownloader removes the partial file before returning ABORTED.
     state = BrowserState::BROWSING;
+    statusMessage = tr(STR_CANCEL);
   } else {
     LOG_ERR("OPDS", "Download failed: %d", static_cast<int>(result));
     state = BrowserState::ERROR;
@@ -452,16 +512,12 @@ void OpdsBookBrowserActivity::performSearch(const std::string& query) {
   statusMessage = tr(STR_LOADING);
   releaseEntries();
   selectorIndex = 0;
-  requestUpdate(true);
-  fetchFeed(url);
+  showLoadingBeforeFetch(url);
 }
 
 void OpdsBookBrowserActivity::checkAndConnectWifi() {
   if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
-    state = BrowserState::LOADING;
-    statusMessage = tr(STR_LOADING);
-    requestUpdate();
-    fetchFeed(currentPath);
+    showLoadingBeforeFetch(currentPath);
     return;
   }
   launchWifiSelection();
@@ -477,10 +533,7 @@ void OpdsBookBrowserActivity::launchWifiSelection() {
 
 void OpdsBookBrowserActivity::onWifiSelectionComplete(const bool connected) {
   if (connected) {
-    state = BrowserState::LOADING;
-    statusMessage = tr(STR_LOADING);
-    requestUpdate(true);
-    fetchFeed(currentPath);
+    showLoadingBeforeFetch(currentPath);
   } else {
     // Leave WiFi up; onExit's silent reboot handles teardown without fragmenting.
     state = BrowserState::ERROR;

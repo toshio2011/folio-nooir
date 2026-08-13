@@ -33,8 +33,8 @@ class TextSettingsActivity final : public Activity {
  private:
   // Row indices per tab. enum class (not plain enum) so a LayoutRow can't be
   // silently confused with a StyleRow of equal value.
-  enum class LayoutRow { LineSpacing, ParaSpacing, Alignment, ScreenMargin, Count };
-  enum class StyleRow { FocusReading, Hyphenation, EmbeddedStyle, AntiAliasing, HighlightColor, Count };
+  enum class LayoutRow { LineSpacing, ParaSpacing, ForceIndents, Alignment, ScreenMargin, Count };
+  enum class StyleRow { FocusReading, GuideDots, Hyphenation, EmbeddedStyle, AntiAliasing, HighlightColor, Count };
   enum class ControlRow { FrontLongPress, SideLongPress, MenuLongPress, PowerLongPress, Count };
 
   void applyFamily(int listIndex);
