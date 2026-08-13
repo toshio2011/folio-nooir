@@ -2,7 +2,7 @@
 
 # Folio Nooir
 
-Current release: **v1.5.6**.
+Current release: **v1.5.7** (development).
 
 ## Hardware warning
 
@@ -26,7 +26,7 @@ devices. It is a personal fork of [CrossPoint Reader](https://github.com/crosspo
 keeping the core reader, wireless transfer, sleep, and settings features while
 adding a Folio Nooir interface and reading tools.
 
-## v1.5.6 changes
+## v1.5.7 changes
 
 This is the current non-BLE release. It focuses on fast shelf navigation,
 cache-first book details, large-library retrieval, sleep/wake controls,
@@ -65,7 +65,7 @@ These two settings control different parts of sleep:
 
 Quick Resume can be selected as the sleep screen itself, or enabled only for automatic inactivity timeout. Resume Reader on Wake only chooses the destination after wake; it does not keep Wi-Fi or Bluetooth running.
 
-Additional v1.5.6 changes:
+Additional v1.5.7 changes carried forward from the stable 1.5.6 baseline:
 
 - Added lightweight page-turn statistics for EPUB, XTC/XTCH, and TXT readers. Counters are committed when leaving a book, so normal page turns do not add SD-card writes or slow rendering.
 - Added per-book and daily pages turned, pages-per-minute pace, current reading streak, and best streak statistics on-device and in the web statistics dashboard.
@@ -264,7 +264,7 @@ Each compatible GitHub release must contain an asset named exactly:
 firmware.bin
 ```
 
-Use a numeric release tag such as `1.5.6`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
+Use a numeric release tag such as `1.5.7`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
 
 ## Custom sleep images
 
