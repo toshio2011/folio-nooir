@@ -33,7 +33,8 @@ class RecentBooksActivity final : public Activity {
   volatile bool retrievingBookCachePopupRendered = false;
   unsigned long retrievingBookCacheStartedMs = 0;
   // One-time post-install/update bootstrap: build missing recent-book
-  // metadata and thumbnails one book at a time while showing feedback.
+  // metadata one book at a time while showing feedback. Thumbnails are
+  // intentionally left to the explicit Refresh Book Cache action.
   bool recentCacheWarmupActive = false;
   bool recentCacheBootstrapProbePending = false;
   unsigned long recentCacheWarmupNextMs = 0;

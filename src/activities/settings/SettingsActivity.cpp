@@ -143,6 +143,7 @@ void SettingsActivity::rebuildSettingsLists() {
                           });
   reorder(readerSettings, {
                              StrId::STR_TEXT_SETTINGS,
+                             StrId::STR_PAGE_NUMBER_MODE,
                              StrId::STR_DICTIONARY,
                              StrId::STR_DICTIONARY_SETTINGS,
                              StrId::STR_DICTIONARY_INDEXES,

@@ -12,8 +12,8 @@
 int KOReaderSyncClient::lastHttpCode = 0;
 
 namespace {
-// Device identifier for CrossPoint reader
-constexpr char DEVICE_NAME[] = "CrossPoint";
+// Keep the identifier stable for existing sync records; the display name is
+// user-editable in KOReader settings.
 constexpr char DEVICE_ID[] = "crosspoint-reader";
 
 // KOSync's TLS-1.3 servers can't be reached through the precompiled system
@@ -225,10 +225,11 @@ KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgr
   }
   doc["progress"] = progress.progress;
   doc["percentage"] = progress.percentage;
-  doc["device"] = DEVICE_NAME;
+  doc["device"] = KOREADER_STORE.getDeviceName();
   doc["device_id"] = DEVICE_ID;
-  if (progress.position.has_value()) {
-    // Extended crosspoint-sync field; kosync servers ignore unknown keys.
+  if (progress.position.has_value() && KOREADER_STORE.usesCrossPointSyncServer()) {
+    // Extended CrossPoint field. Do not send it to generic KOReader servers;
+    // some self-hosted implementations reject unknown payload fields.
     const auto& p = *progress.position;
     auto pos = doc["position"].to<JsonObject>();
     pos["pctQ"] = p.pctQ;

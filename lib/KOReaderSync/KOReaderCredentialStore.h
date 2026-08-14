@@ -29,6 +29,7 @@ class KOReaderCredentialStore : public PersistableStore<KOReaderCredentialStore>
   std::string username;
   std::string password;
   std::string serverUrl;                                            // Custom sync server URL (empty = default)
+  std::string deviceName = "Folio Nooir X4";                      // Name shown to other sync clients
   DocumentMatchMethod matchMethod = DocumentMatchMethod::FILENAME;  // Default to filename for compatibility
   bool sendMetadata = false;                                        // Send document metadata with progress sync
   KOReaderSyncBehavior syncBehavior = KOReaderSyncBehavior::SMART;
@@ -61,6 +62,15 @@ class KOReaderCredentialStore : public PersistableStore<KOReaderCredentialStore>
   // Server URL management
   void setServerUrl(const std::string& url);
   const std::string& getServerUrl() const { return serverUrl; }
+
+  // Device name management. Kept in the sync credential store so it follows
+  // the account/server settings and does not change the reader identity.
+  void setDeviceName(const std::string& name);
+  const std::string& getDeviceName() const { return deviceName; }
+
+  // Rich position data is understood by the CrossPoint sync service. Generic
+  // KOReader/KOSync servers receive only the standard protocol fields.
+  bool usesCrossPointSyncServer() const;
 
   // Get base URL for API calls (with http:// normalization if no protocol, falls back to default)
   std::string getBaseUrl() const;

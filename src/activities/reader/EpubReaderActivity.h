@@ -8,6 +8,7 @@
 #include "BookmarkEntry.h"
 #include "ClippingEntry.h"
 #include "EndOfBookOptions.h"
+#include "StablePageCache.h"
 #include "EpubReaderMenuActivity.h"
 #include "ProgressMapper.h"
 #include "activities/Activity.h"
@@ -19,6 +20,10 @@ class EpubReaderActivity final : public Activity {
   // remain unchanged.
   std::optional<ProgressChangeResult> initialBookmark;
   std::unique_ptr<Section> section = nullptr;
+  // Optional font-independent page map. It is built only when the user selects
+  // Stable Pages; Current Pages never touches this cache or changes behavior.
+  StablePageCache::Index stablePageIndex;
+  bool stablePagesReady = false;
   int currentSpineIndex = 0;
   int nextPageNumber = 0;
   std::optional<uint16_t> pendingPageJump;
@@ -39,6 +44,12 @@ class EpubReaderActivity final : public Activity {
   float pendingSpineProgress = 0.0f;
   bool pendingScreenshot = false;
   bool pendingSyncSaveError = false;
+  // Exit feedback: render one modal popup before the relatively expensive
+  // statistics/cache cleanup, then ignore repeated exit presses until the
+  // activity transition is queued.
+  bool exitHomePending = false;
+  bool exitPopupShown = false;
+  HomeMenuItem exitHomeItem = HomeMenuItem::NONE;
   // Consecutive page-load failures. Each failure drops the section and rebuilds on the next render,
   // which recovers a transiently corrupt cache; capped so a persistently bad page can't spin forever.
   uint8_t pageLoadRetryCount = 0;
@@ -183,6 +194,7 @@ class EpubReaderActivity final : public Activity {
   void openReaderOptions();
   void refreshAfterReaderSettings();
   void openDictionaryWordSelect();
+  void requestExitToHome(HomeMenuItem item = HomeMenuItem::NONE);
   // Returns true if sync acted (launched, or surfaced a save error); false if it was a no-op
   // because no KOReader credentials are stored.
   bool launchKOReaderSync();
@@ -194,6 +206,7 @@ class EpubReaderActivity final : public Activity {
   void addBookmark();
   void openClipSelection();
   void updateBookmarkFlag();
+  void prepareStablePages();
 
   // Footnote navigation
   void navigateToHref(const std::string& href, bool savePosition = false);

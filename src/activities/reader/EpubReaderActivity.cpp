@@ -331,11 +331,68 @@ void EpubReaderActivity::onEnter() {
   RECENT_BOOKS.addBook(epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getThumbBmpPath(),
                        epub->getDescription());
 
+  prepareStablePages();
+
   loadCachedBookmarks();
   loadCachedClippings();
 
   // Trigger first update
   requestUpdate();
+}
+
+void EpubReaderActivity::prepareStablePages() {
+  stablePageIndex = {};
+  stablePagesReady = false;
+  if (!epub || SETTINGS.pageNumberMode != CrossPointSettings::STABLE_PAGES) return;
+
+  StablePageCache::Index cached;
+  if (StablePageCache::load(*epub, cached)) {
+    stablePageIndex = std::move(cached);
+    stablePagesReady = true;
+    LOG_DBG("ERS", "Using stable page cache (%lu pages)", static_cast<unsigned long>(stablePageIndex.totalPages));
+    return;
+  }
+
+  const unsigned long startedAt = millis();
+  const auto result = StablePageCache::build(
+      *epub, stablePageIndex,
+      [this, startedAt](const uint16_t processed, const uint16_t total, const std::string& href,
+                        const uint32_t totalPagesSoFar) {
+        // Do not treat the button press that opened the book as a cancellation.
+        if (millis() - startedAt > 500 && mappedInput.isPressed(MappedInputManager::Button::Back)) return false;
+
+        std::string itemName = href;
+        const size_t slash = itemName.find_last_of('/');
+        if (slash != std::string::npos) itemName.erase(0, slash + 1);
+        if (itemName.size() > 28) itemName = itemName.substr(0, 25) + "...";
+
+        renderer.clearScreen();
+        const std::string message = std::string(tr(STR_PREPARING_STABLE_PAGES)) + "\n" + itemName + "\n" +
+                                    std::to_string(processed) + "/" + std::to_string(total) + " chapters\n" +
+                                    "~" + std::to_string(totalPagesSoFar) + " pages\n" + std::string(tr(STR_STOP_FOR_NOW));
+        const Rect layout = GUI.drawPopup(renderer, message.c_str(), true);
+        GUI.fillPopupProgress(renderer, layout, total == 0 ? 0 : (processed * 100) / total);
+        return true;
+      });
+
+  if (result == StablePageCache::BuildResult::Built || result == StablePageCache::BuildResult::AlreadyCached) {
+    stablePagesReady = stablePageIndex.valid();
+    LOG_INF("ERS", "Stable page map ready: %s", stablePagesReady ? "yes" : "no");
+  } else if (result == StablePageCache::BuildResult::Cancelled) {
+    stablePageIndex = {};
+    LOG_INF("ERS", "Stable page preparation stopped by user");
+  } else {
+    stablePageIndex = {};
+    LOG_ERR("ERS", "Stable page preparation failed after %lu ms", millis() - startedAt);
+  }
+}
+
+void EpubReaderActivity::requestExitToHome(const HomeMenuItem item) {
+  if (exitHomePending) return;
+  exitHomePending = true;
+  exitPopupShown = false;
+  exitHomeItem = item;
+  requestUpdate(true);
 }
 
 void EpubReaderActivity::onExit() {
@@ -363,8 +420,13 @@ void EpubReaderActivity::onExit() {
   // Reset orientation back to portrait for the rest of the UI
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
 
-  APP_STATE.readerActivityLoadCount = 0;
-  APP_STATE.saveToFile();
+  // Normal reader launches already have a zero crash-recovery counter. Avoid
+  // rewriting the whole state JSON on every exit; only persist when boot
+  // recovery had incremented the counter and it must be cleared.
+  if (APP_STATE.readerActivityLoadCount != 0) {
+    APP_STATE.readerActivityLoadCount = 0;
+    APP_STATE.saveToFile();
+  }
 
   // Leaving mid-footnote loses the in-RAM return stack on deep sleep; persist the
   // pre-footnote position so the book reopens at the link origin, not the footnote.
@@ -619,6 +681,16 @@ void EpubReaderActivity::openClipSelection() {
 }
 
 void EpubReaderActivity::loop() {
+  // Wait until the exit popup has physically rendered before beginning the
+  // statistics/cache cleanup. This gives immediate feedback and prevents
+  // repeated button presses from queuing multiple transitions.
+  if (exitHomePending) {
+    if (exitPopupShown) {
+      activityManager.goHome(exitHomeItem);
+    }
+    return;
+  }
+
   if (readerOptionsReturnGuard) {
     const auto closingButton = [this](MappedInputManager::Button button) {
       return mappedInput.isPressed(button) || mappedInput.wasReleased(button);
@@ -872,7 +944,7 @@ void EpubReaderActivity::loop() {
         activityManager.goToReader(openPath);
         return;
       case EndOfBookOptions::Action::GoHome:
-        onGoHome();
+        requestExitToHome();
         return;
       case EndOfBookOptions::Action::LastPage:
         currentSpineIndex = std::max(epub->getSpineItemsCount() - 1, 0);
@@ -987,7 +1059,7 @@ void EpubReaderActivity::loop() {
   }
 
   if (ReaderUtils::handleBackNavigation(mappedInput, activityManager, epub ? epub->getPath().c_str() : "",
-                                        {this, [](void* ctx) { static_cast<EpubReaderActivity*>(ctx)->onGoHome(); }})) {
+                                        {this, [](void* ctx) { static_cast<EpubReaderActivity*>(ctx)->requestExitToHome(); }})) {
     return;
   }
 
@@ -1050,7 +1122,7 @@ void EpubReaderActivity::loop() {
       return;
     }
     if (nextTriggered) {
-      onGoHome();
+      requestExitToHome();
     } else {
       currentSpineIndex = epub->getSpineItemsCount() - 1;
       nextPageNumber = 0;
@@ -1332,7 +1404,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       break;
     }
     case EpubReaderMenuActivity::MenuAction::GO_HOME: {
-      onGoHome();
+      requestExitToHome();
       return;
     }
     case EpubReaderMenuActivity::MenuAction::DELETE_CACHE: {
@@ -1350,7 +1422,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
           }
         }
       }
-      onGoHome();
+      requestExitToHome();
       return;
     }
     case EpubReaderMenuActivity::MenuAction::SCREENSHOT: {
@@ -1529,6 +1601,17 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   renderer.setDarkMode(SETTINGS.readerDarkMode != 0);
   renderer.setRenderMode(GfxRenderer::BW);
   if (!epub) {
+    return;
+  }
+
+  // Keep the current page visible while the exit path persists Recent,
+  // per-book, and daily reading data. drawPopup() performs the one visible
+  // refresh; the main loop queues the home transition only afterward.
+  if (exitHomePending) {
+    if (!exitPopupShown) {
+      GUI.drawPopup(renderer, tr(STR_SAVING_READING_DATA), true);
+      exitPopupShown = true;
+    }
     return;
   }
 
@@ -2243,7 +2326,17 @@ void EpubReaderActivity::renderStatusBar() const {
   // Calculate progress in book. Use the estimated total while a giant spine is still building so
   // "page X of Y" and the progress bar don't read off the small build watermark.
   const int currentPage = section->currentPage + 1;
-  const float pageCount = section->estimatedTotalPages();
+  const int currentChapterPageCount = section->estimatedTotalPages();
+  int displayedPage = currentPage;
+  int displayedPageCount = currentChapterPageCount;
+  bool displayedPageCountEstimated = section->isBuilding();
+  if (stablePagesReady && SETTINGS.pageNumberMode == CrossPointSettings::STABLE_PAGES) {
+    displayedPage = static_cast<int>(StablePageCache::pageFor(stablePageIndex, currentSpineIndex,
+                                                               section->currentPage, currentChapterPageCount));
+    displayedPageCount = static_cast<int>(stablePageIndex.totalPages);
+    displayedPageCountEstimated = true;
+  }
+  const float pageCount = currentChapterPageCount;
   const float sectionChapterProg = (pageCount > 0) ? (static_cast<float>(currentPage) / pageCount) : 0;
   const float bookProgress = epub->calculateProgress(currentSpineIndex, sectionChapterProg) * 100;
 
@@ -2275,8 +2368,9 @@ void EpubReaderActivity::renderStatusBar() const {
     title = epub->getTitle();
   }
 
-  GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset, true, currentPageBookmarked,
-                    section->isBuilding());
+  GUI.drawStatusBar(renderer, bookProgress, displayedPage, displayedPageCount, title, 0, textYOffset, true,
+                    currentPageBookmarked, displayedPageCountEstimated,
+                    stablePagesReady && SETTINGS.pageNumberMode == CrossPointSettings::STABLE_PAGES);
 }
 
 void EpubReaderActivity::navigateToHref(const std::string& hrefStr, const bool savePosition) {

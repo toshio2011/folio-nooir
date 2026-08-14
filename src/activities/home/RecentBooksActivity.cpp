@@ -38,10 +38,12 @@ constexpr char RECENT_CACHE_BOOTSTRAP_MARKER[] = "/.crosspoint/recent_cache_boot
 constexpr uint32_t FOLIO_HOME_MAGIC = 0x464E484D;  // "FNHM"
 constexpr uint16_t FOLIO_HOME_VERSION = 2;
 constexpr unsigned long RETRIEVE_POPUP_TIMEOUT_MS = 2500;
-// Keep the X3 bootstrap bounded when an EPUB embeds a pathological cover.
-// Retrieve All uses the same limit; the shelf can safely show its title
-// placeholder when the source is larger than this.
-constexpr size_t MAX_RECENT_THUMBNAIL_SOURCE_BYTES = 512u * 1024u;
+// Manual cover refresh is the only path that may decode a source image. Keep
+// it bounded for X3/X4, but allow normal high-quality covers (the old 512 KiB
+// limit rejected many perfectly usable 2 MiB JPEGs before the converter could
+// apply its own dimension and heap guards). Ordinary Recent bootstrap never
+// enters this path and remains thumbnail-free.
+constexpr size_t MAX_MANUAL_THUMBNAIL_SOURCE_BYTES = 3u * 1024u * 1024u;
 
 bool isClippingsExport(const std::string& path) {
   std::string name = path;
@@ -75,16 +77,10 @@ bool RecentBooksActivity::hasMissingRecentCache() const {
     if (FsHelpers::hasEpubExtension(book.path)) {
       Epub epub(book.path, "/.crosspoint");
       if (!epub.loadCachedMetadataOnly()) return true;
-      const std::string thumbPath = UITheme::getCoverThumbPath(
-          book.coverBmpPath.empty() ? epub.getThumbBmpPath() : book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
-      if (!isValidBookThumbnail(thumbPath)) return true;
-    } else if (!book.coverBmpPath.empty()) {
-      // XTC has no metadata.bin. Its stored presentation path plus a valid
-      // thumbnail is the equivalent cache check. An empty path is allowed:
-      // some XTC files legitimately have no cover image.
-      const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
-      if (!isValidBookThumbnail(thumbPath)) return true;
     }
+    // A missing thumbnail is intentionally not a bootstrap condition. Recent
+    // can render its lightweight placeholder immediately; only the explicit
+    // Refresh Book Cache action is allowed to decode a cover.
   }
   return false;
 }
@@ -185,22 +181,19 @@ void RecentBooksActivity::generateNextCover() {
   // First-run warmup and manual Refresh Book Cache only need the lightweight
   // bookshelf metadata path.  Do not build the reader's spine/TOC cache here;
   // that work is deferred until the user opens the book.
-  // Warm-up must process only entries whose cache probe found a gap. Manual
-  // Refresh Book Cache is the only path that intentionally forces a reread of
-  // the selected book even when its files already exist.
+  // Warm-up must process only entries whose metadata cache probe found a gap.
+  // Manual Refresh Book Cache is the only path that intentionally rereads a
+  // source cover or generates a missing thumbnail.
   const bool forceRebuild = coverGenerationRequested && !recentCacheWarmupActive;
   const bool metadataOnly = forceRebuild || recentCacheWarmupActive;
   while (nextCoverToGenerate < recentBooks.size()) {
     RecentBook& book = recentBooks[nextCoverToGenerate++];
     if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path)) continue;
     const bool metadataMissing = book.title.empty() || book.coverBmpPath.empty();
-    const std::string thumbPath = book.coverBmpPath.empty()
-                                      ? std::string()
-                                      : UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
     // A manual Refresh Book Cache must reread metadata even when an old
-    // thumbnail survived the cache cleanup. Warmup can still skip entries
-    // whose metadata and cover are already complete.
-    if (!forceRebuild && !metadataMissing && !thumbPath.empty() && isValidBookThumbnail(thumbPath)) continue;
+    // thumbnail survived the cache cleanup. Normal warm-up only handles
+    // missing metadata; it must not inspect or regenerate thumbnails.
+    if (!forceRebuild && !metadataMissing) continue;
     bool attempted = false;
     if (FsHelpers::hasEpubExtension(book.path)) {
       Epub epub(book.path, "/.crosspoint");
@@ -235,12 +228,15 @@ void RecentBooksActivity::generateNextCover() {
           book.synopsis = synopsis;
           RECENT_BOOKS.refreshBookMetadata(book.path, book.title, book.author, book.coverBmpPath, book.synopsis);
         }
-        if (!book.coverBmpPath.empty()) {
+        // Never decode a missing cover during ordinary Recent bootstrap. A
+        // placeholder keeps navigation responsive; manual refresh is the only
+        // operation allowed to spend time and heap on image conversion.
+        if (forceRebuild && !book.coverBmpPath.empty()) {
           const std::string thumb = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
           if (!isValidBookThumbnail(thumb)) {
             const size_t coverBytes = epub.getCoverImageSize();
-            if (coverBytes > MAX_RECENT_THUMBNAIL_SOURCE_BYTES) {
-              LOG_DBG("SHELF", "Skipping oversized Recent thumbnail source (%lu bytes): %s",
+            if (coverBytes > MAX_MANUAL_THUMBNAIL_SOURCE_BYTES) {
+              LOG_DBG("SHELF", "Skipping oversized manual thumbnail source (%lu bytes): %s",
                       static_cast<unsigned long>(coverBytes), book.path.c_str());
             } else if (coverBytes == 0) {
               // No cover reference (or an unresolvable reference). Keep the
@@ -269,7 +265,7 @@ void RecentBooksActivity::generateNextCover() {
           RECENT_BOOKS.updateBook(book.path, book.title, book.author, book.coverBmpPath);
         }
         const std::string thumb = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
-        if (!isValidBookThumbnail(thumb)) {
+        if (forceRebuild && !isValidBookThumbnail(thumb)) {
           Storage.remove(thumb.c_str());
           if (!xtc.generateThumbBmp(BOOKSHELF_COVER_HEIGHT) || !isValidBookThumbnail(thumb)) {
             LOG_ERR("SHELF", "Could not regenerate XTC thumbnail: %s", book.path.c_str());
