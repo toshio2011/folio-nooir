@@ -2,7 +2,7 @@
 
 # Folio Nooir
 
-Current release: **v1.5.7** (development).
+Current release: **v1.5.8** (development).
 
 ## Hardware warning
 
@@ -26,26 +26,44 @@ devices. It is a personal fork of [CrossPoint Reader](https://github.com/crosspo
 keeping the core reader, wireless transfer, sleep, and settings features while
 adding a Folio Nooir interface and reading tools.
 
-## v1.5.7 changes
+## v1.5.8 changes
 
-This section lists only changes made after the v1.5.7 development baseline.
-The complete firmware feature list remains below.
+This release's change list starts with the **Stable Pages** enhancement.
+Earlier v1.5.7 work remains documented in the complete feature list below.
 
-- Clock & Weather now has a lightweight **Change location** action. Enter a
-  city name only; the device resolves coordinates and the IANA timezone,
-  clears stale weather, syncs the new location, and returns to the existing
-  status screen.
-- Clock cards, dates, and clock/weather sync timestamps use the resolved
-  location's local offset. Sync now continues to use the saved location and
-  never asks for the city again.
-- EPUB images with long JPEG Huffman tables now use a bounded streaming pixel cache instead of a large full-image RAM allocation. Cache writes are block-batched, failed cache creation stops cleanly, and later grayscale passes reuse the completed cache instead of decoding the image repeatedly.
-- Image pages redraw the lightweight reader status bar after image restoration, preventing full-page EPUB images from covering the footer during fast/grayscale refreshes.
-- First-install Recent handling now checks lightweight `metadata.bin`/`book.bin` caches once, scans only entries with missing data, and avoids reopening cached books during normal shelf navigation.
-- OPDS browsing now shows loading state before network work, supports cancellable feed fetches and downloads, writes downloads through a temporary file, and avoids large duplicate feed allocations.
-- EPUB formatting now includes optional paragraph indents, improved lists/tables and `<hr>` separators, lightweight strikethrough/redaction handling, and Reader Guide Dots without replacing the existing image pipeline.
-- Added lightweight **Settings Profiles** stored under `/.crosspoint/profiles/`. Profiles save and restore device settings (including reader, controls, typography, sleep, display, and network preferences) without copying book progress, reading statistics, bookmarks, clippings, or runtime sync state.
-- Settings persistence now uses safer temporary-file/rename commits and recovery validation so a reset or interrupted write is less likely to restore defaults or leave a partially written settings file.
-- Favorite sleep images can be selected explicitly; clearing the favorite returns to random sleep-image selection, with recent-image history reducing immediate repeats. Transparent overlays and cover/clipping modes continue to use the selected image policy.
+- Added optional **Stable Pages** reader mode. CrossInk-processed EPUBs can
+  import `META-INF/x-locations.json`; the firmware stores a compact per-book
+  `stable_pages.bin` map beside the book cache.
+- Stable-page preparation is streamed and bounded for X3/X4 memory. It shows
+  progress, supports stopping, reuses an existing valid map, and releases its
+  temporary memory after preparation. EPUBs without a compatible map use the
+  safe local fallback instead of changing Current Pages behavior.
+- The Stable Pages choice is included in Settings Profiles. The profile saves
+  the mode, while each book's `stable_pages.bin` remains in its own cache.
+- Recent and Finished shelf startup now checks lightweight metadata only.
+  Missing thumbnails no longer trigger automatic image decoding; the shelf
+  shows a placeholder and stays responsive.
+- **Refresh Book Cache** remains the explicit cover-rebuild action. Manual
+  refresh allows bounded sources up to 3 MB and keeps a placeholder when the
+  cover format, dimensions, or available heap cannot be safely converted.
+- Reader exit now shows a saving state before returning home and avoids an
+  unnecessary full state-file rewrite during normal exits, reducing the delay
+  when returning to Recent or Library.
+- KOReader Sync now prefers portable XPath/percentage mapping, uses rich
+  CrossPoint position data as a fallback, supports an editable sync device
+  name (default: `Folio Nooir X4`), and keeps generic KOReader payloads
+  protocol-compatible.
+- EPUB image rendering now rejects invalid dimensions and overflow-prone pixel
+  counts, clips unsafe geometry, uses fail-soft placeholders, and protects PNG
+  and framebuffer cache writes from out-of-range coordinates. Valid images keep
+  the existing fast path.
+- Clipping/highlight restoration now survives CSS, font, and line-spacing
+  reflow. Existing clipping files remain compatible; saved text is matched with
+  the same punctuation/whitespace sanitization used when it is stored, and the
+  resolver cache is invalidated after clipping-list edits.
+- Web Transfer continues to yield during sustained uploads/downloads so Wi-Fi
+  and SD tasks keep running; the Bookshelf page avoids parsing EPUBs or decoding
+  missing covers while it is open.
 - Web Transfer now yields regularly during sustained uploads/downloads so the Wi‑Fi and SD tasks keep running; the Bookshelf page no longer parses EPUBs or decodes missing covers while it is open.
 - Added **Edit book metadata** beside EPUB/XTC/TXT/Markdown files in Transfer. Title, author, and synopsis edits are stored in a lightweight device-side override and are applied to Library/Recent without rewriting the book or disturbing reading progress, bookmarks, or clippings.
 
@@ -91,6 +109,11 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - EPUB formatting now includes optional paragraph indents, improved lists/tables and `<hr>` separators, lightweight strikethrough/redaction handling, and Reader Guide Dots. These changes stay in the existing parser/render path and do not replace the image pipeline.
 - Large images are fitted to the display instead of producing empty squares where possible.
 - XTC/XTCH cover and page rendering improvements.
+- Optional **Stable Pages** mode uses a compact per-book `stable_pages.bin` map,
+  can import CrossInk `META-INF/x-locations.json`, and keeps page numbers
+  consistent across font/layout changes. Current Pages remains the default;
+  preparation is streamed, bounded, cancellable, reusable, and releases its
+  temporary memory when finished.
 - Reader font size in points rather than only Small/Medium/Large presets.
 - Point-based margin controls and line-spacing controls with fine percentage steps.
 - UI scale controls for menus and reader controls; bookshelf geometry remains fixed.
@@ -166,6 +189,13 @@ and choose **Apply Remote** to continue from the server or **Upload Local** to
 send the current Nooir position. Use the same server where your KOReader
 account was created; accounts are not shared between different sync servers.
 
+The sync settings include an editable **Sync Device Name**, defaulting to
+`Folio Nooir X4`. The existing device ID remains unchanged for compatibility.
+CrossPoint sync receives the richer CrossPoint position data, while generic
+KOReader servers receive standard KOReader fields only. On download, portable
+XPath/percentage mapping is tried first, with rich CrossPoint page and paragraph
+position used as a fallback when needed.
+
 ### Reading statistics
 
 - Persistent per-book reading time, session count, progress, status, and dates.
@@ -239,7 +269,7 @@ Each compatible GitHub release must contain an asset named exactly:
 firmware.bin
 ```
 
-Use a numeric release tag such as `1.5.7`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
+Use a numeric release tag such as `1.5.8`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
 
 ## Custom sleep images
 
