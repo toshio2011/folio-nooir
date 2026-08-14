@@ -42,6 +42,10 @@ class RecentBooksActivity final : public Activity {
   bool snapshotRestored = false;
   size_t snapshotPageStart = SIZE_MAX;
   size_t snapshotSelectorIndex = SIZE_MAX;
+  // When the persisted frame is still valid (for example after leaving
+  // Settings), one panel refresh is enough. The first render can reuse the
+  // frame instead of rebuilding all cover/text geometry.
+  bool snapshotFastPathUsed = false;
   size_t lastRenderedSelectorIndex = SIZE_MAX;
   size_t lastRenderedPageStart = SIZE_MAX;
   uint8_t lastRenderedTab = 0;

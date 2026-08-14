@@ -36,7 +36,7 @@ constexpr char FOLIO_HOME_SNAPSHOT[] = "/.crosspoint/folio_home.bin";
 // back the post-boot hitch this activity was designed to avoid.
 constexpr char RECENT_CACHE_BOOTSTRAP_MARKER[] = "/.crosspoint/recent_cache_bootstrap_v1";
 constexpr uint32_t FOLIO_HOME_MAGIC = 0x464E484D;  // "FNHM"
-constexpr uint16_t FOLIO_HOME_VERSION = 2;
+constexpr uint16_t FOLIO_HOME_VERSION = 3;
 constexpr unsigned long RETRIEVE_POPUP_TIMEOUT_MS = 2500;
 // Manual cover refresh is the only path that may decode a source image. Keep
 // it bounded for X3/X4, but allow normal high-quality covers (the old 512 KiB
@@ -112,7 +112,23 @@ uint64_t RecentBooksActivity::snapshotKey() const {
   hashBytes(hash, &width, sizeof(width));
   hashBytes(hash, &height, sizeof(height));
   hashBytes(hash, &activeTab, sizeof(activeTab));
-  for (const auto& book : recentBooks) hashBytes(hash, book.path.data(), book.path.size());
+  for (const auto& book : recentBooks) {
+    hashBytes(hash, book.path.data(), book.path.size());
+    hashBytes(hash, book.title.data(), book.title.size());
+    hashBytes(hash, book.author.data(), book.author.size());
+    hashBytes(hash, book.coverBmpPath.data(), book.coverBmpPath.size());
+    hashBytes(hash, book.synopsis.data(), book.synopsis.size());
+    hashBytes(hash, &book.progressPercent, sizeof(book.progressPercent));
+    hashBytes(hash, &book.readingSeconds, sizeof(book.readingSeconds));
+    hashBytes(hash, &book.lastSessionSeconds, sizeof(book.lastSessionSeconds));
+    hashBytes(hash, &book.dailyReadingSeconds, sizeof(book.dailyReadingSeconds));
+    hashBytes(hash, &book.dailyReadingDateKey, sizeof(book.dailyReadingDateKey));
+    hashBytes(hash, &book.readingSessions, sizeof(book.readingSessions));
+    hashBytes(hash, &book.pagesTurned, sizeof(book.pagesTurned));
+    const BookState* state = BOOK_STATES.find(book.path);
+    const uint8_t status = state ? static_cast<uint8_t>(state->status) : 0;
+    hashBytes(hash, &status, sizeof(status));
+  }
   return hash;
 }
 
@@ -481,6 +497,7 @@ void RecentBooksActivity::onEnter() {
     snapshotPageStart = SIZE_MAX;
     snapshotSelectorIndex = SIZE_MAX;
   }
+  snapshotFastPathUsed = false;
   lastRenderedSelectorIndex = SIZE_MAX;
   lastRenderedPageStart = SIZE_MAX;
   lastRenderedTab = 0;
@@ -909,6 +926,42 @@ void RecentBooksActivity::render(RenderLock&&) {
   const int pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
   const size_t currentPageStart = (selectorIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE;
+
+  // Settings and other non-library screens do not change the shelf data. If
+  // the persisted frame matches the current book state, show that frame once
+  // and add only the focus outline. This avoids a second full shelf rebuild
+  // (cover decoding, synopsis wrapping, and eight-card geometry) on return.
+  // The snapshot key includes presentation/progress fields, so a reader exit
+  // or cache update invalidates this path automatically.
+  if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR && renderedFromSnapshot &&
+      initialRenderPending && !snapshotFastPathUsed && !overlayFrameShown && !menuPopup.isActive() &&
+      !bookActionsPopup.isActive() && !retrievingBookCache && !recentCacheWarmupActive && !manualSingleRefresh &&
+      snapshotPageStart == currentPageStart && visibleBookCount > 0) {
+    const auto& folioTheme = static_cast<const FolioNooirTheme&>(GUI);
+    const FolioShelfLayout layout = folioTheme.shelfLayout(renderer, metrics);
+    const int columns = layout.columns;
+    const int gap = layout.gridGap;
+    const int cardWidth = layout.cardWidth;
+    const int cardHeight = layout.cardHeight;
+    const size_t slot = selectorIndex % BOOKS_PER_PAGE;
+    const int x = gap + static_cast<int>(slot % columns) * (cardWidth + gap);
+    const int y = layout.gridTop + static_cast<int>(slot / columns) * cardHeight;
+    const int coverHeight = std::max(40, std::min(cardHeight - 27, cardWidth * 3 / 2));
+    renderer.drawRect(x - 3, y - 3, cardWidth + 6, coverHeight + 6);
+    renderer.displayBuffer();
+    snapshotFastPathUsed = true;
+    initialRenderPending = false;
+    lastRenderedSelectorIndex = selectorIndex;
+    lastRenderedPageStart = currentPageStart;
+    lastRenderedTab = activeTab;
+    const RecentBook& selected = recentBooks[selectedRecentIndex()];
+    lastFeaturedPath = selected.path;
+    lastFeaturedCoverPath = selected.coverBmpPath;
+    snapshotRestored = true;
+    snapshotPageStart = currentPageStart;
+    snapshotSelectorIndex = selectorIndex;
+    return;
+  }
 
   // A deferred request can arrive after a popup or cache task has already
   // completed. If the same Folio shelf frame is still on the panel, avoid
