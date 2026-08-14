@@ -77,6 +77,22 @@ class EpubReaderActivity final : public Activity {
   bool bookmarkRemoved = false;  // true when last toggle removed (controls popup text)
   std::vector<BookmarkEntry> cachedBookmarks;
   std::vector<ClippingEntry> cachedClippings;
+  // A font/line-spacing change can move a clipping to another page. Keep the
+  // resolved word spans for the current page so the BW and grayscale passes
+  // never repeat the text search. The vector is bounded by ClipFile's per-book
+  // clipping limit and is reserved when annotations are loaded.
+  struct SavedHighlightMatch {
+    uint16_t firstWord = 0;
+    uint16_t lastWord = 0;
+  };
+  std::vector<SavedHighlightMatch> highlightMatches;
+  const Page* highlightMatchPageObject = nullptr;
+  int highlightMatchSpine = -1;
+  int highlightMatchPage = -1;
+  bool highlightLookupDone = false;
+  // Enabled on entry and after typography changes. It allows content matching
+  // to recover annotations whose old page number is no longer valid.
+  bool allowClippingRelocation = true;
   // Tracks whether this book is currently removed from Recent Books by the
   // removeReadBooksFromRecents feature (set at End-of-Book, cleared if paged back in).
   bool recentsEntryRemoved = false;

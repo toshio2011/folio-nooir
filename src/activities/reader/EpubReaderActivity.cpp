@@ -156,19 +156,77 @@ std::string buildHighlightText(const std::vector<HighlightWord>& words, const in
   return text;
 }
 
-bool findHighlightTextRange(const std::vector<HighlightWord>& words, const std::string& text, int& first, int& last) {
+// Font and line-spacing changes can move words between visual rows.  The saved
+// clipping text intentionally retains the old wrapping for display/export, but
+// that wrapping must not be part of the relocation key.  Collapse all ASCII
+// whitespace to one separator while preserving word boundaries and UTF-8 bytes.
+// This is only used on the annotation-recovery path; the normal exact-match
+// path remains allocation-free after the word-range verification succeeds.
+std::string collapseHighlightWhitespace(const std::string& text) {
+  // ClipFile sanitizes unsupported punctuation (curly quotes, NBSP, symbol
+  // ranges, and malformed UTF-8) before saving. Apply the same inexpensive
+  // normalization to freshly rendered EPUB text, otherwise a saved clip such
+  // as “quoted text” can never match the page's original UTF-8 bytes.
+  const std::string sanitized = ClipFile::normalizeText(text);
+  std::string collapsed;
+  collapsed.reserve(sanitized.size());
+  bool pendingSpace = false;
+  for (const unsigned char byte : sanitized) {
+    if (std::isspace(byte)) {
+      pendingSpace = true;
+      continue;
+    }
+    if (pendingSpace && !collapsed.empty()) collapsed.push_back(' ');
+    collapsed.push_back(static_cast<char>(byte));
+    pendingSpace = false;
+  }
+  return collapsed;
+}
+
+bool findHighlightTextRange(const std::vector<HighlightWord>& words, const std::string& text, int& first, int& last,
+                            const bool ignoreWrapping = false) {
   if (text.empty() || words.empty()) return false;
+  const std::string target = ignoreWrapping ? collapseHighlightWhitespace(text) : text;
+  if (target.empty()) return false;
+
+  if (ignoreWrapping) {
+    // Build one normalized candidate per start and extend it in place.  This
+    // avoids allocating/collapsing a temporary string for every (start,end)
+    // pair when a page has many words, which matters on the X3.
+    for (int start = 0; start < static_cast<int>(words.size()); ++start) {
+      std::string candidate;
+      candidate.reserve(std::min<size_t>(target.size() + 16, 1024));
+      for (int end = start; end < static_cast<int>(words.size()); ++end) {
+        if (end > start && (words[end].row != words[end - 1].row ||
+                            words[end].x > words[end - 1].x + words[end - 1].width + 1)) {
+          candidate.push_back(' ');
+        }
+        if (candidate.size() < 1024) {
+          const size_t remaining = 1024 - candidate.size();
+          candidate.append(words[end].text, std::min(remaining, strlen(words[end].text)));
+        }
+        if (candidate == target) {
+          first = start;
+          last = end;
+          return true;
+        }
+        if (candidate.size() > target.size() + 16) break;
+      }
+    }
+    return false;
+  }
+
   for (int start = 0; start < static_cast<int>(words.size()); ++start) {
     for (int end = start; end < static_cast<int>(words.size()); ++end) {
       const std::string candidate = buildHighlightText(words, start, end);
-      if (candidate == text) {
+      if (candidate == target) {
         first = start;
         last = end;
         return true;
       }
       // Once the assembled text is materially longer than the saved clip,
       // extending this candidate cannot produce a match.
-      if (candidate.size() > text.size() + 16) break;
+      if (candidate.size() > target.size() + 16) break;
     }
   }
   return false;
@@ -181,6 +239,22 @@ ProgressRange getPageProgressRange(const std::shared_ptr<Epub>& epub, const int 
   }
 
   const float step = 1.0f / static_cast<float>(pageCount - 1);
+  const float anchor = std::clamp(static_cast<float>(page) * step, 0.0f, 1.0f);
+  const float start = std::max(0.0f, anchor - (step * 0.5f));
+  const float end = std::min(1.0f, anchor + (step * 0.5f));
+  return {epub->calculateProgress(spineIndex, start), epub->calculateProgress(spineIndex, end)};
+}
+
+// ClipSelectionActivity stores its percentage using page / pageCount (rather
+// than the bookmark mapper's page / (pageCount - 1)). Keep a matching range so
+// a clipping on the final page can still be relocated after reflow.
+ProgressRange getClippingPageProgressRange(const std::shared_ptr<Epub>& epub, const int spineIndex, const int page,
+                                            const int pageCount) {
+  if (pageCount <= 1) {
+    return {epub->calculateProgress(spineIndex, 0.0f), epub->calculateProgress(spineIndex, 1.0f)};
+  }
+
+  const float step = 1.0f / static_cast<float>(pageCount);
   const float anchor = std::clamp(static_cast<float>(page) * step, 0.0f, 1.0f);
   const float start = std::max(0.0f, anchor - (step * 0.5f));
   const float end = std::min(1.0f, anchor + (step * 0.5f));
@@ -509,6 +583,14 @@ void EpubReaderActivity::refreshAfterReaderSettings() {
   idlePrewarmPage = -1;
   partialRebuildStartFailed = false;
   pagesUntilFullRefresh = 1;
+  // The old word coordinates/page numbers belong to the previous layout.
+  // Reconcile saved clipping text against the new pagination on demand.
+  highlightMatches.clear();
+  highlightMatchPageObject = nullptr;
+  highlightMatchSpine = -1;
+  highlightMatchPage = -1;
+  highlightLookupDone = false;
+  allowClippingRelocation = true;
 }
 
 void EpubReaderActivity::renderSavedHighlights(const Page& page, const int fontId, const int marginLeft,
@@ -520,6 +602,95 @@ void EpubReaderActivity::renderSavedHighlights(const Page& page, const int fontI
   if (words.empty()) return;
 
   const int currentPage = section->currentPage;
+
+  // Resolve clipping ranges once per page render. renderContents() invokes
+  // this method for the BW pass and every grayscale strip; repeating a
+  // content search there made font-change recovery needlessly expensive on
+  // the X3. Normal clippings still take the old page/range fast path.
+  if (highlightMatchPageObject != &page || highlightMatchSpine != currentSpineIndex ||
+      highlightMatchPage != currentPage) {
+    highlightMatches.clear();
+    highlightMatchPageObject = &page;
+    highlightMatchSpine = currentSpineIndex;
+    highlightMatchPage = currentPage;
+    highlightLookupDone = false;
+  }
+
+  if (!highlightLookupDone) {
+    const int pageCount = section->estimatedTotalPages();
+    const ProgressRange pageRange =
+        (allowClippingRelocation && pageCount > 0)
+            ? getClippingPageProgressRange(epub, currentSpineIndex, currentPage, pageCount)
+            : ProgressRange{0.0f, 1.0f};
+
+    for (auto& clipping : cachedClippings) {
+      if (clipping.spineIndex != currentSpineIndex) continue;
+
+      const bool pageMatches = clipping.page == currentPage;
+      if (!pageMatches) {
+        if (!allowClippingRelocation || pageCount <= 0) continue;
+
+        // The saved percentage is a cheap location hint independent of the
+        // chapter's old page count. It keeps recovery bounded to the likely
+        // page instead of doing an O(words²) search on every page in a long
+        // chapter. A first-page clipping legitimately has percentage 0.
+        const float savedProgress = std::clamp(clipping.percentage, 0.0f, 1.0f);
+        // A large font change can move a clip across more than one page. Keep
+        // the recovery window bounded, but allow two page widths so the text
+        // search is not skipped just because the old page hint is stale.
+        const float pageWidth = std::max(0.01f, pageRange.end - pageRange.start);
+        const float hintMargin = pageWidth * 2.0f;
+        if (savedProgress + bookmarkProgressEpsilon < pageRange.start - hintMargin ||
+            savedProgress - bookmarkProgressEpsilon > pageRange.end + hintMargin) {
+          continue;
+        }
+      }
+
+      int first = -1;
+      int last = -1;
+      bool matched = false;
+      if (pageMatches && clipping.hasWordRange && clipping.firstWord <= clipping.lastWord &&
+          clipping.lastWord < words.size()) {
+        first = clipping.firstWord;
+        last = clipping.lastWord;
+        // Verify the range against the saved text. This handles stale ranges
+        // after a cache rebuild while keeping the normal path allocation-free.
+        matched = buildHighlightText(words, first, last) == clipping.text;
+      }
+      if (!matched) {
+        matched = findHighlightTextRange(words, clipping.text, first, last);
+      }
+      if (!matched && allowClippingRelocation) {
+        // A typography change can alter only the visual wrapping, not the
+        // underlying words. Retry with whitespace collapsed so old line
+        // breaks do not make an otherwise valid highlight disappear.
+        matched = findHighlightTextRange(words, clipping.text, first, last, true);
+      }
+      if (!matched) continue;
+
+      if (!pageMatches) {
+        // Keep the in-memory range current for the remaining BW/gray passes
+        // and for further page redraws in this session. We deliberately do
+        // not write the clipping JSON from the render path; that would add SD
+        // latency and wear. The content anchor remains authoritative on the
+        // next open as well.
+        clipping.page = static_cast<uint16_t>(std::max(0, currentPage));
+        if (first <= static_cast<int>(UINT16_MAX) && last <= static_cast<int>(UINT16_MAX)) {
+          clipping.firstWord = static_cast<uint16_t>(first);
+          clipping.lastWord = static_cast<uint16_t>(last);
+          clipping.hasWordRange = true;
+        }
+        LOG_DBG("ERS", "Restored clipping after reflow: spine=%d page=%d", currentSpineIndex, currentPage);
+      }
+
+      highlightMatches.push_back(
+          SavedHighlightMatch{static_cast<uint16_t>(first), static_cast<uint16_t>(last)});
+    }
+    highlightLookupDone = true;
+  }
+
+  if (highlightMatches.empty()) return;
+
   const int lineHeight = renderer.getLineHeight(fontId);
   const bool darkMode = renderer.isDarkMode();
   // Keep dark mode's existing white-band/black-text contrast regardless of the
@@ -550,24 +721,10 @@ void EpubReaderActivity::renderSavedHighlights(const Page& page, const int fontI
     }
   }
 
-  for (const auto& clipping : cachedClippings) {
-    if (clipping.spineIndex != currentSpineIndex || clipping.page != currentPage) continue;
-
-    int first = -1;
-    int last = -1;
-    bool matched = false;
-    if (clipping.hasWordRange && clipping.firstWord <= clipping.lastWord &&
-        clipping.lastWord < words.size()) {
-      first = clipping.firstWord;
-      last = clipping.lastWord;
-      // Verify the range against the saved text.  This handles stale ranges
-      // after a cache rebuild while keeping the fast path allocation-free.
-      matched = buildHighlightText(words, first, last) == clipping.text;
-    }
-    if (!matched) {
-      matched = findHighlightTextRange(words, clipping.text, first, last);
-    }
-    if (!matched) continue;
+  for (const auto& match : highlightMatches) {
+    const int first = match.firstWord;
+    const int last = match.lastWord;
+    if (first < 0 || last < first || last >= static_cast<int>(words.size())) continue;
 
     // The normal reader is monochrome. Paint one continuous band per line
     // rather than a separate box around every word, then redraw the glyphs in
@@ -1382,9 +1539,10 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
             std::make_unique<EpubReaderClippingListActivity>(renderer, mappedInput, epub->getPath(), epub->getTitle()),
             [this](const ActivityResult&) {
               // The clipping manager can edit or delete entries. Refresh the
-              // in-memory highlight set before the reader renders again.
-              cachedClippings.clear();
-              if (epub) ClipFile::load(epub->getPath(), cachedClippings);
+              // in-memory highlight set and invalidate the per-page resolver
+              // before the reader renders again. Do not leave a stale page
+              // pointer here: the next Page allocation may reuse its address.
+              loadCachedClippings();
               requestUpdate();
             });
       }
@@ -2449,6 +2607,14 @@ void EpubReaderActivity::loadCachedBookmarks() {
 void EpubReaderActivity::loadCachedClippings() {
   cachedClippings.clear();
   if (epub) ClipFile::load(epub->getPath(), cachedClippings);
+  LOG_DBG("CLP", "Reader loaded %u clipping(s)", static_cast<unsigned>(cachedClippings.size()));
+  highlightMatches.clear();
+  highlightMatches.reserve(cachedClippings.size());
+  highlightMatchPageObject = nullptr;
+  highlightMatchSpine = -1;
+  highlightMatchPage = -1;
+  highlightLookupDone = false;
+  allowClippingRelocation = true;
 }
 
 void EpubReaderActivity::addBookmark() {

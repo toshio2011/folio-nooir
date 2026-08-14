@@ -226,6 +226,7 @@ struct DirectCacheWriter {
   inline void writePixel(int screenX, uint8_t value) const {
     if (!rowPtr) return;
     const int localX = screenX - originX;
+    if (localX < 0) return;
     const int byteIdx = localX >> 2;  // localX / 4
     if (static_cast<unsigned>(byteIdx) >= static_cast<unsigned>(bytesPerRow)) return;
     const int bitShift = 6 - (localX & 3) * 2;  // MSB first: pixel 0 at bits 6-7

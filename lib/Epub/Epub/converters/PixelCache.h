@@ -61,6 +61,11 @@ struct PixelCache {
   // Open the cache file, write the header, and allocate a band buffer big enough
   // to hold the tallest single decode block (maxBlockDstRows output rows).
   bool begin(const std::string& cachePath, int w, int h, int ox, int oy, int maxBlockDstRows) {
+    if (w <= 0 || h <= 0 || maxBlockDstRows <= 0 || w > UINT16_MAX || h > UINT16_MAX) {
+      LOG_ERR("IMG", "Invalid cache geometry: %dx%d (block rows %d)", w, h, maxBlockDstRows);
+      return false;
+    }
+
     width = w;
     height = h;
     originX = ox;
