@@ -46,6 +46,21 @@ Earlier v1.5.7 work remains documented in the complete feature list below.
 - **Refresh Book Cache** remains the explicit cover-rebuild action. Manual
   refresh allows bounded sources up to 3 MB and keeps a placeholder when the
   cover format, dimensions, or available heap cannot be safely converted.
+- Reader exit now shows a saving state before returning home and avoids an
+  unnecessary full state-file rewrite during normal exits, reducing the delay
+  when returning to Recent or Library.
+- KOReader Sync now prefers portable XPath/percentage mapping, uses rich
+  CrossPoint position data as a fallback, supports an editable sync device
+  name (default: `Folio Nooir X4`), and keeps generic KOReader payloads
+  protocol-compatible.
+- EPUB image rendering now rejects invalid dimensions and overflow-prone pixel
+  counts, clips unsafe geometry, uses fail-soft placeholders, and protects PNG
+  and framebuffer cache writes from out-of-range coordinates. Valid images keep
+  the existing fast path.
+- Clipping/highlight restoration now survives CSS, font, and line-spacing
+  reflow. Existing clipping files remain compatible; saved text is matched with
+  the same punctuation/whitespace sanitization used when it is stored, and the
+  resolver cache is invalidated after clipping-list edits.
 
 The following retained Web Transfer behavior is from the earlier baseline and
 is not a new v1.5.8 change:
@@ -93,6 +108,11 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - EPUB formatting now includes optional paragraph indents, improved lists/tables and `<hr>` separators, lightweight strikethrough/redaction handling, and Reader Guide Dots. These changes stay in the existing parser/render path and do not replace the image pipeline.
 - Large images are fitted to the display instead of producing empty squares where possible.
 - XTC/XTCH cover and page rendering improvements.
+- Optional **Stable Pages** mode uses a compact per-book `stable_pages.bin`
+  map, can import CrossInk `META-INF/x-locations.json`, and keeps page numbers
+  consistent across font/layout changes. Current Pages remains the default;
+  stable-page preparation is streamed, bounded, cancellable, reusable, and
+  releases its temporary memory when finished.
 - Reader font size in points rather than only Small/Medium/Large presets.
 - Point-based margin controls and line-spacing controls with fine percentage steps.
 - UI scale controls for menus and reader controls; bookshelf geometry remains fixed.
