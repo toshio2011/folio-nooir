@@ -483,6 +483,7 @@ void RecentBooksActivity::onEnter() {
   }
   lastRenderedSelectorIndex = SIZE_MAX;
   lastRenderedPageStart = SIZE_MAX;
+  lastRenderedTab = 0;
   lastFeaturedPath.clear();
   lastFeaturedCoverPath.clear();
   overlayFrameShown = false;
@@ -909,6 +910,19 @@ void RecentBooksActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const size_t currentPageStart = (selectorIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE;
 
+  // A deferred request can arrive after a popup or cache task has already
+  // completed. If the same Folio shelf frame is still on the panel, avoid
+  // rebuilding all synopsis text and cover geometry and avoid another e-ink
+  // refresh. Explicit cache refreshes and tab/selection changes invalidate
+  // this fast path below.
+  if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR && !initialRenderPending &&
+      !overlayFrameShown && !menuPopup.isActive() && !bookActionsPopup.isActive() && !retrievingBookCache &&
+      !recentCacheWarmupActive && !manualSingleRefresh && lastRenderedSelectorIndex == selectorIndex &&
+      lastRenderedPageStart == currentPageStart && lastRenderedTab == activeTab && snapshotRestored) {
+    const bool sameFeatured = visibleBookCount == 0 || recentBooks[selectedRecentIndex()].path == lastFeaturedPath;
+    if (sameFeatured) return;
+  }
+
   // The shelf frame is already on the panel and in the renderer framebuffer
   // when a menu/long-press popup opens. Do not redraw all covers, synopsis
   // lines, statistics, and progress badges just to place the dialog on top.
@@ -1174,6 +1188,7 @@ void RecentBooksActivity::render(RenderLock&&) {
   }
   lastRenderedSelectorIndex = selectorIndex;
   lastRenderedPageStart = currentPageStart;
+  lastRenderedTab = activeTab;
   // The framebuffer is already a valid in-memory base frame even when its
   // optional SD snapshot is still waiting for the idle write. Keep using it
   // for immediate button navigation; otherwise the first button press after
