@@ -37,7 +37,6 @@ constexpr char FOLIO_HOME_SNAPSHOT[] = "/.crosspoint/folio_home.bin";
 constexpr char RECENT_CACHE_BOOTSTRAP_MARKER[] = "/.crosspoint/recent_cache_bootstrap_v1";
 constexpr uint32_t FOLIO_HOME_MAGIC = 0x464E484D;  // "FNHM"
 constexpr uint16_t FOLIO_HOME_VERSION = 3;
-constexpr unsigned long RETRIEVE_POPUP_TIMEOUT_MS = 2500;
 // Manual cover refresh is the only path that may decode a source image. Keep
 // it bounded for X3/X4, but allow normal high-quality covers (the old 512 KiB
 // limit rejected many perfectly usable 2 MiB JPEGs before the converter could
@@ -410,7 +409,6 @@ void RecentBooksActivity::showBookActions() {
       retrievingBookCacheProgress = 5;
       retrievingBookCacheIndex = selectorIndex;
       retrievingBookCachePopupRendered = false;
-      retrievingBookCacheStartedMs = millis();
     }
     if (action == 6) {
       RECENT_BOOKS.removeByPath(selected.path);
@@ -472,7 +470,6 @@ void RecentBooksActivity::onEnter() {
   retrievingBookCacheProgress = 0;
   retrievingBookCacheIndex = SIZE_MAX;
   retrievingBookCachePopupRendered = false;
-  retrievingBookCacheStartedMs = 0;
   // A pending write belongs to the previous shelf frame. Never carry it into
   // a new activity instance, where it could write unrelated framebuffer data
   // during the first interaction after boot.
@@ -595,7 +592,15 @@ void RecentBooksActivity::loop() {
   }
 
   if (retrievingBookCache) {
-    if (!retrievingBookCachePopupRendered && millis() - retrievingBookCacheStartedMs < RETRIEVE_POPUP_TIMEOUT_MS) return;
+    // Popup-first: wait for the visible retrieval dialog instead of using a
+    // fixed timeout fallback that could start ZIP/image work before feedback
+    // reached a slower panel.
+    if (!retrievingBookCachePopupRendered) return;
+    retrievingBookCacheProgress = 35;
+    requestUpdateAndWait();
+    const unsigned long retrievalWorkStartedMs = millis();
+    const size_t selectedIndex = selectedRecentIndex();
+    const std::string selectedPath = selectedIndex < recentBooks.size() ? recentBooks[selectedIndex].path : std::string{};
     retrievingBookCache = false;
     retrievingBookCachePopupRendered = false;
     coverGenerationRequested = true;
@@ -603,6 +608,8 @@ void RecentBooksActivity::loop() {
     // synchronous ZIP/thumbnail work runs. This prevents slower X3 panels
     // from appearing frozen or showing an empty cover during extraction.
     generateNextCover();
+    LOG_DBG("PERF", "Metadata retrieval book=%s elapsed=%lums", selectedPath.c_str(),
+            static_cast<unsigned long>(millis() - retrievalWorkStartedMs));
     retrievingBookCacheProgress = 100;
     requestUpdate();
     return;
