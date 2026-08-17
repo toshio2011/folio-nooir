@@ -2,7 +2,7 @@
 
 # Folio Nooir
 
-Current release: **v1.5.8** (development).
+Current release: **v1.5.9** (development).
 
 ## Hardware warning
 
@@ -25,6 +25,16 @@ Folio Nooir is an experimental, bookshelf-focused e-reader firmware for Xteink
 devices. It is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader),
 keeping the core reader, wireless transfer, sleep, and settings features while
 adding a Folio Nooir interface and reading tools.
+
+## v1.5.9 changes
+
+This development cycle starts after the tested v1.5.8 baseline.
+
+- Recent/Finished now reuses a validated Folio shelf snapshot when returning
+  from Settings, avoiding unnecessary cover decoding and shelf reconstruction.
+- Shelf snapshot validation includes presentation metadata, reading progress,
+  and book status, so the fast path cannot display stale progress or metadata.
+- The snapshot format was versioned so older frames are rebuilt safely once.
 
 ## v1.5.8 changes
 
