@@ -12,13 +12,15 @@ from pathlib import Path
 Import("env")  # noqa: F821  -- provided by PlatformIO
 
 
-if env.get("PIOENV") == "simulator_x4":
+simulator_env = str(env.get("PIOENV") or "")
+
+if simulator_env in ("simulator_x4", "simulator_x3"):
     project_dir = Path(env.subst("$PROJECT_DIR"))
     png_path = (
         project_dir
         / ".pio"
         / "libdeps"
-        / "simulator_x4"
+        / simulator_env
         / "simulator"
         / "src"
         / "PNGdec.h"

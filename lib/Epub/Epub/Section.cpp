@@ -22,7 +22,9 @@ namespace {
 //      first render).
 // v33: HTML tables render one text block per row with visible cell separators.
 // v34: force-paragraph-indent is part of the layout spec.
-constexpr uint8_t SECTION_FILE_VERSION = 34;
+// v35: image dimensions are fitted after vertical margins are resolved, so cached
+// page geometry from v34 may place an image below the content viewport.
+constexpr uint8_t SECTION_FILE_VERSION = 35;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects
