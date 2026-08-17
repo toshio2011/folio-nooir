@@ -26,6 +26,16 @@ devices. It is a personal fork of [CrossPoint Reader](https://github.com/crosspo
 keeping the core reader, wireless transfer, sleep, and settings features while
 adding a Folio Nooir interface and reading tools.
 
+## Native Simulator
+
+Folio Nooir provides native PlatformIO profiles for `simulator_x4` and
+`simulator_x3`. They can test the Nooir UI, library behavior, EPUB rendering
+and navigation, and supported simulated inputs without flashing a physical
+device. The X3 profile also includes simulated tilt testing. Real-device
+testing is still recommended. See the complete [native simulator guide](docs/simulator.md)
+for WSL/Linux setup, build/run commands, controls, virtual SD-card use, and
+troubleshooting.
+
 ## v1.5.9 changes
 
 This development cycle starts after the tested v1.5.8 baseline.
