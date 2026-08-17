@@ -12,7 +12,7 @@
 
 # Folio Nooir
 
-Current release: **v1.5.8** (development).
+Current release: **v1.5.9** (development).
 
 ## Hardware warning
 
@@ -36,46 +36,71 @@ devices. It is a personal fork of [CrossPoint Reader](https://github.com/crosspo
 keeping the core reader, wireless transfer, sleep, and settings features while
 adding a Folio Nooir interface and reading tools.
 
-## v1.5.8 changes
+## v1.5.9 changes
 
 This release's change list starts with the **Stable Pages** enhancement.
-Earlier v1.5.7 work remains documented in the complete feature list below.
+Earlier v1.5.8 work remains documented in the complete feature list below.
 
-- Added optional **Stable Pages** reader mode. CrossInk-processed EPUBs can
-  import `META-INF/x-locations.json`; the firmware stores a compact per-book
-  `stable_pages.bin` map beside the book cache.
-- Stable-page preparation is streamed and bounded for X3/X4 memory. It shows
-  progress, supports stopping, reuses an existing valid map, and releases its
-  temporary memory after preparation. EPUBs without a compatible map use the
-  safe local fallback instead of changing Current Pages behavior.
-- The Stable Pages choice is included in Settings Profiles. The profile saves
-  the mode, while each book's `stable_pages.bin` remains in its own cache.
-- Recent and Finished shelf startup now checks lightweight metadata only.
-  Missing thumbnails no longer trigger automatic image decoding; the shelf
-  shows a placeholder and stays responsive.
-- **Refresh Book Cache** remains the explicit cover-rebuild action. Manual
-  refresh allows bounded sources up to 3 MB and keeps a placeholder when the
-  cover format, dimensions, or available heap cannot be safely converted.
-- Reader exit now shows a saving state before returning home and avoids an
-  unnecessary full state-file rewrite during normal exits, reducing the delay
-  when returning to Recent or Library.
-- KOReader Sync now prefers portable XPath/percentage mapping, uses rich
-  CrossPoint position data as a fallback, supports an editable sync device
-  name (default: `Folio Nooir X4`), and keeps generic KOReader payloads
-  protocol-compatible.
-- EPUB image rendering now rejects invalid dimensions and overflow-prone pixel
-  counts, clips unsafe geometry, uses fail-soft placeholders, and protects PNG
-  and framebuffer cache writes from out-of-range coordinates. Valid images keep
-  the existing fast path.
-- Clipping/highlight restoration now survives CSS, font, and line-spacing
-  reflow. Existing clipping files remain compatible; saved text is matched with
-  the same punctuation/whitespace sanitization used when it is stored, and the
-  resolver cache is invalidated after clipping-list edits.
-- Web Transfer continues to yield during sustained uploads/downloads so Wi-Fi
-  and SD tasks keep running; the Bookshelf page avoids parsing EPUBs or decoding
-  missing covers while it is open.
-- Web Transfer now yields regularly during sustained uploads/downloads so the Wi‑Fi and SD tasks keep running; the Bookshelf page no longer parses EPUBs or decodes missing covers while it is open.
-- Added **Edit book metadata** beside EPUB/XTC/TXT/Markdown files in Transfer. Title, author, and synopsis edits are stored in a lightweight device-side override and are applied to Library/Recent without rewriting the book or disturbing reading progress, bookmarks, or clippings.
+A stability and performance-focused update, with new simulator support and a few EPUB improvements.
+
+### Performance & Library
+- Faster **Retrieve All Book Details** for large libraries.
+- Reduced duplicate metadata and thumbnail cache checks.
+- Removed unnecessary fixed delays during bulk book-detail retrieval.
+- Faster individual metadata retrieval after selection settles.
+- Preserved lightweight Library scrolling — simply scrolling through books will **not** trigger metadata retrieval for every highlighted item.
+- Added lightweight performance logging for metadata and thumbnail retrieval.
+- Improved cache-hit handling so already-cached books can be skipped more efficiently.
+- Kept the existing low-memory, SD-backed retrieval queue.
+
+### EPUB Improvements
+- Improved image fitting after margins and vertical spacing are calculated.
+- Prevents oversized EPUB images from extending outside the available reading area.
+- Better handling of tall/full-page images on different screen sizes.
+- Existing image cache, lazy extraction and fallback decoding behaviour preserved.
+- Section cache version updated so incompatible older layout caches rebuild safely.
+
+### X3 Support & Simulator
+- Added a dedicated **X3 desktop simulator profile**.
+- Added X3-specific screen geometry and orientation handling.
+- Added simulated X3 tilt page turning:
+  - `A` = previous page / left tilt
+  - `D` = next page / right tilt
+- X3 simulator reuses the same Nooir UI, reader and library code used by the firmware.
+- EPUB image-layout fixes validated against the X3 screen size.
+
+### X4 Simulator
+- Added/expanded the native **X4 desktop simulator foundation**.
+- Nooir UI, Library, Recent, reader, EPUB rendering and virtual SD storage can now be tested on desktop.
+- Added simulator compatibility handling for clock, PNG, String and host-specific dependencies.
+- Simulator uses a virtual SD card through the `fs_` directory.
+
+### Documentation
+- Added simulator setup and usage documentation.
+- Added X4 and X3 build/run instructions.
+- Added virtual SD / books folder instructions.
+- Added X3 simulated tilt controls.
+- Documented simulator limitations compared with real hardware.
+
+### Validation
+Tested with:
+- X4 simulator
+- X3 simulator
+- Real XTEink X4
+- Large library with **452 books**
+- Retrieve All Book Details and cancellation
+- Rapid Library scrolling
+- Library / Recent / Finished navigation
+- EPUB text and image-heavy books
+- Forward/back page navigation
+- Reader exit and cache persistence
+- Sleep/wake behaviour
+
+### Notes
+The simulator is intended for UI, navigation and rendering development. It does **not** fully reproduce real-device RAM limits, SD-card speed, e-ink refresh timing, battery behaviour or sleep hardware.
+
+X3 support uses the shared X3/X4 code path, but device revisions can differ, so keeping a backup and a known recovery method is still recommended.
+
 
 ## Features
 
