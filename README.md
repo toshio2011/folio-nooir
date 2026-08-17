@@ -2,7 +2,7 @@
 
 # Folio Nooir
 
-Current release: **v1.5.8** (development).
+Current release: **v1.5.9** (development).
 
 ## Hardware warning
 
@@ -25,6 +25,26 @@ Folio Nooir is an experimental, bookshelf-focused e-reader firmware for Xteink
 devices. It is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader),
 keeping the core reader, wireless transfer, sleep, and settings features while
 adding a Folio Nooir interface and reading tools.
+
+## Native Simulator
+
+Folio Nooir provides native PlatformIO profiles for `simulator_x4` and
+`simulator_x3`. They can test the Nooir UI, library behavior, EPUB rendering
+and navigation, and supported simulated inputs without flashing a physical
+device. The X3 profile also includes simulated tilt testing. Real-device
+testing is still recommended. See the complete [native simulator guide](docs/simulator.md)
+for WSL/Linux setup, build/run commands, controls, virtual SD-card use, and
+troubleshooting.
+
+## v1.5.9 changes
+
+This development cycle starts after the tested v1.5.8 baseline.
+
+- Recent/Finished now reuses a validated Folio shelf snapshot when returning
+  from Settings, avoiding unnecessary cover decoding and shelf reconstruction.
+- Shelf snapshot validation includes presentation metadata, reading progress,
+  and book status, so the fast path cannot display stale progress or metadata.
+- The snapshot format was versioned so older frames are rebuilt safely once.
 
 ## v1.5.8 changes
 
@@ -61,12 +81,16 @@ Earlier v1.5.7 work remains documented in the complete feature list below.
   reflow. Existing clipping files remain compatible; saved text is matched with
   the same punctuation/whitespace sanitization used when it is stored, and the
   resolver cache is invalidated after clipping-list edits.
-- Web Transfer continues to yield during sustained uploads/downloads so Wi-Fi
-  and SD tasks keep running; the Bookshelf page avoids parsing EPUBs or decoding
-  missing covers while it is open.
-- Web Transfer now yields regularly during sustained uploads/downloads so the Wi‑Fi and SD tasks keep running; the Bookshelf page no longer parses EPUBs or decodes missing covers while it is open.
-- Added **Edit book metadata** beside EPUB/XTC/TXT/Markdown files in Transfer. Title, author, and synopsis edits are stored in a lightweight device-side override and are applied to Library/Recent without rewriting the book or disturbing reading progress, bookmarks, or clippings.
 
+- Added **Edit book metadata** beside EPUB/XTC/TXT/Markdown files in Transfer.
+  Title, author, and synopsis edits are stored in a lightweight device-side
+  override and are applied to Library/Recent without rewriting the book or
+  disturbing reading progress, bookmarks, or clippings.
+
+The following retained Web Transfer behavior is from the earlier baseline and
+is not a new v1.5.8 change:
+
+- Web Transfer now yields regularly during sustained uploads/downloads so the Wi‑Fi and SD tasks keep running; the Bookshelf page no longer parses EPUBs or decodes missing covers while it is open.
 ## Features
 
 ### CrossPoint functions retained
@@ -109,11 +133,11 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - EPUB formatting now includes optional paragraph indents, improved lists/tables and `<hr>` separators, lightweight strikethrough/redaction handling, and Reader Guide Dots. These changes stay in the existing parser/render path and do not replace the image pipeline.
 - Large images are fitted to the display instead of producing empty squares where possible.
 - XTC/XTCH cover and page rendering improvements.
-- Optional **Stable Pages** mode uses a compact per-book `stable_pages.bin` map,
-  can import CrossInk `META-INF/x-locations.json`, and keeps page numbers
+- Optional **Stable Pages** mode uses a compact per-book `stable_pages.bin`
+  map, can import CrossInk `META-INF/x-locations.json`, and keeps page numbers
   consistent across font/layout changes. Current Pages remains the default;
-  preparation is streamed, bounded, cancellable, reusable, and releases its
-  temporary memory when finished.
+  stable-page preparation is streamed, bounded, cancellable, reusable, and
+  releases its temporary memory when finished.
 - Reader font size in points rather than only Small/Medium/Large presets.
 - Point-based margin controls and line-spacing controls with fine percentage steps.
 - UI scale controls for menus and reader controls; bookshelf geometry remains fixed.
@@ -193,8 +217,8 @@ The sync settings include an editable **Sync Device Name**, defaulting to
 `Folio Nooir X4`. The existing device ID remains unchanged for compatibility.
 CrossPoint sync receives the richer CrossPoint position data, while generic
 KOReader servers receive standard KOReader fields only. On download, portable
-XPath/percentage mapping is tried first, with rich CrossPoint page and paragraph
-position used as a fallback when needed.
+XPath/percentage mapping is tried first, with the rich CrossPoint page and
+paragraph position used as a fallback when needed.
 
 ### Reading statistics
 

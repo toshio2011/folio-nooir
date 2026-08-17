@@ -36,12 +36,13 @@ constexpr char FOLIO_HOME_SNAPSHOT[] = "/.crosspoint/folio_home.bin";
 // back the post-boot hitch this activity was designed to avoid.
 constexpr char RECENT_CACHE_BOOTSTRAP_MARKER[] = "/.crosspoint/recent_cache_bootstrap_v1";
 constexpr uint32_t FOLIO_HOME_MAGIC = 0x464E484D;  // "FNHM"
-constexpr uint16_t FOLIO_HOME_VERSION = 2;
-constexpr unsigned long RETRIEVE_POPUP_TIMEOUT_MS = 2500;
-// Keep the X3 bootstrap bounded when an EPUB embeds a pathological cover.
-// Retrieve All uses the same limit; the shelf can safely show its title
-// placeholder when the source is larger than this.
-constexpr size_t MAX_RECENT_THUMBNAIL_SOURCE_BYTES = 512u * 1024u;
+constexpr uint16_t FOLIO_HOME_VERSION = 3;
+// Manual cover refresh is the only path that may decode a source image. Keep
+// it bounded for X3/X4, but allow normal high-quality covers (the old 512 KiB
+// limit rejected many perfectly usable 2 MiB JPEGs before the converter could
+// apply its own dimension and heap guards). Ordinary Recent bootstrap never
+// enters this path and remains thumbnail-free.
+constexpr size_t MAX_MANUAL_THUMBNAIL_SOURCE_BYTES = 3u * 1024u * 1024u;
 
 bool isClippingsExport(const std::string& path) {
   std::string name = path;
@@ -75,16 +76,10 @@ bool RecentBooksActivity::hasMissingRecentCache() const {
     if (FsHelpers::hasEpubExtension(book.path)) {
       Epub epub(book.path, "/.crosspoint");
       if (!epub.loadCachedMetadataOnly()) return true;
-      const std::string thumbPath = UITheme::getCoverThumbPath(
-          book.coverBmpPath.empty() ? epub.getThumbBmpPath() : book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
-      if (!isValidBookThumbnail(thumbPath)) return true;
-    } else if (!book.coverBmpPath.empty()) {
-      // XTC has no metadata.bin. Its stored presentation path plus a valid
-      // thumbnail is the equivalent cache check. An empty path is allowed:
-      // some XTC files legitimately have no cover image.
-      const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
-      if (!isValidBookThumbnail(thumbPath)) return true;
     }
+    // A missing thumbnail is intentionally not a bootstrap condition. Recent
+    // can render its lightweight placeholder immediately; only the explicit
+    // Refresh Book Cache action is allowed to decode a cover.
   }
   return false;
 }
@@ -116,7 +111,23 @@ uint64_t RecentBooksActivity::snapshotKey() const {
   hashBytes(hash, &width, sizeof(width));
   hashBytes(hash, &height, sizeof(height));
   hashBytes(hash, &activeTab, sizeof(activeTab));
-  for (const auto& book : recentBooks) hashBytes(hash, book.path.data(), book.path.size());
+  for (const auto& book : recentBooks) {
+    hashBytes(hash, book.path.data(), book.path.size());
+    hashBytes(hash, book.title.data(), book.title.size());
+    hashBytes(hash, book.author.data(), book.author.size());
+    hashBytes(hash, book.coverBmpPath.data(), book.coverBmpPath.size());
+    hashBytes(hash, book.synopsis.data(), book.synopsis.size());
+    hashBytes(hash, &book.progressPercent, sizeof(book.progressPercent));
+    hashBytes(hash, &book.readingSeconds, sizeof(book.readingSeconds));
+    hashBytes(hash, &book.lastSessionSeconds, sizeof(book.lastSessionSeconds));
+    hashBytes(hash, &book.dailyReadingSeconds, sizeof(book.dailyReadingSeconds));
+    hashBytes(hash, &book.dailyReadingDateKey, sizeof(book.dailyReadingDateKey));
+    hashBytes(hash, &book.readingSessions, sizeof(book.readingSessions));
+    hashBytes(hash, &book.pagesTurned, sizeof(book.pagesTurned));
+    const BookState* state = BOOK_STATES.find(book.path);
+    const uint8_t status = state ? static_cast<uint8_t>(state->status) : 0;
+    hashBytes(hash, &status, sizeof(status));
+  }
   return hash;
 }
 
@@ -185,22 +196,19 @@ void RecentBooksActivity::generateNextCover() {
   // First-run warmup and manual Refresh Book Cache only need the lightweight
   // bookshelf metadata path.  Do not build the reader's spine/TOC cache here;
   // that work is deferred until the user opens the book.
-  // Warm-up must process only entries whose cache probe found a gap. Manual
-  // Refresh Book Cache is the only path that intentionally forces a reread of
-  // the selected book even when its files already exist.
+  // Warm-up must process only entries whose metadata cache probe found a gap.
+  // Manual Refresh Book Cache is the only path that intentionally rereads a
+  // source cover or generates a missing thumbnail.
   const bool forceRebuild = coverGenerationRequested && !recentCacheWarmupActive;
   const bool metadataOnly = forceRebuild || recentCacheWarmupActive;
   while (nextCoverToGenerate < recentBooks.size()) {
     RecentBook& book = recentBooks[nextCoverToGenerate++];
     if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path)) continue;
     const bool metadataMissing = book.title.empty() || book.coverBmpPath.empty();
-    const std::string thumbPath = book.coverBmpPath.empty()
-                                      ? std::string()
-                                      : UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
     // A manual Refresh Book Cache must reread metadata even when an old
-    // thumbnail survived the cache cleanup. Warmup can still skip entries
-    // whose metadata and cover are already complete.
-    if (!forceRebuild && !metadataMissing && !thumbPath.empty() && isValidBookThumbnail(thumbPath)) continue;
+    // thumbnail survived the cache cleanup. Normal warm-up only handles
+    // missing metadata; it must not inspect or regenerate thumbnails.
+    if (!forceRebuild && !metadataMissing) continue;
     bool attempted = false;
     if (FsHelpers::hasEpubExtension(book.path)) {
       Epub epub(book.path, "/.crosspoint");
@@ -235,12 +243,15 @@ void RecentBooksActivity::generateNextCover() {
           book.synopsis = synopsis;
           RECENT_BOOKS.refreshBookMetadata(book.path, book.title, book.author, book.coverBmpPath, book.synopsis);
         }
-        if (!book.coverBmpPath.empty()) {
+        // Never decode a missing cover during ordinary Recent bootstrap. A
+        // placeholder keeps navigation responsive; manual refresh is the only
+        // operation allowed to spend time and heap on image conversion.
+        if (forceRebuild && !book.coverBmpPath.empty()) {
           const std::string thumb = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
           if (!isValidBookThumbnail(thumb)) {
             const size_t coverBytes = epub.getCoverImageSize();
-            if (coverBytes > MAX_RECENT_THUMBNAIL_SOURCE_BYTES) {
-              LOG_DBG("SHELF", "Skipping oversized Recent thumbnail source (%lu bytes): %s",
+            if (coverBytes > MAX_MANUAL_THUMBNAIL_SOURCE_BYTES) {
+              LOG_DBG("SHELF", "Skipping oversized manual thumbnail source (%lu bytes): %s",
                       static_cast<unsigned long>(coverBytes), book.path.c_str());
             } else if (coverBytes == 0) {
               // No cover reference (or an unresolvable reference). Keep the
@@ -269,7 +280,7 @@ void RecentBooksActivity::generateNextCover() {
           RECENT_BOOKS.updateBook(book.path, book.title, book.author, book.coverBmpPath);
         }
         const std::string thumb = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
-        if (!isValidBookThumbnail(thumb)) {
+        if (forceRebuild && !isValidBookThumbnail(thumb)) {
           Storage.remove(thumb.c_str());
           if (!xtc.generateThumbBmp(BOOKSHELF_COVER_HEIGHT) || !isValidBookThumbnail(thumb)) {
             LOG_ERR("SHELF", "Could not regenerate XTC thumbnail: %s", book.path.c_str());
@@ -398,7 +409,6 @@ void RecentBooksActivity::showBookActions() {
       retrievingBookCacheProgress = 5;
       retrievingBookCacheIndex = selectorIndex;
       retrievingBookCachePopupRendered = false;
-      retrievingBookCacheStartedMs = millis();
     }
     if (action == 6) {
       RECENT_BOOKS.removeByPath(selected.path);
@@ -460,7 +470,6 @@ void RecentBooksActivity::onEnter() {
   retrievingBookCacheProgress = 0;
   retrievingBookCacheIndex = SIZE_MAX;
   retrievingBookCachePopupRendered = false;
-  retrievingBookCacheStartedMs = 0;
   // A pending write belongs to the previous shelf frame. Never carry it into
   // a new activity instance, where it could write unrelated framebuffer data
   // during the first interaction after boot.
@@ -485,8 +494,10 @@ void RecentBooksActivity::onEnter() {
     snapshotPageStart = SIZE_MAX;
     snapshotSelectorIndex = SIZE_MAX;
   }
+  snapshotFastPathUsed = false;
   lastRenderedSelectorIndex = SIZE_MAX;
   lastRenderedPageStart = SIZE_MAX;
+  lastRenderedTab = 0;
   lastFeaturedPath.clear();
   lastFeaturedCoverPath.clear();
   overlayFrameShown = false;
@@ -581,7 +592,15 @@ void RecentBooksActivity::loop() {
   }
 
   if (retrievingBookCache) {
-    if (!retrievingBookCachePopupRendered && millis() - retrievingBookCacheStartedMs < RETRIEVE_POPUP_TIMEOUT_MS) return;
+    // Popup-first: wait for the visible retrieval dialog instead of using a
+    // fixed timeout fallback that could start ZIP/image work before feedback
+    // reached a slower panel.
+    if (!retrievingBookCachePopupRendered) return;
+    retrievingBookCacheProgress = 35;
+    requestUpdateAndWait();
+    const unsigned long retrievalWorkStartedMs = millis();
+    const size_t selectedIndex = selectedRecentIndex();
+    const std::string selectedPath = selectedIndex < recentBooks.size() ? recentBooks[selectedIndex].path : std::string{};
     retrievingBookCache = false;
     retrievingBookCachePopupRendered = false;
     coverGenerationRequested = true;
@@ -589,6 +608,8 @@ void RecentBooksActivity::loop() {
     // synchronous ZIP/thumbnail work runs. This prevents slower X3 panels
     // from appearing frozen or showing an empty cover during extraction.
     generateNextCover();
+    LOG_DBG("PERF", "Metadata retrieval book=%s elapsed=%lums", selectedPath.c_str(),
+            static_cast<unsigned long>(millis() - retrievalWorkStartedMs));
     retrievingBookCacheProgress = 100;
     requestUpdate();
     return;
@@ -913,6 +934,55 @@ void RecentBooksActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const size_t currentPageStart = (selectorIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE;
 
+  // Settings and other non-library screens do not change the shelf data. If
+  // the persisted frame matches the current book state, show that frame once
+  // and add only the focus outline. This avoids a second full shelf rebuild
+  // (cover decoding, synopsis wrapping, and eight-card geometry) on return.
+  // The snapshot key includes presentation/progress fields, so a reader exit
+  // or cache update invalidates this path automatically.
+  if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR && renderedFromSnapshot &&
+      initialRenderPending && !snapshotFastPathUsed && !overlayFrameShown && !menuPopup.isActive() &&
+      !bookActionsPopup.isActive() && !retrievingBookCache && !recentCacheWarmupActive && !manualSingleRefresh &&
+      snapshotPageStart == currentPageStart && visibleBookCount > 0) {
+    const auto& folioTheme = static_cast<const FolioNooirTheme&>(GUI);
+    const FolioShelfLayout layout = folioTheme.shelfLayout(renderer, metrics);
+    const int columns = layout.columns;
+    const int gap = layout.gridGap;
+    const int cardWidth = layout.cardWidth;
+    const int cardHeight = layout.cardHeight;
+    const size_t slot = selectorIndex % BOOKS_PER_PAGE;
+    const int x = gap + static_cast<int>(slot % columns) * (cardWidth + gap);
+    const int y = layout.gridTop + static_cast<int>(slot / columns) * cardHeight;
+    const int coverHeight = std::max(40, std::min(cardHeight - 27, cardWidth * 3 / 2));
+    renderer.drawRect(x - 3, y - 3, cardWidth + 6, coverHeight + 6);
+    renderer.displayBuffer();
+    snapshotFastPathUsed = true;
+    initialRenderPending = false;
+    lastRenderedSelectorIndex = selectorIndex;
+    lastRenderedPageStart = currentPageStart;
+    lastRenderedTab = activeTab;
+    const RecentBook& selected = recentBooks[selectedRecentIndex()];
+    lastFeaturedPath = selected.path;
+    lastFeaturedCoverPath = selected.coverBmpPath;
+    snapshotRestored = true;
+    snapshotPageStart = currentPageStart;
+    snapshotSelectorIndex = selectorIndex;
+    return;
+  }
+
+  // A deferred request can arrive after a popup or cache task has already
+  // completed. If the same Folio shelf frame is still on the panel, avoid
+  // rebuilding all synopsis text and cover geometry and avoid another e-ink
+  // refresh. Explicit cache refreshes and tab/selection changes invalidate
+  // this fast path below.
+  if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR && !initialRenderPending &&
+      !overlayFrameShown && !menuPopup.isActive() && !bookActionsPopup.isActive() && !retrievingBookCache &&
+      !recentCacheWarmupActive && !manualSingleRefresh && lastRenderedSelectorIndex == selectorIndex &&
+      lastRenderedPageStart == currentPageStart && lastRenderedTab == activeTab && snapshotRestored) {
+    const bool sameFeatured = visibleBookCount == 0 || recentBooks[selectedRecentIndex()].path == lastFeaturedPath;
+    if (sameFeatured) return;
+  }
+
   // The shelf frame is already on the panel and in the renderer framebuffer
   // when a menu/long-press popup opens. Do not redraw all covers, synopsis
   // lines, statistics, and progress badges just to place the dialog on top.
@@ -1178,6 +1248,7 @@ void RecentBooksActivity::render(RenderLock&&) {
   }
   lastRenderedSelectorIndex = selectorIndex;
   lastRenderedPageStart = currentPageStart;
+  lastRenderedTab = activeTab;
   // The framebuffer is already a valid in-memory base frame even when its
   // optional SD snapshot is still waiting for the idle write. Keep using it
   // for immediate button navigation; otherwise the first button press after

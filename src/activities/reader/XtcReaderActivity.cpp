@@ -125,8 +125,10 @@ void XtcReaderActivity::onExit() {
 
   ReaderUtils::clearGhostingOnExit(renderer);
 
-  APP_STATE.readerActivityLoadCount = 0;
-  APP_STATE.saveToFile();
+  if (APP_STATE.readerActivityLoadCount != 0) {
+    APP_STATE.readerActivityLoadCount = 0;
+    APP_STATE.saveToFile();
+  }
   xtc.reset();
 }
 

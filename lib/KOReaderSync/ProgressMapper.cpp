@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cstdint>
 
 #include "ChapterXPathResolver.h"
 #include "Epub/Section.h"
@@ -726,7 +727,24 @@ SavedProgressPosition ProgressMapper::toSavedProgress(const std::shared_ptr<Epub
 
 std::optional<CrossPointPosition> ProgressMapper::fromRichPosition(const std::shared_ptr<Epub>& epub,
                                                                    const KOReaderRichPosition& rich,
-                                                                   GfxRenderer& renderer) {
+                                                                   GfxRenderer& renderer,
+                                                                   bool xpathAlreadyTried) {
+  // The standard KOReader XPath/percentage position is the portable,
+  // authoritative position. Try it before the CrossPoint page hint when the
+  // server supplied an XPath. Rich page numbers are only a fallback because
+  // they depend on the sender's font/layout settings.
+  if (!xpathAlreadyTried && !rich.xpath.empty()) {
+    SavedProgressPosition saved;
+    saved.xpath = rich.xpath;
+    saved.percentage = rich.pctQ > 0 ? static_cast<float>(rich.pctQ) / 1000000.0f : 0.0f;
+    const auto mapped = toCrossPoint(epub, saved, renderer);
+    if (mapped.hasVisibleTextOffset) {
+      LOG_DBG("PM", "Rich XPath resolved by visible text offset: spine=%d page=%d/%d offset=%lu", mapped.spineIndex,
+              mapped.pageNumber, mapped.totalPages, static_cast<unsigned long>(mapped.visibleTextOffset));
+      return mapped;
+    }
+  }
+
   const int spineCount = epub->getSpineItemsCount();
   if (static_cast<int>(rich.spineIndex) >= spineCount) {
     LOG_DBG("PM", "Rich position spine %u out of range (%d spine items)", rich.spineIndex, spineCount);
@@ -840,6 +858,8 @@ CrossPointPosition ProgressMapper::toCrossPoint(const std::shared_ptr<Epub>& epu
     ParagraphStreamer s(xpathSteps, xpathStepCount, xpathChar, xpathTextNode);
     if (streamSpine(epub, result.spineIndex, s) && s.found()) {
       intra = s.progress();
+      result.visibleTextOffset = static_cast<uint32_t>(std::min<size_t>(s.getTargetVisChars(), UINT32_MAX));
+      result.hasVisibleTextOffset = true;
       resolvedIntra = true;
       const int pAtMatch = s.getParagraphAtMatch();
       if (pAtMatch > 0) {
@@ -866,6 +886,8 @@ CrossPointPosition ProgressMapper::toCrossPoint(const std::shared_ptr<Epub>& epu
     ParagraphStreamer s(xpathP, xpathChar, xpathTextNode);
     if (streamSpine(epub, result.spineIndex, s) && s.found()) {
       intra = s.progress();
+      result.visibleTextOffset = static_cast<uint32_t>(std::min<size_t>(s.getTargetVisChars(), UINT32_MAX));
+      result.hasVisibleTextOffset = true;
       resolvedIntra = true;
       LOG_DBG("PM", "XPath p[%d]/text()[%d]+%d -> %.1f%% (target=%zu total=%zu)", xpathP, xpathTextNode, xpathChar,
               intra * 100, s.getTargetVisChars(), s.getTotalVisChars());
@@ -873,6 +895,8 @@ CrossPointPosition ProgressMapper::toCrossPoint(const std::shared_ptr<Epub>& epu
   }
   if (!resolvedIntra && xpathSpine >= 0 && xpathSpine < spineCount && isChapterStartXPath(koPos.xpath)) {
     intra = 0.0f;
+    result.visibleTextOffset = 0;
+    result.hasVisibleTextOffset = true;
     resolvedIntra = true;
     LOG_DBG("PM", "Chapter-start XPath %s -> spine=%d page start", koPos.xpath.c_str(), result.spineIndex);
   }

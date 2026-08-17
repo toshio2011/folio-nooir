@@ -8,6 +8,8 @@
 #include <Serialization.h>
 
 #include <cstdlib>
+#include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <new>
 
@@ -47,6 +49,10 @@ std::string getCachePath(const std::string& imagePath) {
 bool readValidCacheHeader(HalFile& cacheFile, const int expectedWidth, const int expectedHeight, uint16_t& cachedWidth,
                           uint16_t& cachedHeight) {
   if (cacheFile.read(&cachedWidth, 2) != 2 || cacheFile.read(&cachedHeight, 2) != 2) {
+    return false;
+  }
+
+  if (expectedWidth <= 0 || expectedHeight <= 0 || cachedWidth == 0 || cachedHeight == 0) {
     return false;
   }
 
@@ -323,9 +329,22 @@ void ImageBlock::clearSessionRenderFailures() { failedImageCount = 0; }
 void ImageBlock::releaseRenderCache() { releasePxcSlot(); }
 
 void ImageBlock::renderPlaceholder(GfxRenderer& renderer, const int x, const int y) const {
-  renderer.fillRect(x, y, width, height, true);
-  if (width > 2 && height > 2) {
-    renderer.fillRect(x + 1, y + 1, width - 2, height - 2, false);
+  // Keep a malformed/stale page cache from handing an out-of-range rectangle
+  // to the renderer. This is only the fail-soft path; valid images keep the
+  // same fast rendering path as before.
+  const int screenWidth = renderer.getScreenWidth();
+  const int screenHeight = renderer.getScreenHeight();
+  const int64_t right64 = static_cast<int64_t>(x) + width;
+  const int64_t bottom64 = static_cast<int64_t>(y) + height;
+  const int left = std::max(0, x);
+  const int top = std::max(0, y);
+  const int right = std::min<int64_t>(screenWidth, right64);
+  const int bottom = std::min<int64_t>(screenHeight, bottom64);
+  if (right <= left || bottom <= top) return;
+
+  renderer.fillRect(left, top, right - left, bottom - top, true);
+  if (right - left > 2 && bottom - top > 2) {
+    renderer.fillRect(left + 1, top + 1, right - left - 2, bottom - top - 2, false);
   }
 }
 
@@ -343,10 +362,15 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   const int screenWidth = renderer.getScreenWidth();
   const int screenHeight = renderer.getScreenHeight();
 
-  // Bounds check render position using logical screen dimensions
-  if (x < 0 || y < 0 || x + width > screenWidth || y + height > screenHeight) {
+  // Use 64-bit arithmetic for corrupted page geometry. Keep the existing
+  // fail-soft behavior, but draw a clipped placeholder instead of risking an
+  // invalid rectangle or re-entering a decoder repeatedly.
+  const int64_t right = static_cast<int64_t>(x) + width;
+  const int64_t bottom = static_cast<int64_t>(y) + height;
+  if (width <= 0 || height <= 0 || x < 0 || y < 0 || right > screenWidth || bottom > screenHeight) {
     LOG_ERR("IMG", "Invalid render position: (%d,%d) size (%dx%d) screen (%dx%d)", x, y, width, height, screenWidth,
             screenHeight);
+    renderPlaceholder(renderer, x, y);
     return;
   }
 
@@ -527,5 +551,9 @@ std::unique_ptr<ImageBlock> ImageBlock::deserialize(HalFile& file) {
   int16_t w, h;
   serialization::readPod(file, w);
   serialization::readPod(file, h);
+  if (w <= 0 || h <= 0) {
+    LOG_ERR("IMG", "Deserialization failed: invalid image dimensions (%d,%d)", w, h);
+    return nullptr;
+  }
   return std::unique_ptr<ImageBlock>(new (std::nothrow) ImageBlock(path, src, w, h));
 }

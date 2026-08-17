@@ -31,9 +31,9 @@ class RecentBooksActivity final : public Activity {
   uint8_t retrievingBookCacheProgress = 0;
   size_t retrievingBookCacheIndex = SIZE_MAX;
   volatile bool retrievingBookCachePopupRendered = false;
-  unsigned long retrievingBookCacheStartedMs = 0;
   // One-time post-install/update bootstrap: build missing recent-book
-  // metadata and thumbnails one book at a time while showing feedback.
+  // metadata one book at a time while showing feedback. Thumbnails are
+  // intentionally left to the explicit Refresh Book Cache action.
   bool recentCacheWarmupActive = false;
   bool recentCacheBootstrapProbePending = false;
   unsigned long recentCacheWarmupNextMs = 0;
@@ -41,8 +41,13 @@ class RecentBooksActivity final : public Activity {
   bool snapshotRestored = false;
   size_t snapshotPageStart = SIZE_MAX;
   size_t snapshotSelectorIndex = SIZE_MAX;
+  // When the persisted frame is still valid (for example after leaving
+  // Settings), one panel refresh is enough. The first render can reuse the
+  // frame instead of rebuilding all cover/text geometry.
+  bool snapshotFastPathUsed = false;
   size_t lastRenderedSelectorIndex = SIZE_MAX;
   size_t lastRenderedPageStart = SIZE_MAX;
+  uint8_t lastRenderedTab = 0;
   // The selector can point to a different book after Recent reorders entries
   // when a reader closes. Track the actual featured book instead of relying on
   // its numeric position in the shelf snapshot.

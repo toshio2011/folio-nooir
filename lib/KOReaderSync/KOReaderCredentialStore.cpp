@@ -16,6 +16,7 @@ constexpr char LEGACY_DEFAULT_SERVER_URL[] = "https://sync.koreader.rocks:443";
 
 // Bumped when a change to defaults would alter behavior for existing configs.
 constexpr uint8_t CONFIG_VERSION = 2;
+constexpr char DEFAULT_DEVICE_NAME[] = "Folio Nooir X4";
 }  // namespace
 
 void KOReaderCredentialStore::toJson(JsonDocument& doc) const {
@@ -23,6 +24,7 @@ void KOReaderCredentialStore::toJson(JsonDocument& doc) const {
   doc["username"] = getUsername();
   doc["password_obf"] = obfuscation::obfuscateToBase64(getPassword());
   doc["serverUrl"] = getServerUrl();
+  doc["deviceName"] = getDeviceName();
   doc["matchMethod"] = static_cast<uint8_t>(getMatchMethod());
   doc["sendMetadata"] = getSendMetadata();
   doc["syncBehavior"] = static_cast<uint8_t>(getSyncBehavior());
@@ -36,6 +38,12 @@ bool KOReaderCredentialStore::fromJson(JsonVariantConst doc) {
 
   setCredentials(user, pass);
   setServerUrl(doc["serverUrl"] | "");
+  const JsonVariantConst deviceNameValue = doc["deviceName"];
+  const bool missingDeviceName = deviceNameValue.isNull();
+  setDeviceName(deviceNameValue | DEFAULT_DEVICE_NAME);
+  // Older config files have no deviceName. Save the migrated default once so
+  // the editable value survives reboot and remains visible to web settings.
+  needsResave = needsResave || missingDeviceName;
 
   // The default server changed in config v2 (sync.koreader.rocks -> crosspoint-sync).
   // A pre-v2 config with credentials and no explicit URL was actively syncing
@@ -111,6 +119,23 @@ void KOReaderCredentialStore::clearCredentials() {
 void KOReaderCredentialStore::setServerUrl(const std::string& url) {
   serverUrl = url;
   LOG_DBG("KRS", "Set server URL: %s", url.empty() ? "(default)" : url.c_str());
+}
+
+void KOReaderCredentialStore::setDeviceName(const std::string& name) {
+  // Keep the value small enough for the sync result screen and the server's
+  // device field, while allowing normal user-entered names.
+  deviceName = name.substr(0, 40);
+  if (deviceName.empty()) deviceName = DEFAULT_DEVICE_NAME;
+  LOG_DBG("KRS", "Set device name: %s", deviceName.c_str());
+}
+
+bool KOReaderCredentialStore::usesCrossPointSyncServer() const {
+  const std::string base = getBaseUrl();
+  // The empty URL resolves to the official CrossPoint service. A custom
+  // CrossPoint deployment can opt into the extension simply by using a host
+  // containing "crosspoint"; generic KOReader servers stay standard-only.
+  return base.find("sync.crosspointreader.com") != std::string::npos ||
+         base.find("crosspoint") != std::string::npos;
 }
 
 std::string KOReaderCredentialStore::getBaseUrl() const {

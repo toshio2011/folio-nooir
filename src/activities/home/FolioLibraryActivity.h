@@ -30,6 +30,18 @@ class FolioLibraryActivity final : public Activity {
     std::string coverBmpPath;
   };
 
+  // One-book, temporary cache inspection used by Retrieve All.  This is not
+  // retained as a library-wide index: it exists only while deciding whether
+  // the current queue item needs metadata and/or thumbnail work.
+  struct RetrieveCacheStatus {
+    bool metadataValid = false;
+    bool thumbnailValid = false;
+    std::string title;
+    std::string author;
+    std::string synopsis;
+    std::string thumbnailPath;
+  };
+
   static constexpr size_t PAGE_SIZE = 8;
   static constexpr size_t NAME_BUFFER_SIZE = 500;
 
@@ -85,10 +97,16 @@ class FolioLibraryActivity final : public Activity {
   bool retrieveAllCurrentFromPriority = false;
   std::string retrieveAllCurrentPath;
   bool retrieveAllCurrentReady = false;
-  unsigned long retrieveAllCurrentReadyAtMs = 0;
+  bool retrieveAllCurrentMetadataCacheValid = false;
+  bool retrieveAllCurrentThumbnailCacheValid = false;
   unsigned long retrieveAllNextUiUpdateMs = 0;
   uint32_t retrieveAllLastHalfRefreshProcessed = 0;
   unsigned long retrieveAllCurrentStartedMs = 0;
+  unsigned long retrieveAllStartedMs = 0;
+  uint32_t retrieveAllMetadataCacheHits = 0;
+  uint32_t retrieveAllMetadataCacheMisses = 0;
+  uint32_t retrieveAllThumbnailCacheHits = 0;
+  uint32_t retrieveAllThumbnailCacheMisses = 0;
   std::atomic<bool> retrieveAllProcessingBook{false};
   std::string retrieveAllStatusMessage;
   size_t selectorIndex = 0;
@@ -101,7 +119,6 @@ class FolioLibraryActivity final : public Activity {
   uint8_t retrievingMetadataProgress = 0;
   bool retrievingMetadataCleanupOnCancel = false;
   volatile bool retrievingPopupRendered = false;
-  unsigned long retrievingMetadataStartedMs = 0;
   bool forceMetadataRefresh = false;
   size_t forceMetadataRefreshIndex = SIZE_MAX;
   size_t retrieveDirectoryIndex = 0;
@@ -118,7 +135,8 @@ class FolioLibraryActivity final : public Activity {
   void applyLibraryFilter();
   void resetPreviews();
   void loadNextPreview();
-  void refreshSelectedPreviewFromCache(const std::string& path);
+  static RetrieveCacheStatus inspectRetrieveCache(const std::string& path);
+  void refreshSelectedPreviewFromCache(const std::string& path, const RetrieveCacheStatus* status = nullptr);
   void loadSelectedMetadata();
   bool matchesLibraryFilter(const std::string& name) const;
   FolioLibrarySummary getLibrarySummary() const;

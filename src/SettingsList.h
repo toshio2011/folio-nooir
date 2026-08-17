@@ -250,6 +250,9 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         SettingInfo::Enum(StrId::STR_IMAGES, &CrossPointSettings::imageRendering,
                           {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS},
                           "imageRendering", StrId::STR_CAT_READER),
+        SettingInfo::Enum(StrId::STR_PAGE_NUMBER_MODE, &CrossPointSettings::pageNumberMode,
+                          {StrId::STR_CURRENT_PAGES, StrId::STR_STABLE_PAGES}, "pageNumberMode",
+                          StrId::STR_CAT_READER),
         // --- Controls ---
         SettingInfo::Enum(StrId::STR_SIDE_BTN_LAYOUT, &CrossPointSettings::sideButtonLayout,
                           {StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV, StrId::STR_DISABLED}, "sideButtonLayout",
@@ -336,6 +339,13 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
               KOREADER_STORE.saveToFile();
             },
             "koServerUrl", StrId::STR_KOREADER_SYNC),
+        SettingInfo::DynamicString(
+            StrId::STR_SYNC_DEVICE_NAME, [] { return KOREADER_STORE.getDeviceName(); },
+            [](const std::string& v) {
+              KOREADER_STORE.setDeviceName(v);
+              KOREADER_STORE.saveToFile();
+            },
+            "koDeviceName", StrId::STR_KOREADER_SYNC),
         SettingInfo::DynamicEnum(
             StrId::STR_DOCUMENT_MATCHING, {StrId::STR_FILENAME, StrId::STR_BINARY},
             [] { return static_cast<uint8_t>(KOREADER_STORE.getMatchMethod()); },

@@ -12,11 +12,11 @@ struct ClippingEntry {
   uint16_t page = 0;
   uint32_t dateKey = 0;
 
-  // Word range on the paginated EPUB page.  Older clipping files do not have
+  // Word range on the paginated EPUB page. Older clipping files do not have
   // these fields; ClipFile marks those entries as range-less and the reader
-  // falls back to matching their saved text.  Keeping the range makes a new
-  // highlight stable after CSS/font reflow as long as the passage remains on
-  // the same page.
+  // falls back to matching their saved text. The range is the fast path; after
+  // CSS/font reflow the reader can relocate the passage using its saved text
+  // and percentage hint.
   uint16_t firstWord = 0;
   uint16_t lastWord = 0;
   bool hasWordRange = false;

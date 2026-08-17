@@ -38,7 +38,6 @@ constexpr char SEARCH_ALL_FOLDERS_LABEL[] = "Search All Folders";
 constexpr char RETRIEVE_QUEUE_PATH[] = "/.crosspoint/retrieve-all.queue";
 constexpr char RETRIEVE_THUMB_QUEUE_PATH[] = "/.crosspoint/retrieve-thumbs.queue";
 constexpr char STOP_RETRIEVE_LABEL[] = "Stop for now";
-constexpr unsigned long RETRIEVE_POPUP_TIMEOUT_MS = 2500;
 constexpr size_t SEARCH_ENTRIES_PER_STEP = 24;
 
 bool isLibraryBook(const std::string& path) {
@@ -96,31 +95,6 @@ bool containsLibrarySearchTerm(const std::string& name, const std::string& folde
     if (match) return true;
   }
   return false;
-}
-
-bool hasValidShelfThumbnail(const std::string& path) {
-  if (FsHelpers::hasEpubExtension(path)) {
-    Epub epub(path, "/.crosspoint");
-    return isValidBookThumbnail(UITheme::getCoverThumbPath(epub.getThumbBmpPath(), FolioNooirTheme::COVER_HEIGHT));
-  }
-  if (FsHelpers::hasXtcExtension(path)) {
-    Xtc xtc(path, "/.crosspoint");
-    return isValidBookThumbnail(UITheme::getCoverThumbPath(xtc.getThumbBmpPath(), FolioNooirTheme::COVER_HEIGHT));
-  }
-  return true;
-}
-
-bool hasValidMetadataCache(const std::string& path) {
-  if (FsHelpers::hasEpubExtension(path)) {
-    Epub epub(path, "/.crosspoint");
-    return epub.loadCachedMetadataOnly();
-  }
-  if (FsHelpers::hasXtcExtension(path)) {
-    // XTC has no separate lightweight metadata file. Its thumbnail is the
-    // reusable presentation cache, so a valid thumbnail is enough to skip it.
-    return hasValidShelfThumbnail(path);
-  }
-  return true;
 }
 
 void removePartialRetrieveThumbnail(const std::string& path) {
@@ -222,7 +196,6 @@ void FolioLibraryActivity::applyLibraryFilter() {
   retrievingMetadataCleanupOnCancel = false;
   retrievingMetadataIndex = SIZE_MAX;
   retrievingPopupRendered = false;
-  retrievingMetadataStartedMs = 0;
   forceMetadataRefresh = false;
   forceMetadataRefreshIndex = SIZE_MAX;
   resetPreviews();
@@ -317,7 +290,38 @@ void FolioLibraryActivity::loadNextPreview() {
   }
 }
 
-void FolioLibraryActivity::refreshSelectedPreviewFromCache(const std::string& path) {
+FolioLibraryActivity::RetrieveCacheStatus FolioLibraryActivity::inspectRetrieveCache(const std::string& path) {
+  RetrieveCacheStatus status;
+  if (FsHelpers::hasEpubExtension(path)) {
+    Epub epub(path, "/.crosspoint");
+    status.metadataValid = epub.loadCachedMetadataOnly();
+    if (status.metadataValid) {
+      status.title = epub.getTitle();
+      status.author = epub.getAuthor();
+      status.synopsis = epub.getDescription();
+    }
+    status.thumbnailPath = epub.getThumbBmpPath();
+    status.thumbnailValid =
+        isValidBookThumbnail(UITheme::getCoverThumbPath(status.thumbnailPath, FolioNooirTheme::COVER_HEIGHT));
+    return status;
+  }
+  if (FsHelpers::hasXtcExtension(path)) {
+    Xtc xtc(path, "/.crosspoint");
+    status.thumbnailPath = xtc.getThumbBmpPath();
+    status.thumbnailValid =
+        isValidBookThumbnail(UITheme::getCoverThumbPath(status.thumbnailPath, FolioNooirTheme::COVER_HEIGHT));
+    // XTC has no separate lightweight metadata file. Its valid shelf
+    // thumbnail remains the existing cache-validity signal.
+    status.metadataValid = status.thumbnailValid;
+    return status;
+  }
+  status.metadataValid = true;
+  status.thumbnailValid = true;
+  return status;
+}
+
+void FolioLibraryActivity::refreshSelectedPreviewFromCache(const std::string& path,
+                                                            const RetrieveCacheStatus* status) {
   // Retrieve All processes books that may not be in RecentBooksStore yet.
   // Refresh only the highlighted shelf slot from the cache just written; do
   // not clear/rebuild the other seven visible previews.
@@ -327,23 +331,33 @@ void FolioLibraryActivity::refreshSelectedPreviewFromCache(const std::string& pa
 
   Preview& preview = previews[selectorIndex - previewPageStart];
   if (FsHelpers::hasEpubExtension(path)) {
-    Epub epub(path, "/.crosspoint");
-    if (epub.loadCachedMetadataOnly()) {
-      if (!epub.getTitle().empty()) preview.title = epub.getTitle();
-      preview.author = epub.getAuthor();
-      if (!epub.getDescription().empty()) preview.synopsis = epub.getDescription();
-      preview.coverBmpPath = epub.getThumbBmpPath();
-      if (const BookMetadataOverride* overrideData = BOOK_METADATA_OVERRIDES.find(path)) {
-        if (!overrideData->title.empty()) preview.title = overrideData->title;
-        preview.author = overrideData->author;
-        preview.synopsis = overrideData->synopsis;
-      }
+    if (status && status->metadataValid) {
+      if (!status->title.empty()) preview.title = status->title;
+      preview.author = status->author;
+      if (!status->synopsis.empty()) preview.synopsis = status->synopsis;
+      preview.coverBmpPath = status->thumbnailPath;
       preview.metadataAttempted = true;
+    } else {
+      Epub epub(path, "/.crosspoint");
+      if (epub.loadCachedMetadataOnly()) {
+        if (!epub.getTitle().empty()) preview.title = epub.getTitle();
+        preview.author = epub.getAuthor();
+        if (!epub.getDescription().empty()) preview.synopsis = epub.getDescription();
+        preview.coverBmpPath = epub.getThumbBmpPath();
+        preview.metadataAttempted = true;
+      }
     }
   } else if (FsHelpers::hasXtcExtension(path)) {
-    Xtc xtc(path, "/.crosspoint");
-    const std::string thumb = xtc.getThumbBmpPath();
-    if (isValidBookThumbnail(UITheme::getCoverThumbPath(thumb, FolioNooirTheme::COVER_HEIGHT))) {
+    std::string thumb;
+    if (status) {
+      thumb = status->thumbnailPath;
+    } else {
+      Xtc xtc(path, "/.crosspoint");
+      thumb = xtc.getThumbBmpPath();
+    }
+    const bool thumbnailValid = status ? status->thumbnailValid
+                                       : isValidBookThumbnail(UITheme::getCoverThumbPath(thumb, FolioNooirTheme::COVER_HEIGHT));
+    if (thumbnailValid) {
       preview.coverBmpPath = thumb;
       preview.metadataAttempted = true;
     }
@@ -383,10 +397,16 @@ void FolioLibraryActivity::startRetrieveAllBooks() {
   retrieveAllCurrentFromPriority = false;
   retrieveAllCurrentPath.clear();
   retrieveAllCurrentReady = false;
-  retrieveAllCurrentReadyAtMs = 0;
+  retrieveAllCurrentMetadataCacheValid = false;
+  retrieveAllCurrentThumbnailCacheValid = false;
   retrieveAllNextUiUpdateMs = 0;
   retrieveAllLastHalfRefreshProcessed = 0;
   retrieveAllCurrentStartedMs = 0;
+  retrieveAllStartedMs = millis();
+  retrieveAllMetadataCacheHits = 0;
+  retrieveAllMetadataCacheMisses = 0;
+  retrieveAllThumbnailCacheHits = 0;
+  retrieveAllThumbnailCacheMisses = 0;
   retrieveAllProcessingBook.store(false);
   retrieveAllStatusMessage.clear();
   retrieveQueueOpen = Storage.openFileForWrite("FLIB", RETRIEVE_QUEUE_PATH, retrieveQueueFile);
@@ -398,6 +418,7 @@ void FolioLibraryActivity::startRetrieveAllBooks() {
   retrievingAllBooksPopupRendered = false;
   retrieveAllComplete = false;
   retrieveAllCompleteUntilMs = 0;
+  LOG_DBG("PERF", "RetrieveAll start");
   requestUpdate(true);
 }
 
@@ -519,10 +540,27 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
         ++retrieveAllProcessed;
         return;
       }
+      // Inspect metadata and the shelf thumbnail once for this queue item.
+      // The result is retained only until the current item finishes, avoiding
+      // duplicate Epub/cache construction without adding a library-wide index.
+      const RetrieveCacheStatus cache = inspectRetrieveCache(retrieveAllCurrentPath);
+      retrieveAllCurrentMetadataCacheValid = cache.metadataValid;
+      retrieveAllCurrentThumbnailCacheValid = cache.thumbnailValid;
+      if (cache.metadataValid) {
+        ++retrieveAllMetadataCacheHits;
+      } else {
+        ++retrieveAllMetadataCacheMisses;
+      }
+      if (cache.thumbnailValid) {
+        ++retrieveAllThumbnailCacheHits;
+      } else {
+        ++retrieveAllThumbnailCacheMisses;
+      }
+
       // A valid metadata cache avoids ZIP parsing, but a missing thumbnail is
       // still added to the small second-phase queue.
-      if (hasValidMetadataCache(retrieveAllCurrentPath)) {
-        if (!hasValidShelfThumbnail(retrieveAllCurrentPath)) {
+      if (cache.metadataValid) {
+        if (!cache.thumbnailValid) {
           if (retrieveThumbnailQueueWriting) {
             retrieveThumbnailQueueFile.write(reinterpret_cast<const uint8_t*>(retrieveAllCurrentPath.c_str()),
                                               retrieveAllCurrentPath.size());
@@ -531,7 +569,7 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
           ++retrieveAllThumbnailTotal;
           if (retrieveAllCurrentPath == retrieveAllSelectedPath) retrieveAllSelectedNeedsThumbnail = true;
         }
-        refreshSelectedPreviewFromCache(retrieveAllCurrentPath);
+        refreshSelectedPreviewFromCache(retrieveAllCurrentPath, &cache);
         ++retrieveAllProcessed;
         if (millis() >= retrieveAllNextUiUpdateMs) {
           retrieveAllNextUiUpdateMs = millis() + 500;
@@ -540,12 +578,10 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
         return;
       }
       retrieveAllCurrentReady = true;
-      retrieveAllCurrentReadyAtMs = millis() + 300;
       retrievingAllBooksPopupRendered = false;
       requestUpdate(true);
       return;
     }
-    if (millis() < retrieveAllCurrentReadyAtMs) return;
     const std::string path = retrieveAllCurrentPath;
     retrieveAllCurrentStartedMs = millis();
     retrieveAllProcessingBook.store(true);
@@ -553,15 +589,25 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
             static_cast<unsigned long>(retrieveAllTotal), path.c_str());
     requestUpdate(true);
     bool metadataReady = false;
+    RetrieveCacheStatus processedCache;
+    bool processedCacheValid = false;
     if (FsHelpers::hasEpubExtension(path)) {
       Epub epub(path, "/.crosspoint");
       metadataReady = epub.loadMetadataOnly();
+      if (metadataReady) {
+        processedCache.metadataValid = true;
+        processedCache.title = epub.getTitle();
+        processedCache.author = epub.getAuthor();
+        processedCache.synopsis = epub.getDescription();
+        processedCache.thumbnailPath = epub.getThumbBmpPath();
+        processedCacheValid = true;
+      }
     } else if (FsHelpers::hasXtcExtension(path)) {
       // XTC has no separate metadata.bin. Its thumbnail phase opens the XTC
       // once when a thumbnail is missing, so metadata remains filename-first.
       metadataReady = true;
     }
-    if (metadataReady && !hasValidShelfThumbnail(path)) {
+    if (metadataReady && !retrieveAllCurrentThumbnailCacheValid) {
       if (retrieveThumbnailQueueWriting) {
         retrieveThumbnailQueueFile.write(reinterpret_cast<const uint8_t*>(path.c_str()), path.size());
         retrieveThumbnailQueueFile.write(static_cast<uint8_t>('\n'));
@@ -570,11 +616,15 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
       if (path == retrieveAllSelectedPath) retrieveAllSelectedNeedsThumbnail = true;
     }
     retrieveAllProcessingBook.store(false);
+    LOG_DBG("PERF", "RetrieveAll metadata book=%s cache=miss elapsed=%lums", path.c_str(),
+            static_cast<unsigned long>(millis() - retrieveAllCurrentStartedMs));
     LOG_INF("FLIB", "Retrieve All metadata finished: %s", path.c_str());
-    refreshSelectedPreviewFromCache(path);
+    refreshSelectedPreviewFromCache(path, processedCacheValid ? &processedCache : nullptr);
     ++retrieveAllProcessed;
     retrieveAllCurrentReady = false;
     retrieveAllCurrentPath.clear();
+    retrieveAllCurrentMetadataCacheValid = false;
+    retrieveAllCurrentThumbnailCacheValid = false;
     return;
   }
 
@@ -602,12 +652,10 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
         if (retrieveAllPriorityDone && retrieveAllCurrentPath == retrieveAllSelectedPath) return;
       }
       retrieveAllCurrentReady = true;
-      retrieveAllCurrentReadyAtMs = millis() + 120;
       retrievingAllBooksPopupRendered = false;
       requestUpdate(true);
       return;
     }
-    if (millis() < retrieveAllCurrentReadyAtMs) return;
     const std::string path = retrieveAllCurrentPath;
     retrieveAllCurrentStartedMs = millis();
     retrieveAllProcessingBook.store(true);
@@ -639,6 +687,8 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
       }
     }
     retrieveAllProcessingBook.store(false);
+    LOG_DBG("PERF", "RetrieveAll thumbnail book=%s elapsed=%lums", path.c_str(),
+            static_cast<unsigned long>(millis() - retrieveAllCurrentStartedMs));
     LOG_INF("FLIB", "Retrieve All thumbnail finished: %s", path.c_str());
     refreshSelectedPreviewFromCache(path);
     ++retrieveAllThumbnailProcessed;
@@ -646,6 +696,8 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
     retrieveAllCurrentReady = false;
     retrieveAllCurrentPath.clear();
     retrieveAllCurrentFromPriority = false;
+    retrieveAllCurrentMetadataCacheValid = false;
+    retrieveAllCurrentThumbnailCacheValid = false;
     requestUpdate();
     return;
   }
@@ -654,6 +706,17 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
 }
 
 void FolioLibraryActivity::finishRetrieveAllBooks(const char* message, const bool showCompletion) {
+  if (retrieveAllStartedMs != 0) {
+    LOG_INF("PERF",
+            "RetrieveAll complete books=%lu metadata_hits=%lu metadata_misses=%lu thumbnail_hits=%lu "
+            "thumbnail_misses=%lu elapsed=%lums status=%s",
+            static_cast<unsigned long>(retrieveAllTotal),
+            static_cast<unsigned long>(retrieveAllMetadataCacheHits),
+            static_cast<unsigned long>(retrieveAllMetadataCacheMisses),
+            static_cast<unsigned long>(retrieveAllThumbnailCacheHits),
+            static_cast<unsigned long>(retrieveAllThumbnailCacheMisses),
+            static_cast<unsigned long>(millis() - retrieveAllStartedMs), message ? message : "finished");
+  }
   retrieveAllProcessingBook.store(false);
   if (retrieveQueueOpen || retrieveQueueReading) retrieveQueueFile.close();
   if (retrieveThumbnailQueueWriting || retrieveThumbnailQueueReading) retrieveThumbnailQueueFile.close();
@@ -682,10 +745,12 @@ void FolioLibraryActivity::finishRetrieveAllBooks(const char* message, const boo
   retrieveAllCurrentFromPriority = false;
   retrieveAllCurrentPath.clear();
   retrieveAllCurrentReady = false;
-  retrieveAllCurrentReadyAtMs = 0;
+  retrieveAllCurrentMetadataCacheValid = false;
+  retrieveAllCurrentThumbnailCacheValid = false;
   retrieveAllNextUiUpdateMs = 0;
   retrieveAllLastHalfRefreshProcessed = 0;
   retrieveAllCurrentStartedMs = 0;
+  retrieveAllStartedMs = 0;
   requestUpdate(true);
 }
 
@@ -946,7 +1011,6 @@ void FolioLibraryActivity::showBookActions() {
       retrievingMetadataProgress = 0;
       retrievingMetadataCleanupOnCancel = true;
       retrievingPopupRendered = false;
-      retrievingMetadataStartedMs = 0;
       forceMetadataRefresh = true;
       forceMetadataRefreshIndex = selectorIndex;
     } else if (action == 6) {
@@ -1053,22 +1117,24 @@ void FolioLibraryActivity::loadSelectedMetadata() {
     retrievingMetadataCleanupOnCancel = forceRefresh;
     retrievingMetadataIndex = selectorIndex;
     retrievingPopupRendered = false;
-    retrievingMetadataStartedMs = millis();
     // Queue the busy frame without blocking the main task. The next loop will
-    // wait for the render acknowledgement (with a timeout) before starting the
-    // synchronous ZIP/thumbnail work. This keeps X3 input responsive even if a
-    // panel refresh is delayed.
+    // wait for the render acknowledgement before starting synchronous
+    // ZIP/thumbnail work. This keeps the popup visible and X3 input responsive.
     requestUpdate(true);
     return;
   }
   if (retrievingMetadataIndex != selectorIndex) return;
-  if (!retrievingPopupRendered && millis() - retrievingMetadataStartedMs < RETRIEVE_POPUP_TIMEOUT_MS) return;
+  // Popup-first: do not begin synchronous metadata/cover work until the
+  // retrieval dialog has actually rendered.  The 1.5 s selection debounce is
+  // enforced before this state is entered; this guard only waits for the
+  // visible feedback frame and never starts work for a transient selection.
+  if (!retrievingPopupRendered) return;
 
   retrievingMetadataProgress = 35;
   requestUpdateAndWait();
+  const unsigned long retrievalWorkStartedMs = millis();
   retrievingMetadata = false;
   retrievingPopupRendered = false;
-  retrievingMetadataStartedMs = 0;
   forceMetadataRefresh = false;
   forceMetadataRefreshIndex = SIZE_MAX;
   preview.metadataAttempted = true;
@@ -1118,6 +1184,8 @@ void FolioLibraryActivity::loadSelectedMetadata() {
     preview.author = overrideData->author;
     preview.synopsis = overrideData->synopsis;
   }
+  LOG_DBG("PERF", "Metadata retrieval book=%s elapsed=%lums", path.c_str(),
+          static_cast<unsigned long>(millis() - retrievalWorkStartedMs));
   retrievingMetadataProgress = 100;
   // Always repaint after retrieval, including a failed/empty metadata pass,
   // so the progress overlay cannot remain ghosted on the e-ink panel.
@@ -1231,7 +1299,6 @@ void FolioLibraryActivity::loop() {
     retrievingMetadataCleanupOnCancel = false;
     retrievingMetadataIndex = SIZE_MAX;
     retrievingPopupRendered = false;
-    retrievingMetadataStartedMs = 0;
     forceMetadataRefresh = false;
     forceMetadataRefreshIndex = SIZE_MAX;
   }
@@ -1271,7 +1338,6 @@ void FolioLibraryActivity::loop() {
     retrievingPopupRendered = false;
     retrievingMetadataProgress = 0;
     retrievingMetadataIndex = SIZE_MAX;
-    retrievingMetadataStartedMs = 0;
     forceMetadataRefresh = false;
     forceMetadataRefreshIndex = SIZE_MAX;
     requestUpdate(true);

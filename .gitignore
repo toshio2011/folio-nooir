@@ -3,7 +3,11 @@
 .DS_Store
 .vscode
 open-x4-sdk
+# Native simulator SD-card data (books, caches, fonts, sleep images).
 fs_
+# Native simulator screenshots and ad-hoc host logs.
+simulator_screenshots/
+simulator_logs/
 lib/EpdFont/fontsrc
 lib/I18n/I18nKeys.h
 lib/I18n/I18nStrings.h

@@ -230,6 +230,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
 
   enum TOUCH_READER_CONTROLS { TOUCH_READER_OFF = 0, TOUCH_READER_ON = 1, TOUCH_READER_CONTROLS_COUNT };
 
+  // Reader page-number display. Current Pages is the existing rendered chapter
+  // count. Stable Pages is an opt-in, font-independent text estimate cached per
+  // EPUB in stable_pages.bin.
+  enum PAGE_NUMBER_MODE { CURRENT_PAGES = 0, STABLE_PAGES = 1, PAGE_NUMBER_MODE_COUNT };
+
   enum QUICK_RESUME_SLEEP_SCREEN {
     QUICK_RESUME_NEVER = 0,
     QUICK_RESUME_AFTER_TIMEOUT = 1,
@@ -399,6 +404,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t tiltPageTurn = TILT_OFF;
   // Touch screen reader zones/gestures on boards with a touch controller.
   uint8_t touchReaderControls = TOUCH_READER_ON;
+  uint8_t pageNumberMode = CURRENT_PAGES;
   // Language setting (Language enum index, default 0 = EN)
   uint8_t language = 0;
   // Quick Resume: keep current content visible with moon icon instead of showing a static sleep screen.
