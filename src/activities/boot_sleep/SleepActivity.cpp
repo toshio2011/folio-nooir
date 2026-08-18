@@ -237,12 +237,14 @@ int overlayPngDraw(PNGDRAW* draw) {
 }
 
 void preconditionSleepRefresh(GfxRenderer& renderer) {
-  // Use the same light waveform as normal reader page turns. A full waveform
-  // removes more ghosting, but its visible flash is distracting when entering
-  // sleep. The fast clear gives the sleep artwork a clean enough base without
-  // turning the transition into a full-screen blink.
+  // Opaque sleep screens replace the previous activity, so first settle the
+  // panel with the stronger balanced waveform. A FAST clear is differential
+  // and can leave a dark reader page or menu behind the sleep artwork. HALF
+  // is intentionally used instead of FULL: it is the existing e-ink-aware
+  // cleanup path (including the X3 resync hook) without adding a full flash.
+  renderer.setDarkMode(false);
   renderer.clearScreen();
-  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
   renderer.clearScreen();
 }
 

@@ -180,6 +180,7 @@ void XtcReaderActivity::loop() {
     } else if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_DARK_MODE) {
       SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
       SETTINGS.saveToFile();
+      pagesUntilFullRefresh = 1;
       darkShortcutFired = true;
       requestUpdate();
     }
@@ -210,6 +211,7 @@ void XtcReaderActivity::loop() {
       mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && !darkShortcutFired) {
     SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
     SETTINGS.saveToFile();
+    pagesUntilFullRefresh = 1;
     darkShortcutFired = true;
     requestUpdate();
     return;
@@ -475,7 +477,7 @@ void XtcReaderActivity::renderPage() {
     if (pagesUntilFullRefresh <= 1) {
       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
       renderer.preconditionGrayscale();
-      pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
+      pagesUntilFullRefresh = ReaderUtils::refreshCadence(renderer);
     } else {
       renderer.displayGrayscaleBase(HalDisplay::FAST_REFRESH);
       pagesUntilFullRefresh--;
@@ -587,7 +589,7 @@ void XtcReaderActivity::renderPage() {
       // the display sync, so only the gentle reinforcement cells fire).
       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
       renderer.preconditionGrayscale();
-      pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
+      pagesUntilFullRefresh = ReaderUtils::refreshCadence(renderer);
     } else {
       // OEM grayscale pipeline base: differential "AA-pre-BW(mid)" update as
       // the page turn on X3; plain FAST refresh on X4 (previous behavior).

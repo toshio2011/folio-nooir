@@ -906,6 +906,7 @@ void EpubReaderActivity::loop() {
       case CrossPointSettings::LP_PWR_DARK_MODE:
         SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
         SETTINGS.saveToFile();
+        pagesUntilFullRefresh = 1;
         requestUpdate();
         break;
       case CrossPointSettings::LP_PWR_KOSYNC:
@@ -1165,6 +1166,7 @@ void EpubReaderActivity::loop() {
         if (mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && !darkShortcutFired) {
           SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
           SETTINGS.saveToFile();
+          pagesUntilFullRefresh = 1;
           ignoreNextConfirmRelease = true;
           darkShortcutFired = true;
           requestUpdate();
@@ -1235,6 +1237,7 @@ void EpubReaderActivity::loop() {
     if (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::DARK_MODE) {
       SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
       SETTINGS.saveToFile();
+      pagesUntilFullRefresh = 1;
       requestUpdate();
       return;
     }

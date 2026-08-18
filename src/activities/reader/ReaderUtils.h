@@ -134,6 +134,15 @@ inline bool isTouchMenuGesture(const MappedInputManager& input) {
   return SETTINGS.touchReaderControls && input.hasTouch() && input.wasMenuGesture();
 }
 
+// Dark pages reverse the panel's dominant polarity. A short cadence keeps
+// charge from accumulating behind white text on a black page while retaining
+// the configured cadence for normal light-mode reading.
+inline int refreshCadence(const GfxRenderer& renderer) {
+  const int configured = SETTINGS.getRefreshFrequency();
+  if (!renderer.isDarkMode()) return configured;
+  return configured > 2 ? 2 : configured;
+}
+
 // One helper, blocking or deferred: the async form starts the refresh and
 // returns so the caller can overlap CPU work with the panel's refresh time.
 // Async callers must not touch the framebuffer until
@@ -147,7 +156,7 @@ inline void displayWithRefreshCycle(const GfxRenderer& renderer, int& pagesUntil
     renderer.displayBuffer(mode);
   }
   if (pagesUntilFullRefresh <= 1) {
-    pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
+    pagesUntilFullRefresh = refreshCadence(renderer);
   } else {
     pagesUntilFullRefresh--;
   }
