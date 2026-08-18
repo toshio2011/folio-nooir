@@ -976,7 +976,6 @@ void FolioLibraryActivity::showBookActions() {
       onSelectBook(path);
       return;
     }
-    RECENT_BOOKS.addBook(path, preview.title, preview.author, preview.coverBmpPath, preview.synopsis);
     if (action == 1) {
       BOOK_STATES.setStatus(path, BookStatus::Reading);
       if (preview.progressPercent >= 100) {
