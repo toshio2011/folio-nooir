@@ -38,6 +38,8 @@ constexpr char DEVICE_ID[] = "crosspoint-reader";
 constexpr uint32_t MIN_FREE_FOR_TLS = 50000;
 constexpr uint32_t MIN_BLOCK_FOR_TLS = 20000;
 
+bool isHttpSuccess(const int status) { return status >= 200 && status < 300; }
+
 // Apply the shared KOSync auth headers after begin(). x-auth-* is the native
 // KOSync scheme; Basic auth is added for Calibre-Web-Automated compatibility.
 void applyAuthHeaders(freeink::SecureHttpClient& http) {
@@ -87,7 +89,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::authenticate() {
   LOG_DBG("KOSync", "Auth response: %d", httpCode);
 
   if (httpCode <= 0) return NETWORK_ERROR;
-  if (httpCode == 200) return OK;
+  if (isHttpSuccess(httpCode)) return OK;
   if (httpCode == 401) return AUTH_FAILED;
   return SERVER_ERROR;
 }
@@ -124,7 +126,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::createUser() {
   LOG_DBG("KOSync", "Create user response: %d", httpCode);
 
   if (httpCode <= 0) return NETWORK_ERROR;
-  if (httpCode == 200 || httpCode == 201) return OK;
+  if (isHttpSuccess(httpCode)) return OK;
   if (httpCode == 402) return USER_EXISTS;
   return SERVER_ERROR;
 }
@@ -158,13 +160,26 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
     return NETWORK_ERROR;
   }
 
-  if (httpCode == 200) {
-    JsonDocument doc;
-    const DeserializationError error = deserializeJson(doc, http.getString().c_str());
+  if (isHttpSuccess(httpCode)) {
+    const String responseBody = http.getString();
     http.end();
+
+    if (responseBody.length() == 0) {
+      LOG_ERR("KOSync", "Successful progress response contained no payload");
+      return JSON_ERROR;
+    }
+
+    JsonDocument doc;
+    const DeserializationError error = deserializeJson(doc, responseBody.c_str());
 
     if (error) {
       LOG_ERR("KOSync", "JSON parse failed: %s", error.c_str());
+      return JSON_ERROR;
+    }
+
+    const char* progressValue = doc["progress"].as<const char*>();
+    if (progressValue == nullptr || progressValue[0] == '\0') {
+      LOG_ERR("KOSync", "Successful progress response contained no usable progress");
       return JSON_ERROR;
     }
 
@@ -261,7 +276,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgr
   LOG_DBG("KOSync", "Update progress response: %d", httpCode);
 
   if (httpCode <= 0) return NETWORK_ERROR;
-  if (httpCode == 200 || httpCode == 202) return OK;
+  if (isHttpSuccess(httpCode)) return OK;
   if (httpCode == 401) return AUTH_FAILED;
   return SERVER_ERROR;
 }
