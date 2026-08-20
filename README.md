@@ -63,7 +63,7 @@ X3 support uses the shared X3/X4 code path, but device revisions can differ, so 
 
 Folio Nooir is an interface and feature layer on top of CrossPoint rather than a replacement reader. The existing CrossPoint workflows remain available:
 
-- EPUB, XTC/XTCH, TXT, Markdown, and PDF/file-browser workflows.
+- EPUB, XTC/XTCH, TXT, and Markdown reading workflows, together with the existing CrossPoint PDF/file-browser handling.
 - EPUB chapter navigation, footnotes, bookmarks, go-to-percent, auto page turn, orientation control, screenshots, and custom fonts.
 - Image preview from the file browser, plus the existing X3 tilt-page-turn path where supported.
 - Wi-Fi setup, browser-based file transfer, and the built-in web server.
@@ -362,7 +362,7 @@ XTEINK display
 
 Prepared/cached pages can be faster to display.
 
-Where supported and safe, Nooir can also prepare one page ahead while the current page is being read.
+Where supported and safe, Nooir can prepare the next page in advance while you read the current page, helping reduce the wait on the next page turn..
 
 This design intentionally favors memory safety over trying to keep entire high-resolution manga pages in RAM.
 
