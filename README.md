@@ -2,7 +2,7 @@
 
 # Folio Nooir
 
-Current release: **v1.5.9** (development).
+Current release: **v1.5.10** (development).
 
 ## Hardware warning
 
@@ -35,6 +35,35 @@ device. The X3 profile also includes simulated tilt testing. Real-device
 testing is still recommended. See the complete [native simulator guide](docs/simulator.md)
 for WSL/Linux setup, build/run commands, controls, virtual SD-card use, and
 troubleshooting.
+
+## v1.5.10 changes
+
+This development cycle adds direct CBZ support and hardens the existing EPUB
+reader without changing the normal XTC/TXT reading paths.
+
+- Added direct CBZ/Comic Book reader support with ComicInfo.xml metadata,
+  cover and thumbnail caching, Library/Recent/Finished integration, metadata
+  retrieval, and Recent updates only when a CBZ is actually opened for reading.
+- Added bounded CBZ page indexing and extraction limits for X3/X4, including
+  safe handling of oversized archives, long page paths, malformed archives,
+  failed images, and temporary extraction cleanup.
+- Added CBZ Fit Width, Fit Page, Landscape, Zoom, Reset View, page picker,
+  manga RTL/LTR navigation, per-book page bookmarks, and direct bookmark/page
+  jumps. Landscape panning remains separate from normal page navigation.
+- Added conservative one-page-ahead CBZ prefetch on the validated path, with
+  serialized ownership, stale-candidate protection, atomic cache staging,
+  queued navigation, and safe fallback rendering. Unsupported hardware stays
+  on the conservative path.
+- Improved bounded CBZ cache replay and added a shared, static long-operation
+  indicator for user-initiated CBZ and EPUB loads without continuous refreshes.
+- Hardened EPUB JPEG/PNG rendering with bounded downsampling, overflow and
+  geometry guards, progressive/long-Huffman fallback handling, fail-soft image
+  placeholders, safer PixelCache replay, and cleanup of incomplete caches.
+- Fixed EPUB clipping/highlight restoration across reflow and font changes,
+  preserving regular, bold, and mixed-style selections independently from the
+  highlight overlay.
+- KOReader Sync now accepts all successful HTTP 2xx responses, including
+  bodyless successful updates, while retaining existing payload validation.
 
 ## v1.5.9 changes
 
@@ -293,7 +322,7 @@ Each compatible GitHub release must contain an asset named exactly:
 firmware.bin
 ```
 
-Use a numeric release tag such as `1.5.8`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
+Use a numeric release tag such as `1.5.10`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
 
 ## Custom sleep images
 
