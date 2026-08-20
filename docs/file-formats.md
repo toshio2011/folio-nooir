@@ -4,6 +4,16 @@ These formats describe the SD-card cache files under `/.crosspoint/epub_<hash>/`
 All POD fields are written in the ESP32 little-endian representation used by
 `Serialization.h`; strings are length-prefixed UTF-8.
 
+## CBZ reader limits
+
+The CBZ reader keeps a bounded page-name index for the physical X3 heap: at
+most 1,024 supported image entries and 64 KiB of page-name bytes. An archive
+that exceeds either limit is rejected before navigation starts with an
+archive-too-large error. Library metadata/thumbnail retrieval uses the
+metadata-only path and does not build this page index, so it remains suitable
+for larger archives. Page extraction is streamed to the SD card and the
+current decoded page cache is session-scoped.
+
 ## `book.bin`
 
 ### Version 7

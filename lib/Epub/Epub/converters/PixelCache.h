@@ -8,6 +8,8 @@
 #include <cstring>
 #include <string>
 
+#include "ImageDiagnostics.h"
+
 // Streaming cache writer for 2-bit pixels (4 levels). Packs 4 pixels per byte,
 // MSB first.
 //
@@ -39,6 +41,7 @@ struct PixelCache {
   HalFile file;
   std::string cachePathStr;
   bool ok;
+  ImageRenderDiagnostics* diagnostics = nullptr;
 
   PixelCache()
       : buffer(nullptr),
@@ -130,15 +133,22 @@ struct PixelCache {
     if (newTopRow <= bandStart) return true;
     if (newTopRow > height) newTopRow = height;
 
+    const uint32_t writeStartedUs = diagnostics ? micros() : 0;
+    const auto recordWriteTime = [&]() {
+      if (diagnostics) diagnostics->cacheWriteUs += micros() - writeStartedUs;
+    };
+
     for (int r = bandStart; r < newTopRow; ++r) {
       const int idx = r - bandStart;
       const uint8_t* rowPtr = (idx < bandRows) ? (buffer + (size_t)idx * bytesPerRow) : zeroRow;
       if (file.write(rowPtr, (size_t)bytesPerRow) != (size_t)bytesPerRow) {
         LOG_ERR("IMG", "Cache write error at row %d", r);
+        recordWriteTime();
         ok = false;
         return false;
       }
     }
+    recordWriteTime();
     flushedRows = newTopRow;
     bandStart = newTopRow;
     memset(buffer, 0, (size_t)bandRows * bytesPerRow);  // fresh band (gaps stay black)
@@ -152,15 +162,21 @@ struct PixelCache {
       abort();
       return false;
     }
+    const uint32_t writeStartedUs = diagnostics ? micros() : 0;
+    const auto recordWriteTime = [&]() {
+      if (diagnostics) diagnostics->cacheWriteUs += micros() - writeStartedUs;
+    };
     for (int r = flushedRows; r < height; ++r) {
       const int idx = r - bandStart;
       const uint8_t* rowPtr = (idx >= 0 && idx < bandRows) ? (buffer + (size_t)idx * bytesPerRow) : zeroRow;
       if (file.write(rowPtr, (size_t)bytesPerRow) != (size_t)bytesPerRow) {
         LOG_ERR("IMG", "Cache write error at row %d", r);
+        recordWriteTime();
         abort();
         return false;
       }
     }
+    recordWriteTime();
     file.close();
     LOG_DBG("IMG", "Cache written: %s (%dx%d, %d bytes)", cachePathStr.c_str(), width, height,
             4 + bytesPerRow * height);

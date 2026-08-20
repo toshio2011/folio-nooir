@@ -18,6 +18,7 @@
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "util/BookCacheUtils.h"
+#include "util/CbzDiagnostics.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -331,7 +332,10 @@ void HomeActivity::render(RenderLock&&) {
   }
 }
 
-void HomeActivity::onSelectBook(const std::string& path) { activityManager.goToReader(path); }
+void HomeActivity::onSelectBook(const std::string& path) {
+  logCbzPath("home-book-selection", path);
+  activityManager.goToReader(path);
+}
 
 void HomeActivity::onFileBrowserOpen() { activityManager.goToFileBrowser(); }
 

@@ -12,6 +12,7 @@
 #include <new>
 
 #include "DirectPixelWriter.h"
+#include "BoundedAreaResampler.h"
 #include "DitherUtils.h"
 #include "PixelCache.h"
 
@@ -46,6 +47,8 @@ struct JpegContext {
 
   PixelCache cache;
   bool caching{false};
+  std::unique_ptr<BoundedAreaResampler> areaResampler;
+  bool areaResampling{false};
 };
 
 // File I/O callbacks use pFile->fHandle to access the HalFile*,
@@ -118,9 +121,107 @@ constexpr int FP_SHIFT = 16;
 constexpr int32_t FP_ONE = 1 << FP_SHIFT;
 constexpr int32_t FP_MASK = FP_ONE - 1;
 
+bool readJpegByte(HalFile& file, uint8_t& value) {
+  const int result = file.read();
+  if (result < 0) return false;
+  value = static_cast<uint8_t>(result);
+  return true;
+}
+
+bool isProgressiveJpegHeader(const std::string& imagePath) {
+  HalFile file;
+  if (!Storage.openFileForRead("JPG", imagePath, file)) return false;
+
+  uint8_t first = 0;
+  uint8_t second = 0;
+  if (!readJpegByte(file, first) || !readJpegByte(file, second) || first != 0xFF || second != 0xD8) return false;
+
+  // SOF2 is the normal progressive marker. C6 and CA are the differential
+  // and arithmetic progressive variants. Stop at SOS: entropy bytes are not
+  // header markers and do not need to be scanned.
+  for (size_t guard = 0; guard < 256 * 1024 && file.position() + 1 < file.size();) {
+    uint8_t prefix = 0;
+    if (!readJpegByte(file, prefix)) return false;
+    if (prefix != 0xFF) continue;
+
+    uint8_t marker = 0;
+    do {
+      if (!readJpegByte(file, marker)) return false;
+    } while (marker == 0xFF);
+
+    if (marker == 0xDA || marker == 0xD9) return false;
+    if (marker == 0xC2 || marker == 0xC6 || marker == 0xCA) return true;
+    if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) continue;
+
+    uint8_t lengthHi = 0;
+    uint8_t lengthLo = 0;
+    if (!readJpegByte(file, lengthHi) || !readJpegByte(file, lengthLo)) return false;
+    const uint16_t segmentLength = static_cast<uint16_t>((static_cast<uint16_t>(lengthHi) << 8) | lengthLo);
+    if (segmentLength < 2) return false;
+    const size_t payloadLength = segmentLength - 2;
+    if (!file.seek(file.position() + payloadLength)) return false;
+    guard = file.position();
+  }
+  return false;
+}
+
+void writeAreaRow(JpegContext& ctx, const int destinationY, const uint8_t* grayRow) {
+  if (!grayRow || destinationY < 0 || destinationY >= ctx.dstHeight) return;
+
+  const int outY = ctx.config->y + destinationY;
+  const bool cacheImageLocal = ctx.config && ctx.config->cbzQualityMode;
+  if (!cacheImageLocal && (outY < 0 || outY >= ctx.screenHeight)) return;
+
+  DirectPixelWriter writer;
+  writer.init(*ctx.renderer);
+  writer.beginRow(outY);
+
+  DirectCacheWriter cacheWriter{};
+  bool caching = ctx.caching;
+  int cacheOriginY = 0;
+  if (caching) {
+    if (!ctx.cache.advanceTo(destinationY)) {
+      LOG_ERR("JPG", "Image resampler pixel cache stream failed at row %d", destinationY);
+      ctx.cache.abort();
+      ctx.caching = false;
+      caching = false;
+    } else {
+      cacheWriter.init(ctx.cache.buffer, ctx.cache.bytesPerRow, ctx.cache.bandRows,
+                       cacheImageLocal ? 0 : ctx.cache.originX);
+      cacheOriginY = cacheImageLocal ? ctx.cache.bandStart : ctx.config->y + ctx.cache.bandStart;
+      cacheWriter.beginRow(cacheImageLocal ? destinationY : outY, cacheOriginY);
+    }
+  }
+
+  for (int destinationX = 0; destinationX < ctx.dstWidth; ++destinationX) {
+    const int outX = ctx.config->x + destinationX;
+    if (!cacheImageLocal && (outX < 0 || outX >= ctx.screenWidth)) continue;
+
+    const uint8_t gray = grayRow[destinationX];
+    uint8_t level;
+    if (ctx.config->useDithering) {
+      level = applyBayerDither4Level(gray, outX, outY);
+    } else {
+      level = quantizeDirect4Level(gray, ctx.config->cbzQualityMode, ctx.config->cbzBwDiagnostic);
+    }
+    recordImageQualityPixel(*ctx.config, outX, outY, gray, level);
+    writer.writePixel(outX, level);
+    if (caching) cacheWriter.writePixel(cacheImageLocal ? destinationX : outX, level);
+  }
+}
+
+bool writePendingAreaRows(JpegContext& ctx) {
+  while (ctx.areaResampler && ctx.areaResampler->hasPendingRow()) {
+    writeAreaRow(ctx, ctx.areaResampler->pendingRowIndex(), ctx.areaResampler->pendingRowData());
+    ctx.areaResampler->consumePendingRow();
+  }
+  return true;
+}
+
 int jpegDrawCallback(JPEGDRAW* pDraw) {
   JpegContext* ctx = reinterpret_cast<JpegContext*>(pDraw->pUser);
   if (!ctx || !ctx->config || !ctx->renderer) return 0;
+  ScopedImagePixelTimer pixelTimer(ctx->config->diagnostics);
 
   // In EIGHT_BIT_GRAYSCALE mode, pPixels contains 8-bit grayscale values
   // Buffer is densely packed: stride = pDraw->iWidth, valid columns = pDraw->iWidthUsed
@@ -128,8 +229,28 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
   const int stride = pDraw->iWidth;
   const int validW = pDraw->iWidthUsed;
   const int blockH = pDraw->iHeight;
+  const int blockX = pDraw->x;
+  const int blockY = pDraw->y;
 
   if (stride <= 0 || blockH <= 0 || validW <= 0) return 1;
+
+  if (ctx->areaResampling && ctx->areaResampler) {
+    const int sourceX = std::max(0, blockX);
+    const int sourceWidth = std::min(validW, ctx->scaledSrcWidth - sourceX);
+    if (sourceWidth <= 0) return 1;
+
+    for (int row = 0; row < blockH; ++row) {
+      const int sourceY = blockY + row;
+      if (sourceY < 0 || sourceY >= ctx->scaledSrcHeight) continue;
+      const uint8_t* sourceRow = &pixels[row * stride + (sourceX - blockX)];
+      const uint32_t resampleStartedUs = ctx->config->diagnostics ? micros() : 0;
+      const bool resampleOk = ctx->areaResampler->addSourceRowSegment(sourceY, sourceX, sourceRow, sourceWidth);
+      if (ctx->config->diagnostics) ctx->config->diagnostics->resampleUs += micros() - resampleStartedUs;
+      if (!resampleOk) return 0;
+      writePendingAreaRows(*ctx);
+    }
+    return 1;
+  }
 
   const bool useDithering = ctx->config->useDithering;
   bool caching = ctx->caching;
@@ -140,8 +261,7 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
   GfxRenderer& renderer = *ctx->renderer;
   const int cfgX = ctx->config->x;
   const int cfgY = ctx->config->y;
-  const int blockX = pDraw->x;
-  const int blockY = pDraw->y;
+  const bool cacheImageLocal = ctx->config->cbzQualityMode;
 
   // Determine destination pixel range covered by this source block
   const int srcYEnd = blockY + blockH;
@@ -152,16 +272,24 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
   int dstXStart = (int)((int64_t)blockX * fineScaleFPX >> FP_SHIFT);
   int dstXEnd = (srcXEnd >= ctx->scaledSrcWidth) ? ctx->dstWidth : (int)((int64_t)srcXEnd * fineScaleFPX >> FP_SHIFT);
 
-  // Pre-clamp destination ranges to screen bounds (eliminates per-pixel screen checks)
-  int clampYMax = ctx->dstHeight;
-  if (ctx->screenHeight - cfgY < clampYMax) clampYMax = ctx->screenHeight - cfgY;
-  if (dstYStart < -cfgY) dstYStart = -cfgY;
-  if (dstYEnd > clampYMax) dstYEnd = clampYMax;
+  // The CBZ cache is image-local, so retain off-screen rows/columns for later
+  // pan operations. Other readers keep the existing screen-range clipping.
+  if (!cacheImageLocal) {
+    int clampYMax = ctx->dstHeight;
+    if (ctx->screenHeight - cfgY < clampYMax) clampYMax = ctx->screenHeight - cfgY;
+    if (dstYStart < -cfgY) dstYStart = -cfgY;
+    if (dstYEnd > clampYMax) dstYEnd = clampYMax;
 
-  int clampXMax = ctx->dstWidth;
-  if (ctx->screenWidth - cfgX < clampXMax) clampXMax = ctx->screenWidth - cfgX;
-  if (dstXStart < -cfgX) dstXStart = -cfgX;
-  if (dstXEnd > clampXMax) dstXEnd = clampXMax;
+    int clampXMax = ctx->dstWidth;
+    if (ctx->screenWidth - cfgX < clampXMax) clampXMax = ctx->screenWidth - cfgX;
+    if (dstXStart < -cfgX) dstXStart = -cfgX;
+    if (dstXEnd > clampXMax) dstXEnd = clampXMax;
+  } else {
+    dstYStart = std::max(0, dstYStart);
+    dstYEnd = std::min(ctx->dstHeight, dstYEnd);
+    dstXStart = std::max(0, dstXStart);
+    dstXEnd = std::min(ctx->dstWidth, dstXEnd);
+  }
 
   if (dstYStart >= dstYEnd || dstXStart >= dstXEnd) return 1;
 
@@ -181,8 +309,9 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
       caching = false;
       ctx->caching = false;
     } else {
-      cw.init(ctx->cache.buffer, ctx->cache.bytesPerRow, ctx->cache.bandRows, ctx->cache.originX);
-      cacheOriginY = ctx->config->y + ctx->cache.bandStart;
+      cw.init(ctx->cache.buffer, ctx->cache.bytesPerRow, ctx->cache.bandRows,
+              cacheImageLocal ? 0 : ctx->cache.originX);
+      cacheOriginY = cacheImageLocal ? ctx->cache.bandStart : ctx->config->y + ctx->cache.bandStart;
     }
   }
 
@@ -191,7 +320,7 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
     for (int dstY = dstYStart; dstY < dstYEnd; dstY++) {
       const int outY = cfgY + dstY;
       pw.beginRow(outY);
-      if (caching) cw.beginRow(outY, cacheOriginY);
+      if (caching) cw.beginRow(cacheImageLocal ? dstY : outY, cacheOriginY);
       const uint8_t* row = &pixels[(dstY - blockY) * stride];
       for (int dstX = dstXStart; dstX < dstXEnd; dstX++) {
         const int outX = cfgX + dstX;
@@ -200,11 +329,11 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
         if (useDithering) {
           dithered = applyBayerDither4Level(gray, outX, outY);
         } else {
-          dithered = gray / 85;
-          if (dithered > 3) dithered = 3;
+          dithered = quantizeDirect4Level(gray, ctx->config->cbzQualityMode, ctx->config->cbzBwDiagnostic);
         }
+        recordImageQualityPixel(*ctx->config, outX, outY, gray, dithered);
         pw.writePixel(outX, dithered);
-        if (caching) cw.writePixel(outX, dithered);
+        if (caching) cw.writePixel(cacheImageLocal ? dstX : outX, dithered);
       }
     }
     return 1;
@@ -225,7 +354,7 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
     for (int dstY = dstYStart; dstY < dstYEnd; dstY++) {
       const int outY = cfgY + dstY;
       pw.beginRow(outY);
-      if (caching) cw.beginRow(outY, cacheOriginY);
+      if (caching) cw.beginRow(cacheImageLocal ? dstY : outY, cacheOriginY);
       const int32_t srcFyFP = dstY * invScaleFPY;
       const int32_t fy = srcFyFP & FP_MASK;
       const int32_t fyInv = FP_ONE - fy;
@@ -259,11 +388,11 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
         if (useDithering) {
           dithered = applyBayerDither4Level(gray, outX, outY);
         } else {
-          dithered = gray / 85;
-          if (dithered > 3) dithered = 3;
+          dithered = quantizeDirect4Level(gray, ctx->config->cbzQualityMode, ctx->config->cbzBwDiagnostic);
         }
+        recordImageQualityPixel(*ctx->config, outX, outY, gray, dithered);
         pw.writePixel(outX, dithered);
-        if (caching) cw.writePixel(outX, dithered);
+        if (caching) cw.writePixel(cacheImageLocal ? dstX : outX, dithered);
       }
 
       // Interior (no X boundary checks — lx0 and lx0+1 guaranteed in bounds)
@@ -282,11 +411,11 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
         if (useDithering) {
           dithered = applyBayerDither4Level(gray, outX, outY);
         } else {
-          dithered = gray / 85;
-          if (dithered > 3) dithered = 3;
+          dithered = quantizeDirect4Level(gray, ctx->config->cbzQualityMode, ctx->config->cbzBwDiagnostic);
         }
+        recordImageQualityPixel(*ctx->config, outX, outY, gray, dithered);
         pw.writePixel(outX, dithered);
-        if (caching) cw.writePixel(outX, dithered);
+        if (caching) cw.writePixel(cacheImageLocal ? dstX : outX, dithered);
       }
 
       // Right edge (with X boundary clamping)
@@ -308,11 +437,11 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
         if (useDithering) {
           dithered = applyBayerDither4Level(gray, outX, outY);
         } else {
-          dithered = gray / 85;
-          if (dithered > 3) dithered = 3;
+          dithered = quantizeDirect4Level(gray, ctx->config->cbzQualityMode, ctx->config->cbzBwDiagnostic);
         }
+        recordImageQualityPixel(*ctx->config, outX, outY, gray, dithered);
         pw.writePixel(outX, dithered);
-        if (caching) cw.writePixel(outX, dithered);
+        if (caching) cw.writePixel(cacheImageLocal ? dstX : outX, dithered);
       }
     }
     return 1;
@@ -322,7 +451,7 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
   for (int dstY = dstYStart; dstY < dstYEnd; dstY++) {
     const int outY = cfgY + dstY;
     pw.beginRow(outY);
-    if (caching) cw.beginRow(outY, cacheOriginY);
+    if (caching) cw.beginRow(cacheImageLocal ? dstY : outY, cacheOriginY);
     const int32_t srcFyFP = dstY * invScaleFPY;
     int ly = (srcFyFP >> FP_SHIFT) - blockY;
     if (ly < 0) ly = 0;
@@ -341,11 +470,11 @@ int jpegDrawCallback(JPEGDRAW* pDraw) {
       if (useDithering) {
         dithered = applyBayerDither4Level(gray, outX, outY);
       } else {
-        dithered = gray / 85;
-        if (dithered > 3) dithered = 3;
+        dithered = quantizeDirect4Level(gray, ctx->config->cbzQualityMode, ctx->config->cbzBwDiagnostic);
       }
+      recordImageQualityPixel(*ctx->config, outX, outY, gray, dithered);
       pw.writePixel(outX, dithered);
-      if (caching) cw.writePixel(outX, dithered);
+      if (caching) cw.writePixel(cacheImageLocal ? dstX : outX, dithered);
     }
   }
 
@@ -381,6 +510,10 @@ bool JpegToFramebufferConverter::getDimensionsStatic(const std::string& imagePat
   return true;
 }
 
+bool JpegToFramebufferConverter::isProgressive(const std::string& imagePath) {
+  return isProgressiveJpegHeader(imagePath);
+}
+
 bool JpegToFramebufferConverter::decodeToFramebuffer(const std::string& imagePath, GfxRenderer& renderer,
                                                      const RenderConfig& config) {
   LOG_DBG("JPG", "Decoding JPEG: %s", imagePath.c_str());
@@ -402,6 +535,7 @@ bool JpegToFramebufferConverter::decodeToFramebuffer(const std::string& imagePat
   ctx.config = &config;
   ctx.screenWidth = renderer.getScreenWidth();
   ctx.screenHeight = renderer.getScreenHeight();
+  if (config.diagnostics) config.diagnostics->decoder = "JPEGDEC";
 
   int rc = jpeg->open(imagePath.c_str(), jpegOpen, jpegClose, jpegRead, jpegSeek, jpegDrawCallback);
   const ScopedCleanup cleanup{[&jpeg]() { jpeg->close(); }};
@@ -418,13 +552,13 @@ bool JpegToFramebufferConverter::decodeToFramebuffer(const std::string& imagePat
     return false;
   }
 
-  if (!validateImageDimensions(srcWidth, srcHeight, "JPEG")) {
+  if (!validateImageDimensionsForRender(srcWidth, srcHeight, "JPEG", config)) {
     return false;
   }
 
   bool isProgressive = jpeg->getJPEGType() == JPEG_MODE_PROGRESSIVE;
   if (isProgressive) {
-    LOG_INF("JPG", "Progressive JPEG detected - decoding DC coefficients only (lower quality)");
+    LOG_INF("EPUBIMG", "progressive_jpeg=1 decoder=JPEGDEC mode=dc_only path=%s", imagePath.c_str());
   }
 
   // Calculate overall target scale
@@ -473,9 +607,38 @@ bool JpegToFramebufferConverter::decodeToFramebuffer(const std::string& imagePat
   ctx.fineScaleFPY = (int32_t)((int64_t)destHeight * FP_ONE / ctx.scaledSrcHeight);
   ctx.invScaleFPY = (int32_t)((int64_t)ctx.scaledSrcHeight * FP_ONE / destHeight);
 
+  LOG_DBG("EPUBIMG", "jpeg_render source=%dx%d target=%dx%d scale=%.2f jpegScale=1/%d progressive=%d", srcWidth,
+          srcHeight, destWidth, destHeight, targetScale, jpegScaleDenom, isProgressive ? 1 : 0);
+  if (config.allowBoundedLargeSource &&
+      static_cast<int64_t>(srcWidth) * static_cast<int64_t>(srcHeight) > MAX_SOURCE_PIXELS) {
+    LOG_DBG("EPUBIMG", "downsample=streamed format=JPEG source=%dx%d target=%dx%d", srcWidth, srcHeight, destWidth,
+            destHeight);
+  }
   LOG_DBG("JPG", "JPEG %dx%d -> %dx%d (scale %.2f, jpegScale 1/%d, fineScale %.2f)%s", srcWidth, srcHeight, destWidth,
           destHeight, targetScale, jpegScaleDenom, (float)destWidth / ctx.scaledSrcWidth,
           isProgressive ? " [progressive]" : "");
+
+  // Use the bounded area reducer only for ordinary baseline downscales.  The
+  // progressive path deliberately retains JPEGDEC's existing DC-only 1/8
+  // behavior and must not enter this new quality path.
+  if (!isProgressive && ctx.fineScaleFPX < FP_ONE && ctx.fineScaleFPY < FP_ONE) {
+    ctx.areaResampler.reset(new (std::nothrow) BoundedAreaResampler());
+    if (ctx.areaResampler &&
+        ctx.areaResampler->begin(ctx.scaledSrcWidth, ctx.scaledSrcHeight, destWidth, destHeight,
+                                 config.cbzQualityMode)) {
+      ctx.areaResampling = true;
+      if (config.diagnostics) {
+        config.diagnostics->areaResampling = true;
+        config.diagnostics->resampleMode = config.cbzQualityMode ? "manga_nearest" : "bounded_area";
+      }
+      LOG_DBG("JPG", "Using bounded %s downsampling (%dx%d -> %dx%d)",
+              config.cbzQualityMode ? "manga-nearest" : "area", ctx.scaledSrcWidth, ctx.scaledSrcHeight,
+              destWidth, destHeight);
+    } else {
+      ctx.areaResampler.reset();
+      LOG_DBG("JPG", "Area downsampler unavailable; using nearest-neighbor fallback");
+    }
+  }
 
   // Set pixel type to 8-bit grayscale (must be after open())
   jpeg->setPixelType(EIGHT_BIT_GRAYSCALE);
@@ -485,6 +648,7 @@ bool JpegToFramebufferConverter::decodeToFramebuffer(const std::string& imagePat
   // tallest single decode block: a JPEGDEC MCU cell is at most 16 scaled-source
   // rows tall, which our fine scale maps to this many output rows.
   ctx.caching = !config.cachePath.empty();
+  ctx.cache.diagnostics = config.diagnostics;
   if (ctx.caching) {
     const int maxBlockDstRows = (int)(((int64_t)16 * ctx.fineScaleFPY) >> FP_SHIFT) + 2;
     if (!ctx.cache.begin(config.cachePath, destWidth, destHeight, config.x, config.y, maxBlockDstRows)) {
@@ -496,6 +660,7 @@ bool JpegToFramebufferConverter::decodeToFramebuffer(const std::string& imagePat
   unsigned long decodeStart = millis();
   rc = jpeg->decode(0, 0, jpegScaleOption);
   unsigned long decodeTime = millis() - decodeStart;
+  if (config.diagnostics) config.diagnostics->decodeMs = decodeTime;
 
   if (rc != 1) {
     LOG_ERR("JPG", "Decode failed (rc=%d, lastError=%d)", rc, jpeg->getLastError());
@@ -504,6 +669,15 @@ bool JpegToFramebufferConverter::decodeToFramebuffer(const std::string& imagePat
   }
 
   LOG_DBG("JPG", "JPEG decoding complete - render time: %lu ms", decodeTime);
+
+  if (ctx.areaResampling && ctx.areaResampler) {
+    if (!ctx.areaResampler->finish()) {
+      LOG_ERR("JPG", "Image downsampler did not receive a complete image");
+      if (ctx.caching) ctx.cache.abort();
+      return false;
+    }
+    writePendingAreaRows(ctx);
+  }
 
   // Finalize the streamed cache file. Note: a flush failure mid-decode clears
   // ctx.caching (the partial file is dropped), so re-read the flag here.

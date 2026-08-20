@@ -18,6 +18,8 @@ struct DirectPixelWriter {
   uint8_t* fb;
   GfxRenderer::RenderMode mode;
   bool darkMode;
+  uint16_t displayWidth;
+  uint16_t displayHeight;
   uint16_t displayWidthBytes;  // Runtime framebuffer stride (X4: 100, X3: 99)
   // Active write target: for tiled grayscale, fb is the band scratch, originY is
   // the band's top physical row, and clipRows is the band height. Off-band
@@ -42,6 +44,8 @@ struct DirectPixelWriter {
     clipRows = renderer.getWriteRows();
     mode = renderer.getRenderMode();
     darkMode = renderer.isDarkMode();
+    displayWidth = renderer.getDisplayWidth();
+    displayHeight = renderer.getDisplayHeight();
     displayWidthBytes = renderer.getDisplayWidthBytes();
 
     const int phyW = renderer.getDisplayWidth();
@@ -172,6 +176,14 @@ struct DirectPixelWriter {
 
     const int phyX = rowPhyXBase + logicalX * phyXStepX;
     const int phyY = rowPhyYBase + logicalX * phyYStepX;
+
+    // Logical image coordinates are normally validated by the caller, but a
+    // zoomed/panned page can intentionally begin outside the viewport.  The
+    // orientation transform may therefore produce an off-frame physical X
+    // even when the logical row is in-band.  Drop it before calculating the
+    // framebuffer byte index; otherwise a negative/oversized coordinate can
+    // corrupt heap memory and only surface later during reader teardown.
+    if (phyX < 0 || phyX >= displayWidth || phyY < 0 || phyY >= displayHeight) return;
 
     // Band-local row. The unsigned compare drops both off-band pixels (strip
     // mode) and any out-of-frame row (full-frame mode) in one branch.

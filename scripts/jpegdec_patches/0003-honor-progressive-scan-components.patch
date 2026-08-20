@@ -1,0 +1,38 @@
+From 8d6e5e3e5d7f5d7e9c4b7e6a8f6a7e9d6a5b4c3d Mon Sep 17 00:00:00 2001
+From: patch <patch@local>
+Date: Tue, 18 Aug 2026 18:00:00 +0800
+Subject: [PATCH 3/3] Honor components present in progressive scan
+
+JPEGDEC records which components are present in the current SOS marker, but
+the progressive grayscale decode path always consumed Cr/Cb MCU data.  A
+Y-only DC scan therefore read entropy bits belonging to a later scan and could
+report JPEG_DECODE_ERROR.  Grayscale output does not use those chroma blocks,
+so skip them when the current scan does not contain them.
+
+---
+ src/jpeg.inl | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/src/jpeg.inl b/src/jpeg.inl
+index 1bd38b2..3e6a7f4 100644
+--- a/src/jpeg.inl
++++ b/src/jpeg.inl
+@@ -5235,8 +5235,14 @@ static int DecodeJPEG(JPEGIMAGE *pJPEG)
+                 if (pJPEG->ucPixelType >= EIGHT_BIT_GRAYSCALE) {
+                     // We're not going to use the color channels, so avoid as much work as possible
+                     if (pJPEG->ucMode == 0xc2) { // progressive
+-                        iErr |= JPEGDecodeMCU_P(pJPEG, MCU_SKIP, &iDCPred1);
+-                        iErr |= JPEGDecodeMCU_P(pJPEG, MCU_SKIP, &iDCPred2);
++                        // Progressive JPEG scans may contain only Y (or only
++                        // one of the chroma components). JPEGGetSOS records
++                        // the components in component_needed; do not consume
++                        // entropy bits for components absent from this scan.
++                        if (pJPEG->JPCI[1].component_needed)
++                            iErr |= JPEGDecodeMCU_P(pJPEG, MCU_SKIP, &iDCPred1);
++                        if (pJPEG->JPCI[2].component_needed)
++                            iErr |= JPEGDecodeMCU_P(pJPEG, MCU_SKIP, &iDCPred2);
+                     } else {
+                         iErr |= JPEGDecodeMCU(pJPEG, MCU_SKIP, &iDCPred1); // decode Cr block
+                         iErr |= JPEGDecodeMCU(pJPEG, MCU_SKIP, &iDCPred2); // decode Cb block
+--
+2.50.1

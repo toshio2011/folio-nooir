@@ -12,6 +12,7 @@
 #include "EpubReaderMenuActivity.h"
 #include "ProgressMapper.h"
 #include "activities/Activity.h"
+#include "components/LongOperationIndicator.h"
 
 class EpubReaderActivity final : public Activity {
   std::shared_ptr<Epub> epub;
@@ -84,6 +85,8 @@ class EpubReaderActivity final : public Activity {
   struct SavedHighlightMatch {
     uint16_t firstWord = 0;
     uint16_t lastWord = 0;
+    uint8_t savedStyleMask = 0;
+    bool savedBold = false;
   };
   std::vector<SavedHighlightMatch> highlightMatches;
   const Page* highlightMatchPageObject = nullptr;
@@ -102,6 +105,7 @@ class EpubReaderActivity final : public Activity {
   bool pendingReadFolderMove = false;
   // Next-book suggestion menu for the End-of-Book screen
   EndOfBookOptions endOfBookOptions;
+  LongOperationIndicator longOperationIndicator;
 
   // Footnote support
   std::vector<FootnoteEntry> currentPageFootnotes;
@@ -121,6 +125,10 @@ class EpubReaderActivity final : public Activity {
   // Set when the lazy extension start failed, so loop() doesn't retry (and log) every
   // tick; the blocking extension in render() remains the fallback past the watermark.
   bool partialRebuildStartFailed = false;
+  // Page requests use a short event-loop phase to show the loading line on
+  // the already-presented page before synchronous parsing/rendering starts.
+  bool loadingUiPending = false;
+  bool loadingUiRenderArmed = false;
 
   // Last position persisted by render()'s saveProgress, used to skip redundant
   // writeAtomic calls on no-op re-renders (menu/bookmark/screenshot).
@@ -130,6 +138,7 @@ class EpubReaderActivity final : public Activity {
 
   void renderContents(std::unique_ptr<Page> page, int orientedMarginTop, int orientedMarginRight,
                       int orientedMarginBottom, int orientedMarginLeft);
+  void requestPageRender(bool immediate = false);
   void renderSavedHighlights(const Page& page, int fontId, int marginLeft, int marginTop);
   void renderStatusBar() const;
   // Pages laid out per incremental-build pump: on the render path (catching up to the page
@@ -230,12 +239,13 @@ class EpubReaderActivity final : public Activity {
 
  public:
   explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub)
-      : Activity("EpubReader", renderer, mappedInput), epub(std::move(epub)) {}
+      : Activity("EpubReader", renderer, mappedInput), epub(std::move(epub)), longOperationIndicator(renderer) {}
   EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub,
                      std::optional<ProgressChangeResult> initialBookmark)
       : Activity("EpubReader", renderer, mappedInput),
         epub(std::move(epub)),
-        initialBookmark(std::move(initialBookmark)) {}
+        initialBookmark(std::move(initialBookmark)),
+        longOperationIndicator(renderer) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;

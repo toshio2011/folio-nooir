@@ -21,6 +21,12 @@ constexpr size_t MAX_CLIP_BYTES = 1024;
 constexpr char CLIPPINGS_DIR[] = "/.crosspoint/clippings/";
 constexpr char MASTER_CLIPPINGS_FILE[] = "/My Clippings.txt";
 
+bool styleMaskHasBold(const uint8_t styleMask) {
+  // styleMask stores a variant bit (1 << (style & 0x03)); variants 1 and 3
+  // are BOLD and BOLD_ITALIC respectively.
+  return (styleMask & 0x0Au) != 0;
+}
+
 std::string clippingPath(const std::string& bookPath) {
   const std::string bookmarkPath = BookmarkUtil::getBookmarkPath(bookPath);
   const std::string bookmarkDir = BookmarkUtil::getBookmarksDir();
@@ -60,6 +66,12 @@ bool save(const std::string& bookPath, const std::vector<ClippingEntry>& clippin
       item["firstWord"] = clipping.firstWord;
       item["lastWord"] = clipping.lastWord;
     }
+    if (clipping.styleMask != 0) item["styleMask"] = clipping.styleMask;
+    // Always write the explicit key for newly saved entries.  Missing keys
+    // in older files remain backward-compatible through load()'s fallback.
+    item["bold"] = clipping.bold;
+    LOG_DBG("CLP", "save_json style=%u bold=%u highlighted=1", static_cast<unsigned>(clipping.styleMask),
+            clipping.bold ? 1u : 0u);
   }
 
   Storage.mkdir(CLIPPINGS_DIR);
@@ -174,6 +186,13 @@ bool load(const std::string& bookPath, std::vector<ClippingEntry>& clippings) {
       clipping.lastWord = item["lastWord"] | static_cast<uint16_t>(0);
       clipping.hasWordRange = clipping.firstWord <= clipping.lastWord;
     }
+    clipping.styleMask = item["styleMask"] | static_cast<uint8_t>(0);
+    // Old JSON files have no explicit bold key.  Derive it from the existing
+    // aggregate style mask, while preserving an explicit false for new
+    // regular-only clippings.
+    clipping.bold = item["bold"].isNull() ? styleMaskHasBold(clipping.styleMask) : (item["bold"] | false);
+    LOG_DBG("CLP", "load style=%u bold=%u highlighted=1", static_cast<unsigned>(clipping.styleMask),
+            clipping.bold ? 1u : 0u);
     clippings.push_back(std::move(clipping));
     if (clippings.size() >= MAX_CLIPPINGS) break;
   }
@@ -202,10 +221,34 @@ bool append(const std::string& bookPath, const std::string& bookTitle, ClippingE
 
   std::vector<ClippingEntry> clippings;
   load(bookPath, clippings);
-  const bool duplicate = std::any_of(clippings.begin(), clippings.end(), [&](const ClippingEntry& item) {
+  const auto duplicate = std::find_if(clippings.begin(), clippings.end(), [&](const ClippingEntry& item) {
     return item.page == clipping.page && item.spineIndex == clipping.spineIndex && item.text == clipping.text;
   });
-  if (duplicate) return true;
+  if (duplicate != clippings.end()) {
+    // Re-clipping the same passage must refresh style metadata.  Older
+    // entries (and entries created before bold persistence was added) would
+    // otherwise return early forever with styleMask=0/bold=0.
+    const bool metadataChanged = duplicate->styleMask != clipping.styleMask || duplicate->bold != clipping.bold ||
+                                  (clipping.hasWordRange &&
+                                   (!duplicate->hasWordRange || duplicate->firstWord != clipping.firstWord ||
+                                    duplicate->lastWord != clipping.lastWord));
+    if (metadataChanged) {
+      duplicate->styleMask = clipping.styleMask;
+      duplicate->bold = clipping.bold;
+      if (clipping.hasWordRange) {
+        duplicate->firstWord = clipping.firstWord;
+        duplicate->lastWord = clipping.lastWord;
+        duplicate->hasWordRange = true;
+      }
+      if (!save(bookPath, clippings)) {
+        LOG_ERR("CLP", "Failed to update clipping metadata for %s", bookPath.c_str());
+        return false;
+      }
+      LOG_DBG("CLP", "updated duplicate style=%u bold=%u highlighted=1",
+              static_cast<unsigned>(duplicate->styleMask), duplicate->bold ? 1u : 0u);
+    }
+    return true;
+  }
 
   if (clippings.size() >= MAX_CLIPPINGS) clippings.erase(clippings.begin());
   clippings.push_back(clipping);

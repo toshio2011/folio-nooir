@@ -1,6 +1,7 @@
 #include "FolioLibraryActivity.h"
 
 #include <Bitmap.h>
+#include <Cbz.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <HalClock.h>
@@ -30,6 +31,7 @@
 #include "activities/util/BmpViewerActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "util/BookCacheUtils.h"
+#include "util/CbzDiagnostics.h"
 #include "util/SynopsisPreview.h"
 
 namespace {
@@ -48,7 +50,7 @@ bool isLibraryBook(const std::string& path) {
                  [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
   if (filename == "my clippings.txt" || filename == "clippings.txt") return false;
   return FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path) ||
-         FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path);
+         FsHelpers::hasCbzExtension(path) || FsHelpers::hasTxtExtension(path) || FsHelpers::hasMarkdownExtension(path);
 }
 
 std::string joinLibraryPath(const std::string& basepath, const std::string& name) {
@@ -107,15 +109,33 @@ void removePartialRetrieveThumbnail(const std::string& path) {
   } else if (FsHelpers::hasXtcExtension(path)) {
     Xtc xtc(path, "/.crosspoint");
     Storage.remove(UITheme::getCoverThumbPath(xtc.getThumbBmpPath(), FolioNooirTheme::COVER_HEIGHT).c_str());
+  } else if (FsHelpers::hasCbzExtension(path)) {
+    Cbz cbz(path, "/.crosspoint");
+    const std::string thumb = UITheme::getCoverThumbPath(cbz.getThumbBmpPath(), FolioNooirTheme::COVER_HEIGHT);
+    // Do not remove a valid persistent shelf thumbnail when stopping a
+    // retrieval. Only an incomplete/invalid output is disposable.
+    logCbzCacheLookup(thumb, Storage.exists(thumb.c_str()));
+    if (!isValidBookThumbnail(thumb)) {
+      logCbzCacheAction("remove", "stop_incomplete_thumbnail", thumb);
+      Storage.remove(thumb.c_str());
+    }
   }
 }
 
 void removePartialRetrieveMetadata(const std::string& path) {
-  if (!FsHelpers::hasEpubExtension(path)) return;
-  Epub epub(path, "/.crosspoint");
-  Storage.remove((epub.getCachePath() + "/metadata.bin.tmp").c_str());
-  Storage.remove((epub.getCachePath() + "/.cover.jpg").c_str());
-  Storage.remove((epub.getCachePath() + "/.cover.png").c_str());
+  if (FsHelpers::hasEpubExtension(path)) {
+    Epub epub(path, "/.crosspoint");
+    Storage.remove((epub.getCachePath() + "/metadata.bin.tmp").c_str());
+    Storage.remove((epub.getCachePath() + "/.cover.jpg").c_str());
+    Storage.remove((epub.getCachePath() + "/.cover.png").c_str());
+  } else if (FsHelpers::hasCbzExtension(path)) {
+    Cbz cbz(path, "/.crosspoint");
+    const std::string tempPath = cbz.getCachePath() + "/metadata.bin.tmp";
+    if (Storage.exists(tempPath.c_str())) {
+      logCbzCacheAction("remove", "stop_incomplete_metadata", tempPath);
+      Storage.remove(tempPath.c_str());
+    }
+  }
 }
 
 enum class LibraryBookState : uint8_t { Reading, Unread, OnHold, Finished };
@@ -151,7 +171,8 @@ void FolioLibraryActivity::loadFiles() {
       allFiles.emplace_back(std::string(fileNameBuffer.get()) + "/");
     } else {
       const std::string_view name(fileNameBuffer.get());
-      if (FsHelpers::hasEpubExtension(name) || FsHelpers::hasXtcExtension(name) || FsHelpers::hasTxtExtension(name) ||
+      if (FsHelpers::hasEpubExtension(name) || FsHelpers::hasXtcExtension(name) || FsHelpers::hasCbzExtension(name) ||
+          FsHelpers::hasTxtExtension(name) ||
           FsHelpers::hasMarkdownExtension(name) || FsHelpers::hasBmpExtension(name) ||
           FsHelpers::hasPngExtension(name) || FsHelpers::hasJpgExtension(name)) {
         allFiles.emplace_back(name);
@@ -256,6 +277,10 @@ void FolioLibraryActivity::loadNextPreview() {
     if (preview.directory && !preview.title.empty()) preview.title.pop_back();
     if (!preview.directory) {
       const std::string path = fullPath(index);
+      if (FsHelpers::hasCbzExtension(path)) {
+        const size_t dot = preview.title.find_last_of('.');
+        if (dot != std::string::npos) preview.title.resize(dot);
+      }
       const auto& recent = RECENT_BOOKS.getBooks();
       const auto recentIt = std::find_if(recent.begin(), recent.end(), [&](const RecentBook& book) {
         return book.path == path;
@@ -315,6 +340,20 @@ FolioLibraryActivity::RetrieveCacheStatus FolioLibraryActivity::inspectRetrieveC
     status.metadataValid = status.thumbnailValid;
     return status;
   }
+  if (FsHelpers::hasCbzExtension(path)) {
+    Cbz cbz(path, "/.crosspoint");
+    status.metadataValid = cbz.loadCachedMetadataOnly();
+    if (status.metadataValid) {
+      status.title = cbz.getTitle();
+      status.author = cbz.getAuthor();
+      status.synopsis = cbz.getSynopsis();
+    }
+    status.thumbnailPath = cbz.getThumbBmpPath();
+    const std::string thumb = UITheme::getCoverThumbPath(status.thumbnailPath, FolioNooirTheme::COVER_HEIGHT);
+    logCbzCacheLookup(thumb, Storage.exists(thumb.c_str()));
+    status.thumbnailValid = isValidBookThumbnail(thumb);
+    return status;
+  }
   status.metadataValid = true;
   status.thumbnailValid = true;
   return status;
@@ -359,6 +398,21 @@ void FolioLibraryActivity::refreshSelectedPreviewFromCache(const std::string& pa
                                        : isValidBookThumbnail(UITheme::getCoverThumbPath(thumb, FolioNooirTheme::COVER_HEIGHT));
     if (thumbnailValid) {
       preview.coverBmpPath = thumb;
+      preview.metadataAttempted = true;
+    }
+  } else if (FsHelpers::hasCbzExtension(path)) {
+    Cbz cbz(path, "/.crosspoint");
+    if (status && status->metadataValid) {
+      if (!status->title.empty()) preview.title = status->title;
+      preview.author = status->author;
+      preview.synopsis = status->synopsis;
+      preview.coverBmpPath = status->thumbnailPath;
+      preview.metadataAttempted = true;
+    } else if (cbz.loadCachedMetadataOnly()) {
+      if (!cbz.getTitle().empty()) preview.title = cbz.getTitle();
+      preview.author = cbz.getAuthor();
+      preview.synopsis = cbz.getSynopsis();
+      preview.coverBmpPath = cbz.getThumbBmpPath();
       preview.metadataAttempted = true;
     }
   }
@@ -476,7 +530,8 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
       if (entry.isDirectory()) {
         if (name == ".crosspoint" || name == ".sleep") continue;
         retrieveDirectories.push_back(path);
-      } else if (FsHelpers::hasEpubExtension(name) || FsHelpers::hasXtcExtension(name)) {
+      } else if (FsHelpers::hasEpubExtension(name) || FsHelpers::hasXtcExtension(name) ||
+                 FsHelpers::hasCbzExtension(name)) {
         if (retrieveQueueOpen) {
           retrieveQueueFile.write(reinterpret_cast<const uint8_t*>(path.c_str()), path.size());
           retrieveQueueFile.write(static_cast<uint8_t>('\n'));
@@ -606,6 +661,17 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
       // XTC has no separate metadata.bin. Its thumbnail phase opens the XTC
       // once when a thumbnail is missing, so metadata remains filename-first.
       metadataReady = true;
+    } else if (FsHelpers::hasCbzExtension(path)) {
+      Cbz cbz(path, "/.crosspoint");
+      metadataReady = cbz.loadMetadataOnly();
+      if (metadataReady) {
+        processedCache.metadataValid = true;
+        processedCache.title = cbz.getTitle();
+        processedCache.author = cbz.getAuthor();
+        processedCache.synopsis = cbz.getSynopsis();
+        processedCache.thumbnailPath = cbz.getThumbBmpPath();
+        processedCacheValid = true;
+      }
     }
     if (metadataReady && !retrieveAllCurrentThumbnailCacheValid) {
       if (retrieveThumbnailQueueWriting) {
@@ -684,6 +750,16 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
       if (!isValidBookThumbnail(thumb) && xtc.load()) {
         Storage.remove(thumb.c_str());
         xtc.generateThumbBmp(FolioNooirTheme::COVER_HEIGHT);
+      }
+    } else if (FsHelpers::hasCbzExtension(path)) {
+      Cbz cbz(path, "/.crosspoint");
+      bool metadataReady = cbz.loadCachedMetadataOnly();
+      if (!metadataReady) metadataReady = cbz.loadMetadataOnly();
+      if (metadataReady) {
+        const std::string thumb = cbz.getThumbBmpPath(FolioNooirTheme::COVER_HEIGHT);
+        if (!isValidBookThumbnail(thumb)) {
+          cbz.generateThumbBmp(FolioNooirTheme::COVER_HEIGHT);
+        }
       }
     }
     retrieveAllProcessingBook.store(false);
@@ -973,6 +1049,7 @@ void FolioLibraryActivity::showBookActions() {
     if (slot >= PAGE_SIZE) return;
     Preview& preview = previews[slot];
     if (action == 0) {
+      logCbzPath("library-book-selection", path);
       onSelectBook(path);
       return;
     }
@@ -1052,14 +1129,15 @@ void FolioLibraryActivity::loadSelectedMetadata() {
   if (!preview.loaded || preview.directory || preview.metadataAttempted) return;
 
   const std::string path = fullPath(selectorIndex);
+  logCbzPath("library-file-selection", path);
   if (FsHelpers::hasBmpExtension(path) || FsHelpers::hasPngExtension(path) || FsHelpers::hasJpgExtension(path)) {
     preview.metadataAttempted = true;
     return;
   }
-  // Only EPUB/XTC books have metadata extractors here. Leave other file types
-  // (including future PDF/image entries) as filename-only rows without a
-  // misleading retrieval popup.
-  if (!FsHelpers::hasEpubExtension(path) && !FsHelpers::hasXtcExtension(path)) {
+  // Only EPUB/XTC/CBZ books have metadata extractors here. Leave other file
+  // types (including future PDF/image entries) as filename-only rows.
+  if (!FsHelpers::hasEpubExtension(path) && !FsHelpers::hasXtcExtension(path) &&
+      !FsHelpers::hasCbzExtension(path)) {
     preview.metadataAttempted = true;
     return;
   }
@@ -1099,6 +1177,28 @@ void FolioLibraryActivity::loadSelectedMetadata() {
     const std::string thumb = xtc.getThumbBmpPath(FolioNooirTheme::COVER_HEIGHT);
     if (isValidBookThumbnail(thumb)) {
       preview.coverBmpPath = xtc.getThumbBmpPath();
+      if (const BookMetadataOverride* overrideData = BOOK_METADATA_OVERRIDES.find(path)) {
+        if (!overrideData->title.empty()) preview.title = overrideData->title;
+        preview.author = overrideData->author;
+        preview.synopsis = overrideData->synopsis;
+      }
+      preview.metadataAttempted = true;
+      requestUpdate();
+      return;
+    }
+  }
+  if (!forceRefresh && !retrievingMetadata && FsHelpers::hasCbzExtension(path)) {
+    Cbz cbz(path, "/.crosspoint");
+    if (cbz.loadCachedMetadataOnly()) {
+      preview.title = cbz.getTitle().empty() ? files[selectorIndex] : cbz.getTitle();
+      preview.author = cbz.getAuthor();
+      preview.synopsis = cbz.getSynopsis();
+      const std::string cachedCover = cbz.getThumbBmpPath();
+      const std::string cachedThumb = UITheme::getCoverThumbPath(cachedCover, FolioNooirTheme::COVER_HEIGHT);
+      logCbzCacheLookup(cachedThumb, Storage.exists(cachedThumb.c_str()));
+      if (isValidBookThumbnail(cachedThumb)) {
+        preview.coverBmpPath = cachedCover;
+      }
       if (const BookMetadataOverride* overrideData = BOOK_METADATA_OVERRIDES.find(path)) {
         if (!overrideData->title.empty()) preview.title = overrideData->title;
         preview.author = overrideData->author;
@@ -1176,6 +1276,22 @@ void FolioLibraryActivity::loadSelectedMetadata() {
       preview.title = xtc.getTitle();
       preview.author = xtc.getAuthor();
       preview.coverBmpPath = xtc.getThumbBmpPath();
+    }
+  } else if (FsHelpers::hasCbzExtension(path)) {
+    Cbz cbz(path, "/.crosspoint");
+    if (cbz.loadMetadataOnly()) {
+      preview.title = cbz.getTitle().empty() ? files[selectorIndex] : cbz.getTitle();
+      preview.author = cbz.getAuthor();
+      preview.synopsis = cbz.getSynopsis();
+      preview.coverBmpPath = cbz.getThumbBmpPath();
+      const std::string thumb = UITheme::getCoverThumbPath(preview.coverBmpPath, FolioNooirTheme::COVER_HEIGHT);
+      logCbzCacheLookup(thumb, Storage.exists(thumb.c_str()));
+      if (!isValidBookThumbnail(thumb)) {
+        if (!cbz.generateThumbBmp(FolioNooirTheme::COVER_HEIGHT) || !isValidBookThumbnail(thumb)) {
+          preview.coverBmpPath.clear();
+        }
+      }
+      RECENT_BOOKS.refreshBookMetadata(path, preview.title, preview.author, preview.coverBmpPath, preview.synopsis);
     }
   }
   if (const BookMetadataOverride* overrideData = BOOK_METADATA_OVERRIDES.find(path)) {

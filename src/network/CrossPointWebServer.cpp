@@ -1,6 +1,7 @@
 #include "CrossPointWebServer.h"
 
 #include <ArduinoJson.h>
+#include <Cbz.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <HalGPIO.h>
@@ -101,7 +102,8 @@ bool isProtectedItemName(const String& name) {
 
 bool isBookFile(const String& filename) {
   const std::string_view view(filename.c_str(), filename.length());
-  return FsHelpers::hasEpubExtension(view) || FsHelpers::hasXtcExtension(view) || FsHelpers::hasTxtExtension(view) ||
+  return FsHelpers::hasEpubExtension(view) || FsHelpers::hasXtcExtension(view) || FsHelpers::hasCbzExtension(view) ||
+         FsHelpers::hasTxtExtension(view) ||
          FsHelpers::hasMarkdownExtension(view);
 }
 }  // namespace
@@ -643,6 +645,15 @@ void CrossPointWebServer::handleGetBookInfo() const {
     if (xtc.load()) {
       title = xtc.getTitle();
       author = xtc.getAuthor();
+    }
+  } else if (FsHelpers::hasCbzExtension(pathView)) {
+    Cbz cbz(path, "/.crosspoint");
+    bool loaded = cbz.loadCachedMetadataOnly();
+    if (!loaded) loaded = cbz.loadMetadataOnly();
+    if (loaded) {
+      title = cbz.getTitle();
+      author = cbz.getAuthor();
+      synopsis = cbz.getSynopsis();
     }
   }
   if (title.empty()) {

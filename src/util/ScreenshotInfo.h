@@ -2,7 +2,7 @@
 #include <cstdint>
 
 struct ScreenshotInfo {
-  enum class ReaderType : uint8_t { None, Epub, Txt, Xtc };
+  enum class ReaderType : uint8_t { None, Epub, Txt, Xtc, Cbz };
   ReaderType readerType = ReaderType::None;
   char title[64] = {};      // Sanitized, truncated book title (null-terminated)
   int spineIndex = -1;      // EPUB only: current spine/chapter index

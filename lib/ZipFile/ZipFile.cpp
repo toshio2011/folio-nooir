@@ -6,6 +6,8 @@
 
 #include <algorithm>
 
+#include "../../src/util/CbzDiagnostics.h"
+
 struct ZipInflateCtx {
   HalFile* file = nullptr;
   size_t fileRemaining = 0;
@@ -266,6 +268,7 @@ bool ZipFile::loadZipDetails() {
 }
 
 bool ZipFile::open() {
+  logCbzPath("zip-open", filePath);
   if (!Storage.openFileForRead("ZIP", filePath, file)) {
     return false;
   }

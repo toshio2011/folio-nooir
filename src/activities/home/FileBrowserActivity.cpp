@@ -15,6 +15,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/BookCacheUtils.h"
+#include "util/CbzDiagnostics.h"
 
 namespace {
 constexpr unsigned long GO_HOME_MS = 1000;
@@ -54,6 +55,7 @@ void FileBrowserActivity::loadFiles() {
           files.emplace_back(filename);
         }
       } else if (FsHelpers::hasEpubExtension(filename) || FsHelpers::hasXtcExtension(filename) ||
+                 FsHelpers::hasCbzExtension(filename) ||
                  FsHelpers::hasTxtExtension(filename) || FsHelpers::hasMarkdownExtension(filename) ||
                  FsHelpers::hasBmpExtension(filename) || FsHelpers::hasPngExtension(filename) ||
                  FsHelpers::hasJpgExtension(filename)) {
@@ -281,6 +283,7 @@ void FileBrowserActivity::loop() {
         requestUpdate();
       } else {
         const std::string path = basepath + entry;
+        logCbzPath("file-browser-selection", path);
         if (FsHelpers::hasBmpExtension(path) || FsHelpers::hasPngExtension(path) || FsHelpers::hasJpgExtension(path)) {
           activityManager.replaceActivity(std::make_unique<BmpViewerActivity>(renderer, mappedInput, path));
         } else {

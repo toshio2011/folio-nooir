@@ -8,7 +8,9 @@
 #include <optional>
 
 #include "CrossPointSettings.h"
+#include "Cbz.h"
 #include "Epub.h"
+#include "CbzReaderActivity.h"
 #include "EpubReaderActivity.h"
 #include "SdCardFontSystem.h"
 #include "Txt.h"
@@ -18,8 +20,36 @@
 #include "activities/util/BmpViewerActivity.h"
 #include "activities/util/FullScreenMessageActivity.h"
 #include "components/UITheme.h"
+#include "util/CbzDiagnostics.h"
+
+namespace {
+
+std::string openingBookLabel(const std::string& path) {
+  const size_t slash = path.find_last_of('/');
+  const size_t start = slash == std::string::npos ? 0 : slash + 1;
+  std::string label = path.substr(start);
+  constexpr size_t MAX_LABEL_CHARS = 28;
+  if (label.size() > MAX_LABEL_CHARS) {
+    label.resize(MAX_LABEL_CHARS - 3);
+    label += "...";
+  }
+  return label;
+}
+
+void showOpeningBookFeedback(GfxRenderer& renderer, const std::string& path) {
+  const std::string label = openingBookLabel(path);
+  const std::string message = std::string(tr(STR_LOADING_POPUP)) + "\n" + label;
+  // drawPopup() performs the single acknowledgement refresh.  ReaderActivity
+  // then loads the format synchronously; no second activity or persistent
+  // buffer is needed, and the existing reader render replaces the popup.
+  GUI.drawPopup(renderer, message.c_str());
+}
+
+}  // namespace
 
 bool ReaderActivity::isXtcFile(const std::string& path) { return FsHelpers::hasXtcExtension(path); }
+
+bool ReaderActivity::isCbzFile(const std::string& path) { return FsHelpers::hasCbzExtension(path); }
 
 bool ReaderActivity::isTxtFile(const std::string& path) {
   return FsHelpers::hasTxtExtension(path) ||
@@ -101,6 +131,28 @@ std::unique_ptr<Txt> ReaderActivity::loadTxt(const std::string& path) {
   return nullptr;
 }
 
+std::unique_ptr<Cbz> ReaderActivity::loadCbz(const std::string& path) {
+  logCbzPath("reader-load-cbz", path);
+  if (!Storage.exists(path.c_str())) {
+    LOG_ERR("READER", "File does not exist: %s", path.c_str());
+    return nullptr;
+  }
+
+  auto cbz = makeUniqueNoThrow<Cbz>(path, "/.crosspoint");
+  if (!cbz) {
+    LOG_ERR("READER", "Failed to allocate CBZ object");
+    return nullptr;
+  }
+  if (cbz->load()) return cbz;
+
+  if (cbz->pageIndexTooLarge()) {
+    LOG_ERR("READER", "CBZ archive too large for this device: %s", path.c_str());
+  }
+
+  LOG_ERR("READER", "Failed to load CBZ");
+  return nullptr;
+}
+
 void ReaderActivity::goToLibrary(const std::string& fromBookPath) {
   // If coming from a book, start in that book's folder; otherwise start from root
   auto initialPath = fromBookPath.empty() ? "/" : FsHelpers::extractFolderPath(fromBookPath);
@@ -130,6 +182,14 @@ void ReaderActivity::onGoToTxtReader(std::unique_ptr<Txt> txt) {
   activityManager.replaceActivity(std::make_unique<TxtReaderActivity>(renderer, mappedInput, std::move(txt)));
 }
 
+void ReaderActivity::onGoToCbzReader(std::unique_ptr<Cbz> cbz) {
+  const auto cbzPath = cbz->getPath();
+  logCbzPath("reader-cbz-routing", cbzPath);
+  currentBookPath = cbzPath;
+  activityManager.replaceActivity(
+      std::make_unique<CbzReaderActivity>(renderer, mappedInput, std::move(cbz)));
+}
+
 void ReaderActivity::onEnter() {
   Activity::onEnter();
 
@@ -138,11 +198,23 @@ void ReaderActivity::onEnter() {
     return;
   }
 
+  // A format may need to parse an archive, build a spine, or extract an
+  // index before its reader can render. Acknowledge the open immediately so a
+  // second button press cannot be mistaken for a dropped input.
+  showOpeningBookFeedback(renderer, initialBookPath);
   sdFontSystem.ensureLoaded(renderer);
 
   currentBookPath = initialBookPath;
+  logCbzPath("reader-on-enter", initialBookPath);
   if (isBmpFile(initialBookPath)) {
     onGoToBmpViewer(initialBookPath);
+  } else if (isCbzFile(initialBookPath)) {
+    auto cbz = loadCbz(initialBookPath);
+    if (!cbz) {
+      onGoBack();
+      return;
+    }
+    onGoToCbzReader(std::move(cbz));
   } else if (isXtcFile(initialBookPath)) {
     auto xtc = loadXtc(initialBookPath);
     if (!xtc) {

@@ -161,7 +161,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
   }
 
   if (isHttpSuccess(httpCode)) {
-    const String responseBody = http.getString();
+    const std::string responseBody = http.getString();
     http.end();
 
     if (responseBody.length() == 0) {

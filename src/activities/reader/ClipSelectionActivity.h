@@ -39,6 +39,8 @@ class ClipSelectionActivity final : public Activity {
     uint16_t row = 0;
     const char* text = nullptr;
     EpdFontFamily::Style style = EpdFontFamily::REGULAR;
+    uint8_t focusBoundary = 0;
+    uint16_t focusSuffixX = 0;
   };
 
   void extractWords();

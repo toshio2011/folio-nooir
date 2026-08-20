@@ -93,6 +93,8 @@ struct HighlightWord {
   uint16_t row = 0;
   const char* text = nullptr;
   EpdFontFamily::Style style = EpdFontFamily::REGULAR;
+  uint8_t focusBoundary = 0;
+  uint16_t focusSuffixX = 0;
 };
 
 bool isSelectableHighlightToken(const char* text) {
@@ -129,6 +131,13 @@ void collectHighlightWords(const Page& page, GfxRenderer& renderer, const int fo
       word.row = row;
       word.text = text;
       word.style = block->wordStyle(i);
+      word.focusBoundary = block->focusBoundary(i);
+      word.focusSuffixX = block->focusSuffixX(i);
+      if (word.focusBoundary > 0) {
+        word.width = static_cast<int16_t>(word.focusSuffixX +
+                                         renderer.getTextAdvanceX(fontId, text + word.focusBoundary,
+                                                                  word.style));
+      }
       words.push_back(word);
       rowHasWords = true;
     }
@@ -183,6 +192,25 @@ std::string collapseHighlightWhitespace(const std::string& text) {
   return collapsed;
 }
 
+// Build the same normalized, whitespace-collapsed representation for a page
+// word without changing the source text used by normal EPUB rendering. This
+// lets an older clipping whose unsupported punctuation was sanitized on save
+// still match the current page during reflow.
+void appendCollapsedHighlightWord(std::string& output, const char* text) {
+  if (!text || *text == '\0') return;
+  const std::string sanitized = ClipFile::normalizeText(text);
+  bool pendingSpace = false;
+  for (const unsigned char byte : sanitized) {
+    if (std::isspace(byte)) {
+      pendingSpace = true;
+      continue;
+    }
+    if (pendingSpace && !output.empty()) output.push_back(' ');
+    output.push_back(static_cast<char>(byte));
+    pendingSpace = false;
+  }
+}
+
 bool findHighlightTextRange(const std::vector<HighlightWord>& words, const std::string& text, int& first, int& last,
                             const bool ignoreWrapping = false) {
   if (text.empty() || words.empty()) return false;
@@ -203,7 +231,8 @@ bool findHighlightTextRange(const std::vector<HighlightWord>& words, const std::
         }
         if (candidate.size() < 1024) {
           const size_t remaining = 1024 - candidate.size();
-          candidate.append(words[end].text, std::min(remaining, strlen(words[end].text)));
+          appendCollapsedHighlightWord(candidate, words[end].text);
+          if (candidate.size() > 1024) candidate.resize(1024);
         }
         if (candidate == target) {
           first = start;
@@ -325,12 +354,46 @@ void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string&
   }
 }
 
+void drawStyledHighlightWord(GfxRenderer& renderer, const int fontId, const HighlightWord& word, const bool black,
+                            const bool forceBold) {
+  if (!word.text || *word.text == '\0') return;
+  if (word.focusBoundary == 0) {
+    const auto style = forceBold ? static_cast<EpdFontFamily::Style>(word.style | EpdFontFamily::BOLD) : word.style;
+    renderer.drawText(fontId, word.x, word.y, word.text, black, style);
+    return;
+  }
+
+  static constexpr size_t MAX_FOCUS_PREFIX_BYTES = 9 * 4 + 1;
+  char boldPrefix[MAX_FOCUS_PREFIX_BYTES + 3]{};
+  const size_t textLength = strlen(word.text);
+  const size_t prefixLength = std::min<size_t>({static_cast<size_t>(word.focusBoundary), textLength,
+                                                sizeof(boldPrefix) - 1});
+  memcpy(boldPrefix, word.text, prefixLength);
+  boldPrefix[prefixLength] = '\0';
+  const auto boldStyle = static_cast<EpdFontFamily::Style>(word.style | EpdFontFamily::BOLD);
+  renderer.drawText(fontId, word.x, word.y, boldPrefix, black, boldStyle);
+  if (prefixLength < textLength) {
+    renderer.drawText(fontId, word.x + word.focusSuffixX, word.y, word.text + prefixLength, black, word.style);
+  }
+}
+
+uint8_t highlightStyleMask(const std::vector<HighlightWord>& words, const int first, const int last) {
+  uint8_t mask = 0;
+  for (int i = first; i <= last && i >= 0 && i < static_cast<int>(words.size()); ++i) {
+    mask |= static_cast<uint8_t>(1u << (static_cast<uint8_t>(words[i].style) & 0x03));
+    if (words[i].focusBoundary > 0) mask |= static_cast<uint8_t>(1u << 1);
+  }
+  return mask;
+}
+
 }  // namespace
 
 void EpubReaderActivity::onEnter() {
   Activity::onEnter();
   mappedInput.setReaderMappingMode(true);
   readingSessionStartedMs = millis();
+  loadingUiPending = false;
+  loadingUiRenderArmed = false;
 
   if (!epub) {
     return;
@@ -411,7 +474,15 @@ void EpubReaderActivity::onEnter() {
   loadCachedClippings();
 
   // Trigger first update
-  requestUpdate();
+  requestPageRender();
+}
+
+void EpubReaderActivity::requestPageRender(const bool immediate) {
+  // Once the loading phase has been presented, keep the next event-loop turn
+  // reserved for the actual synchronous render instead of refreshing the
+  // loading line a second time.
+  if (!loadingUiRenderArmed) loadingUiPending = true;
+  requestUpdate(immediate);
 }
 
 void EpubReaderActivity::prepareStablePages() {
@@ -471,6 +542,9 @@ void EpubReaderActivity::requestExitToHome(const HomeMenuItem item) {
 
 void EpubReaderActivity::onExit() {
   Activity::onExit();
+  longOperationIndicator.cancel("reader_exit");
+  loadingUiPending = false;
+  loadingUiRenderArmed = false;
   mappedInput.setReaderMappingMode(false);
   renderer.setDarkMode(false);
 
@@ -560,7 +634,7 @@ void EpubReaderActivity::openReaderOptions() {
         readerOptionsReturnGuard = true;
         longPowerShortcutFired = false;
         ignoreNextConfirmRelease = false;
-        requestUpdate();
+        requestPageRender();
       });
 }
 
@@ -597,9 +671,24 @@ void EpubReaderActivity::renderSavedHighlights(const Page& page, const int fontI
                                                const int marginTop) {
   if (!section || cachedClippings.empty()) return;
 
+  const auto logRestoreNotFound = [](const size_t index, const char* reason) {
+    LOG_DBG("CLP", "restore result=not_found index=%u reason=%s", static_cast<unsigned>(index), reason);
+    LOG_DBG("CLP", "restore_match index=%u result=not_found reason=%s", static_cast<unsigned>(index), reason);
+  };
+
   std::vector<HighlightWord> words;
   collectHighlightWords(page, renderer, fontId, marginLeft, marginTop, words);
-  if (words.empty()) return;
+  if (words.empty()) {
+    for (size_t index = 0; index < cachedClippings.size(); ++index) {
+      const auto& clipping = cachedClippings[index];
+      LOG_DBG("CLP", "restore_attempt index=%u spine=%u page=%u savedBold=%u savedStyle=%u",
+              static_cast<unsigned>(index), static_cast<unsigned>(clipping.spineIndex),
+              static_cast<unsigned>(clipping.page), clipping.bold ? 1u : 0u,
+              static_cast<unsigned>(clipping.styleMask));
+      logRestoreNotFound(index, "no_words");
+    }
+    return;
+  }
 
   const int currentPage = section->currentPage;
 
@@ -623,12 +712,23 @@ void EpubReaderActivity::renderSavedHighlights(const Page& page, const int fontI
             ? getClippingPageProgressRange(epub, currentSpineIndex, currentPage, pageCount)
             : ProgressRange{0.0f, 1.0f};
 
-    for (auto& clipping : cachedClippings) {
-      if (clipping.spineIndex != currentSpineIndex) continue;
+    for (size_t clippingIndex = 0; clippingIndex < cachedClippings.size(); ++clippingIndex) {
+      auto& clipping = cachedClippings[clippingIndex];
+      LOG_DBG("CLP", "restore_attempt index=%u spine=%u page=%u savedBold=%u savedStyle=%u",
+              static_cast<unsigned>(clippingIndex), static_cast<unsigned>(clipping.spineIndex),
+              static_cast<unsigned>(clipping.page), clipping.bold ? 1u : 0u,
+              static_cast<unsigned>(clipping.styleMask));
+      if (clipping.spineIndex != currentSpineIndex) {
+        logRestoreNotFound(clippingIndex, "spine");
+        continue;
+      }
 
       const bool pageMatches = clipping.page == currentPage;
       if (!pageMatches) {
-        if (!allowClippingRelocation || pageCount <= 0) continue;
+        if (!allowClippingRelocation || pageCount <= 0) {
+          logRestoreNotFound(clippingIndex, "relocation_disabled");
+          continue;
+        }
 
         // The saved percentage is a cheap location hint independent of the
         // chapter's old page count. It keeps recovery bounded to the likely
@@ -642,6 +742,7 @@ void EpubReaderActivity::renderSavedHighlights(const Page& page, const int fontI
         const float hintMargin = pageWidth * 2.0f;
         if (savedProgress + bookmarkProgressEpsilon < pageRange.start - hintMargin ||
             savedProgress - bookmarkProgressEpsilon > pageRange.end + hintMargin) {
+          logRestoreNotFound(clippingIndex, "progress_hint");
           continue;
         }
       }
@@ -666,7 +767,20 @@ void EpubReaderActivity::renderSavedHighlights(const Page& page, const int fontI
         // breaks do not make an otherwise valid highlight disappear.
         matched = findHighlightTextRange(words, clipping.text, first, last, true);
       }
-      if (!matched) continue;
+      if (!matched) {
+        logRestoreNotFound(clippingIndex, "text");
+        continue;
+      }
+
+      const uint8_t resolvedStyleMask = highlightStyleMask(words, first, last);
+      LOG_DBG("CLP", "restore_match index=%u result=matched", static_cast<unsigned>(clippingIndex));
+      LOG_DBG("CLP", "restore result=matched spine=%d page=%d style=%u bold=%u", currentSpineIndex, currentPage,
+              static_cast<unsigned>(resolvedStyleMask), (resolvedStyleMask & 0x0Au) != 0 ? 1u : 0u);
+      LOG_DBG("CLP", "restore style=%u bold=%u savedStyle=%u savedBold=%u", static_cast<unsigned>(resolvedStyleMask),
+              (resolvedStyleMask & 0x0Au) != 0 ? 1u : 0u, static_cast<unsigned>(clipping.styleMask),
+              clipping.bold ? 1u : 0u);
+      LOG_DBG("CLP", "restore_apply index=%u bold=%u style=%u", static_cast<unsigned>(clippingIndex),
+              clipping.bold ? 1u : 0u, static_cast<unsigned>(clipping.styleMask));
 
       if (!pageMatches) {
         // Keep the in-memory range current for the remaining BW/gray passes
@@ -683,8 +797,8 @@ void EpubReaderActivity::renderSavedHighlights(const Page& page, const int fontI
         LOG_DBG("ERS", "Restored clipping after reflow: spine=%d page=%d", currentSpineIndex, currentPage);
       }
 
-      highlightMatches.push_back(
-          SavedHighlightMatch{static_cast<uint16_t>(first), static_cast<uint16_t>(last)});
+      highlightMatches.push_back(SavedHighlightMatch{static_cast<uint16_t>(first), static_cast<uint16_t>(last),
+                                                     clipping.styleMask, clipping.bold});
     }
     highlightLookupDone = true;
   }
@@ -725,6 +839,17 @@ void EpubReaderActivity::renderSavedHighlights(const Page& page, const int fontI
     const int first = match.firstWord;
     const int last = match.lastWord;
     if (first < 0 || last < first || last >= static_cast<int>(words.size())) continue;
+    const uint8_t resolvedStyleMask = highlightStyleMask(words, first, last);
+    bool hasFocusBoundary = false;
+    for (int i = first; i <= last; ++i) hasFocusBoundary = hasFocusBoundary || words[i].focusBoundary > 0;
+    // If a legacy/reflowed page lost the bold bit but the persisted clipping
+    // is a bold-only selection, restore it. Focus-split words retain their
+    // prefix/suffix boundary and are never forced fully bold.
+    const bool forceBold = match.savedBold && (match.savedStyleMask & 0x01u) == 0 && !hasFocusBoundary;
+    const bool renderedBold = (resolvedStyleMask & 0x0Au) != 0 || forceBold;
+    LOG_DBG("CLP", "render highlight=1 bold=%u style=%u savedBold=%u savedStyle=%u", renderedBold ? 1u : 0u,
+            static_cast<unsigned>(resolvedStyleMask), match.savedBold ? 1u : 0u,
+            static_cast<unsigned>(match.savedStyleMask));
 
     // The normal reader is monochrome. Paint one continuous band per line
     // rather than a separate box around every word, then redraw the glyphs in
@@ -750,13 +875,13 @@ void EpubReaderActivity::renderSavedHighlights(const Page& page, const int fontI
       renderer.setDarkMode(false);
       for (int i = first; i <= last; ++i) {
         const auto& word = words[i];
-        renderer.drawText(fontId, word.x, word.y, word.text, highlightTextBlack, word.style);
+        drawStyledHighlightWord(renderer, fontId, word, highlightTextBlack, forceBold);
       }
       renderer.setDarkMode(true);
     } else {
       for (int i = first; i <= last; ++i) {
         const auto& word = words[i];
-        renderer.drawText(fontId, word.x, word.y, word.text, highlightTextBlack, word.style);
+        drawStyledHighlightWord(renderer, fontId, word, highlightTextBlack, forceBold);
       }
     }
   }
@@ -907,7 +1032,7 @@ void EpubReaderActivity::loop() {
         SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
         SETTINGS.saveToFile();
         pagesUntilFullRefresh = 1;
-        requestUpdate();
+        requestPageRender();
         break;
       case CrossPointSettings::LP_PWR_KOSYNC:
         launchKOReaderSync();
@@ -1317,7 +1442,7 @@ void EpubReaderActivity::loop() {
     nextPageNumber = section ? section->currentPage : nextPageNumber;
     cachedChapterTotalPageCount = section ? section->estimatedTotalPages() : cachedChapterTotalPageCount;
     section.reset();
-    requestUpdate();
+    requestPageRender();
     return;
   }
 
@@ -1327,14 +1452,14 @@ void EpubReaderActivity::loop() {
     nextPageNumber = section ? section->currentPage : nextPageNumber;
     cachedChapterTotalPageCount = section ? section->estimatedTotalPages() : cachedChapterTotalPageCount;
     section.reset();
-    requestUpdate();
+    requestPageRender();
     return;
   }
 
   if (longPress && longPressBehavior == SETTINGS.CHAPTER_SKIP) {
     if (!nextTriggered && section && section->currentPage > 0) {
       section->currentPage = 0;
-      requestUpdate();
+      requestPageRender();
       return;
     }
 
@@ -1349,7 +1474,7 @@ void EpubReaderActivity::loop() {
       }
       section.reset();
     }
-    requestUpdate();
+    requestPageRender();
     return;
   }
 
@@ -1358,13 +1483,13 @@ void EpubReaderActivity::loop() {
         nextTriggered ? (SETTINGS.orientation - 1 + SETTINGS.ORIENTATION_COUNT) % SETTINGS.ORIENTATION_COUNT
                       : (SETTINGS.orientation + 1) % SETTINGS.ORIENTATION_COUNT;
     applyOrientation(newOrientation);
-    requestUpdate();
+    requestPageRender();
     return;
   }
 
   // No current section, attempt to rerender the book
   if (!section) {
-    requestUpdate();
+    requestPageRender();
     return;
   }
 
@@ -1436,6 +1561,7 @@ void EpubReaderActivity::jumpToPercent(int percent) {
     pendingPercentJump = true;
     section.reset();
   }
+  requestPageRender();
 }
 
 void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action) {
@@ -1493,6 +1619,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
               nextPageNumber = 0;
 
               section.reset();
+              requestPageRender();
             }
           });
       break;
@@ -1754,7 +1881,7 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn) {
     if (sessionPagesTurned < UINT32_MAX) ++sessionPagesTurned;
   }
   lastPageTurnTime = millis();
-  requestUpdate();
+  requestPageRender();
 }
 
 // TODO: Failure handling
@@ -1775,6 +1902,19 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     }
     return;
   }
+
+  // A page request is split across two render-task turns. The first turn
+  // refreshes the already-presented page with one static loading line; the
+  // second turn enters the existing synchronous EPUB parser/layout/image
+  // pipeline. No decoder or background task is added.
+  if (loadingUiPending) {
+    loadingUiPending = false;
+    loadingUiRenderArmed = true;
+    longOperationIndicator.showBeforeWork("EPUB_RENDER", true);
+    requestUpdate(true);
+    return;
+  }
+  if (loadingUiRenderArmed) loadingUiRenderArmed = false;
 
   const auto showPendingSyncSaveError = [this]() {
     if (!pendingSyncSaveError) return;
@@ -1812,6 +1952,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     showPendingSyncSaveError();
     return;
   }
+
+  auto longOperation = longOperationIndicator.scoped("EPUB_RENDER");
+  longOperationIndicator.stage("parsing");
 
   // Apply screen viewable areas and additional padding
   int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
@@ -2084,6 +2227,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   // a plain resume / unchanged pagination). If still building, this defers to loop() on completion.
   applyDeferredReposition();
 
+  longOperationIndicator.stage("rendering");
   renderer.clearScreen();
 
   if (section->pageCount == 0) {
@@ -2093,6 +2237,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     renderer.displayBuffer();
     automaticPageTurnActive = false;
     showPendingSyncSaveError();
+    longOperation.complete();
     return;
   }
 
@@ -2103,6 +2248,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     renderer.displayBuffer();
     automaticPageTurnActive = false;
     showPendingSyncSaveError();
+    longOperation.complete();
     return;
   }
 
@@ -2172,6 +2318,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   if (showDictionaryMessage) {
     GUI.drawPopup(renderer, tr(STR_DICT_NO_DICT_SET));
   }
+  longOperation.complete();
 }
 
 bool EpubReaderActivity::applyDeferredReposition() {
@@ -2225,6 +2372,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   // beginning the actual BW/gray render.  Cached images are skipped, so normal
   // page turns retain the fast path.
   if (page->hasImagesNeedingDecode()) {
+    longOperationIndicator.stage("decoding");
     page->warmImageCaches(renderer, orientedMarginLeft, orientedMarginTop);
     renderer.clearScreen();
   }
@@ -2257,11 +2405,16 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     }
   };
 
+  longOperationIndicator.stage("rendering");
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop, guideDots);
   renderSavedHighlights(*page, fontId, orientedMarginLeft, orientedMarginTop);
   renderStatusBar();
   const auto tBwRender = millis();
 
+  longOperationIndicator.stage("refreshing");
+  // Piggyback on the reader's normal display refresh; the indicator never
+  // schedules an extra e-ink update or animation.
+  longOperationIndicator.drawIfDue();
   if (pageHasImages) {
     // Double FAST_REFRESH with selective image blanking (pablohc's technique):
     // HALF_REFRESH sets particles too firmly for the grayscale LUT to adjust.
@@ -2574,7 +2727,7 @@ void EpubReaderActivity::navigateToHref(const std::string& hrefStr, const bool s
     nextPageNumber = 0;
     section.reset();
   }
-  requestUpdate();
+  requestPageRender();
   LOG_DBG("ERS", "Navigated to spine %d for href: %s", targetSpineIndex, hrefStr.c_str());
 }
 
@@ -2590,7 +2743,7 @@ void EpubReaderActivity::restoreSavedPosition() {
     nextPageNumber = pos.pageNumber;
     section.reset();
   }
-  requestUpdate();
+  requestPageRender();
 }
 
 void EpubReaderActivity::loadCachedBookmarks() {

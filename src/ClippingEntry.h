@@ -20,4 +20,14 @@ struct ClippingEntry {
   uint16_t firstWord = 0;
   uint16_t lastWord = 0;
   bool hasWordRange = false;
+
+  // Aggregate style information for diagnostics and compatibility. The
+  // renderer still resolves each word's exact style from the current EPUB
+  // page (including split-bold/focus runs), so mixed-style clippings remain
+  // correct after reflow and older files remain fully supported.
+  uint8_t styleMask = 0;
+  // Explicit bold metadata is kept separately from the highlight state.  The
+  // field is intentionally optional in JSON so older clipping files continue
+  // to load; ClipFile derives it from styleMask when the key is absent.
+  bool bold = false;
 };

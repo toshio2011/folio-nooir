@@ -12,6 +12,7 @@
 #include <new>
 
 #include "DirectPixelWriter.h"
+#include "BoundedAreaResampler.h"
 #include "DitherUtils.h"
 #include "PixelCache.h"
 
@@ -38,6 +39,8 @@ struct PngContext {
   bool caching{false};
 
   uint8_t* grayLineBuffer{nullptr};
+  std::unique_ptr<BoundedAreaResampler> areaResampler;
+  bool areaResampling{false};
 };
 
 // File I/O callbacks use pFile->fHandle to access the HalFile*,
@@ -202,9 +205,62 @@ void convertLineToGray(const uint8_t* pPixels, uint8_t* grayLine, int width, int
   }
 }
 
+void writeAreaRow(PngContext& ctx, const int destinationY, const uint8_t* grayRow) {
+  if (!grayRow || destinationY < 0 || destinationY >= ctx.dstHeight) return;
+
+  const int outY = ctx.config->y + destinationY;
+  const bool cacheImageLocal = ctx.config && ctx.config->cbzQualityMode;
+  if (!cacheImageLocal && (outY < 0 || outY >= ctx.screenHeight)) return;
+
+  DirectPixelWriter writer;
+  writer.init(*ctx.renderer);
+  writer.beginRow(outY);
+
+  DirectCacheWriter cacheWriter{};
+  bool caching = ctx.caching;
+  int cacheOriginY = 0;
+  if (caching) {
+    if (!ctx.cache.advanceTo(destinationY)) {
+      LOG_ERR("PNG", "Image resampler pixel cache stream failed at row %d", destinationY);
+      ctx.cache.abort();
+      ctx.caching = false;
+      caching = false;
+    } else {
+      cacheWriter.init(ctx.cache.buffer, ctx.cache.bytesPerRow, ctx.cache.bandRows,
+                       cacheImageLocal ? 0 : ctx.cache.originX);
+      cacheOriginY = cacheImageLocal ? ctx.cache.bandStart : ctx.config->y + ctx.cache.bandStart;
+      cacheWriter.beginRow(cacheImageLocal ? destinationY : outY, cacheOriginY);
+    }
+  }
+
+  for (int destinationX = 0; destinationX < ctx.dstWidth; ++destinationX) {
+    const int outX = ctx.config->x + destinationX;
+    if (!cacheImageLocal && (outX < 0 || outX >= ctx.screenWidth)) continue;
+
+    const uint8_t gray = grayRow[destinationX];
+    uint8_t level;
+    if (ctx.config->useDithering) {
+      level = applyBayerDither4Level(gray, outX, outY);
+    } else {
+      level = quantizeDirect4Level(gray, ctx.config->cbzQualityMode, ctx.config->cbzBwDiagnostic);
+    }
+    recordImageQualityPixel(*ctx.config, outX, outY, gray, level);
+    writer.writePixel(outX, level);
+    if (caching) cacheWriter.writePixel(cacheImageLocal ? destinationX : outX, level);
+  }
+}
+
+void writePendingAreaRows(PngContext& ctx) {
+  while (ctx.areaResampler && ctx.areaResampler->hasPendingRow()) {
+    writeAreaRow(ctx, ctx.areaResampler->pendingRowIndex(), ctx.areaResampler->pendingRowData());
+    ctx.areaResampler->consumePendingRow();
+  }
+}
+
 int pngDrawCallback(PNGDRAW* pDraw) {
   PngContext* ctx = reinterpret_cast<PngContext*>(pDraw->pUser);
   if (!ctx || !ctx->config || !ctx->renderer || !ctx->grayLineBuffer) return 0;
+  ScopedImagePixelTimer pixelTimer(ctx->config->diagnostics);
 
   int srcY = pDraw->y;
   int srcWidth = ctx->srcWidth;
@@ -228,11 +284,21 @@ int pngDrawCallback(PNGDRAW* pDraw) {
   convertLineToGray(pDraw->pPixels, ctx->grayLineBuffer, srcWidth, pDraw->iPixelType, pDraw->iBpp, pDraw->pPalette,
                     pDraw->iHasAlpha);
 
+  if (ctx->areaResampling && ctx->areaResampler) {
+    const uint32_t resampleStartedUs = ctx->config->diagnostics ? micros() : 0;
+    const bool resampleOk = ctx->areaResampler->addSourceRowSegment(srcY, 0, ctx->grayLineBuffer, srcWidth);
+    if (ctx->config->diagnostics) ctx->config->diagnostics->resampleUs += micros() - resampleStartedUs;
+    if (!resampleOk) return 0;
+    writePendingAreaRows(*ctx);
+    return 1;
+  }
+
   // Render scaled rows using Bresenham-style integer stepping (no floating-point division)
   int dstWidth = ctx->dstWidth;
   int outXBase = ctx->config->x;
   int screenWidth = ctx->screenWidth;
   bool useDithering = ctx->config->useDithering;
+  const bool cacheImageLocal = ctx->config->cbzQualityMode;
 
   // Pre-compute orientation and render-mode state once per callback.
   DirectPixelWriter pw;
@@ -241,7 +307,7 @@ int pngDrawCallback(PNGDRAW* pDraw) {
   for (int dstY = firstDstY; dstY < endDstY; dstY++) {
     ctx->lastDstY = dstY;
     int outY = ctx->config->y + dstY;
-    if (outY < 0 || outY >= ctx->screenHeight) continue;
+    if (!cacheImageLocal && (outY < 0 || outY >= ctx->screenHeight)) continue;
 
     pw.beginRow(outY);
 
@@ -256,8 +322,10 @@ int pngDrawCallback(PNGDRAW* pDraw) {
         caching = false;
         ctx->caching = false;
       } else {
-        cw.init(ctx->cache.buffer, ctx->cache.bytesPerRow, ctx->cache.bandRows, ctx->cache.originX);
-        cw.beginRow(outY, ctx->config->y + ctx->cache.bandStart);
+        cw.init(ctx->cache.buffer, ctx->cache.bytesPerRow, ctx->cache.bandRows,
+                cacheImageLocal ? 0 : ctx->cache.originX);
+        cw.beginRow(cacheImageLocal ? dstY : outY,
+                    cacheImageLocal ? ctx->cache.bandStart : ctx->config->y + ctx->cache.bandStart);
       }
     }
 
@@ -266,18 +334,18 @@ int pngDrawCallback(PNGDRAW* pDraw) {
 
     for (int dstX = 0; dstX < dstWidth; dstX++) {
       int outX = outXBase + dstX;
-      if (outX >= 0 && outX < screenWidth) {
+      if (cacheImageLocal || (outX >= 0 && outX < screenWidth)) {
         uint8_t gray = ctx->grayLineBuffer[srcX];
 
         uint8_t ditheredGray;
         if (useDithering) {
           ditheredGray = applyBayerDither4Level(gray, outX, outY);
         } else {
-          ditheredGray = gray / 85;
-          if (ditheredGray > 3) ditheredGray = 3;
+          ditheredGray = quantizeDirect4Level(gray, ctx->config->cbzQualityMode, ctx->config->cbzBwDiagnostic);
         }
+        recordImageQualityPixel(*ctx->config, outX, outY, gray, ditheredGray);
         pw.writePixel(outX, ditheredGray);
-        if (caching) cw.writePixel(outX, ditheredGray);
+        if (caching) cw.writePixel(cacheImageLocal ? dstX : outX, ditheredGray);
       }
 
       // Bresenham-style stepping: advance srcX based on ratio srcWidth/dstWidth
@@ -344,6 +412,7 @@ bool PngToFramebufferConverter::decodeToFramebuffer(const std::string& imagePath
   ctx.config = &config;
   ctx.screenWidth = renderer.getScreenWidth();
   ctx.screenHeight = renderer.getScreenHeight();
+  if (config.diagnostics) config.diagnostics->decoder = "PNGDEC";
 
   int rc = png->open(imagePath.c_str(), pngOpenWithHandle, pngCloseWithHandle, pngReadWithHandle, pngSeekWithHandle,
                      pngDrawCallback);
@@ -353,7 +422,7 @@ bool PngToFramebufferConverter::decodeToFramebuffer(const std::string& imagePath
     return false;
   }
 
-  if (!validateImageDimensions(png->getWidth(), png->getHeight(), "PNG")) {
+  if (!validateImageDimensionsForRender(png->getWidth(), png->getHeight(), "PNG", config)) {
     return false;
   }
 
@@ -382,9 +451,18 @@ bool PngToFramebufferConverter::decodeToFramebuffer(const std::string& imagePath
   const int bitsPerSample = png->getBpp();
   LOG_DBG("PNG", "PNG %dx%d -> %dx%d (scale %.2f), type: %d, bpp: %d", ctx.srcWidth, ctx.srcHeight, ctx.dstWidth,
           ctx.dstHeight, ctx.scale, pixelType, bitsPerSample);
+  if (config.allowBoundedLargeSource &&
+      static_cast<int64_t>(ctx.srcWidth) * static_cast<int64_t>(ctx.srcHeight) > MAX_SOURCE_PIXELS) {
+    LOG_DBG("EPUBIMG", "downsample=streamed format=PNG source=%dx%d target=%dx%d", ctx.srcWidth, ctx.srcHeight,
+            ctx.dstWidth, ctx.dstHeight);
+  }
 
   const int requiredInternal = requiredPngInternalBufferBytes(ctx.srcWidth, pixelType, bitsPerSample);
   if (requiredInternal > PNG_MAX_BUFFERED_PIXELS) {
+    if (config.allowBoundedLargeSource) {
+      LOG_ERR("EPUBIMG", "skip=PNG reason=row_buffer_limit source=%dx%d required=%d limit=%d", ctx.srcWidth,
+              ctx.srcHeight, requiredInternal, PNG_MAX_BUFFERED_PIXELS);
+    }
     LOG_ERR(
         "PNG",
         "PNG row buffer too small: need %d bytes for width=%d type=%d bpp=%d, configured PNG_MAX_BUFFERED_PIXELS=%d",
@@ -405,6 +483,10 @@ bool PngToFramebufferConverter::decodeToFramebuffer(const std::string& imagePath
   constexpr size_t MAX_GRAY_LINE_BUFFER_BYTES = PNG_MAX_BUFFERED_PIXELS / 2;
   const size_t grayBufSize = static_cast<size_t>(ctx.srcWidth);
   if (grayBufSize > MAX_GRAY_LINE_BUFFER_BYTES) {
+    if (config.allowBoundedLargeSource) {
+      LOG_ERR("EPUBIMG", "skip=PNG reason=gray_row_limit source=%dx%d rowBytes=%u limit=%u", ctx.srcWidth,
+              ctx.srcHeight, static_cast<unsigned>(grayBufSize), static_cast<unsigned>(MAX_GRAY_LINE_BUFFER_BYTES));
+    }
     LOG_ERR("PNG", "Expanded gray row too wide: need %u bytes for width=%d, max=%u", static_cast<unsigned>(grayBufSize),
             ctx.srcWidth, static_cast<unsigned>(MAX_GRAY_LINE_BUFFER_BYTES));
     return false;
@@ -417,6 +499,25 @@ bool PngToFramebufferConverter::decodeToFramebuffer(const std::string& imagePath
   }
   ctx.grayLineBuffer = grayLineBuffer.get();
 
+  if (ctx.srcWidth > ctx.dstWidth && ctx.srcHeight > ctx.dstHeight) {
+    ctx.areaResampler.reset(new (std::nothrow) BoundedAreaResampler());
+    if (ctx.areaResampler &&
+        ctx.areaResampler->begin(ctx.srcWidth, ctx.srcHeight, ctx.dstWidth, ctx.dstHeight,
+                                 config.cbzQualityMode)) {
+      ctx.areaResampling = true;
+      if (config.diagnostics) {
+        config.diagnostics->areaResampling = true;
+        config.diagnostics->resampleMode = config.cbzQualityMode ? "manga_nearest" : "bounded_area";
+      }
+      LOG_DBG("PNG", "Using bounded %s downsampling (%dx%d -> %dx%d)",
+              config.cbzQualityMode ? "manga-nearest" : "area", ctx.srcWidth, ctx.srcHeight, ctx.dstWidth,
+              ctx.dstHeight);
+    } else {
+      ctx.areaResampler.reset();
+      LOG_DBG("PNG", "Area downsampler unavailable; using nearest-neighbor fallback");
+    }
+  }
+
   // Stream the pixel cache to disk. PNGdec delivers source scanlines top to
   // bottom and we emit at most one (downscaled) output row per callback, so the
   // band only needs a single row. Streaming keeps the working set tiny, so
@@ -424,6 +525,7 @@ bool PngToFramebufferConverter::decodeToFramebuffer(const std::string& imagePath
   // nor forces larger images to skip caching - which previously meant a full
   // re-decode on every one of an image page's ~14 render passes.
   ctx.caching = !config.cachePath.empty();
+  ctx.cache.diagnostics = config.diagnostics;
   if (ctx.caching) {
     if (!ctx.cache.begin(config.cachePath, ctx.dstWidth, ctx.dstHeight, config.x, config.y, 1)) {
       LOG_ERR("PNG", "Failed to start cache stream, continuing without caching");
@@ -434,6 +536,7 @@ bool PngToFramebufferConverter::decodeToFramebuffer(const std::string& imagePath
   unsigned long decodeStart = millis();
   rc = png->decode(&ctx, 0);
   unsigned long decodeTime = millis() - decodeStart;
+  if (config.diagnostics) config.diagnostics->decodeMs = decodeTime;
 
   ctx.grayLineBuffer = nullptr;
 
@@ -444,6 +547,15 @@ bool PngToFramebufferConverter::decodeToFramebuffer(const std::string& imagePath
   }
 
   LOG_DBG("PNG", "PNG decoding complete - render time: %lu ms", decodeTime);
+
+  if (ctx.areaResampling && ctx.areaResampler) {
+    if (!ctx.areaResampler->finish()) {
+      LOG_ERR("PNG", "Image downsampler did not receive a complete image");
+      if (ctx.caching) ctx.cache.abort();
+      return false;
+    }
+    writePendingAreaRows(ctx);
+  }
 
   // Finalize the streamed cache (caching may have been cleared on a flush error).
   if (ctx.caching) {

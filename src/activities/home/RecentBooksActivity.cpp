@@ -5,6 +5,7 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Bitmap.h>
+#include <Cbz.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <Xtc.h>
@@ -27,6 +28,7 @@
 #include "util/SynopsisPreview.h"
 #include "components/UITheme.h"
 #include "components/themes/folio_nooir/FolioNooirTheme.h"
+#include "util/CbzDiagnostics.h"
 #include "fontIds.h"
 
 namespace {
@@ -66,7 +68,8 @@ void RecentBooksActivity::loadRecentBooks() { recentBooks = RECENT_BOOKS.getBook
 
 bool RecentBooksActivity::hasMissingRecentCache() const {
   for (const auto& book : recentBooks) {
-    if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path)) continue;
+    if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path) &&
+        !FsHelpers::hasCbzExtension(book.path)) continue;
     // RecentBook can survive a firmware update/cache deletion, so a non-empty
     // title alone does not prove that the lightweight cache still exists.
     // Probe only the at-most-ten Recent entries during the one-time bootstrap;
@@ -76,6 +79,9 @@ bool RecentBooksActivity::hasMissingRecentCache() const {
     if (FsHelpers::hasEpubExtension(book.path)) {
       Epub epub(book.path, "/.crosspoint");
       if (!epub.loadCachedMetadataOnly()) return true;
+    } else if (FsHelpers::hasCbzExtension(book.path)) {
+      Cbz cbz(book.path, "/.crosspoint");
+      if (!cbz.loadCachedMetadataOnly()) return true;
     }
     // A missing thumbnail is intentionally not a bootstrap condition. Recent
     // can render its lightweight placeholder immediately; only the explicit
@@ -203,8 +209,13 @@ void RecentBooksActivity::generateNextCover() {
   const bool metadataOnly = forceRebuild || recentCacheWarmupActive;
   while (nextCoverToGenerate < recentBooks.size()) {
     RecentBook& book = recentBooks[nextCoverToGenerate++];
-    if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path)) continue;
-    const bool metadataMissing = book.title.empty() || book.coverBmpPath.empty();
+    if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path) &&
+        !FsHelpers::hasCbzExtension(book.path)) continue;
+    bool metadataMissing = book.title.empty() || book.coverBmpPath.empty();
+    if (FsHelpers::hasCbzExtension(book.path)) {
+      Cbz cached(book.path, "/.crosspoint");
+      metadataMissing = metadataMissing || !cached.loadCachedMetadataOnly();
+    }
     // A manual Refresh Book Cache must reread metadata even when an old
     // thumbnail survived the cache cleanup. Normal warm-up only handles
     // missing metadata; it must not inspect or regenerate thumbnails.
@@ -284,6 +295,32 @@ void RecentBooksActivity::generateNextCover() {
           Storage.remove(thumb.c_str());
           if (!xtc.generateThumbBmp(BOOKSHELF_COVER_HEIGHT) || !isValidBookThumbnail(thumb)) {
             LOG_ERR("SHELF", "Could not regenerate XTC thumbnail: %s", book.path.c_str());
+          }
+        }
+      }
+    } else if (FsHelpers::hasCbzExtension(book.path)) {
+      Cbz cbz(book.path, "/.crosspoint");
+      if (cbz.loadMetadataOnly()) {
+        attempted = true;
+        const std::string title = cbz.getTitle().empty() ? book.title : cbz.getTitle();
+        const std::string author = cbz.getAuthor();
+        const std::string cover = cbz.getThumbBmpPath();
+        const std::string synopsis = cbz.getSynopsis().empty() ? book.synopsis : cbz.getSynopsis().substr(0, 384);
+        const std::string thumb = UITheme::getCoverThumbPath(cover, BOOKSHELF_COVER_HEIGHT);
+        logCbzCacheLookup(thumb, Storage.exists(thumb.c_str()));
+        if (book.title != title || book.author != author || book.coverBmpPath != cover || book.synopsis != synopsis) {
+          book.title = title;
+          book.author = author;
+          book.coverBmpPath = cover;
+          book.synopsis = synopsis;
+          RECENT_BOOKS.refreshBookMetadata(book.path, book.title, book.author, book.coverBmpPath, book.synopsis);
+        }
+        if (forceRebuild && !book.coverBmpPath.empty()) {
+          const bool thumbValid = isValidBookThumbnail(thumb);
+          if (!thumbValid) {
+            if (!cbz.generateThumbBmp(BOOKSHELF_COVER_HEIGHT) || !isValidBookThumbnail(thumb)) {
+              LOG_ERR("SHELF", "Could not generate CBZ thumbnail: %s", book.path.c_str());
+            }
           }
         }
       }
@@ -382,6 +419,7 @@ void RecentBooksActivity::showBookActions() {
     if (visibleBookCount == 0 || selectorIndex >= visibleBookCount) return;
     const RecentBook selected = recentBooks[selectedRecentIndex()];
     if (action == 0) {
+      logCbzPath("recent-book-selection", selected.path);
       onSelectBook(selected.path);
       return;
     }
@@ -648,6 +686,7 @@ void RecentBooksActivity::loop() {
     if (visibleBookCount > 0 && selectorIndex < visibleBookCount) {
       const RecentBook& selected = recentBooks[selectedRecentIndex()];
       LOG_DBG("RBA", "Selected recent book: %s", selected.path.c_str());
+      logCbzPath("recent-book-selection", selected.path);
       onSelectBook(selected.path);
       return;
     }
@@ -729,7 +768,9 @@ void RecentBooksActivity::loop() {
     const int cardY = gridTop + (slot / columns) * cardHeight;
     if (mappedInput.wasTapInRect(cardX, cardY, cardWidth, cardHeight)) {
       selectorIndex = index;
-      onSelectBook(recentBooks[visibleBookIndexes[index]].path);
+      const std::string& path = recentBooks[visibleBookIndexes[index]].path;
+      logCbzPath("recent-book-selection", path);
+      onSelectBook(path);
       return;
     }
   }
