@@ -1,5 +1,16 @@
 <img width="324" height="450" alt="Folio Nooir on Xteink X4" src="https://github.com/user-attachments/assets/cf0a9cd3-6783-417a-986c-0ec2fdf89ba4" />
 
+<img width="241" height="402" alt="1" src="https://github.com/user-attachments/assets/4f2836ea-894f-4850-8af2-862581fbaeb4" />
+<img width="240" height="403" alt="2" src="https://github.com/user-attachments/assets/7fcc16d9-1e15-4c8c-ace4-ead43df7bb34" />
+<img width="243" height="404" alt="3" src="https://github.com/user-attachments/assets/34d89a00-2bdc-4e59-bfd9-c7a7442c87da" />
+<img width="244" height="416" alt="4" src="https://github.com/user-attachments/assets/2f819edf-f09a-4b37-8a51-136402d751ee" />
+<img width="241" height="401" alt="5" src="https://github.com/user-attachments/assets/75ee65a0-ccb0-4862-a8a6-b61be1b58329" />
+<img width="239" height="416" alt="6" src="https://github.com/user-attachments/assets/362576fa-eb2c-44d0-a519-60b02781dda6" />
+<img width="240" height="406" alt="7" src="https://github.com/user-attachments/assets/aa0f3fd7-c5d0-42e1-8f37-2afa92d8e106" />
+<img width="239" height="401" alt="8" src="https://github.com/user-attachments/assets/8ed8ec97-3cdb-4094-a130-11c32b3f0936" />
+<img width="240" height="401" alt="9" src="https://github.com/user-attachments/assets/0896b309-f380-4667-90f4-36d7f6ef04c4" />
+<img width="239" height="403" alt="10" src="https://github.com/user-attachments/assets/c075cd38-3501-4492-bb75-04e490f788fe" />
+
 # Folio Nooir
 
 Current stable release: **v1.5.10**. Release candidate: **v1.5.11**.
@@ -158,6 +169,7 @@ The following retained Web Transfer behavior is from the earlier baseline and
 is not a new v1.5.8 change:
 
 - Web Transfer now yields regularly during sustained uploads/downloads so the Wi‑Fi and SD tasks keep running; the Bookshelf page no longer parses EPUBs or decodes missing covers while it is open.
+
 ## Features
 
 ### CrossPoint functions retained
@@ -180,6 +192,9 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 ### Folio Nooir bookshelf
 
 - Folio Nooir boot logo and visual theme.
+- Direct CBZ/Comic Book support with `ComicInfo.xml` metadata, cover/thumbnail caching, bounded page indexing, and Library/Recent/Finished integration.
+- Normal `.cbz` files can be copied directly to the SD card and read without conversion or Web UI preprocessing.
+- CBZ metadata retrieval remains lightweight: metadata can be retrieved without treating the book as opened, while Recent is updated only when the CBZ is actually opened for reading.
 - Three bookshelf views: **Library**, **Recent**, and **Finished**.
 - Library acts as a folder/file browser and loads metadata lazily as books are highlighted.
 - Library search is available from the menu and performs fast, case-insensitive filename filtering in the current folder, with an optional recursive **Search All Folders** mode.
@@ -290,6 +305,193 @@ CrossPoint sync receives the richer CrossPoint position data, while generic
 KOReader servers receive standard KOReader fields only. On download, portable
 XPath/percentage mapping is tried first, with the rich CrossPoint page and
 paragraph position used as a fallback when needed.
+
+### CBZ / Manga reading guide
+
+CBZ support in Folio Nooir is currently **experimental**.
+
+Nooir can open normal `.cbz` comic and manga files directly from the SD card. No conversion or Web UI preprocessing is required.
+
+A CBZ is an archive containing comic page images. Because the XTEINK has limited RAM, Nooir processes pages in bounded chunks and uses SD-backed temporary/cache files where needed instead of loading an entire high-resolution page into memory.
+
+The original `.cbz` file is not modified.
+
+#### Quick start
+
+1. Copy a `.cbz` file to any normal book folder on the SD card.
+2. Open it from **Library**.
+3. Start with **Fit Width** for normal manga reading.
+4. Press **Confirm** to open the CBZ View Mode menu.
+5. Use the Page Picker or bookmarks when you want to jump around the book.
+
+Example folder layout:
+
+```text
+/Manga/
+  ONE PIECE/
+    Chapter 1.cbz
+    Chapter 2.cbz
+```
+
+The `/Manga/` folder is only an example. CBZ files do not need to be stored in a special folder.
+
+#### Library integration
+
+CBZ books use the normal Folio Nooir bookshelf workflow.
+
+Where available, Nooir can use `ComicInfo.xml` from inside the CBZ for book metadata.
+
+CBZ books can also participate in:
+
+- Library
+- Recent
+- Finished/status tracking
+- Reading progress
+- Reading statistics
+- Cover/thumbnail caching
+- Metadata retrieval
+- Per-book page bookmarks
+
+#### View modes
+
+Press **Confirm** while reading a CBZ to open the **View Mode** menu.
+
+##### Fit Width
+
+The recommended default mode for normal manga reading.
+
+The page is scaled to use the available reading width while preserving its aspect ratio.
+
+```text
+Left     Previous page
+Right    Next page
+Confirm  View Mode menu
+```
+
+##### Fit Page
+
+Shows the complete comic page on screen.
+
+This is useful for seeing the full page layout, although small manga text may naturally appear smaller.
+
+```text
+Left     Previous page
+Right    Next page
+Confirm  View Mode menu
+```
+
+##### Landscape
+
+Uses the landscape reading width to enlarge the page and lets you scroll through the oversized page.
+
+```text
+Left     Scroll toward the top/start
+Right    Scroll toward the bottom/end
+Up       Previous comic page
+Down     Next comic page
+Confirm  View Mode menu
+```
+
+Scrolling stops at the page boundary instead of unexpectedly changing comic pages.
+
+##### Zoom
+
+Enlarges the current page and allows you to move around it.
+
+```text
+Left / Right / Up / Down  Pan around the page
+
+Hold Left                 Previous page
+Hold Right                Next page
+
+Confirm                   View Mode menu
+```
+
+Short directional presses remain pan-only while Zoom mode is active. Panning stops at the page boundaries.
+
+#### Page Picker
+
+The **Page Picker** lets you jump directly to another comic page without paging through the whole book.
+
+#### Reset View
+
+Use **Reset View** to return the current CBZ page to its default pan/zoom position.
+
+#### Manga reading direction
+
+CBZ books support both normal **LTR** and manga-style **RTL** page navigation.
+
+Changing the reading direction changes comic page navigation only. It does not modify the original CBZ file.
+
+#### CBZ bookmarks
+
+CBZ books support per-book page bookmarks.
+
+You can save a comic page and later jump directly back to that bookmarked page.
+
+#### Covers and ComicInfo.xml
+
+When available, Nooir can read `ComicInfo.xml` metadata from inside the CBZ.
+
+CBZ cover/thumbnail files are cached separately from temporary reader pages so normal reader cleanup does not remove the bookshelf cover.
+
+#### CBZ caching and performance
+
+Comic pages are image-heavy, while XTEINK devices have limited RAM.
+
+To stay within those limits, Nooir uses a bounded rendering pipeline and SD-backed page caches instead of keeping a full decoded comic page in memory.
+
+A first-time page load may therefore take several seconds because Nooir may need to:
+
+1. Find the requested image inside the CBZ.
+2. Extract the current page.
+3. Decode the source image.
+4. Prepare the device-friendly page/cache.
+5. Refresh the e-ink display.
+
+Simplified flow:
+
+```text
+CBZ archive
+    ↓
+Current page image
+    ↓
+Bounded image decode
+    ↓
+Device/page cache
+    ↓
+XTEINK display
+```
+
+Prepared/cached pages can be faster to display.
+
+Where supported and safe, Nooir can prepare upcoming pages in advance while you read the current page, helping reduce the wait on later page turns.
+
+This design intentionally favors memory safety over trying to keep entire high-resolution manga pages in RAM.
+
+#### Current CBZ limitations
+
+CBZ support is still being developed and tuned.
+
+Current limitations may include:
+
+- Very small manga text and fine line art may not yet render as clearly as expected.
+- Large or high-resolution pages may take several seconds on their first decode.
+- Landscape and Zoom require additional processing compared with normal Fit Width reading.
+- Rendering quality can vary depending on the source image and compression used inside the CBZ.
+- Physical e-ink refresh time still contributes to page-turn delay.
+
+For now, **Fit Width** is the recommended starting mode for normal reading.
+
+#### Reporting CBZ problems
+
+If a particular CBZ behaves unexpectedly, useful information for a bug report includes:
+
+- XTEINK model/revision
+- CBZ page dimensions
+- Image format inside the CBZ, if known
+- A photo of the physical display
+- Relevant serial logs, if available
 
 ### Reading statistics
 
