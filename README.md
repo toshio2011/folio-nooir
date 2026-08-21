@@ -1,18 +1,8 @@
-
-<img width="241" height="402" alt="1" src="https://github.com/user-attachments/assets/4f2836ea-894f-4850-8af2-862581fbaeb4" />
-<img width="240" height="403" alt="2" src="https://github.com/user-attachments/assets/7fcc16d9-1e15-4c8c-ace4-ead43df7bb34" />
-<img width="243" height="404" alt="3" src="https://github.com/user-attachments/assets/34d89a00-2bdc-4e59-bfd9-c7a7442c87da" />
-<img width="244" height="416" alt="4" src="https://github.com/user-attachments/assets/2f819edf-f09a-4b37-8a51-136402d751ee" />
-<img width="241" height="401" alt="5" src="https://github.com/user-attachments/assets/75ee65a0-ccb0-4862-a8a6-b61be1b58329" />
-<img width="239" height="416" alt="6" src="https://github.com/user-attachments/assets/362576fa-eb2c-44d0-a519-60b02781dda6" />
-<img width="240" height="406" alt="7" src="https://github.com/user-attachments/assets/aa0f3fd7-c5d0-42e1-8f37-2afa92d8e106" />
-<img width="239" height="401" alt="8" src="https://github.com/user-attachments/assets/8ed8ec97-3cdb-4094-a130-11c32b3f0936" />
-<img width="240" height="401" alt="9" src="https://github.com/user-attachments/assets/0896b309-f380-4667-90f4-36d7f6ef04c4" />
-<img width="239" height="403" alt="10" src="https://github.com/user-attachments/assets/c075cd38-3501-4492-bb75-04e490f788fe" />
+<img width="324" height="450" alt="Folio Nooir on Xteink X4" src="https://github.com/user-attachments/assets/cf0a9cd3-6783-417a-986c-0ec2fdf89ba4" />
 
 # Folio Nooir
 
-Current release: **v1.5.10** (development).
+Current stable release: **v1.5.10**. Release candidate: **v1.5.11**.
 
 ## Hardware warning
 
@@ -36,34 +26,145 @@ devices. It is a personal fork of [CrossPoint Reader](https://github.com/crosspo
 keeping the core reader, wireless transfer, sleep, and settings features while
 adding a Folio Nooir interface and reading tools.
 
+## Native Simulator
+
+Folio Nooir provides native PlatformIO profiles for `simulator_x4` and
+`simulator_x3`. They can test the Nooir UI, library behavior, EPUB rendering
+and navigation, and supported simulated inputs without flashing a physical
+device. The X3 profile also includes simulated tilt testing. Real-device
+testing is still recommended. See the complete [native simulator guide](docs/simulator.md)
+for WSL/Linux setup, build/run commands, controls, virtual SD-card use, and
+troubleshooting.
+
+## v1.5.11 changes
+
+This release candidate builds on the released v1.5.10 baseline. The main
+changes are:
+
+- Persistent CBZ page caching with atomic page publication, manifest
+  validation, cache reuse after leaving and reopening a book, and safe
+  cleanup of incomplete cache files.
+- CBZ background read-ahead of up to three pages on X4 and a conservative
+  one-page lookahead on X3, gated by available memory and reader ownership so
+  foreground reading remains the priority.
+- CBZ cache sharing across Fit Width, Landscape, and Zoom modes, with
+  half-screen pan steps for the larger views. A cache miss shows the current
+  page/progress state instead of silently blocking the reader.
+- Reserved-area cache feedback such as `Preparing page 18/23 | cached 9/23`
+  and `> Next ready`; Next, Back, and Confirm cancel or queue around
+  background work so repeated input does not appear to freeze the device.
+- Explicit cache controls: Reset Progress removes CBZ `progress.bin`; the
+  global Clear Reading Data action remains metadata/progress/statistics
+  cleanup; per-book Clear Reading Cache removes generated reader pages while
+  preserving reading progress.
+- Optional web-transfer normalization of progressive CBZ JPEGs to baseline
+  JPEGs. Baseline JPEGs, PNGs, and other files are left unchanged, so the
+  conversion is only needed for CBZs that show poor grayscale/color output on
+  the device.
+- Clear exit/saving feedback for XTC and CBZ readers, preserved covers when
+  leaving XTC, and end-of-book actions that do not leave the reader appearing
+  unresponsive.
+- More reliable web To-Do and Clock & Weather actions: duplicate saves/syncs
+  are prevented, To-Do refreshes do not interrupt editing, slow network work
+  feeds the watchdog, and a temporary station Wi-Fi loss no longer ends the
+  web session automatically.
+- Power-management transitions now avoid redundant active locks and reduce
+  unnecessary CPU-frequency bouncing while preserving the existing sleep and
+  deep-sleep behavior.
+- Persistent page read-ahead is currently a CBZ feature. EPUB, XTC/XTCH, TXT,
+  and Markdown continue to use their existing reader/cache paths.
+
 ## v1.5.10 changes
 
-This development cycle adds direct CBZ/comic reading and continues to harden the existing EPUB reader without changing the normal XTC/XTCH/TXT reading paths.
+This development cycle adds direct CBZ support and hardens the existing EPUB
+reader without changing the normal XTC/TXT reading paths.
 
-- Added direct `.cbz` / Comic Book support. Normal CBZ files can be copied directly to the SD card and opened from the Library without conversion or Web UI preprocessing.
-- Added `ComicInfo.xml` metadata support, cover/thumbnail caching, Library/Recent/Finished integration, metadata retrieval, and Recent updates only when a CBZ is actually opened for reading.
-- Added bounded CBZ page indexing and extraction for X3/X4, including safer handling of large archives, long page paths, malformed archives, failed images, and temporary extraction cleanup.
-- Added CBZ **Fit Width**, **Fit Page**, **Landscape**, and **Zoom** reading modes, together with Reset View, page picker, manga RTL/LTR navigation, per-book page bookmarks, and direct bookmark/page jumps.
-- Added conservative one-page-ahead CBZ prefetch on validated hardware, with serialized page ownership, stale-candidate protection, atomic cache staging, queued navigation, and safe fallback rendering.
-- Improved bounded CBZ cache replay and added a shared long-operation indicator for user-initiated CBZ and EPUB loads without continuous e-ink refreshes.
-- CBZ rendering remains experimental while image quality, fine manga text, landscape behavior, caching, and navigation continue to be tuned.
-- Improved bounded EPUB JPEG/PNG rendering, overflow and geometry guards, progressive/long-Huffman fallback handling, fail-soft image placeholders, safer PixelCache replay, and cleanup of incomplete caches.
-- Fixed EPUB clipping/highlight restoration across reflow and font changes, preserving regular, bold, and mixed-style selections independently from the highlight overlay.
-- KOReader Sync now accepts successful HTTP 2xx responses, including bodyless successful updates, while retaining existing payload validation.
+- Added direct CBZ/Comic Book reader support with ComicInfo.xml metadata,
+  cover and thumbnail caching, Library/Recent/Finished integration, metadata
+  retrieval, and Recent updates only when a CBZ is actually opened for reading.
+- Added bounded CBZ page indexing and extraction limits for X3/X4, including
+  safe handling of oversized archives, long page paths, malformed archives,
+  failed images, and temporary extraction cleanup.
+- Added CBZ Fit Width, Fit Page, Landscape, Zoom, Reset View, page picker,
+  manga RTL/LTR navigation, per-book page bookmarks, and direct bookmark/page
+  jumps. Landscape panning remains separate from normal page navigation.
+- Added conservative one-page-ahead CBZ prefetch on the validated path, with
+  serialized ownership, stale-candidate protection, atomic cache staging,
+  queued navigation, and safe fallback rendering. Unsupported hardware stays
+  on the conservative path.
+- Improved bounded CBZ cache replay and added a shared, static long-operation
+  indicator for user-initiated CBZ and EPUB loads without continuous refreshes.
+- Hardened EPUB JPEG/PNG rendering with bounded downsampling, overflow and
+  geometry guards, progressive/long-Huffman fallback handling, fail-soft image
+  placeholders, safer PixelCache replay, and cleanup of incomplete caches.
+- Fixed EPUB clipping/highlight restoration across reflow and font changes,
+  preserving regular, bold, and mixed-style selections independently from the
+  highlight overlay.
+- KOReader Sync now accepts all successful HTTP 2xx responses, including
+  bodyless successful updates, while retaining existing payload validation.
 
-### Notes
-The simulator is intended for UI, navigation and rendering development. It does **not** fully reproduce real-device RAM limits, SD-card speed, e-ink refresh timing, battery behaviour or sleep hardware.
+## v1.5.9 changes
 
-X3 support uses the shared X3/X4 code path, but device revisions can differ, so keeping a backup and a known recovery method is still recommended.
+This development cycle starts after the tested v1.5.8 baseline.
 
+- Recent/Finished now reuses a validated Folio shelf snapshot when returning
+  from Settings, avoiding unnecessary cover decoding and shelf reconstruction.
+- Shelf snapshot validation includes presentation metadata, reading progress,
+  and book status, so the fast path cannot display stale progress or metadata.
+- The snapshot format was versioned so older frames are rebuilt safely once.
 
+## v1.5.8 changes
+
+This release's change list starts with the **Stable Pages** enhancement.
+Earlier v1.5.7 work remains documented in the complete feature list below.
+
+- Added optional **Stable Pages** reader mode. CrossInk-processed EPUBs can
+  import `META-INF/x-locations.json`; the firmware stores a compact per-book
+  `stable_pages.bin` map beside the book cache.
+- Stable-page preparation is streamed and bounded for X3/X4 memory. It shows
+  progress, supports stopping, reuses an existing valid map, and releases its
+  temporary memory after preparation. EPUBs without a compatible map use the
+  safe local fallback instead of changing Current Pages behavior.
+- The Stable Pages choice is included in Settings Profiles. The profile saves
+  the mode, while each book's `stable_pages.bin` remains in its own cache.
+- Recent and Finished shelf startup now checks lightweight metadata only.
+  Missing thumbnails no longer trigger automatic image decoding; the shelf
+  shows a placeholder and stays responsive.
+- **Refresh Book Cache** remains the explicit cover-rebuild action. Manual
+  refresh allows bounded sources up to 3 MB and keeps a placeholder when the
+  cover format, dimensions, or available heap cannot be safely converted.
+- Reader exit now shows a saving state before returning home and avoids an
+  unnecessary full state-file rewrite during normal exits, reducing the delay
+  when returning to Recent or Library.
+- KOReader Sync now prefers portable XPath/percentage mapping, uses rich
+  CrossPoint position data as a fallback, supports an editable sync device
+  name (default: `Folio Nooir X4`), and keeps generic KOReader payloads
+  protocol-compatible.
+- EPUB image rendering now rejects invalid dimensions and overflow-prone pixel
+  counts, clips unsafe geometry, uses fail-soft placeholders, and protects PNG
+  and framebuffer cache writes from out-of-range coordinates. Valid images keep
+  the existing fast path.
+- Clipping/highlight restoration now survives CSS, font, and line-spacing
+  reflow. Existing clipping files remain compatible; saved text is matched with
+  the same punctuation/whitespace sanitization used when it is stored, and the
+  resolver cache is invalidated after clipping-list edits.
+
+- Added **Edit book metadata** beside EPUB/XTC/TXT/Markdown files in Transfer.
+  Title, author, and synopsis edits are stored in a lightweight device-side
+  override and are applied to Library/Recent without rewriting the book or
+  disturbing reading progress, bookmarks, or clippings.
+
+The following retained Web Transfer behavior is from the earlier baseline and
+is not a new v1.5.8 change:
+
+- Web Transfer now yields regularly during sustained uploads/downloads so the Wi‑Fi and SD tasks keep running; the Bookshelf page no longer parses EPUBs or decodes missing covers while it is open.
 ## Features
 
 ### CrossPoint functions retained
 
 Folio Nooir is an interface and feature layer on top of CrossPoint rather than a replacement reader. The existing CrossPoint workflows remain available:
 
-- EPUB, XTC/XTCH, TXT, and Markdown reading workflows, together with the existing CrossPoint PDF/file-browser handling.
+- EPUB, XTC/XTCH, TXT, Markdown, and PDF/file-browser workflows.
 - EPUB chapter navigation, footnotes, bookmarks, go-to-percent, auto page turn, orientation control, screenshots, and custom fonts.
 - Image preview from the file browser, plus the existing X3 tilt-page-turn path where supported.
 - Wi-Fi setup, browser-based file transfer, and the built-in web server.
@@ -73,14 +174,12 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Persistent To-Do List storage at `/.crosspoint/todo.json` with on-device add, edit, delete, reorder, complete, priority, and clear-completed actions.
 - Existing input mappings, themes/settings storage, status-bar controls, localization, and device configuration.
 - Settings Profiles for saving, applying, and deleting named device-setting snapshots without copying reading data.
-- **Clear Reading Cache** clears Recent entries, Book State records, reading statistics, and the Folio shelf snapshot while preserving covers, thumbnails, `metadata.bin`, `book.bin`, bookmarks, clippings, and highlights.
+- **Clear Reading Data** clears Recent entries, Book State records, reading statistics, and the Folio shelf snapshot while preserving covers, thumbnails, `metadata.bin`, `book.bin`, bookmarks, clippings, and highlights.
+- Per-book **Clear Reading Cache** removes that book's generated reader cache while preserving its saved reading position.
 
 ### Folio Nooir bookshelf
 
 - Folio Nooir boot logo and visual theme.
-- Direct CBZ/Comic Book support with `ComicInfo.xml` metadata, cover/thumbnail caching, bounded page indexing, and Library/Recent/Finished integration.
-- Normal `.cbz` files can be copied directly to the SD card and read without conversion or Web UI preprocessing.
-- CBZ metadata retrieval remains lightweight: metadata can be retrieved without treating the book as opened, while Recent is updated only when the CBZ is actually opened for reading.
 - Three bookshelf views: **Library**, **Recent**, and **Finished**.
 - Library acts as a folder/file browser and loads metadata lazily as books are highlighted.
 - Library search is available from the menu and performs fast, case-insensitive filename filtering in the current folder, with an optional recursive **Search All Folders** mode.
@@ -93,21 +192,23 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Bookmark, clipping, and highlight managers are available from the home menu and book actions; entries can be reviewed, edited, or deleted, and selecting a bookmark opens its book at the saved location.
 - Automatic movement to Finished when a book reaches 100%.
 - Shelf buttons stay context-aware: Library opens the menu, while Recent and Finished provide direct Library/Recent/Finished navigation without leaving the shelf.
-- Library menu access to Clock & Weather, To-Do List, Reading Statistics, bookmarks, clippings, and Retrieve All Book Details.
+- Library menu access to Clock & Weather, To-Do List, Reading Summary, Reading Calendar, bookmarks, clippings, and Retrieve All Book Details.
 
 ### Reader and typography
 
 - CrossPoint reader engine retained for EPUB, XTC/XTCH, TXT, and Markdown workflows.
-- Dedicated CBZ reader with Fit Width, Fit Page, Landscape, and Zoom modes, Reset View, page picker, manga RTL/LTR navigation, per-book page bookmarks, direct bookmark/page jumps, bounded SD-backed rendering, and conservative one-page lookahead on validated hardware.
+- Direct CBZ reader with ComicInfo.xml metadata, cover/thumbnail caching,
+  bounded archive extraction, Fit Width/Fit Page/Landscape/Zoom, page picker,
+  RTL/LTR navigation, bookmarks, cache replay, and responsive read-ahead.
 - Improved EPUB CSS handling, HTML tables/cells, images, metadata, and memory safety.
 - EPUB formatting now includes optional paragraph indents, improved lists/tables and `<hr>` separators, lightweight strikethrough/redaction handling, and Reader Guide Dots. These changes stay in the existing parser/render path and do not replace the image pipeline.
 - Large images are fitted to the display instead of producing empty squares where possible.
 - XTC/XTCH cover and page rendering improvements.
-- Optional **Stable Pages** mode uses a compact per-book `stable_pages.bin` map,
-  can import CrossInk `META-INF/x-locations.json`, and keeps page numbers
+- Optional **Stable Pages** mode uses a compact per-book `stable_pages.bin`
+  map, can import CrossInk `META-INF/x-locations.json`, and keeps page numbers
   consistent across font/layout changes. Current Pages remains the default;
-  preparation is streamed, bounded, cancellable, reusable, and releases its
-  temporary memory when finished.
+  stable-page preparation is streamed, bounded, cancellable, reusable, and
+  releases its temporary memory when finished.
 - Reader font size in points rather than only Small/Medium/Large presets.
 - Point-based margin controls and line-spacing controls with fine percentage steps.
 - UI scale controls for menus and reader controls; bookshelf geometry remains fixed.
@@ -187,210 +288,8 @@ The sync settings include an editable **Sync Device Name**, defaulting to
 `Folio Nooir X4`. The existing device ID remains unchanged for compatibility.
 CrossPoint sync receives the richer CrossPoint position data, while generic
 KOReader servers receive standard KOReader fields only. On download, portable
-XPath/percentage mapping is tried first, with rich CrossPoint page and paragraph
-position used as a fallback when needed.
-
-### CBZ / Manga reading guide
-
-CBZ support in Folio Nooir is currently **experimental**.
-
-Nooir can open normal `.cbz` comic and manga files directly from the SD card. No conversion or Web UI preprocessing is required.
-
-A CBZ is an archive containing comic page images. Because the XTEINK has limited RAM, Nooir processes pages in bounded chunks and uses SD-backed temporary/cache files where needed instead of loading an entire high-resolution page into memory.
-
-The original `.cbz` file is not modified.
-
-
-#### Quick start
-
-1. Copy a `.cbz` file to any normal book folder on the SD card.
-2. Open it from **Library**.
-3. Start with **Fit Width** for normal manga reading.
-4. Press **Confirm** to open the CBZ View Mode menu.
-5. Use the Page Picker or bookmarks when you want to jump around the book.
-
-Example folder layout:
-
-```text
-/Manga/
-  ONE PIECE/
-    Chapter 1.cbz
-    Chapter 2.cbz
-```
-
-The `/Manga/` folder is only an example. CBZ files do not need to be stored in a special folder.
-
-
-#### Library integration
-
-CBZ books use the normal Folio Nooir bookshelf workflow.
-
-Where available, Nooir can use `ComicInfo.xml` from inside the CBZ for book metadata.
-
-CBZ books can also participate in:
-
-- Library
-- Recent
-- Finished/status tracking
-- Reading progress
-- Reading statistics
-- Cover/thumbnail caching
-- Metadata retrieval
-- Per-book page bookmarks
-
-
-#### View modes
-
-Press **Confirm** while reading a CBZ to open the **View Mode** menu.
-
-
-##### Fit Width
-
-The recommended default mode for normal manga reading.
-
-The page is scaled to use the available reading width while preserving its aspect ratio.
-
-```text
-Left     Previous page
-Right    Next page
-Confirm  View Mode menu
-```
-
-
-##### Fit Page
-
-Shows the complete comic page on screen.
-
-This is useful for seeing the full page layout, although small manga text may naturally appear smaller.
-
-```text
-Left     Previous page
-Right    Next page
-Confirm  View Mode menu
-```
-
-
-##### Landscape
-
-Uses the landscape reading width to enlarge the page and lets you scroll through the oversized page.
-
-```text
-Left     Scroll toward the top/start
-Right    Scroll toward the bottom/end
-Up       Previous comic page
-Down     Next comic page
-Confirm  View Mode menu
-```
-
-Scrolling stops at the page boundary instead of unexpectedly changing comic pages.
-
-
-##### Zoom
-
-Enlarges the current page and allows you to move around it.
-
-```text
-Left / Right / Up / Down  Pan around the page
-
-Hold Left                 Previous page
-Hold Right                Next page
-
-Confirm                   View Mode menu
-```
-
-Short directional presses remain pan-only while Zoom mode is active. Panning stops at the page boundaries.
-
-
-#### Page Picker
-
-The **Page Picker** lets you jump directly to another comic page without paging through the whole book.
-
-
-#### Reset View
-
-Use **Reset View** to return the current CBZ page to its default pan/zoom position.
-
-
-#### Manga reading direction
-
-CBZ books support both normal **LTR** and manga-style **RTL** page navigation.
-
-Changing the reading direction changes comic page navigation only. It does not modify the original CBZ file.
-
-
-#### CBZ bookmarks
-
-CBZ books support per-book page bookmarks.
-
-You can save a comic page and later jump directly back to that bookmarked page.
-
-
-#### Covers and ComicInfo.xml
-
-When available, Nooir can read `ComicInfo.xml` metadata from inside the CBZ.
-
-CBZ cover/thumbnail files are cached separately from temporary reader pages so normal reader cleanup does not remove the bookshelf cover.
-
-
-#### CBZ caching and performance
-
-Comic pages are image-heavy, while XTEINK devices have limited RAM.
-
-To stay within those limits, Nooir uses a bounded rendering pipeline and SD-backed page caches instead of keeping a full decoded comic page in memory.
-
-A first-time page load may therefore take several seconds because Nooir may need to:
-
-1. Find the requested image inside the CBZ.
-2. Extract the current page.
-3. Decode the source image.
-4. Prepare the device-friendly page/cache.
-5. Refresh the e-ink display.
-
-Simplified flow:
-
-```text
-CBZ archive
-    ↓
-Current page image
-    ↓
-Bounded image decode
-    ↓
-Device/page cache
-    ↓
-XTEINK display
-```
-
-Prepared/cached pages can be faster to display.
-
-Where supported and safe, Nooir can prepare the next page in advance while you read the current page, helping reduce the wait on the next page turn..
-
-This design intentionally favors memory safety over trying to keep entire high-resolution manga pages in RAM.
-
-
-#### Current CBZ limitations
-
-CBZ support is still being developed and tuned.
-
-Current limitations may include:
-
-- Very small manga text and fine line art may not yet render as clearly as expected.
-- Large or high-resolution pages may take several seconds on their first decode.
-- Landscape and Zoom require additional processing compared with normal Fit Width reading.
-- Rendering quality can vary depending on the source image and compression used inside the CBZ.
-- Physical e-ink refresh time still contributes to page-turn delay.
-
-For now, **Fit Width** is the recommended starting mode for normal reading.
-
-
-#### Reporting CBZ problems
-
-If a particular CBZ behaves unexpectedly, useful information for a bug report includes:
-
-- XTEINK model/revision
-- CBZ page dimensions
-- Image format inside the CBZ, if known
-- A photo of the physical display
-- Relevant serial logs, if available
+XPath/percentage mapping is tried first, with the rich CrossPoint page and
+paragraph position used as a fallback when needed.
 
 ### Reading statistics
 
@@ -398,7 +297,7 @@ If a particular CBZ behaves unexpectedly, useful information for a bug report in
 - Persistent page-turn counts for each book and recorded day, plus pages-per-minute pace.
 - Current and best consecutive reading-day streaks.
 - On-device book statistics from the long-press menu.
-- Overall reading statistics from the Recent menu.
+- Reading Summary from the home/Library menu.
 - On-device reading calendar showing the last 30 recorded days.
 - Web statistics cards and JSON export include pages, pace, streaks, and daily page counts.
 - The on-device summary includes total time, sessions, average session, pages, pace, streaks, book states, today, and recent recorded days.
@@ -417,12 +316,20 @@ When the device is connected to the same network, the built-in web interface pro
 - Reset-reading-data action and JSON statistics export.
 - Clock/weather card with editable location coordinates, Celsius/Fahrenheit choice, last-sync status, cached conditions, and a one-shot Sync now action.
 - On-device Clock & Weather status page from the home menu, including cached clock/date/weather information and a one-shot refresh button.
-- To-Do List page at `/todo`, synchronized with the device list and supporting quick add, edit, complete, reorder, delete, and clear-completed actions.
+- To-Do List page at `/todo`, synchronized with the device list and supporting quick add, edit, complete, reorder, delete, and clear-completed actions. Saves are guarded against duplicates and refreshes pause while the user is editing.
 - Web metadata editing for title, author, synopsis, status, progress, start date, and finish date without rewriting the original book file.
 - The web statistics JSON includes daily page counts, current/best streaks, and total pages for external tools.
 - File browsing, image preview, upload, download, rename, move, delete, and folder creation.
+- Transfer-page optimization for EPUBs and opt-in progressive-CBZ-JPEG
+  normalization, with guidance on when conversion is useful and when a normal
+  transfer is sufficient.
 - Existing CrossPoint settings, Wi-Fi, OPDS, font, and typography pages.
-- Network activities keep their existing behavior and are entered without an unconditional reboot; memory-heavy cleanup is performed when leaving the activity.
+- Clock & Weather sync reports progress and prevents duplicate requests; a
+  device-started sync may release Wi-Fi when it finishes, while web mode keeps
+  the current session alive through temporary station-Wi-Fi loss.
+- Network activities keep their existing behavior and are entered without an
+  unconditional reboot; memory-heavy cleanup is performed when leaving the
+  activity.
 
 ### Sleep and display
 
@@ -437,17 +344,6 @@ When the device is connected to the same network, the built-in web interface pro
 - Conservative X3/X4 display-driver detection, including newer X3 UC8279d probing with UC8253 fallback and the known X4 SSD1677 default path.
 
 Some sleep-overlay, display-compatibility, and reader usability ideas were reviewed against the open-source [CrossInk](https://github.com/uxjulia/CrossInk) project and adapted where they fit Folio Nooir's CrossPoint base.
-
-### Quick Resume and wake behavior
-
-These two settings control different parts of sleep:
-
-- **Quick Resume on + Resume Reader on Wake on:** the current page remains visible during sleep and waking returns quickly to the reader.
-- **Quick Resume on + Resume Reader on Wake off:** the current page remains visible during sleep, but waking goes to Recent/Library.
-- **Quick Resume off + Resume Reader on Wake on:** the configured normal sleep image is shown, then waking reopens the reader.
-- **Quick Resume off + Resume Reader on Wake off:** the configured normal sleep image is shown, then waking goes to Recent/Library.
-
-Quick Resume can be selected as the sleep screen itself, or enabled only for automatic inactivity timeout. Resume Reader on Wake only chooses the destination after wake; it does not keep Wi-Fi or Bluetooth running.
 
 ## Installation
 
