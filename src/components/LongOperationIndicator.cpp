@@ -6,6 +6,8 @@
 #include <cstring>
 
 #include "Logging.h"
+#include "UITheme.h"
+#include "fontIds.h"
 
 void LongOperationIndicator::begin(const char* operationName) {
   // A stale scope should never survive a reader transition, but keeping begin
@@ -30,7 +32,8 @@ void LongOperationIndicator::stage(const char* stageName) {
           static_cast<unsigned long>(millis() - startedAt));
 }
 
-bool LongOperationIndicator::showBeforeWork(const char* operationName, const bool allowRefresh) {
+bool LongOperationIndicator::showBeforeWork(const char* operationName, const bool allowRefresh,
+                                             const char* statusText, const int progress) {
   if (!allowRefresh || !renderer.hasFrameBuffer()) {
     LOG_DBG("LONGOP", "loading_ui=skipped op=%s reason=%s", safeName(operationName),
             allowRefresh ? "no_framebuffer" : "profile");
@@ -45,18 +48,37 @@ bool LongOperationIndicator::showBeforeWork(const char* operationName, const boo
   renderer.setRenderMode(GfxRenderer::BW);
   const int screenWidth = renderer.getScreenWidth();
   const int screenHeight = renderer.getScreenHeight();
-  const int indicatorX = std::min(INDICATOR_INSET, std::max(0, screenWidth - 1));
+  const bool hasStatus = statusText != nullptr && statusText[0] != '\0';
+  const int statusLineHeight = hasStatus ? renderer.getLineHeight(SMALL_FONT_ID) : 0;
+  const Rect safeArea = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+  const int statusBarHeight = UITheme::getStatusBarHeight();
+  const int mangaBottom = std::max(0, std::min(screenHeight, safeArea.y + safeArea.height - statusBarHeight));
+  const int reservedBottomHeight = std::max(0, screenHeight - mangaBottom);
+  const int compactStatusHeight = statusLineHeight + INDICATOR_HEIGHT + 2;
+  const bool useReservedBottom = hasStatus && reservedBottomHeight >= compactStatusHeight;
+  const int indicatorX = std::min(hasStatus ? 4 : INDICATOR_INSET, std::max(0, screenWidth - 1));
   const int indicatorY = std::min(INDICATOR_INSET, std::max(0, screenHeight - 1));
   const int indicatorWidth = std::max(1, screenWidth - indicatorX * 2);
-  const int indicatorHeight = std::min(INDICATOR_HEIGHT, std::max(1, screenHeight - indicatorY));
-  renderer.fillRect(indicatorX, indicatorY, indicatorWidth, indicatorHeight, true);
+  const int indicatorTop = useReservedBottom ? mangaBottom : (hasStatus ? 0 : indicatorY);
+  const int indicatorHeight = hasStatus
+                                  ? std::min(compactStatusHeight,
+                                             std::max(1, screenHeight - indicatorTop))
+                                  : std::min(INDICATOR_HEIGHT, std::max(1, screenHeight - indicatorY));
+  renderer.fillRect(0, indicatorTop, screenWidth, indicatorHeight, false);
+  if (hasStatus) {
+    renderer.drawText(SMALL_FONT_ID, indicatorX, useReservedBottom ? indicatorTop : indicatorTop + 2, statusText, true);
+  }
+  const int barY = std::max(indicatorTop, indicatorTop + indicatorHeight - INDICATOR_HEIGHT);
+  const int barWidth = progress >= 0 ? std::max(1, (indicatorWidth * std::min(100, std::max(0, progress))) / 100)
+                                     : indicatorWidth;
+  renderer.fillRect(indicatorX, barY, barWidth, INDICATOR_HEIGHT, true);
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
   const uint32_t refreshMs = millis() - refreshStarted;
   loadingUiShown = true;
   presented = true;
   LOG_DBG("LONGOP", "loading_ui=shown op=%s", operation);
-  LOG_DBG("LONGOP", "loading_ui=shown rect=%d,%d,%d,%d", indicatorX, indicatorY, indicatorWidth,
-          indicatorHeight);
+  LOG_DBG("LONGOP", "loading_ui=shown rect=%d,%d,%d,%d placement=%s", indicatorX, indicatorTop, indicatorWidth,
+          indicatorHeight, useReservedBottom ? "reserved_bottom" : "top_edge");
   LOG_DBG("LONGOP", "loading_ui_refresh_ms=%lums", static_cast<unsigned long>(refreshMs));
   return true;
 }

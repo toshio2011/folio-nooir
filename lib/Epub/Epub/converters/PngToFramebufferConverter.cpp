@@ -260,6 +260,7 @@ void writePendingAreaRows(PngContext& ctx) {
 int pngDrawCallback(PNGDRAW* pDraw) {
   PngContext* ctx = reinterpret_cast<PngContext*>(pDraw->pUser);
   if (!ctx || !ctx->config || !ctx->renderer || !ctx->grayLineBuffer) return 0;
+  if (renderShouldAbort(*ctx->config)) return 0;
   ScopedImagePixelTimer pixelTimer(ctx->config->diagnostics);
 
   int srcY = pDraw->y;

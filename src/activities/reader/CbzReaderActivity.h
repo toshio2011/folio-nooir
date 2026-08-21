@@ -8,6 +8,8 @@
 #include <vector>
 
 #include "BookmarkEntry.h"
+#include "util/CbzPageCache.h"
+#include "EndOfBookOptions.h"
 #include "MappedInputManager.h"
 #include "activities/Activity.h"
 #include "components/LongOperationIndicator.h"
@@ -20,6 +22,7 @@ class CbzReaderActivity final : public Activity {
  private:
 
   std::unique_ptr<Cbz> cbz;
+  std::unique_ptr<CbzPageCache> persistentPageCache;
   size_t currentPage = 0;
   int pagesUntilFullRefresh = 0;
   unsigned long readingSessionStartedMs = 0UL;
@@ -48,10 +51,16 @@ class CbzReaderActivity final : public Activity {
   // the already-presented page before the synchronous render starts.
   bool loadingUiPending = false;
   bool loadingUiRenderArmed = false;
+  bool loadingCacheMiss = false;
+  bool loadingCachePopupShown = false;
+  // Preserve a Confirm press that arrives while a synchronous page render is
+  // still running so the reader menu opens as soon as the page is ready.
+  bool pendingMenuOpen = false;
   bool pendingNavigation = false;
   bool pendingNavigationCancelPrefetch = false;
   MappedInputManager::Button pendingNavigationButton = MappedInputManager::Button::Right;
   ViewMode pendingNavigationViewMode = ViewMode::FitWidth;
+  unsigned long pendingNavigationHeldMs = 0UL;
   bool busyLogEmitted = false;
   int busyLogButton = -1;
   bool staleLogEmitted = false;
@@ -62,15 +71,22 @@ class CbzReaderActivity final : public Activity {
   std::string currentImagePath;
   std::string activeRenderCachePath;
   bool forceRenderCacheRebuild = false;
-  // Conservative one-page lookahead. X4 may pre-render the next page during
-  // an idle window; X3 is deliberately guarded out until its timing/heap
-  // path can be validated independently.
+  // Persistent page caches are shared by both X4 and X3. X3 uses a shorter
+  // lookahead window and the same cancellation path to protect its smaller
+  // heap and slower panel while still avoiding repeated foreground decoding.
   bool prefetchReady = false;
   // Prefetch and foreground rendering share the same decoder/cache resources.
   // This gate makes cancellation explicit: a foreground render may not start
   // until the prefetch owner has released its files and decoder state.
   bool prefetchRunning = false;
   bool prefetchCancelRequested = false;
+  // A decoder callback may observe a short physical button press while the
+  // foreground loop is busy. Preserve that edge until the normal loop can
+  // queue the requested navigation after the staging files are released.
+  bool prefetchInputAbortPending = false;
+  MappedInputManager::Button prefetchAbortButton = MappedInputManager::Button::Right;
+  unsigned long prefetchLastInputPollMs = 0UL;
+  unsigned long prefetchAbortHeldMs = 0UL;
   uint32_t prefetchGeneration = 0;
   size_t prefetchPage = SIZE_MAX;
   size_t prefetchAttemptedPage = SIZE_MAX;
@@ -81,8 +97,17 @@ class CbzReaderActivity final : public Activity {
   std::string prefetchCachePath;
   int prefetchSourceWidth = 0;
   int prefetchSourceHeight = 0;
+  int prefetchTargetWidth = 0;
+  int prefetchTargetHeight = 0;
   unsigned long prefetchWaitStartedMs = 0UL;
   uint32_t prefetchWaitMs = 0;
+  size_t prefetchOriginPage = SIZE_MAX;
+  uint8_t prefetchLookaheadCompleted = 0;
+  bool prefetchUiPending = false;
+  bool prefetchUiRenderArmed = false;
+  size_t prefetchUiPage = SIZE_MAX;
+  size_t prefetchUiCachedPages = 0;
+  size_t prefetchUiTotalPages = 0;
   bool cacheOnlyCurrentPage = false;
   int currentCachedWidth = 0;
   int currentCachedHeight = 0;
@@ -103,6 +128,10 @@ class CbzReaderActivity final : public Activity {
   bool readingRtl = false;
   size_t lastPersistedPage = SIZE_MAX;
   bool progressDirty = false;
+  // Render the same saving feedback as EPUB before queuing the home transition.
+  bool exitHomePending = false;
+  bool exitPopupShown = false;
+  EndOfBookOptions endOfBookOptions;
   // Diagnostic-only render transition state.  It is deliberately tiny and is
   // not used for pagination or cache invalidation.
   bool hasRenderedRefreshState = false;
@@ -115,6 +144,7 @@ class CbzReaderActivity final : public Activity {
   void renderPage();
   void requestPageRender(bool immediate = false);
   void renderStatusBar() const;
+  void requestExitToHome();
   void saveProgress();
   void loadProgress();
   void clearRenderCache();
@@ -146,9 +176,15 @@ class CbzReaderActivity final : public Activity {
   void clearPendingNavigation(const char* reason);
   void executePendingNavigation();
   void maybePrefetchNextPage();
+  uint8_t prefetchLookaheadLimit() const;
+  bool supportsPersistentCacheForViewMode() const;
+  uint8_t persistentCacheViewMode() const;
+  void resetPrefetchWindow();
   bool renderNextPageToCache(size_t page, const std::string& imagePath, const std::string& cachePath,
                              size_t& freeBefore, size_t& freeAfter, size_t& maxAllocBefore,
                              size_t& maxAllocAfter);
+  static bool prefetchAbortCallback(void* context);
+  bool pollPrefetchAbort();
 
  public:
   explicit CbzReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Cbz> cbz)

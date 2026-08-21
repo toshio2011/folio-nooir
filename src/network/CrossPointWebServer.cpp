@@ -44,7 +44,7 @@
 #include "html/ToDoPageHtml.generated.h"
 #include "html/js/jszip_minJs.generated.h"
 #include "util/BookCacheUtils.h"
-#include "util/TaskWatchdog.h"
+#include <TaskWatchdog.h>
 
 namespace {
 // Folders/files to hide from the web interface file browser

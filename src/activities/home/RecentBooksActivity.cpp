@@ -368,7 +368,7 @@ void RecentBooksActivity::generateNextCover() {
 
 void RecentBooksActivity::showMenu() {
   std::vector<std::string> options = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), tr(STR_CLOCK_WEATHER),
-                                      tr(STR_TODO_LIST), "Reading Statistics", "Reading Stats",
+                                      tr(STR_TODO_LIST), tr(STR_LONG_PWR_READING_STATS), tr(STR_READING_STATS),
                                       "Bookmarks (all books)", "Clippings (all books)"};
   menuPopup.show(StrId::STR_MENU, options, 0, [this](const int index) {
     // Always close the menu before starting another activity. This is
@@ -410,7 +410,8 @@ void RecentBooksActivity::showBookActions() {
   const RecentBook selectedBook = recentBooks[selectedRecentIndex()];
   std::vector<std::string> actions = {tr(STR_OPEN), tr(STR_MARK_READING), tr(STR_MARK_ON_HOLD), tr(STR_FINISHED),
                                       tr(STR_RESET_PROGRESS), tr(STR_REFRESH_BOOK_CACHE),
-                                      tr(STR_REMOVE_FROM_LIST), tr(STR_READ_FULL_SYNOPSIS), "Book Statistics"};
+                                      tr(STR_DELETE_CACHE), tr(STR_REMOVE_FROM_LIST),
+                                      tr(STR_READ_FULL_SYNOPSIS), tr(STR_BOOK_STATISTICS)};
   if (FsHelpers::hasEpubExtension(selectedBook.path)) {
     actions.emplace_back(tr(STR_BOOKMARKS));
     actions.emplace_back(tr(STR_CLIPPINGS));
@@ -433,6 +434,7 @@ void RecentBooksActivity::showBookActions() {
     }
     if (action == 4) {
       BOOK_STATES.reset(selected.path);
+      resetBookProgress(selected.path);
       RECENT_BOOKS.recordReading(selected.path, 0, 0);
     }
     if (action == 5) {
@@ -449,21 +451,25 @@ void RecentBooksActivity::showBookActions() {
       retrievingBookCachePopupRendered = false;
     }
     if (action == 6) {
+      // Preserve progress, but force CBZ reader pages to be rebuilt.
+      clearBookCache(selected.path);
+    }
+    if (action == 7) {
       RECENT_BOOKS.removeByPath(selected.path);
       BOOK_STATES.removeByPath(selected.path);
     }
-    if (action == 7) {
+    if (action == 8) {
       startActivityForResult(
           std::make_unique<SynopsisActivity>(renderer, mappedInput, selected.title, selected.author, selected.synopsis,
                                              selected.path),
           nullptr);
       return;
     }
-    if (action == 8) {
+    if (action == 9) {
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, selected.path), nullptr);
       return;
     }
-    if (action == 9 && FsHelpers::hasEpubExtension(selected.path)) {
+    if (action == 10 && FsHelpers::hasEpubExtension(selected.path)) {
       startActivityForResult(
           std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, selected.path),
           [this](const ActivityResult& result) {
@@ -475,7 +481,7 @@ void RecentBooksActivity::showBookActions() {
           });
       return;
     }
-    if (action == 10 && FsHelpers::hasEpubExtension(selected.path)) {
+    if (action == 11 && FsHelpers::hasEpubExtension(selected.path)) {
       startActivityForResult(std::make_unique<EpubReaderClippingListActivity>(
                                 renderer, mappedInput, selected.path, selected.title),
                             nullptr);

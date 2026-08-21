@@ -221,6 +221,7 @@ bool writePendingAreaRows(JpegContext& ctx) {
 int jpegDrawCallback(JPEGDRAW* pDraw) {
   JpegContext* ctx = reinterpret_cast<JpegContext*>(pDraw->pUser);
   if (!ctx || !ctx->config || !ctx->renderer) return 0;
+  if (renderShouldAbort(*ctx->config)) return 0;
   ScopedImagePixelTimer pixelTimer(ctx->config->diagnostics);
 
   // In EIGHT_BIT_GRAYSCALE mode, pPixels contains 8-bit grayscale values

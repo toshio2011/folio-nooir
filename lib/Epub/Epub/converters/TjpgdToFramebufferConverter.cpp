@@ -333,6 +333,7 @@ bool appendTjpgdAreaBlock(TjpgdDecodeContext& ctx, const uint8_t* source, const 
 int tjpgdOutput(JDEC* jd, void* bitmap, JRECT* rect) {
   auto* ctx = static_cast<TjpgdDecodeContext*>(jd->device);
   if (ctx == nullptr || ctx->renderer == nullptr || bitmap == nullptr || rect == nullptr) return 0;
+  if (ctx->config && renderShouldAbort(*ctx->config)) return 0;
   ScopedImagePixelTimer pixelTimer(ctx->config ? ctx->config->diagnostics : nullptr);
 
   const auto* source = static_cast<const uint8_t*>(bitmap);

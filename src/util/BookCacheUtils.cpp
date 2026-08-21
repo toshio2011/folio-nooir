@@ -86,3 +86,20 @@ void clearBookCache(const std::string& path) {
   }
   LOG_DBG("BookCache", "Done checking metadata cache for: %s", path.c_str());
 }
+
+void resetBookProgress(const std::string& path) {
+  if (!FsHelpers::hasCbzExtension(path)) return;
+
+  Cbz book(path, "/.crosspoint");
+  book.setupCacheDir();
+  const char* progressFiles[] = {"/progress.bin", "/progress.bin.tmp"};
+  for (const char* suffix : progressFiles) {
+    const std::string progressPath = book.getCachePath() + suffix;
+    if (!Storage.exists(progressPath.c_str())) continue;
+    if (Storage.remove(progressPath.c_str())) {
+      LOG_DBG("BookCache", "Reset CBZ progress: %s", progressPath.c_str());
+    } else {
+      LOG_ERR("BookCache", "Could not reset CBZ progress: %s", progressPath.c_str());
+    }
+  }
+}

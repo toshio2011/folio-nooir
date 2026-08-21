@@ -21,18 +21,41 @@
   <script>
     const esc=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     let items=[];
+    let requestInFlight=false;
+    let loadInFlight=false;
     const message=t=>document.getElementById('message').textContent=t||'';
-    async function api(payload){const r=await fetch('/api/todo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Could not save');return d}
+    function setAddBusy(busy){const input=document.getElementById('newText'),button=document.querySelector('.add-row button');input.disabled=busy;button.disabled=busy;button.textContent=busy?'Saving…':'Add'}
+    async function api(payload){
+      if(requestInFlight)throw Error('Another change is still being saved');
+      requestInFlight=true;
+      try{
+        const r=await fetch('/api/todo',{method:'POST',headers:{'Content-Type':'application/json','Cache-Control':'no-cache'},cache:'no-store',body:JSON.stringify(payload)});
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok)throw Error(d.error||'Could not save');
+        return d;
+      }finally{requestInFlight=false}
+    }
     function render(){const open=items.filter(x=>!x.completed).length,done=items.length-open;document.getElementById('summary').textContent=`${open} open · ${done} done`;const el=document.getElementById('tasks');el.innerHTML=items.length?items.map((x,i)=>`<div class="task ${x.completed?'done':''}"><input type="checkbox" ${x.completed?'checked':''} onchange="toggle(${x.id})"><span class="priority">${x.priority?'!':''}</span><span class="task-text">${esc(x.text)}</span><span class="task-actions"><button onclick="togglePriority(${x.id})" title="Toggle priority">${x.priority?'★':'☆'}</button><button onclick="move(${x.id},-1)" title="Move up">↑</button><button onclick="move(${x.id},1)" title="Move down">↓</button><button onclick="edit(${x.id})">Edit</button><button onclick="removeTask(${x.id})">Delete</button></span></div>`).join(''):'<p class="muted">No tasks yet.</p>'}
-    async function load(){message('Syncing with device…');try{const r=await fetch('/api/todo?_='+Date.now());if(!r.ok)throw Error('Could not load');items=(await r.json()).items||[];render();message('Synced');}catch(e){message(e.message)}}
-    async function addTask(){const input=document.getElementById('newText'),text=input.value.trim();if(!text)return;try{await api({action:'add',text});input.value='';await load()}catch(e){message(e.message)}}
+    async function load(force=false){
+      const input=document.getElementById('newText');
+      if(loadInFlight||(!force&&(requestInFlight||document.activeElement===input)))return;
+      loadInFlight=true;
+      message('Syncing with device…');
+      try{const r=await fetch('/api/todo?_='+Date.now(),{cache:'no-store'});if(!r.ok)throw Error('Could not load');items=(await r.json()).items||[];render();message('Synced');}catch(e){message(e.message)}finally{loadInFlight=false}
+    }
+    async function addTask(){
+      const input=document.getElementById('newText'),text=input.value.trim();
+      if(!text||requestInFlight)return;
+      setAddBusy(true);message('Saving task…');
+      try{await api({action:'add',text});input.value='';await load(true)}catch(e){message(e.message)}finally{setAddBusy(false)}
+    }
     async function toggle(id){try{await api({action:'toggle',id});await load()}catch(e){message(e.message)}}
     async function togglePriority(id){try{await api({action:'togglePriority',id});await load()}catch(e){message(e.message)}}
     async function move(id,direction){try{await api({action:'move',id,direction});await load()}catch(e){message(e.message)}}
     async function removeTask(id){if(!confirm('Delete this task?'))return;try{await api({action:'delete',id});await load()}catch(e){message(e.message)}}
     async function edit(id){const item=items.find(x=>x.id===id),text=prompt('Edit task',item?.text||'');if(text===null||!text.trim())return;try{await api({action:'update',id,text:text.trim(),completed:!!item.completed});await load()}catch(e){message(e.message)}}
     async function clearCompleted(){try{await api({action:'clearCompleted'});await load()}catch(e){message(e.message)}}
-    load();setInterval(load,15000);
+    load();setInterval(()=>{const input=document.getElementById('newText');if(!requestInFlight&&document.activeElement!==input)load()},15000);
   </script>
 </body>
 </html>

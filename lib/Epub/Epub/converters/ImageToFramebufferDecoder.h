@@ -14,6 +14,11 @@ struct ImageDimensions {
   int16_t height;
 };
 
+// Optional cooperative cancellation hook for long streamed decodes. The
+// default is null, so existing EPUB and image callers retain their current
+// behavior. CBZ uses this only for its X4 background lookahead.
+using RenderAbortCallback = bool (*)(void* context);
+
 struct RenderConfig {
   int x, y;
   int maxWidth, maxHeight;
@@ -49,7 +54,13 @@ struct RenderConfig {
   std::string cachePath;            // If non-empty, decoder will write pixel cache to this path
   ImageRenderDiagnostics* diagnostics = nullptr;  // Temporary CBZ-only timing diagnostics
   ImageQualityProbe* qualityProbe = nullptr;      // Temporary bounded pre/post-dither probe
+  RenderAbortCallback abortCallback = nullptr;
+  void* abortContext = nullptr;
 };
+
+inline bool renderShouldAbort(const RenderConfig& config) {
+  return config.abortCallback != nullptr && config.abortCallback(config.abortContext);
+}
 
 inline void recordImageQualityPixel(const RenderConfig& config, const int screenX, const int screenY,
                                     const uint8_t gray, const uint8_t level) {

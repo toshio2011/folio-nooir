@@ -64,7 +64,7 @@ void ReadingStatsActivity::buildLines() {
   firstLine = 0;
 
   if (!bookPath.empty()) {
-    heading = "Book Statistics";
+    heading = tr(STR_BOOK_STATISTICS);
     const RecentBook* recent = findRecent(bookPath);
     const BookState* state = BOOK_STATES.find(bookPath);
     const std::string title = recent && !recent->title.empty() ? recent->title : bookPath;
@@ -107,7 +107,7 @@ void ReadingStatsActivity::buildLines() {
   }
 
   if (calendarMode) {
-    heading = "Reading Stats";
+    heading = tr(STR_READING_STATS);
     const auto& days = READING_STATS.getDays();
     const size_t start = days.size() > 30 ? days.size() - 30 : 0;
     uint32_t totalSeconds = 0;
@@ -141,7 +141,7 @@ void ReadingStatsActivity::buildLines() {
     return;
   }
 
-  heading = "Reading Statistics";
+  heading = tr(STR_LONG_PWR_READING_STATS);
   uint32_t bookSeconds = 0;
   uint32_t bookSessions = 0;
   uint32_t bookPages = 0;

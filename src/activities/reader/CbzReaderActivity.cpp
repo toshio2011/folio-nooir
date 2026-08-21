@@ -47,13 +47,17 @@ constexpr float ZOOM_STEP = 0.25f;
 // preserving their aspect ratio rather than allocating a full enlarged frame.
 constexpr int MAX_RENDER_DIMENSION = 8192;
 constexpr int64_t MAX_RENDER_PIXELS = 8ll * 1024ll * 1024ll;
-// Prefetch is intentionally X4-only for now. The synchronous decoder path
-// has not been validated against X3's panel timing and smaller heap, so X3
-// skips it rather than taking a risk with input latency or memory pressure.
 constexpr unsigned long CBZ_PREFETCH_IDLE_DELAY_MS = 900UL;
 constexpr size_t CBZ_PREFETCH_MIN_FREE_HEAP = 80 * 1024;
 constexpr size_t CBZ_PREFETCH_MIN_MAX_ALLOC = 32 * 1024;
+constexpr size_t CBZ_PREFETCH_X3_MIN_FREE_HEAP = 96 * 1024;
+constexpr size_t CBZ_PREFETCH_X3_MIN_MAX_ALLOC = 48 * 1024;
+constexpr uint8_t CBZ_PREFETCH_LOOKAHEAD_X4 = 3;
+constexpr uint8_t CBZ_PREFETCH_LOOKAHEAD_X3 = 1;
 constexpr uint16_t CBZ_PREFETCH_MIN_BATTERY_PERCENT = 15;
+// The synchronous lookahead remains enabled, but power ownership is shared
+// and CPU-frequency transitions are serialized by HalPowerManager.
+constexpr bool CBZ_BACKGROUND_PREFETCH_ENABLED = true;
 constexpr const char* VIEW_MODE_LABELS[] = {"Fit Width", "Fit Page", "Landscape", "Zoom", "Reset View",
                                             "Go to Page...", "Toggle Bookmark", "Bookmarks", "Reading Direction"};
 constexpr int VIEW_MODE_LABEL_COUNT = static_cast<int>(sizeof(VIEW_MODE_LABELS) / sizeof(VIEW_MODE_LABELS[0]));
@@ -104,35 +108,77 @@ const char* viewModeName(const CbzReaderActivity::ViewMode mode) {
 
 }
 
+void CbzReaderActivity::requestExitToHome() {
+  if (exitHomePending) return;
+  exitHomePending = true;
+  exitPopupShown = false;
+  requestUpdate(true);
+}
+
 void CbzReaderActivity::onEnter() {
   Activity::onEnter();
   mappedInput.setReaderMappingMode(true);
   readingSessionStartedMs = millis();
+  exitHomePending = false;
+  exitPopupShown = false;
   prefetchReady = false;
   prefetchRunning = false;
   prefetchCancelRequested = false;
+  prefetchInputAbortPending = false;
+  prefetchAbortButton = MappedInputManager::Button::Right;
+  prefetchLastInputPollMs = 0UL;
+  prefetchAbortHeldMs = 0UL;
   prefetchGeneration = 0;
   prefetchPage = SIZE_MAX;
   prefetchAttemptedPage = SIZE_MAX;
   prefetchSkipLoggedPage = SIZE_MAX;
+  prefetchViewMode = ViewMode::FitWidth;
+  prefetchZoomLevel = 0;
   prefetchImagePath.clear();
   prefetchCachePath.clear();
   prefetchSourceWidth = 0;
   prefetchSourceHeight = 0;
+  prefetchTargetWidth = 0;
+  prefetchTargetHeight = 0;
   prefetchWaitStartedMs = 0UL;
   prefetchWaitMs = 0;
+  prefetchOriginPage = SIZE_MAX;
+  prefetchLookaheadCompleted = 0;
+  prefetchUiPending = false;
+  prefetchUiRenderArmed = false;
+  prefetchUiPage = SIZE_MAX;
+  prefetchUiCachedPages = 0;
+  prefetchUiTotalPages = 0;
   cacheOnlyCurrentPage = false;
   currentCachedWidth = 0;
   currentCachedHeight = 0;
   pendingNavigation = false;
   pendingNavigationCancelPrefetch = false;
+  pendingNavigationHeldMs = 0UL;
   loadingUiPending = false;
   loadingUiRenderArmed = false;
+  loadingCacheMiss = false;
+  loadingCachePopupShown = false;
+  pendingMenuOpen = false;
   lastRenderCompleteMs = 0UL;
 
   if (!cbz) return;
   logCbzPath("cbz-activity-entry", cbz->getPath());
   cbz->setupCacheDir();
+  persistentPageCache.reset();
+  // Both X4 and X3 use the persistent cache. X3 keeps a conservative
+  // one-page lookahead below, but it still gets fast return-to-book behavior
+  // and avoids re-decoding pages that were already prepared.
+  persistentPageCache =
+      makeUniqueNoThrow<CbzPageCache>(cbz->getCachePath(), cbz->getPath(), cbz->getPageCount());
+  if (!persistentPageCache || !persistentPageCache->open()) {
+    LOG_ERR("CBZCACHE", "persistent=disabled hardware=%s reason=manifest_open",
+            gpio.deviceIsX3() ? "X3" : "X4");
+    persistentPageCache.reset();
+  } else {
+    LOG_DBG("CBZCACHE", "persistent=enabled hardware=%s lookahead=%u",
+            gpio.deviceIsX3() ? "X3" : "X4", static_cast<unsigned>(prefetchLookaheadLimit()));
+  }
   const std::string renderCachePath = cbz->getRenderCachePath();
   if (Storage.exists(renderCachePath.c_str())) {
     logCbzCacheAction("remove", "reader_enter_reset", renderCachePath);
@@ -191,6 +237,18 @@ void CbzReaderActivity::requestPageRender(const bool immediate) {
   // loading refresh. Navigation itself remains serialized by renderBusy and
   // the existing queued-navigation path.
   if (!loadingUiRenderArmed) loadingUiPending = true;
+  loadingCacheMiss = false;
+  loadingCachePopupShown = false;
+  // Any page or view variant that is not already in the persistent cache needs
+  // foreground work. Decide from the cache itself rather than renderedImagePage:
+  // a prefetch can be cancelled after the loading phase, and that transition
+  // must still show the full preparation popup instead of only a thin line.
+  // Cache hits remain visually immediate.
+  if (cbz && currentPage < cbz->getPageCount()) {
+    CbzPageCache::PageInfo cacheInfo;
+    loadingCacheMiss = !persistentPageCache ||
+                       !persistentPageCache->isReady(currentPage, persistentCacheViewMode(), zoomLevel, cacheInfo);
+  }
   requestUpdate(immediate);
 }
 
@@ -205,7 +263,15 @@ void CbzReaderActivity::onExit() {
   renderBusy = false;
   loadingUiPending = false;
   loadingUiRenderArmed = false;
+  loadingCacheMiss = false;
+  loadingCachePopupShown = false;
+  pendingMenuOpen = false;
   clearPendingNavigation("exit");
+  prefetchUiPending = false;
+  prefetchUiRenderArmed = false;
+  prefetchUiPage = SIZE_MAX;
+  prefetchUiCachedPages = 0;
+  prefetchUiTotalPages = 0;
   inputGateAfterRender = false;
   mappedInput.setReaderMappingMode(false);
   renderer.setDarkMode(false);
@@ -222,6 +288,7 @@ void CbzReaderActivity::onExit() {
     const std::string path = cbz->getPath();
     const uint32_t elapsedSeconds = (millis() - readingSessionStartedMs) / 1000UL;
     clearCurrentImage();
+    persistentPageCache.reset();
     const std::string shelfThumb = UITheme::getCoverThumbPath(cbz->getThumbBmpPath(), FolioNooirTheme::COVER_HEIGHT);
     logCbzCacheLookup(shelfThumb, Storage.exists(shelfThumb.c_str()));
     cbz.reset();
@@ -266,6 +333,26 @@ void CbzReaderActivity::clearCurrentImage() {
   zoomLongPressFired = false;
 }
 
+uint8_t CbzReaderActivity::persistentCacheViewMode() const {
+  return static_cast<uint8_t>(viewMode);
+}
+
+uint8_t CbzReaderActivity::prefetchLookaheadLimit() const {
+  return gpio.deviceIsX3() ? CBZ_PREFETCH_LOOKAHEAD_X3 : CBZ_PREFETCH_LOOKAHEAD_X4;
+}
+
+bool CbzReaderActivity::supportsPersistentCacheForViewMode() const {
+  // Source 1:1 is a diagnostic that intentionally keeps native dimensions;
+  // do not create large persistent files for it. All user-facing reader
+  // modes, including Landscape and Zoom, share the same page-local cache.
+  return viewMode != ViewMode::SourceOneToOne;
+}
+
+void CbzReaderActivity::resetPrefetchWindow() {
+  prefetchOriginPage = SIZE_MAX;
+  prefetchLookaheadCompleted = 0;
+}
+
 void CbzReaderActivity::clearRenderCache() {
   if (!cbz) return;
   ImageBlock::releaseRenderCache();
@@ -274,6 +361,7 @@ void CbzReaderActivity::clearRenderCache() {
                                cbz->getCachePath() + "/render.pending.pxc"};
   for (const auto& path : paths) {
     if (path.empty() || !Storage.exists(path.c_str())) continue;
+    if (persistentPageCache && path.rfind(cbz->getCachePath() + "/page_", 0) == 0) continue;
     logCbzCacheAction("remove", "reader_render_cache", path);
     Storage.remove(path.c_str());
   }
@@ -283,6 +371,14 @@ void CbzReaderActivity::clearRenderCache() {
 void CbzReaderActivity::cancelPrefetch(const char* reason) {
   if (!cbz) return;
   const char* cancelReason = reason ? reason : "stale";
+  if (prefetchUiPending || prefetchUiRenderArmed) {
+    prefetchUiPending = false;
+    prefetchUiRenderArmed = false;
+    prefetchUiPage = SIZE_MAX;
+    prefetchUiCachedPages = 0;
+    prefetchUiTotalPages = 0;
+    if (!prefetchRunning) longOperationIndicator.cancel(cancelReason);
+  }
   if (prefetchRunning) {
     prefetchCancelRequested = true;
     LOG_DBG("CBZPREFETCH", "hardware=%s state=cancel_requested page=%lu generation=%lu reason=%s",
@@ -319,11 +415,59 @@ void CbzReaderActivity::cancelPrefetch(const char* reason) {
   prefetchCachePath.clear();
   prefetchSourceWidth = 0;
   prefetchSourceHeight = 0;
+  prefetchTargetWidth = 0;
+  prefetchTargetHeight = 0;
   prefetchCancelRequested = false;
   LOG_DBG("CBZPREFETCH", "hardware=%s state=cancelled page=%lu generation=%lu owner_released=1",
           gpio.deviceIsX3() ? "X3" : "X4",
           cancelledPage == SIZE_MAX ? 0UL : static_cast<unsigned long>(cancelledPage + 1),
           static_cast<unsigned long>(cancelledGeneration));
+}
+
+bool CbzReaderActivity::prefetchAbortCallback(void* context) {
+  auto* activity = static_cast<CbzReaderActivity*>(context);
+  return activity != nullptr && activity->pollPrefetchAbort();
+}
+
+bool CbzReaderActivity::pollPrefetchAbort() {
+  if (prefetchCancelRequested) return true;
+
+  // The lookahead is synchronous on the main activity task, so the normal
+  // main-loop GPIO update cannot run until the decoder returns. Poll often
+  // enough on both X4 and X3 to make a button press cancel the decode instead
+  // of waiting for the whole multi-second lookahead to finish.
+  const unsigned long now = millis();
+  if (prefetchLastInputPollMs != 0UL && now - prefetchLastInputPollMs < 10UL) return false;
+  prefetchLastInputPollMs = now;
+  gpio.update();
+
+  if (!gpio.wasAnyPressed() && !gpio.wasTouchActivity()) return false;
+
+  prefetchCancelRequested = true;
+  const MappedInputManager::Button candidates[] = {
+      MappedInputManager::Button::Back,       MappedInputManager::Button::Confirm,
+      MappedInputManager::Button::Left,       MappedInputManager::Button::Right,
+      MappedInputManager::Button::Up,         MappedInputManager::Button::Down,
+      MappedInputManager::Button::PageBack,   MappedInputManager::Button::PageForward,
+      MappedInputManager::Button::Power,
+  };
+  bool recognized = false;
+  for (const auto button : candidates) {
+    if (mappedInput.wasPressed(button)) {
+      prefetchAbortButton = button;
+      prefetchAbortHeldMs = mappedInput.getHeldTime();
+      recognized = true;
+      // Preserve every reader action, including Confirm and Zoom panning.
+      // The normal loop resolves its mode-specific meaning after the decoder
+      // has released the staging files.
+      prefetchInputAbortPending = true;
+      break;
+    }
+  }
+  LOG_DBG("CBZPREFETCH", "hardware=%s state=cancel_requested reason=input button=%s recognized=%d",
+          gpio.deviceIsX3() ? "X3" : "X4", recognized ? inputButtonName(prefetchAbortButton) : "input",
+          recognized ? 1 : 0);
+  return true;
 }
 
 bool CbzReaderActivity::isQueueableNavigationButton(const MappedInputManager::Button button) const {
@@ -341,6 +485,15 @@ bool CbzReaderActivity::isQueueableNavigationButton(const MappedInputManager::Bu
     return button == MappedInputManager::Button::Left || button == MappedInputManager::Button::Right ||
            button == MappedInputManager::Button::PageBack || button == MappedInputManager::Button::PageForward ||
            button == MappedInputManager::Button::Power;
+  }
+  // Zoom normally uses directional buttons for panning. A long horizontal
+  // press is the explicit page-turn escape, so queue every directional input
+  // while a render/prefetch is busy and resolve pan versus page-turn when the
+  // input is executed.
+  if (viewMode == ViewMode::Zoom) {
+    return button == MappedInputManager::Button::Left || button == MappedInputManager::Button::Right ||
+           button == MappedInputManager::Button::Up || button == MappedInputManager::Button::Down ||
+           button == MappedInputManager::Button::PageBack || button == MappedInputManager::Button::PageForward;
   }
   return false;
 }
@@ -390,6 +543,7 @@ void CbzReaderActivity::logPageIntent(const bool next) const {
 
 void CbzReaderActivity::queueNavigationButton(const MappedInputManager::Button button, const char* state) {
   if (!isQueueableNavigationButton(button)) return;
+  pendingMenuOpen = false;
   if (pendingNavigation) {
     // One physical press is enough to express the user's intent while a
     // render is busy. Do not let a held/repeating button skip extra pages.
@@ -405,6 +559,7 @@ void CbzReaderActivity::queueNavigationButton(const MappedInputManager::Button b
   pendingNavigationCancelPrefetch = true;
   pendingNavigationButton = button;
   pendingNavigationViewMode = viewMode;
+  pendingNavigationHeldMs = mappedInput.getHeldTime();
   LOG_DBG("CBZCTRL", "queued=%s button=%s", state ? state : "busy", inputButtonName(button));
   const bool pageIntent = viewMode != ViewMode::Landscape ||
                           (button != MappedInputManager::Button::Left &&
@@ -436,6 +591,7 @@ void CbzReaderActivity::clearPendingNavigation(const char* reason) {
   }
   pendingNavigation = false;
   pendingNavigationCancelPrefetch = false;
+  pendingNavigationHeldMs = 0UL;
 }
 
 void CbzReaderActivity::executePendingNavigation() {
@@ -446,35 +602,13 @@ void CbzReaderActivity::executePendingNavigation() {
   }
 
   const auto button = pendingNavigationButton;
+  const unsigned long heldMs = pendingNavigationHeldMs;
   const bool cancelLookahead = pendingNavigationCancelPrefetch;
   pendingNavigation = false;
   pendingNavigationCancelPrefetch = false;
+  pendingNavigationHeldMs = 0UL;
   const bool logicalNextButton = isLogicalNextButton(button);
-  const size_t queuedTarget = logicalNextButton ? (readingRtl ? (currentPage == 0 ? SIZE_MAX : currentPage - 1)
-                                                             : currentPage + 1)
-                                                 : (readingRtl ? currentPage + 1
-                                                               : (currentPage == 0 ? SIZE_MAX : currentPage - 1));
-  const bool matchingPrefetch = logicalNextButton && queuedTarget != SIZE_MAX &&
-                                (prefetchReady || prefetchRunning) && prefetchPage == queuedTarget &&
-                                prefetchViewMode == viewMode && prefetchZoomLevel == zoomLevel;
-  const bool preserveMatchingPrefetch = matchingPrefetch && prefetchReady;
-  if (matchingPrefetch && prefetchRunning) {
-    // Keep the request queued while the matching serialized lookahead owner
-    // finishes. It is the same page the user requested, so cancelling it would
-    // throw away the work and force a duplicate foreground decode.
-    pendingNavigation = true;
-    pendingNavigationCancelPrefetch = false;
-    pendingNavigationButton = button;
-    pendingNavigationViewMode = viewMode;
-    if (prefetchWaitStartedMs == 0UL) {
-      prefetchWaitStartedMs = millis();
-      LOG_DBG("CBZPREFETCH", "state=wait_for_use page=%lu generation=%lu",
-              static_cast<unsigned long>(queuedTarget + 1), static_cast<unsigned long>(prefetchGeneration));
-    }
-    requestPageRender(true);
-    return;
-  }
-  if (cancelLookahead && !preserveMatchingPrefetch) {
+  if (cancelLookahead) {
     cancelPrefetch("navigation");
     if (prefetchRunning) {
       // The prefetch decoder owns its staging files until its cancellation
@@ -484,6 +618,7 @@ void CbzReaderActivity::executePendingNavigation() {
       pendingNavigationCancelPrefetch = true;
       pendingNavigationButton = button;
       pendingNavigationViewMode = viewMode;
+      pendingNavigationHeldMs = heldMs;
       LOG_DBG("CBZUI", "waiting_for_prefetch_release page=%lu",
               static_cast<unsigned long>(currentPage + 1));
       return;
@@ -522,6 +657,37 @@ void CbzReaderActivity::executePendingNavigation() {
     // Fit modes always turn pages. Do not let handlePageTurn's optional
     // vertical-scroll resolution consume Next/Previous as a same-page pan.
     handlePageTurn(previous, false);
+  } else if (viewMode == ViewMode::Zoom) {
+    const bool horizontal = button == MappedInputManager::Button::Left ||
+                            button == MappedInputManager::Button::Right;
+    const bool longPageTurn = horizontal && heldMs >= ReaderUtils::SKIP_HOLD_MS;
+    if (longPageTurn) {
+      const bool previous = !logicalNextButton;
+      logPageIntent(!previous);
+      handlePageTurn(previous, false);
+      return;
+    }
+    const int horizontalStep = std::max(32, renderer.getScreenWidth() / 2);
+    const int verticalStep = std::max(32, renderer.getScreenHeight() / 2);
+    switch (button) {
+      case MappedInputManager::Button::Left:
+        panBy(-horizontalStep, 0);
+        break;
+      case MappedInputManager::Button::Right:
+        panBy(horizontalStep, 0);
+        break;
+      case MappedInputManager::Button::Up:
+      case MappedInputManager::Button::PageBack:
+        panBy(0, -verticalStep);
+        break;
+      case MappedInputManager::Button::Down:
+      case MappedInputManager::Button::PageForward:
+        panBy(0, verticalStep);
+        break;
+      default:
+        clearPendingNavigation("stale");
+        break;
+    }
   } else {
     clearPendingNavigation("stale");
   }
@@ -545,6 +711,12 @@ bool CbzReaderActivity::renderNextPageToCache(const size_t page, const std::stri
   prefetchSourceWidth = dimensions.width;
   prefetchSourceHeight = dimensions.height;
 
+  const auto previousOrientation = renderer.getOrientation();
+  if (viewMode == ViewMode::Landscape) {
+    // Use the same logical viewport geometry as the foreground Landscape
+    // renderer when calculating the persistent cache dimensions.
+    renderer.setOrientation(GfxRenderer::Orientation::LandscapeCounterClockwise);
+  }
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
   const int statusHeight = UITheme::getStatusBarHeight();
   const int availableWidth = std::max(1, safe.width);
@@ -556,6 +728,10 @@ bool CbzReaderActivity::renderNextPageToCache(const size_t page, const std::stri
     scale = std::min(1.5f, fitWidth);
   } else if (viewMode == ViewMode::FitPage) {
     scale = std::min(scale, 1.0f);
+  } else if (viewMode == ViewMode::Landscape) {
+    scale = std::min(1.5f, fitWidth);
+  } else if (viewMode == ViewMode::Zoom) {
+    scale = std::min(2.5f, fitWidth * (1.0f + zoomLevel * ZOOM_STEP));
   } else {
     return false;
   }
@@ -572,6 +748,8 @@ bool CbzReaderActivity::renderNextPageToCache(const size_t page, const std::stri
     targetWidth = std::max(1, static_cast<int>(std::floor(dimensions.width * scale)));
     targetHeight = std::max(1, static_cast<int>(std::floor(dimensions.height * scale)));
   }
+  prefetchTargetWidth = targetWidth;
+  prefetchTargetHeight = targetHeight;
 
   RenderConfig config;
   // Keep all decoded pixels off the visible framebuffer. CBZ cache coordinates
@@ -587,13 +765,13 @@ bool CbzReaderActivity::renderNextPageToCache(const size_t page, const std::stri
   config.useExactDimensions = true;
   config.cbzQualityMode = true;
   config.cachePath = cachePath;
+  config.abortCallback = &CbzReaderActivity::prefetchAbortCallback;
+  config.abortContext = this;
 
   const bool useTjpgd = strcmp(decoder->getFormatName(), "JPEG") == 0 &&
                         TjpgdToFramebufferConverter::requiresFallback(imagePath);
   TjpgdToFramebufferConverter tjpgd;
   bool rendered = false;
-  const auto previousOrientation = renderer.getOrientation();
-  renderer.setOrientation(GfxRenderer::Portrait);
   ImageBlock::releaseRenderCache();
   if (useTjpgd) {
     rendered = tjpgd.decodeToFramebuffer(imagePath, renderer, config);
@@ -626,7 +804,14 @@ void CbzReaderActivity::maybePrefetchNextPage() {
     }
   };
 
-  if (!cbz || pageLoadFailed || prefetchReady) return;
+  if (!CBZ_BACKGROUND_PREFETCH_ENABLED) {
+    if (prefetchSkipLoggedPage != currentPage) {
+      LOG_DBG("CBZPREFETCH", "hardware=%s state=disabled reason=stability", gpio.deviceIsX3() ? "X3" : "X4");
+      prefetchSkipLoggedPage = currentPage;
+    }
+    return;
+  }
+  if (!cbz || !persistentPageCache || pageLoadFailed || prefetchReady || !supportsPersistentCacheForViewMode()) return;
   if (prefetchRunning || renderBusy || loadingUiPending || loadingUiRenderArmed || pendingNavigation) {
     logBlocked("foreground_render");
     return;
@@ -635,19 +820,27 @@ void CbzReaderActivity::maybePrefetchNextPage() {
     logSkip("busy", false);
     return;
   }
-  if (prefetchAttemptedPage == currentPage) return;
   if (lastRenderCompleteMs == 0 || millis() - lastRenderCompleteMs < CBZ_PREFETCH_IDLE_DELAY_MS) return;
 
-  if (gpio.deviceIsX3()) {
-    logSkip("unsupported", true);
+  if (bwDiagnosticMode) {
+    logSkip("diagnostic", true);
     return;
   }
-  if (viewMode != ViewMode::FitWidth && viewMode != ViewMode::FitPage) {
-    logSkip("unsupported", true);
+  if (prefetchOriginPage != currentPage) {
+    resetPrefetchWindow();
+    prefetchOriginPage = currentPage;
+  }
+  const uint8_t lookaheadLimit = prefetchLookaheadLimit();
+  if (prefetchLookaheadCompleted >= lookaheadLimit) {
+    logSkip("window_complete", true);
     return;
   }
-  const bool hasForwardPage = readingRtl ? currentPage > 0 : currentPage + 1 < cbz->getPageCount();
+
+  const size_t lookaheadOffset = static_cast<size_t>(prefetchLookaheadCompleted) + 1;
+  const bool hasForwardPage = readingRtl ? currentPage >= lookaheadOffset
+                                         : currentPage + lookaheadOffset < cbz->getPageCount();
   if (!hasForwardPage) {
+    prefetchLookaheadCompleted = lookaheadLimit;
     logSkip("boundary", true);
     return;
   }
@@ -657,26 +850,10 @@ void CbzReaderActivity::maybePrefetchNextPage() {
     return;
   }
 
-  // The main loop lowers the CPU frequency between activity iterations. Keep
-  // the low-power guard, but use the existing RAII power lock for this one
-  // bounded X4 decode so an idle reader can actually perform the lookahead.
-  // The lock is scoped to this function and never changes refresh behavior.
   const uint16_t battery = powerManager.getBatteryPercentage();
   if (battery > 0 && battery < CBZ_PREFETCH_MIN_BATTERY_PERCENT) {
     logSkip("power", true);
     return;
-  }
-
-  std::unique_ptr<HalPowerManager::Lock> prefetchPowerLock;
-  if (getCpuFrequencyMhz() <= 40) {
-    // Wake only when the idle loop actually lowered the CPU. If another lock
-    // owns the power manager, or allocation fails, retry later without
-    // entering a decode loop.
-    prefetchPowerLock = makeUniqueNoThrow<HalPowerManager::Lock>();
-    if (!prefetchPowerLock || getCpuFrequencyMhz() <= 40) {
-      logSkip("power", false);
-      return;
-    }
   }
 
   // A same-page pan keeps the bounded pixel-cache payload resident to avoid
@@ -686,12 +863,31 @@ void CbzReaderActivity::maybePrefetchNextPage() {
   ImageBlock::releaseRenderCache();
   const size_t freeBefore = ESP.getFreeHeap();
   const size_t maxAllocBefore = ESP.getMaxAllocHeap();
-  if (freeBefore < CBZ_PREFETCH_MIN_FREE_HEAP || maxAllocBefore < CBZ_PREFETCH_MIN_MAX_ALLOC) {
+  const size_t minFreeHeap = gpio.deviceIsX3() ? CBZ_PREFETCH_X3_MIN_FREE_HEAP : CBZ_PREFETCH_MIN_FREE_HEAP;
+  const size_t minMaxAlloc = gpio.deviceIsX3() ? CBZ_PREFETCH_X3_MIN_MAX_ALLOC : CBZ_PREFETCH_MIN_MAX_ALLOC;
+  if (freeBefore < minFreeHeap || maxAllocBefore < minMaxAlloc) {
     logSkip("memory", true);
     return;
   }
 
-  const size_t nextPage = readingRtl ? currentPage - 1 : currentPage + 1;
+  // Hold one shared normal-speed owner for the complete synchronous lookahead.
+  // The render task may temporarily acquire the same shared lock for its UI
+  // refresh, but neither owner can trigger a redundant frequency transition.
+  auto prefetchPowerLock = makeUniqueNoThrow<HalPowerManager::Lock>();
+  if (!prefetchPowerLock || getCpuFrequencyMhz() <= 40) {
+    logSkip("power", false);
+    return;
+  }
+
+  const size_t nextPage = readingRtl ? currentPage - lookaheadOffset : currentPage + lookaheadOffset;
+  CbzPageCache::PageInfo cachedInfo;
+  if (persistentPageCache->isReady(nextPage, persistentCacheViewMode(), zoomLevel, cachedInfo)) {
+    ++prefetchLookaheadCompleted;
+    prefetchUiRenderArmed = false;
+    LOG_DBG("CBZPREFETCH", "state=already_cached page=%lu ready=%lu", static_cast<unsigned long>(nextPage + 1),
+            static_cast<unsigned long>(persistentPageCache->completedCount()));
+    return;
+  }
   const std::string_view entry = cbz->getPageEntry(nextPage);
   const size_t dot = entry.find_last_of('.');
   if (dot == std::string_view::npos) {
@@ -708,19 +904,40 @@ void CbzReaderActivity::maybePrefetchNextPage() {
   const uint32_t generation = ++prefetchGeneration;
   const std::string generationName = std::to_string(static_cast<unsigned long>(generation));
   const std::string imagePath = cbz->getCachePath() + "/prefetch_" + generationName + extension;
-  const std::string cachePath = cbz->getCachePath() + "/render.prefetch_" + generationName + ".pxc";
+  const std::string cachePath = persistentPageCache->temporaryPagePath(nextPage);
+  if (Storage.exists(cachePath.c_str())) Storage.remove(cachePath.c_str());
 
-  prefetchAttemptedPage = currentPage;
+  if (!prefetchUiRenderArmed) {
+    prefetchUiPage = nextPage;
+    prefetchUiCachedPages = persistentPageCache->completedCount();
+    prefetchUiTotalPages = cbz->getPageCount();
+    prefetchUiPending = true;
+    requestUpdate(true);
+    LOG_DBG("CBZPREFETCH", "hardware=%s state=ui_pending page=%lu cached=%lu total=%lu",
+            gpio.deviceIsX3() ? "X3" : "X4", static_cast<unsigned long>(nextPage + 1),
+            static_cast<unsigned long>(prefetchUiCachedPages), static_cast<unsigned long>(prefetchUiTotalPages));
+    return;
+  }
+  prefetchUiRenderArmed = false;
+  prefetchUiPending = false;
+
+  prefetchAttemptedPage = nextPage;
   prefetchPage = nextPage;
+  prefetchViewMode = viewMode;
+  prefetchZoomLevel = zoomLevel;
   prefetchRunning = true;
   prefetchCancelRequested = false;
+  prefetchInputAbortPending = false;
+  prefetchLastInputPollMs = 0UL;
+  prefetchAbortHeldMs = 0UL;
   const size_t operationPage = nextPage;
   const size_t operationCurrentPage = currentPage;
   const ViewMode operationViewMode = viewMode;
   const uint8_t operationZoomLevel = zoomLevel;
   const unsigned long startedMs = millis();
-  LOG_DBG("CBZPREFETCH", "hardware=X4 state=start page=%lu generation=%lu freeBefore=%lu maxAllocBefore=%lu",
-          static_cast<unsigned long>(nextPage + 1), static_cast<unsigned long>(generation),
+  LOG_DBG("CBZPREFETCH", "hardware=%s state=start page=%lu generation=%lu freeBefore=%lu maxAllocBefore=%lu",
+          gpio.deviceIsX3() ? "X3" : "X4", static_cast<unsigned long>(nextPage + 1),
+          static_cast<unsigned long>(generation),
           static_cast<unsigned long>(freeBefore), static_cast<unsigned long>(maxAllocBefore));
 
   const auto cancelled = [&]() {
@@ -746,11 +963,15 @@ void CbzReaderActivity::maybePrefetchNextPage() {
       prefetchCachePath.clear();
       prefetchSourceWidth = 0;
       prefetchSourceHeight = 0;
+      prefetchTargetWidth = 0;
+      prefetchTargetHeight = 0;
       if (wasCancelled) {
-        LOG_DBG("CBZPREFETCH", "hardware=X4 state=cancelled page=%lu generation=%lu owner_released=1",
-                static_cast<unsigned long>(operationPage + 1), static_cast<unsigned long>(generation));
+        LOG_DBG("CBZPREFETCH", "hardware=%s state=cancelled page=%lu generation=%lu owner_released=1",
+                gpio.deviceIsX3() ? "X3" : "X4", static_cast<unsigned long>(operationPage + 1),
+                static_cast<unsigned long>(generation));
       } else if (failureReason) {
-        LOG_DBG("CBZPREFETCH", "hardware=X4 state=skip reason=%s", failureReason);
+        LOG_DBG("CBZPREFETCH", "hardware=%s state=skip reason=%s", gpio.deviceIsX3() ? "X3" : "X4",
+                failureReason);
       }
     }
     // Only release the serialized owner after all staging files have been
@@ -768,7 +989,7 @@ void CbzReaderActivity::maybePrefetchNextPage() {
   }
 
   renderBusy = true;
-  const bool extracted = cbz->extractPageTo(nextPage, imagePath);
+  const bool extracted = cbz->extractPageTo(nextPage, imagePath, &CbzReaderActivity::prefetchAbortCallback, this);
   bool rendered = false;
   size_t decodeFreeBefore = freeBefore;
   size_t decodeFreeAfter = freeBefore;
@@ -783,22 +1004,29 @@ void CbzReaderActivity::maybePrefetchNextPage() {
     return;
   }
 
-  // Recheck immediately before publication.  A cancelled/stale candidate is
-  // never promoted over the active page cache.
+  // Recheck immediately before publication. A cancelled/stale candidate is
+  // never promoted into the persistent page cache.
   if (cancelled()) {
     releaseCandidate(false, "stale");
     return;
   }
 
-  prefetchReady = true;
-  prefetchPage = nextPage;
-  prefetchViewMode = viewMode;
-  prefetchZoomLevel = zoomLevel;
-  prefetchImagePath = imagePath;
-  prefetchCachePath = cachePath;
+  CbzPageCache::PageInfo pageInfo;
+  pageInfo.sourceWidth = static_cast<uint16_t>(std::min(prefetchSourceWidth, UINT16_MAX));
+  pageInfo.sourceHeight = static_cast<uint16_t>(std::min(prefetchSourceHeight, UINT16_MAX));
+  pageInfo.targetWidth = static_cast<uint16_t>(std::min(prefetchTargetWidth, UINT16_MAX));
+  pageInfo.targetHeight = static_cast<uint16_t>(std::min(prefetchTargetHeight, UINT16_MAX));
+  pageInfo.viewMode = persistentCacheViewMode();
+  pageInfo.zoomLevel = zoomLevel;
+  if (!persistentPageCache->publish(nextPage, pageInfo, cachePath)) {
+    releaseCandidate(false, "manifest");
+    return;
+  }
+  ++prefetchLookaheadCompleted;
   size_t cacheBytes = 0;
   HalFile cacheFile;
-  if (Storage.openFileForRead("CBZPREFETCH", cachePath, cacheFile)) {
+  const std::string publishedCachePath = persistentPageCache->pagePath(nextPage);
+  if (Storage.openFileForRead("CBZPREFETCH", publishedCachePath, cacheFile)) {
     cacheBytes = cacheFile.size();
     cacheFile.close();
   }
@@ -809,14 +1037,34 @@ void CbzReaderActivity::maybePrefetchNextPage() {
     releaseCandidate(false, "stale");
     return;
   }
+  prefetchReady = false;
+  prefetchPage = SIZE_MAX;
+  prefetchImagePath.clear();
+  prefetchCachePath.clear();
+  prefetchSourceWidth = 0;
+  prefetchSourceHeight = 0;
+  prefetchTargetWidth = 0;
+  prefetchTargetHeight = 0;
   renderBusy = false;
   prefetchRunning = false;
   prefetchCancelRequested = false;
-  LOG_DBG("CBZPREFETCH", "hardware=X4 state=done page=%lu generation=%lu duration=%lums freeAfter=%lu maxAllocAfter=%lu cacheBytes=%lu",
-          static_cast<unsigned long>(nextPage + 1), static_cast<unsigned long>(generation),
+  LOG_DBG("CBZPREFETCH", "hardware=%s state=done page=%lu generation=%lu duration=%lums freeAfter=%lu maxAllocAfter=%lu cacheBytes=%lu",
+          gpio.deviceIsX3() ? "X3" : "X4", static_cast<unsigned long>(nextPage + 1),
+          static_cast<unsigned long>(generation),
           static_cast<unsigned long>(millis() - startedMs),
           static_cast<unsigned long>(decodeFreeAfter), static_cast<unsigned long>(decodeMaxAfter),
           static_cast<unsigned long>(cacheBytes));
+  const std::string readyStatus = "> Next ready | " + std::to_string(nextPage + 1) + "/" +
+                                  std::to_string(cbz->getPageCount()) + " | cached " +
+                                  std::to_string(persistentPageCache->completedCount()) + "/" +
+                                  std::to_string(cbz->getPageCount());
+  const size_t furtherOffset = static_cast<size_t>(prefetchLookaheadCompleted) + 1;
+  const bool hasFurtherLookahead = prefetchLookaheadCompleted < prefetchLookaheadLimit() &&
+                                   (readingRtl ? currentPage >= furtherOffset
+                                               : currentPage + furtherOffset < cbz->getPageCount());
+  if (!hasFurtherLookahead) {
+    longOperationIndicator.showBeforeWork("CBZ_PREFETCH_READY", true, readyStatus.c_str(), 100);
+  }
 }
 
 void CbzReaderActivity::openViewModePopup() {
@@ -860,6 +1108,7 @@ void CbzReaderActivity::resetView() {
   if (!changed) return;
 
   cancelPrefetch("mode_change");
+  resetPrefetchWindow();
   viewMode = ViewMode::FitWidth;
   zoomLevel = 0;
   panX = 0;
@@ -1209,6 +1458,7 @@ void CbzReaderActivity::openDirectionPopup() {
                         readingRtl = nextRtl;
                         clearPendingNavigation("mode_change");
                         cancelPrefetch("mode_change");
+                        resetPrefetchWindow();
                         prefetchAttemptedPage = SIZE_MAX;
                         prefetchSkipLoggedPage = SIZE_MAX;
                         LOG_DBG("CBZDIR", "direction=%s", readingRtl ? "RTL" : "LTR");
@@ -1230,6 +1480,7 @@ void CbzReaderActivity::applyViewMode(const int index) {
   pageLoadFailed = false;
   clearPendingNavigation("mode_change");
   cancelPrefetch("mode_change");
+  resetPrefetchWindow();
   viewMode = next;
   if (viewMode == ViewMode::Zoom) {
     zoomLevel = std::max<uint8_t>(zoomLevel, 2);
@@ -1261,6 +1512,7 @@ void CbzReaderActivity::toggleBwDiagnosticMode() {
   pageLoadFailed = false;
   clearPendingNavigation("mode_change");
   cancelPrefetch("mode_change");
+  resetPrefetchWindow();
   panX = 0;
   panY = 0;
   ImageBlock::releaseRenderCache();
@@ -1286,6 +1538,7 @@ void CbzReaderActivity::adjustZoom(const int direction) {
   zoomLevel = static_cast<uint8_t>(next);
   clearPendingNavigation("mode_change");
   cancelPrefetch("mode_change");
+  resetPrefetchWindow();
   panX = 0;
   panY = 0;
   ImageBlock::releaseRenderCache();
@@ -1333,7 +1586,7 @@ void CbzReaderActivity::handleLandscapeHorizontalNavigation(const MappedInputMan
   }
 
   const int oldPan = panY;
-  const int scrollStep = std::max(32, renderer.getScreenWidth() / 3);
+  const int scrollStep = std::max(32, renderer.getScreenWidth() / 2);
   LOG_DBG("CBZUI", "intent=%s mode=landscape page=%lu", left ? "pan_left" : "pan_right",
           static_cast<unsigned long>(currentPage + 1));
   panBy(0, left ? -scrollStep : scrollStep);
@@ -1371,15 +1624,15 @@ bool CbzReaderActivity::handlePageTurn(const bool previous, const bool resolveVe
   const size_t pageCount = cbz->getPageCount();
   if (logicalNext) {
     if (moveTowardHigherIndex) {
-      if (currentPage + 1 >= pageCount) return true;
-      ++currentPage;
+      if (currentPage >= pageCount) return true;
+      currentPage = currentPage + 1 >= pageCount ? pageCount : currentPage + 1;
     } else {
       if (currentPage == 0) return true;
       --currentPage;
     }
   } else if (moveTowardHigherIndex) {
-    if (currentPage + 1 >= pageCount) return true;
-    ++currentPage;
+    if (currentPage >= pageCount) return true;
+    currentPage = currentPage + 1 >= pageCount ? pageCount : currentPage + 1;
   } else {
     if (currentPage == 0) return true;
     --currentPage;
@@ -1414,6 +1667,39 @@ bool CbzReaderActivity::handlePageTurn(const bool previous, const bool resolveVe
 void CbzReaderActivity::loop() {
   if (!cbz) return;
 
+  // Match EPUB's exit sequence: let the render task show the saving message before
+  // the activity transition runs onExit() and persists the reading session.
+  if (exitHomePending) {
+    if (exitPopupShown) activityManager.goHome();
+    return;
+  }
+
+  // A prefetch decoder can cancel itself from its output callback after
+  // observing a physical button edge. The callback preserves page-turn/back
+  // intent because this loop's next gpio.update() will otherwise clear it.
+  if (prefetchInputAbortPending) {
+    const auto button = prefetchAbortButton;
+    const unsigned long heldMs = prefetchAbortHeldMs;
+    prefetchInputAbortPending = false;
+    prefetchAbortHeldMs = 0UL;
+    if (button == MappedInputManager::Button::Back) {
+      cancelPrefetch("back");
+      requestExitToHome();
+      return;
+    }
+    if (button == MappedInputManager::Button::Confirm) {
+      cancelPrefetch("menu");
+      pendingMenuOpen = true;
+      requestUpdate(true);
+      return;
+    }
+    if (isQueueableNavigationButton(button)) {
+      queueNavigationButton(button, "prefetch_cancel");
+      pendingNavigationHeldMs = heldMs;
+      return;
+    }
+  }
+
   if (bookmarksActive) {
     handleBookmarksInput();
     return;
@@ -1445,6 +1731,11 @@ void CbzReaderActivity::loop() {
     };
     bool navigationQueued = false;
     for (const auto button : buttons) {
+      if (button == MappedInputManager::Button::Confirm && mappedInput.wasPressed(button)) {
+        // Keep a short menu press from being lost while a slow page render is
+        // still holding the reader in its foreground work section.
+        pendingMenuOpen = true;
+      }
       if (mappedInput.wasPressed(button) || mappedInput.isPressed(button)) {
         pressedButton = static_cast<int>(button);
         if (!navigationQueued && isQueueableNavigationButton(button)) {
@@ -1475,12 +1766,21 @@ void CbzReaderActivity::loop() {
     return;
   }
 
+  if (pendingMenuOpen) {
+    pendingMenuOpen = false;
+    openViewModePopup();
+    return;
+  }
+
   // A slow decode can finish after a user has already pressed a button. Drop
   // that stale edge (and any held repeat) once, so the completed page cannot
   // immediately receive a second navigation/mode mutation.
   if (inputGateAfterRender) {
+    // Confirm opens the reader menu in every view mode. It must not be part of
+    // this stale page-turn gate, otherwise the first menu press after a slow
+    // Fit Width, Landscape, or Zoom render is swallowed.
     const MappedInputManager::Button buttons[] = {
-        MappedInputManager::Button::Back,       MappedInputManager::Button::Confirm,
+        MappedInputManager::Button::Back,
         MappedInputManager::Button::Left,       MappedInputManager::Button::Right,
         MappedInputManager::Button::Up,         MappedInputManager::Button::Down,
         MappedInputManager::Button::PageBack,   MappedInputManager::Button::PageForward,
@@ -1504,7 +1804,7 @@ void CbzReaderActivity::loop() {
       queueNavigationButton(navigationButton, "stale");
       return;
     }
-    if (held || mappedInput.wasAnyPressed()) {
+    if (held) {
       if (!staleLogEmitted || pressedButton != staleLogButton) {
         LOG_DBG("CBZCTRL", "ignored=stale_after_render button=%s", pressedButton >= 0
                                                                           ? inputButtonName(static_cast<MappedInputManager::Button>(pressedButton))
@@ -1535,8 +1835,58 @@ void CbzReaderActivity::loop() {
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) directCropDumpFired = false;
   }
 
+  const bool atEndOfBook = currentPage >= cbz->getPageCount();
+  if (atEndOfBook && endOfBookOptions.menuActive()) {
+    std::string openPath;
+    switch (endOfBookOptions.handleMenuInput(mappedInput, &openPath)) {
+      case EndOfBookOptions::Action::OpenBook:
+        activityManager.goToReader(openPath);
+        return;
+      case EndOfBookOptions::Action::GoHome:
+        requestExitToHome();
+        return;
+      case EndOfBookOptions::Action::LastPage:
+        currentPage = cbz->getPageCount() > 0 ? cbz->getPageCount() - 1 : 0;
+        requestUpdate();
+        return;
+      case EndOfBookOptions::Action::Redraw:
+        requestUpdate();
+        return;
+      case EndOfBookOptions::Action::None:
+        return;
+    }
+  }
+
   if (ReaderUtils::handleBackNavigation(mappedInput, activityManager, cbz->getPath().c_str(),
-                                        {this, [](void* ctx) { static_cast<CbzReaderActivity*>(ctx)->onGoHome(); }})) {
+                                        {this, [](void* ctx) { static_cast<CbzReaderActivity*>(ctx)->requestExitToHome(); }})) {
+    return;
+  }
+
+  if (atEndOfBook) {
+    const auto touch = ReaderUtils::detectTouchPageTurn(renderer, mappedInput);
+    auto [prevTriggered, nextTriggered, fromTilt, fromSide] = ReaderUtils::detectPageTurn(mappedInput);
+    (void)fromTilt;
+    (void)fromSide;
+    prevTriggered = prevTriggered || touch.prev;
+    nextTriggered = nextTriggered || touch.next;
+    switch (mappedInput.wasSwipe()) {
+      case MappedInputManager::SwipeDir::Up:
+      case MappedInputManager::SwipeDir::Right:
+        prevTriggered = true;
+        break;
+      case MappedInputManager::SwipeDir::Down:
+      case MappedInputManager::SwipeDir::Left:
+        nextTriggered = true;
+        break;
+      case MappedInputManager::SwipeDir::None:
+        break;
+    }
+    if (nextTriggered) {
+      requestExitToHome();
+    } else if (prevTriggered) {
+      currentPage = cbz->getPageCount() > 0 ? cbz->getPageCount() - 1 : 0;
+      requestUpdate();
+    }
     return;
   }
 
@@ -1573,6 +1923,7 @@ void CbzReaderActivity::loop() {
       handlePageTurn(upReleased, false);
       return;
     }
+    maybePrefetchNextPage();
     return;
   }
 
@@ -1653,8 +2004,8 @@ void CbzReaderActivity::loop() {
     }
 
     const auto panOrTurn = [&](const MappedInputManager::Button button) {
-      const int horizontalStep = std::max(32, renderer.getScreenWidth() / 3);
-      const int verticalStep = std::max(32, renderer.getScreenHeight() / 3);
+      const int horizontalStep = std::max(32, renderer.getScreenWidth() / 2);
+      const int verticalStep = std::max(32, renderer.getScreenHeight() / 2);
       int dx = 0;
       int dy = 0;
       bool atEdge = false;
@@ -1744,6 +2095,7 @@ void CbzReaderActivity::loop() {
     }
     // Consume held/repeated/queued directional events too. No Zoom input may
     // reach the generic reader page-turn detector below.
+    maybePrefetchNextPage();
     return;
   }
 
@@ -1751,7 +2103,9 @@ void CbzReaderActivity::loop() {
     case MappedInputManager::SwipeDir::Up:
       if (viewMode == ViewMode::Landscape)
         handlePageTurn(true, false);
-      else if ((viewMode == ViewMode::Zoom) || currentMaxPanY > 0)
+      else if (viewMode == ViewMode::Zoom)
+        panBy(0, -std::max(32, renderer.getScreenHeight() / 2));
+      else if (currentMaxPanY > 0)
         panBy(0, -std::max(32, renderer.getScreenHeight() / 3));
       else
         handlePageTurn(true);
@@ -1759,16 +2113,18 @@ void CbzReaderActivity::loop() {
     case MappedInputManager::SwipeDir::Down:
       if (viewMode == ViewMode::Landscape)
         handlePageTurn(false, false);
-      else if ((viewMode == ViewMode::Zoom) || currentMaxPanY > 0)
+      else if (viewMode == ViewMode::Zoom)
+        panBy(0, std::max(32, renderer.getScreenHeight() / 2));
+      else if (currentMaxPanY > 0)
         panBy(0, std::max(32, renderer.getScreenHeight() / 3));
       else
         handlePageTurn(false);
       return;
     case MappedInputManager::SwipeDir::Left:
       if (viewMode == ViewMode::Zoom) {
-        panBy(std::max(32, renderer.getScreenWidth() / 3), 0);
+        panBy(std::max(32, renderer.getScreenWidth() / 2), 0);
       } else if (viewMode == ViewMode::Landscape) {
-        panBy(0, std::max(32, renderer.getScreenWidth() / 3));
+        panBy(0, std::max(32, renderer.getScreenWidth() / 2));
       } else if (currentMaxPanX > 0) {
         panBy(std::max(32, renderer.getScreenWidth() / 3), 0);
       } else {
@@ -1777,9 +2133,9 @@ void CbzReaderActivity::loop() {
       return;
     case MappedInputManager::SwipeDir::Right:
       if (viewMode == ViewMode::Zoom) {
-        panBy(-std::max(32, renderer.getScreenWidth() / 3), 0);
+        panBy(-std::max(32, renderer.getScreenWidth() / 2), 0);
       } else if (viewMode == ViewMode::Landscape) {
-        panBy(0, -std::max(32, renderer.getScreenWidth() / 3));
+        panBy(0, -std::max(32, renderer.getScreenWidth() / 2));
       } else if (currentMaxPanX > 0) {
         panBy(-std::max(32, renderer.getScreenWidth() / 3), 0);
       } else {
@@ -1822,28 +2178,62 @@ void CbzReaderActivity::render(RenderLock&&) {
 
   renderer.setDarkMode(SETTINGS.readerDarkMode != 0);
 
+  // Keep the current page visible while onExit() persists Recent, per-book,
+  // and daily reading data, matching the EPUB reader's exit feedback.
+  if (exitHomePending) {
+    if (!exitPopupShown) {
+      GUI.drawPopup(renderer, tr(STR_SAVING_READING_DATA), true);
+      exitPopupShown = true;
+    }
+    return;
+  }
+
+  // Prefetch is synchronous, so give the current page a visible status line
+  // on its own render-task turn before the decoder takes the activity loop.
+  // The next loop pass starts the actual extraction/decode only after this
+  // lightweight refresh has completed.
+  if (prefetchUiPending) {
+    prefetchUiPending = false;
+    prefetchUiRenderArmed = true;
+    if (prefetchUiPage != SIZE_MAX && prefetchUiTotalPages > 0) {
+      const int progress = static_cast<int>(std::min<size_t>(99, (prefetchUiCachedPages * 100) /
+                                                                    prefetchUiTotalPages));
+      bool immediateNextReady = false;
+      if (persistentPageCache && cbz && currentPage < cbz->getPageCount()) {
+        const size_t immediateNext = readingRtl ? (currentPage == 0 ? SIZE_MAX : currentPage - 1)
+                                                : (currentPage + 1 < cbz->getPageCount() ? currentPage + 1 : SIZE_MAX);
+        CbzPageCache::PageInfo immediateNextInfo;
+        immediateNextReady = immediateNext != SIZE_MAX &&
+                             persistentPageCache->isReady(immediateNext, persistentCacheViewMode(), zoomLevel,
+                                                          immediateNextInfo);
+      }
+      const std::string status = immediateNextReady
+                                     ? "> Next ready | preparing " + std::to_string(prefetchUiPage + 1) + "/" +
+                                           std::to_string(prefetchUiTotalPages) + " | cached " +
+                                           std::to_string(prefetchUiCachedPages) + "/" +
+                                           std::to_string(prefetchUiTotalPages)
+                                     : "Preparing next " + std::to_string(prefetchUiPage + 1) + "/" +
+                                           std::to_string(prefetchUiTotalPages) + " | cached " +
+                                           std::to_string(prefetchUiCachedPages) + "/" +
+                                           std::to_string(prefetchUiTotalPages);
+      longOperationIndicator.showBeforeWork("CBZ_PREFETCH", true, status.c_str(), progress);
+      LOG_DBG("CBZPREFETCH", "hardware=%s state=ui_shown page=%lu cached=%lu total=%lu progress=%d",
+              gpio.deviceIsX3() ? "X3" : "X4", static_cast<unsigned long>(prefetchUiPage + 1),
+              static_cast<unsigned long>(prefetchUiCachedPages), static_cast<unsigned long>(prefetchUiTotalPages),
+              progress);
+    } else {
+      longOperationIndicator.showBeforeWork("CBZ_PREFETCH", true);
+    }
+    return;
+  }
+
   // Foreground rendering owns the decoder, PixelCache and staging files. Keep
   // a valid candidate only when this render is the matching page turn; every
   // other render invalidates lookahead before drawing any UI or page content.
   const bool matchingPrefetch = prefetchReady && prefetchPage == currentPage &&
                                 prefetchViewMode == viewMode && prefetchZoomLevel == zoomLevel;
-  const bool waitingForMatchingPrefetch = [&]() {
-    if (!prefetchRunning || !pendingNavigation || pendingNavigationViewMode != viewMode) return false;
-    const bool logicalNextButton = isLogicalNextButton(pendingNavigationButton);
-    if (!logicalNextButton) return false;
-    const size_t target = readingRtl ? (currentPage == 0 ? SIZE_MAX : currentPage - 1) : currentPage + 1;
-    return target != SIZE_MAX && prefetchPage == target && prefetchViewMode == viewMode &&
-           prefetchZoomLevel == zoomLevel;
-  }();
-  if (!matchingPrefetch && !waitingForMatchingPrefetch) cancelPrefetch("foreground_render");
+  if (!matchingPrefetch) cancelPrefetch("foreground_render");
   if (prefetchRunning) {
-    if (waitingForMatchingPrefetch && loadingUiPending) {
-      loadingUiPending = false;
-      loadingUiRenderArmed = true;
-      longOperationIndicator.showBeforeWork("CBZ_RENDER", true);
-      requestUpdate(true);
-      return;
-    }
     LOG_DBG("CBZPREFETCH", "hardware=%s state=blocked reason=foreground_render",
             gpio.deviceIsX3() ? "X3" : "X4");
     LOG_DBG("CBZUI", "waiting_for_prefetch_release page=%lu",
@@ -1879,7 +2269,30 @@ void CbzReaderActivity::render(RenderLock&&) {
     loadingUiPending = false;
     if (cbz->getPageCount() > 0 && currentPage < cbz->getPageCount()) {
       loadingUiRenderArmed = true;
-      longOperationIndicator.showBeforeWork("CBZ_RENDER", true);
+      if (loadingCacheMiss && renderer.hasFrameBuffer()) {
+        renderer.setRenderMode(GfxRenderer::BW);
+        const size_t totalPages = cbz->getPageCount();
+        const bool cacheProgressAvailable = persistentPageCache != nullptr;
+        const size_t cachedPages = cacheProgressAvailable ? persistentPageCache->completedCount() : 0;
+        const int progress = cacheProgressAvailable && totalPages > 0
+                                 ? static_cast<int>(std::min<size_t>(99, (cachedPages * 100) / totalPages))
+                                 : 0;
+        const std::string message = cacheProgressAvailable
+                                        ? "Preparing page " + std::to_string(currentPage + 1) + "/" +
+                                              std::to_string(totalPages) + "\nCached " +
+                                              std::to_string(cachedPages) + "/" + std::to_string(totalPages) +
+                                              " pages\nPlease wait..."
+                                        : "Preparing page " + std::to_string(currentPage + 1) + "/" +
+                                              std::to_string(totalPages) + "\nProcessing on device\nPlease wait...";
+        const Rect popup = GUI.drawPopup(renderer, message.c_str(), true);
+        if (cacheProgressAvailable) GUI.fillPopupProgress(renderer, popup, progress);
+        loadingCachePopupShown = true;
+        LOG_DBG("CBZCACHE", "loading_popup=shown page=%lu cached=%lu total=%lu progress=%d",
+                static_cast<unsigned long>(currentPage + 1), static_cast<unsigned long>(cachedPages),
+                static_cast<unsigned long>(totalPages), progress);
+      } else {
+        longOperationIndicator.showBeforeWork("CBZ_RENDER", true);
+      }
       requestUpdate(true);
       return;
     }
@@ -1895,12 +2308,10 @@ void CbzReaderActivity::render(RenderLock&&) {
     return;
   }
   if (currentPage >= cbz->getPageCount()) {
+    endOfBookOptions.loadOnce(cbz->getPath());
     renderer.clearScreen();
-    renderer.drawCenteredText(UI_12_FONT_ID, renderer.getScreenHeight() / 2, tr(STR_END_OF_BOOK), true,
-                              EpdFontFamily::BOLD);
-    renderStatusBar();
-    ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
-    saveProgress();
+    endOfBookOptions.render(renderer, mappedInput);
+    renderer.displayBuffer();
     return;
   }
 
@@ -1964,13 +2375,31 @@ void CbzReaderActivity::renderPage() {
   bool usingPrefetchedPage = pageSourceNeeded && prefetchReady && prefetchPage == currentPage &&
                              prefetchViewMode == viewMode && prefetchZoomLevel == zoomLevel &&
                              !prefetchImagePath.empty() && !prefetchCachePath.empty();
+  bool persistentCacheHit = false;
+  CbzPageCache::PageInfo persistentCacheInfo;
+  if (!pageLoadFailed && pageSourceNeeded && !forceRenderCacheRebuild && !usingPrefetchedPage && !bwDiagnosticMode &&
+      persistentPageCache && supportsPersistentCacheForViewMode() &&
+      persistentPageCache->isReady(currentPage, persistentCacheViewMode(), zoomLevel, persistentCacheInfo)) {
+    persistentCacheHit = true;
+    cacheOnlyCurrentPage = true;
+    currentCachedWidth = persistentCacheInfo.sourceWidth;
+    currentCachedHeight = persistentCacheInfo.sourceHeight;
+    if (!currentImagePath.empty()) {
+      Storage.remove(currentImagePath.c_str());
+      currentImagePath.clear();
+    }
+    activeRenderCachePath = persistentPageCache->pagePath(currentPage);
+    imagePath.clear();
+    LOG_DBG("CBZCACHE", "persistent=hit page=%lu path=%s", static_cast<unsigned long>(currentPage + 1),
+            persistentPageCache->pagePath(currentPage).c_str());
+  }
   if (usingPrefetchedPage && !Storage.exists(prefetchCachePath.c_str())) {
     LOG_DBG("CBZPREFETCH", "hardware=%s state=skip reason=stale", gpio.deviceIsX3() ? "X3" : "X4");
     cancelPrefetch("stale");
     usingPrefetchedPage = false;
   }
   bool candidateCacheActive = false;
-  if (!pageLoadFailed && (forceRenderCacheRebuild || pageSourceNeeded)) {
+  if (!pageLoadFailed && (forceRenderCacheRebuild || pageSourceNeeded) && !persistentCacheHit) {
     longOperationIndicator.stage("extracting");
     const uint32_t extractStartedMs = millis();
     // Keep the committed cache readable until the candidate page has decoded
@@ -2064,12 +2493,12 @@ void CbzReaderActivity::renderPage() {
     const bool prefetchDimensionsReady = usingPrefetchedPage && currentCachedWidth > 0 && currentCachedHeight > 0;
     const bool activeCacheOnly = cacheOnlyCurrentPage && renderedImagePage == currentPage &&
                                  currentCachedWidth > 0 && currentCachedHeight > 0;
-    const bool cacheOnlyRender = (prefetchDimensionsReady && !candidateImageActive) || activeCacheOnly;
+    const bool cacheOnlyRender = persistentCacheHit || (prefetchDimensionsReady && !candidateImageActive) || activeCacheOnly;
     ImageToFramebufferDecoder* decoder = cacheOnlyRender || imagePath.empty()
                                              ? nullptr
                                              : ImageDecoderFactory::getDecoder(imagePath);
     const uint32_t probeStartedMs = millis();
-    const bool dimensionsReady = (prefetchDimensionsReady || activeCacheOnly)
+    const bool dimensionsReady = (persistentCacheHit || prefetchDimensionsReady || activeCacheOnly)
                                      ? ((imageDimensions.width = currentCachedWidth) > 0 &&
                                         (imageDimensions.height = currentCachedHeight) > 0)
                                      : (decoder && decoder->getDimensions(imagePath, imageDimensions) &&
@@ -2193,7 +2622,9 @@ void CbzReaderActivity::renderPage() {
       renderedHeight = targetHeight;
       // A new page is rendered into a candidate cache. Pan/zoom/mode redraws
       // keep using the committed cache for the current page.
-       if (usingPrefetchedPage) {
+       if (persistentCacheHit) {
+         renderedCachePath = persistentPageCache->pagePath(currentPage);
+       } else if (usingPrefetchedPage) {
          // Keep the exact candidate selected by the prefetch transaction. Do
          // not recompute render.next/render.pending from mutable active state.
          renderedCachePath = prefetchCachePath;
@@ -2340,7 +2771,9 @@ void CbzReaderActivity::renderPage() {
         currentImagePath = candidateImagePath;
       }
     }
-    if (candidateImageActive || (usingPrefetchedPage && cacheOnlyCurrentPage)) renderedImagePage = currentPage;
+    if (candidateImageActive || (usingPrefetchedPage && cacheOnlyCurrentPage) || persistentCacheHit) {
+      renderedImagePage = currentPage;
+    }
     if (usingPrefetchedPage) {
       if (!candidateImageActive && !prefetchImagePath.empty() && prefetchImagePath != currentImagePath &&
           Storage.exists(prefetchImagePath.c_str())) {
@@ -2445,7 +2878,7 @@ void CbzReaderActivity::renderPage() {
   longOperationIndicator.stage("refreshing");
   // Paint the one-shot hint into the refresh that was already required for
   // this page. This adds no separate e-ink update or page-turn delay.
-  longOperationIndicator.drawIfDue();
+  if (!loadingCachePopupShown) longOperationIndicator.drawIfDue();
   const uint32_t refreshStartedMs = millis();
   // Seed the panel's grayscale base with the same device-aware policy used by
   // XTC/EPUB readers.  The normal BW helper is retained as the fallback for a

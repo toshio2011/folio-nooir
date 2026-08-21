@@ -2,7 +2,7 @@
 
 # Folio Nooir
 
-Current release: **v1.5.10** (development).
+Current stable release: **v1.5.10**. Release candidate: **v1.5.11**.
 
 ## Hardware warning
 
@@ -35,6 +35,44 @@ device. The X3 profile also includes simulated tilt testing. Real-device
 testing is still recommended. See the complete [native simulator guide](docs/simulator.md)
 for WSL/Linux setup, build/run commands, controls, virtual SD-card use, and
 troubleshooting.
+
+## v1.5.11 changes
+
+This release candidate builds on the released v1.5.10 baseline. The main
+changes are:
+
+- Persistent CBZ page caching with atomic page publication, manifest
+  validation, cache reuse after leaving and reopening a book, and safe
+  cleanup of incomplete cache files.
+- CBZ background read-ahead of up to three pages on X4 and a conservative
+  one-page lookahead on X3, gated by available memory and reader ownership so
+  foreground reading remains the priority.
+- CBZ cache sharing across Fit Width, Landscape, and Zoom modes, with
+  half-screen pan steps for the larger views. A cache miss shows the current
+  page/progress state instead of silently blocking the reader.
+- Reserved-area cache feedback such as `Preparing page 18/23 | cached 9/23`
+  and `> Next ready`; Next, Back, and Confirm cancel or queue around
+  background work so repeated input does not appear to freeze the device.
+- Explicit cache controls: Reset Progress removes CBZ `progress.bin`; the
+  global Clear Reading Data action remains metadata/progress/statistics
+  cleanup; per-book Clear Reading Cache removes generated reader pages while
+  preserving reading progress.
+- Optional web-transfer normalization of progressive CBZ JPEGs to baseline
+  JPEGs. Baseline JPEGs, PNGs, and other files are left unchanged, so the
+  conversion is only needed for CBZs that show poor grayscale/color output on
+  the device.
+- Clear exit/saving feedback for XTC and CBZ readers, preserved covers when
+  leaving XTC, and end-of-book actions that do not leave the reader appearing
+  unresponsive.
+- More reliable web To-Do and Clock & Weather actions: duplicate saves/syncs
+  are prevented, To-Do refreshes do not interrupt editing, slow network work
+  feeds the watchdog, and a temporary station Wi-Fi loss no longer ends the
+  web session automatically.
+- Power-management transitions now avoid redundant active locks and reduce
+  unnecessary CPU-frequency bouncing while preserving the existing sleep and
+  deep-sleep behavior.
+- Persistent page read-ahead is currently a CBZ feature. EPUB, XTC/XTCH, TXT,
+  and Markdown continue to use their existing reader/cache paths.
 
 ## v1.5.10 changes
 
@@ -136,7 +174,8 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Persistent To-Do List storage at `/.crosspoint/todo.json` with on-device add, edit, delete, reorder, complete, priority, and clear-completed actions.
 - Existing input mappings, themes/settings storage, status-bar controls, localization, and device configuration.
 - Settings Profiles for saving, applying, and deleting named device-setting snapshots without copying reading data.
-- **Clear Reading Cache** clears Recent entries, Book State records, reading statistics, and the Folio shelf snapshot while preserving covers, thumbnails, `metadata.bin`, `book.bin`, bookmarks, clippings, and highlights.
+- **Clear Reading Data** clears Recent entries, Book State records, reading statistics, and the Folio shelf snapshot while preserving covers, thumbnails, `metadata.bin`, `book.bin`, bookmarks, clippings, and highlights.
+- Per-book **Clear Reading Cache** removes that book's generated reader cache while preserving its saved reading position.
 
 ### Folio Nooir bookshelf
 
@@ -153,11 +192,14 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Bookmark, clipping, and highlight managers are available from the home menu and book actions; entries can be reviewed, edited, or deleted, and selecting a bookmark opens its book at the saved location.
 - Automatic movement to Finished when a book reaches 100%.
 - Shelf buttons stay context-aware: Library opens the menu, while Recent and Finished provide direct Library/Recent/Finished navigation without leaving the shelf.
-- Library menu access to Clock & Weather, To-Do List, Reading Statistics, bookmarks, clippings, and Retrieve All Book Details.
+- Library menu access to Clock & Weather, To-Do List, Reading Summary, Reading Calendar, bookmarks, clippings, and Retrieve All Book Details.
 
 ### Reader and typography
 
 - CrossPoint reader engine retained for EPUB, XTC/XTCH, TXT, and Markdown workflows.
+- Direct CBZ reader with ComicInfo.xml metadata, cover/thumbnail caching,
+  bounded archive extraction, Fit Width/Fit Page/Landscape/Zoom, page picker,
+  RTL/LTR navigation, bookmarks, cache replay, and responsive read-ahead.
 - Improved EPUB CSS handling, HTML tables/cells, images, metadata, and memory safety.
 - EPUB formatting now includes optional paragraph indents, improved lists/tables and `<hr>` separators, lightweight strikethrough/redaction handling, and Reader Guide Dots. These changes stay in the existing parser/render path and do not replace the image pipeline.
 - Large images are fitted to the display instead of producing empty squares where possible.
@@ -255,7 +297,7 @@ paragraph position used as a fallback when needed.
 - Persistent page-turn counts for each book and recorded day, plus pages-per-minute pace.
 - Current and best consecutive reading-day streaks.
 - On-device book statistics from the long-press menu.
-- Overall reading statistics from the Recent menu.
+- Reading Summary from the home/Library menu.
 - On-device reading calendar showing the last 30 recorded days.
 - Web statistics cards and JSON export include pages, pace, streaks, and daily page counts.
 - The on-device summary includes total time, sessions, average session, pages, pace, streaks, book states, today, and recent recorded days.
@@ -274,12 +316,20 @@ When the device is connected to the same network, the built-in web interface pro
 - Reset-reading-data action and JSON statistics export.
 - Clock/weather card with editable location coordinates, Celsius/Fahrenheit choice, last-sync status, cached conditions, and a one-shot Sync now action.
 - On-device Clock & Weather status page from the home menu, including cached clock/date/weather information and a one-shot refresh button.
-- To-Do List page at `/todo`, synchronized with the device list and supporting quick add, edit, complete, reorder, delete, and clear-completed actions.
+- To-Do List page at `/todo`, synchronized with the device list and supporting quick add, edit, complete, reorder, delete, and clear-completed actions. Saves are guarded against duplicates and refreshes pause while the user is editing.
 - Web metadata editing for title, author, synopsis, status, progress, start date, and finish date without rewriting the original book file.
 - The web statistics JSON includes daily page counts, current/best streaks, and total pages for external tools.
 - File browsing, image preview, upload, download, rename, move, delete, and folder creation.
+- Transfer-page optimization for EPUBs and opt-in progressive-CBZ-JPEG
+  normalization, with guidance on when conversion is useful and when a normal
+  transfer is sufficient.
 - Existing CrossPoint settings, Wi-Fi, OPDS, font, and typography pages.
-- Network activities keep their existing behavior and are entered without an unconditional reboot; memory-heavy cleanup is performed when leaving the activity.
+- Clock & Weather sync reports progress and prevents duplicate requests; a
+  device-started sync may release Wi-Fi when it finishes, while web mode keeps
+  the current session alive through temporary station-Wi-Fi loss.
+- Network activities keep their existing behavior and are entered without an
+  unconditional reboot; memory-heavy cleanup is performed when leaving the
+  activity.
 
 ### Sleep and display
 

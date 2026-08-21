@@ -57,11 +57,13 @@ class LongOperationIndicator final {
   void stage(const char* stageName);
 
   // Show the existing page with a single static loading line before a
-  // synchronous reader operation starts. The caller then schedules the real
-  // render on the next event-loop turn. This never allocates a second page
+  // synchronous reader operation starts. An optional compact status string
+  // and progress bar are used by CBZ prefetch. The caller then schedules the
+  // real work on the next event-loop turn. This never allocates a second page
   // buffer or starts an animation; allowRefresh lets a device profile opt out
   // if its display cannot safely accept the extra FAST_REFRESH.
-  bool showBeforeWork(const char* operation, bool allowRefresh = true);
+  bool showBeforeWork(const char* operation, bool allowRefresh = true, const char* statusText = nullptr,
+                      int progress = -1);
 
   // Call immediately before an existing reader refresh. At most one thin line
   // is painted per operation, and only after the threshold has elapsed. This

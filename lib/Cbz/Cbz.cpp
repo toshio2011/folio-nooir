@@ -13,6 +13,7 @@
 #include <functional>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 #include <utility>
 
 #include "../../src/util/CbzDiagnostics.h"
@@ -130,6 +131,19 @@ bool isUsableThumbnail(const std::string& path) {
                       signature[0] == 'B' && signature[1] == 'M';
   file.close();
   return header;
+}
+
+bool isReaderCacheFile(const char* name) {
+  if (!name) return false;
+  const std::string value(name);
+  if (value == "page_cache.bin" || value == "page_cache.bin.tmp" || value == "render.pxc" ||
+      value == "render.next.pxc" || value == "render.pending.pxc") {
+    return true;
+  }
+  if (value.rfind("prefetch_", 0) == 0) return true;
+  if (value.rfind("page_", 0) != 0) return false;
+  return value.size() > 4 && (value.rfind(".pxc") == value.size() - 4 ||
+                              value.rfind(".pxc.tmp") == value.size() - 8);
 }
 }  // namespace
 
@@ -471,9 +485,10 @@ bool Cbz::saveMetadataCache() const {
 bool Cbz::clearCache() const {
   if (!Storage.exists(cachePath.c_str())) return true;
 
-  // Keep the generated shelf thumbnail: it is a persistent presentation
-  // asset, not reader state. Only metadata and session/rebuildable files are
-  // cleared here; the caller restores progress separately when requested.
+  // Keep the generated shelf thumbnail and progress.bin: the former is a
+  // persistent presentation asset, while the cache utility restores the
+  // latter after this operation. Reader page caches are deliberately removed
+  // here so an explicit cache rebuild cannot replay an old render algorithm.
   const char* transientFiles[] = {"/metadata.bin", "/metadata.bin.tmp", "/current.jpg", "/current.jpeg",
                                   "/current.png", "/thumb_source.jpg", "/thumb_source.jpeg", "/thumb_source.png",
                                   "/render.pxc"};
@@ -484,6 +499,26 @@ bool Cbz::clearCache() const {
       LOG_DBG("CBZCACHE", "action=remove reason=clear_cache path=\"%s\"", path.c_str());
       if (!Storage.remove(path.c_str())) ok = false;
     }
+  }
+
+  std::vector<std::string> readerCacheFiles;
+  HalFile directory = Storage.open(cachePath.c_str());
+  if (directory && directory.isDirectory()) {
+    directory.rewindDirectory();
+    for (HalFile entry = directory.openNextFile(); entry; entry = directory.openNextFile()) {
+      char name[96]{};
+      entry.getName(name, sizeof(name));
+      const bool remove = !entry.isDirectory() && isReaderCacheFile(name);
+      entry.close();
+      if (remove) readerCacheFiles.emplace_back(name);
+    }
+    directory.close();
+  }
+  for (const auto& name : readerCacheFiles) {
+    const std::string path = cachePath + "/" + name;
+    if (!Storage.exists(path.c_str())) continue;
+    LOG_DBG("CBZCACHE", "action=remove reason=clear_reader_cache path=\"%s\"", path.c_str());
+    if (!Storage.remove(path.c_str())) ok = false;
   }
   return ok;
 }
@@ -597,12 +632,14 @@ bool Cbz::extractPage(const size_t index, std::string& outputPath) const {
   return extractEntry(pageEntries[index], outputPath);
 }
 
-bool Cbz::extractPageTo(const size_t index, const std::string& outputPath) const {
+bool Cbz::extractPageTo(const size_t index, const std::string& outputPath, const AbortCallback abortCallback,
+                        void* const abortContext) const {
   if (!loaded || index >= pageEntries.size() || outputPath.empty()) return false;
-  return extractEntryToPath(pageEntries[index], outputPath);
+  return extractEntryToPath(pageEntries[index], outputPath, abortCallback, abortContext);
 }
 
-bool Cbz::extractEntryToPath(const std::string& entry, const std::string& outputPath) const {
+bool Cbz::extractEntryToPath(const std::string& entry, const std::string& outputPath,
+                             const AbortCallback abortCallback, void* const abortContext) const {
   const size_t dot = entry.find_last_of('.');
   if (dot == std::string::npos) return false;
   const std::string ext = lowerCopy(std::string_view(entry).substr(dot));
@@ -633,14 +670,19 @@ bool Cbz::extractEntryToPath(const std::string& entry, const std::string& output
     zip.close();
     return false;
   }
-  const bool streamed = zip.readFileToStream(entry.c_str(), output, STREAM_CHUNK_SIZE);
+  const bool streamed = zip.readFileToStream(entry.c_str(), output, STREAM_CHUNK_SIZE, false, abortCallback,
+                                             abortContext);
   output.flush();
   output.close();
   zip.close();
   if (!streamed) {
     LOG_DBG("CBZCACHE", "action=remove reason=extract_failed path=\"%s\"", outputPath.c_str());
     Storage.remove(outputPath.c_str());
-    LOG_ERR("CBZ", "Could not extract page: %s", entry.c_str());
+    if (abortCallback && abortCallback(abortContext)) {
+      LOG_DBG("CBZ", "Extraction cancelled: %s", entry.c_str());
+    } else {
+      LOG_ERR("CBZ", "Could not extract page: %s", entry.c_str());
+    }
     return false;
   }
 

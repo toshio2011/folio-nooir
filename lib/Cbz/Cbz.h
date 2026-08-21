@@ -15,6 +15,8 @@
  */
 class Cbz {
  public:
+  using AbortCallback = bool (*)(void* context);
+
   struct Metadata {
     std::string title;
     std::string series;
@@ -63,7 +65,8 @@ class Cbz {
   // Extract an archive image to a caller-selected transient path.  Reader
   // pages use current.* while shelf thumbnails use thumb_source.* so cover
   // generation can never remove the page that an active reader is using.
-  bool extractEntryToPath(const std::string& entry, const std::string& outputPath) const;
+  bool extractEntryToPath(const std::string& entry, const std::string& outputPath,
+                          AbortCallback abortCallback = nullptr, void* abortContext = nullptr) const;
   bool extractEntry(const std::string& entry, std::string& outputPath) const;
 
  public:
@@ -102,7 +105,8 @@ class Cbz {
   // touching the reader's current.* page. Readers use this for atomic page
   // transitions so a failed next-page extraction cannot destroy the page
   // currently being displayed.
-  bool extractPageTo(size_t index, const std::string& outputPath) const;
+  bool extractPageTo(size_t index, const std::string& outputPath, AbortCallback abortCallback = nullptr,
+                     void* abortContext = nullptr) const;
 
   bool isLoaded() const { return loaded; }
   bool pageIndexTooLarge() const { return pageIndexLimitExceeded; }

@@ -8,6 +8,8 @@
 #include <functional>
 #include <string>
 
+#include <TaskWatchdog.h>
+
 #if defined(FREEINK_NET_WOLFSSL)
 #include <SecureHttpClient.h>
 
@@ -71,6 +73,7 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
     LOG_DBG("HTTP", "wolfSSL GET: %s", url.c_str());
     const int status = http.GET(
         [&http, &sink](const uint8_t* data, size_t len) {
+          resetTaskWatchdogIfSubscribed();
           if (http.getStatus() != 200) return true;
           if (sink.total == 0 && http.hasContentLength()) sink.total = http.getContentLength();
           if (!sink.write(data, len)) return false;
@@ -191,6 +194,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   }
 
   while (true) {
+    resetTaskWatchdogIfSubscribed();
     if (sink.cancelFlag && *sink.cancelFlag) {
       esp_http_client_cleanup(client);
       return HttpDownloader::ABORTED;

@@ -847,7 +847,7 @@ void FolioLibraryActivity::cancelRetrieveAllBooks() {
 
 void FolioLibraryActivity::showMenu() {
   std::vector<std::string> options = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), tr(STR_CLOCK_WEATHER),
-                                      tr(STR_TODO_LIST), "Reading Statistics", "Reading Stats",
+                                      tr(STR_TODO_LIST), tr(STR_LONG_PWR_READING_STATS), tr(STR_READING_STATS),
                                       "Retrieve All Book Details", "Bookmarks (all books)", "Clippings (all books)",
                                       searchQuery.empty() ? std::string(tr(STR_SEARCH))
                                                           : std::string(tr(STR_CLEAR_BUTTON)) + " " + tr(STR_SEARCH),
@@ -1038,7 +1038,8 @@ void FolioLibraryActivity::showBookActions() {
   const std::string selectedPath = fullPath(selectorIndex);
   std::vector<std::string> actions = {tr(STR_OPEN), tr(STR_MARK_READING), tr(STR_MARK_ON_HOLD), tr(STR_FINISHED),
                                       tr(STR_RESET_PROGRESS), tr(STR_REFRESH_BOOK_CACHE),
-                                      tr(STR_READ_FULL_SYNOPSIS), "Book Statistics"};
+                                      tr(STR_DELETE_CACHE), tr(STR_READ_FULL_SYNOPSIS),
+                                      tr(STR_BOOK_STATISTICS)};
   if (FsHelpers::hasEpubExtension(selectedPath)) {
     actions.emplace_back(tr(STR_BOOKMARKS));
     actions.emplace_back(tr(STR_CLIPPINGS));
@@ -1071,6 +1072,7 @@ void FolioLibraryActivity::showBookActions() {
       preview.progressPercent = 100;
     } else if (action == 4) {
       BOOK_STATES.reset(path);
+      resetBookProgress(path);
       RECENT_BOOKS.recordReading(path, 0, 0);
       preview.progressPercent = 0;
     } else if (action == 5) {
@@ -1090,15 +1092,18 @@ void FolioLibraryActivity::showBookActions() {
       forceMetadataRefresh = true;
       forceMetadataRefreshIndex = selectorIndex;
     } else if (action == 6) {
+      // Preserve progress, but force CBZ reader pages to be rebuilt.
+      clearBookCache(path);
+    } else if (action == 7) {
       startActivityForResult(
           std::make_unique<SynopsisActivity>(renderer, mappedInput, preview.title, preview.author, preview.synopsis,
                                              path),
           nullptr);
       return;
-    } else if (action == 7) {
+    } else if (action == 8) {
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, path), nullptr);
       return;
-    } else if (action == 8 && FsHelpers::hasEpubExtension(path)) {
+    } else if (action == 9 && FsHelpers::hasEpubExtension(path)) {
       startActivityForResult(
           std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, path),
           [this](const ActivityResult& result) {
@@ -1109,7 +1114,7 @@ void FolioLibraryActivity::showBookActions() {
             }
           });
       return;
-    } else if (action == 9 && FsHelpers::hasEpubExtension(path)) {
+    } else if (action == 10 && FsHelpers::hasEpubExtension(path)) {
       startActivityForResult(
           std::make_unique<EpubReaderClippingListActivity>(renderer, mappedInput, path, preview.title), nullptr);
       return;
