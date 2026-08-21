@@ -12,7 +12,8 @@ history, decisions, and feature inventory.
 - The 1.5.10 baseline uses the Nooir-specific FreeInk commit
   `958720659ea289ae325e83db20049d0ea844800d` (`9587206`).
 - The local README now inventories the current 1.5.11 release-candidate
-  features. No remote README branch was changed by this documentation pass.
+  features. The separate `codex/folio-nooir` documentation branch was updated
+  with the same README in remote commit `a6046870`.
 - The default PlatformIO environment now builds successfully after the shared
   watchdog header fix. No simulator run, flashing, tag, or GitHub Release has
   been performed for the current development source.

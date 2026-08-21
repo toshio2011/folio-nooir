@@ -39,8 +39,8 @@ Parent repository:
   CBZ/EPUB reader work, and README updates.
 
 The repository's GitHub default branch is currently `codex/folio-nooir`, not
-`main`. This local documentation pass does not update or push that remote
-branch. Verify the remote branch before assuming its tip or content.
+`main`. Its README was updated separately with the current feature inventory
+in remote commit `a6046870`; source changes remain on the development branch.
 
 Nested `freeink-sdk`:
 
