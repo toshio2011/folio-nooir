@@ -96,6 +96,7 @@ class RecentBooksActivity final : public Activity {
   bool usesFourByTwoGrid() const;
   int activePageItems() const;
   void renderCarousel(bool threeCover);
+  void renderFolioCarouselShelf(int shelfTop, int shelfHeight, bool threeCover);
 
   // Show an OK/Cancel prompt to remove the given book from the Recent Books list.
   void promptRemoveBook(const std::string& path, const std::string& title);

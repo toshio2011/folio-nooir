@@ -145,4 +145,84 @@ inline std::array<CoverStackSlot, 5> layoutThree(const int screenWidth, const si
   return slots;
 }
 
+// Folio Nooir keeps its Featured Book and summary strip on screen, so its
+// Carousel occupies only the existing book-presentation region. The same
+// perspective and wrapped-slot rules are reused with dimensions derived from
+// that region instead of the independent full-screen Carousel geometry.
+inline std::array<CoverStackSlot, 5> layoutFolioShelf(const int screenWidth, const int shelfTop,
+                                                      const int shelfHeight, const size_t itemCount,
+                                                      const size_t selectedIndex, const bool threeCover) {
+  std::array<CoverStackSlot, 5> slots{};
+  if (screenWidth <= 0 || shelfHeight <= 0 || itemCount == 0) return slots;
+
+  const size_t selected = std::min(selectedIndex, itemCount - 1);
+  const int verticalPadding = std::min(8, std::max(3, shelfHeight / 12));
+  const int heroHeight = std::max(40, shelfHeight - verticalPadding * 2);
+  const int centerWidth = std::min(heroHeight * 2 / 3, std::max(40, screenWidth - 20));
+  const int centerX = (screenWidth - centerWidth) / 2;
+  const int centerY = shelfTop + (shelfHeight - heroHeight) / 2;
+  const int nearWidth = threeCover ? std::max(28, centerWidth * 2 / 5) : std::max(24, centerWidth / 3);
+  const int farWidth = std::max(22, nearWidth * 3 / 4);
+  const int nearExposure = std::max(18, nearWidth * 2 / 3);
+  const int farExposure = std::max(14, farWidth / 2);
+  const int nearLeftX = centerX - nearExposure;
+  const int nearRightX = screenWidth - nearLeftX - nearWidth;
+  const int farLeftX = nearLeftX - farExposure;
+  const int farRightX = screenWidth - farLeftX - farWidth;
+  const int nearOuterHeight = heroHeight * (threeCover ? 70 : 64) / 100;
+  const int nearInnerHeight = heroHeight * (threeCover ? 80 : 72) / 100;
+  const int farOuterHeight = heroHeight * 55 / 100;
+  const int farInnerHeight = heroHeight * 64 / 100;
+  const int sideY = shelfTop + (shelfHeight - nearInnerHeight) / 2;
+
+  const auto makeSlot = [&](const int x, const int width, const int leftHeight, const int rightHeight,
+                            const uint8_t depth, const size_t itemIndex, const bool valid) {
+    return CoverStackSlot{valid, itemIndex, depth, CoverStackRect{x, sideY, width, std::max(leftHeight, rightHeight)},
+                          leftHeight, rightHeight};
+  };
+
+  // A single book must remain a single center cover. In particular, do not
+  // use wrapped neighbors here because that would render the same book three
+  // times in a small Folio shelf.
+  if (itemCount == 1) {
+    slots[4] = CoverStackSlot{true, selected, 0, CoverStackRect{centerX, centerY, centerWidth, heroHeight},
+                              heroHeight, heroHeight};
+    return slots;
+  }
+
+  if (threeCover) {
+    if (itemCount == 2) {
+      slots[0] = makeSlot(nearLeftX, nearWidth, nearOuterHeight, nearInnerHeight, 1, 0, selected == 1);
+      slots[1] = makeSlot(nearRightX, nearWidth, nearInnerHeight, nearOuterHeight, 1, 1, selected == 0);
+    } else {
+      slots[0] = makeSlot(nearLeftX, nearWidth, nearOuterHeight, nearInnerHeight, 1,
+                          wrappedIndex(selected, -1, itemCount), true);
+      slots[1] = makeSlot(nearRightX, nearWidth, nearInnerHeight, nearOuterHeight, 1,
+                          wrappedIndex(selected, 1, itemCount), true);
+    }
+  } else if (itemCount == 2) {
+    slots[2] = makeSlot(nearLeftX, nearWidth, nearOuterHeight, nearInnerHeight, 1, 0, selected == 1);
+    slots[3] = makeSlot(nearRightX, nearWidth, nearInnerHeight, nearOuterHeight, 1, 1, selected == 0);
+  } else if (itemCount == 3) {
+    slots[2] = makeSlot(nearLeftX, nearWidth, nearOuterHeight, nearInnerHeight, 1,
+                        wrappedIndex(selected, -1, itemCount), true);
+    slots[3] = makeSlot(nearRightX, nearWidth, nearInnerHeight, nearOuterHeight, 1,
+                        wrappedIndex(selected, 1, itemCount), true);
+  } else {
+    const size_t farLeftIndex = wrappedIndex(selected, -2, itemCount);
+    const size_t nearLeftIndex = wrappedIndex(selected, -1, itemCount);
+    const size_t nearRightIndex = wrappedIndex(selected, 1, itemCount);
+    const size_t farRightIndex = wrappedIndex(selected, 2, itemCount);
+    slots[0] = makeSlot(farLeftX, farWidth, farOuterHeight, farInnerHeight, 2, farLeftIndex, true);
+    slots[1] = makeSlot(farRightX, farWidth, farInnerHeight, farOuterHeight, 2, farRightIndex,
+                        farRightIndex != farLeftIndex);
+    slots[2] = makeSlot(nearLeftX, nearWidth, nearOuterHeight, nearInnerHeight, 1, nearLeftIndex, true);
+    slots[3] = makeSlot(nearRightX, nearWidth, nearInnerHeight, nearOuterHeight, 1, nearRightIndex, true);
+  }
+
+  slots[4] = CoverStackSlot{true, selected, 0, CoverStackRect{centerX, centerY, centerWidth, heroHeight},
+                            heroHeight, heroHeight};
+  return slots;
+}
+
 }  // namespace CoverStackGeometry

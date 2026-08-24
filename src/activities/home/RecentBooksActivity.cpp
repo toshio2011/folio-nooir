@@ -730,6 +730,7 @@ void RecentBooksActivity::loop() {
   const int pageItems = activePageItems();
   const auto& metrics = UITheme::getInstance().getMetrics();
   const bool carouselTheme = usesCarouselLayout();
+  const bool standaloneCarousel = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::CAROUSEL;
   const bool snapshotLayout = usesFourByTwoGrid();
   const bool threeCoverGrid = usesThreeCoverGrid();
   FolioShelfLayout layout{};
@@ -922,24 +923,32 @@ void RecentBooksActivity::loop() {
   int touchX = 0;
   int touchY = 0;
   if (carouselTheme) {
-    const int synopsisLineHeight = std::max(1, renderer.getLineHeight(SMALL_FONT_ID));
-    int synopsisLineCount = 5;
-    if (visibleBookCount > 0) {
-      const RecentBook& layoutSelected = recentBooks[selectedRecentIndex()];
-      const std::string layoutSynopsisPreview = SynopsisPreview::firstWords(layoutSelected.synopsis);
-      const char* layoutSynopsisText =
-          layoutSynopsisPreview.empty() ? tr(STR_NO_SYNOPSIS) : layoutSynopsisPreview.c_str();
-      const auto layoutSynopsisLines =
-          renderer.wrappedText(SMALL_FONT_ID, layoutSynopsisText, std::max(1, renderer.getScreenWidth() - 48), 5);
-      synopsisLineCount = std::clamp(static_cast<int>(layoutSynopsisLines.size()), 1, 5);
+    std::array<CoverStackSlot, 5> stackSlots{};
+    if (standaloneCarousel) {
+      const int synopsisLineHeight = std::max(1, renderer.getLineHeight(SMALL_FONT_ID));
+      int synopsisLineCount = 5;
+      if (visibleBookCount > 0) {
+        const RecentBook& layoutSelected = recentBooks[selectedRecentIndex()];
+        const std::string layoutSynopsisPreview = SynopsisPreview::firstWords(layoutSelected.synopsis);
+        const char* layoutSynopsisText =
+            layoutSynopsisPreview.empty() ? tr(STR_NO_SYNOPSIS) : layoutSynopsisPreview.c_str();
+        const auto layoutSynopsisLines =
+            renderer.wrappedText(SMALL_FONT_ID, layoutSynopsisText, std::max(1, renderer.getScreenWidth() - 48), 5);
+        synopsisLineCount = std::clamp(static_cast<int>(layoutSynopsisLines.size()), 1, 5);
+      }
+      static const CarouselTheme carouselPresentation;
+      const auto carouselLayout = carouselPresentation.carouselLayout(renderer, synopsisLineCount, synopsisLineHeight);
+      stackSlots = activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_THREE_COVER_CAROUSEL
+                       ? CoverStackGeometry::layoutThree(renderer.getScreenWidth(), visibleBookCount,
+                                                         selectorIndex, carouselLayout.centerHeight)
+                       : CoverStackGeometry::layout(renderer.getScreenWidth(), visibleBookCount, selectorIndex,
+                                                    carouselLayout.centerHeight);
+    } else {
+      stackSlots = CoverStackGeometry::layoutFolioShelf(renderer.getScreenWidth(), layout.gridTop, layout.gridHeight,
+                                                        visibleBookCount, selectorIndex,
+                                                        activeBookLayout() ==
+                                                            CrossPointSettings::FOLIO_LAYOUT_THREE_COVER_CAROUSEL);
     }
-    static const CarouselTheme carouselPresentation;
-    const auto carouselLayout = carouselPresentation.carouselLayout(renderer, synopsisLineCount, synopsisLineHeight);
-    const auto stackSlots = activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_THREE_COVER_CAROUSEL
-                                ? CoverStackGeometry::layoutThree(renderer.getScreenWidth(), visibleBookCount,
-                                                                  selectorIndex, carouselLayout.centerHeight)
-                                : CoverStackGeometry::layout(renderer.getScreenWidth(), visibleBookCount, selectorIndex,
-                                                             carouselLayout.centerHeight);
     if (mappedInput.wasScreenTouchDown(touchX, touchY)) {
       if (touchY >= metrics.topPadding && touchY < layout.contentTop) {
         const uint8_t touchedTab =
@@ -1468,6 +1477,98 @@ void RecentBooksActivity::renderCarousel(const bool threeCover) {
   snapshotRestored = false;
 }
 
+void RecentBooksActivity::renderFolioCarouselShelf(const int shelfTop, const int shelfHeight,
+                                                    const bool threeCover) {
+  if (shelfHeight <= 0) return;
+
+  const int pageWidth = renderer.getScreenWidth();
+  renderer.fillRect(0, shelfTop, pageWidth, shelfHeight, false);
+  if (visibleBookCount == 0) return;
+
+  // This renderer deliberately uses the Folio shelf bounds only. The
+  // independent Carousel theme keeps its own full-screen title, synopsis,
+  // status, and button layout in renderCarousel().
+  static const FolioNooirTheme folioPresentation;
+  const auto stackSlots = CoverStackGeometry::layoutFolioShelf(pageWidth, shelfTop, shelfHeight,
+                                                                visibleBookCount, selectorIndex, threeCover);
+
+  auto drawCoverOutline = [this](const CoverStackSlot& stackSlot) {
+    const auto& rect = stackSlot.rect;
+    const int maxHeight = std::max(stackSlot.leftHeight, stackSlot.rightHeight);
+    const int rightX = rect.x + rect.width - 1;
+    const int leftTop = rect.y + (maxHeight - stackSlot.leftHeight) / 2;
+    const int rightTop = rect.y + (maxHeight - stackSlot.rightHeight) / 2;
+    const int leftBottom = leftTop + stackSlot.leftHeight - 1;
+    const int rightBottom = rightTop + stackSlot.rightHeight - 1;
+    renderer.drawLine(rect.x, leftTop, rightX, rightTop);
+    renderer.drawLine(rightX, rightTop, rightX, rightBottom);
+    renderer.drawLine(rightX, rightBottom, rect.x, leftBottom);
+    renderer.drawLine(rect.x, leftBottom, rect.x, leftTop);
+  };
+
+  auto drawCover = [this, &drawCoverOutline](const RecentBook& book, const CoverStackSlot& stackSlot) {
+    const auto& rect = stackSlot.rect;
+    const int maxHeight = std::max(stackSlot.leftHeight, stackSlot.rightHeight);
+    const int fallbackWidth = std::max(1, std::min(rect.width, maxHeight * 2 / 3));
+    auto drawBitmap = [this, &rect, &stackSlot](const std::string& path) {
+      HalFile file;
+      if (path.empty() || !Storage.openFileForRead("SHELF", path, file)) return false;
+      Bitmap bitmap(file);
+      if (bitmap.parseHeaders() != BmpReaderError::Ok || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) {
+        return false;
+      }
+      return renderer.drawPerspectiveBitmap(bitmap, rect.x, rect.y, rect.width, stackSlot.leftHeight,
+                                            stackSlot.rightHeight);
+    };
+
+    // Only the selected shelf cover may use the prepared HQ thumbnail. Side
+    // covers remain on the existing 220px cache and navigation never creates
+    // a missing HQ file synchronously.
+    if (stackSlot.depth == 0 && !book.coverBmpPath.empty()) {
+      const std::string hqPath = UITheme::getCoverThumbPath(book.coverBmpPath, CAROUSEL_HQ_COVER_HEIGHT);
+      if (isValidBookThumbnail(hqPath) && drawBitmap(hqPath)) {
+        drawCoverOutline(stackSlot);
+        return;
+      }
+    }
+
+    const std::string path = UITheme::getCoverThumbPath(book.coverBmpPath, FolioNooirTheme::COVER_HEIGHT);
+    if (drawBitmap(path)) {
+      drawCoverOutline(stackSlot);
+      return;
+    }
+
+    const int rightX = rect.x + rect.width - 1;
+    const int leftTop = rect.y + (maxHeight - stackSlot.leftHeight) / 2;
+    const int rightTop = rect.y + (maxHeight - stackSlot.rightHeight) / 2;
+    const int leftBottom = leftTop + stackSlot.leftHeight - 1;
+    const int rightBottom = rightTop + stackSlot.rightHeight - 1;
+    const int silhouetteX[] = {rect.x, rightX, rightX, rect.x};
+    const int silhouetteY[] = {leftTop, rightTop, rightBottom, leftBottom};
+    renderer.fillPolygon(silhouetteX, silhouetteY, 4, false);
+    drawCoverOutline(stackSlot);
+    const int coverX = rect.x + (rect.width - fallbackWidth) / 2;
+    const std::string placeholder = renderer.truncatedText(UI_10_FONT_ID, book.title.c_str(),
+                                                            std::max(1, fallbackWidth - 10));
+    renderer.drawText(UI_10_FONT_ID, coverX + 5, rect.y + maxHeight / 2, placeholder.c_str());
+  };
+
+  // CoverStackGeometry returns rear-to-front order; drawing in that order
+  // keeps every nearer silhouette/bitmap opaque over the covers behind it.
+  for (const auto& stackSlot : stackSlots) {
+    if (!stackSlot.valid) continue;
+    const RecentBook& book = recentBooks[visibleBookIndexes[stackSlot.itemIndex]];
+    drawCover(book, stackSlot);
+    folioPresentation.drawCoverProgressBadge(renderer, stackSlot.rect.x, stackSlot.rect.y,
+                                             stackSlot.rect.width, stackSlot.rect.height, book.progressPercent);
+  }
+
+  const auto& center = stackSlots.back();
+  if (center.valid) {
+    renderer.drawRect(center.rect.x - 3, center.rect.y - 3, center.rect.width + 6, center.rect.height + 6);
+  }
+}
+
 void RecentBooksActivity::render(RenderLock&&) {
   // Keep the Folio bookshelf's featured book and 4x2 grid typography fixed;
   // UI Scale applies to the surrounding application screens instead.
@@ -1484,7 +1585,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     initialRenderPending = true;
   }
 
-  if (usesCarouselLayout()) {
+  if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::CAROUSEL) {
     renderer.clearScreen();
     renderCarousel(activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_THREE_COVER_CAROUSEL);
     return;
@@ -1717,34 +1818,39 @@ void RecentBooksActivity::render(RenderLock&&) {
     if (fill > 0) renderer.fillRect(detailX + 1, progressY + 1, fill, 10);
     renderer.drawLine(0, contentTop + detailHeight - 1, pageWidth - 1, contentTop + detailHeight - 1);
 
-    const int columns = threeCoverGrid ? 3 : layout.columns;
-    const int gap = threeCoverGrid ? 10 : layout.gridGap;
-    const int gridTop = layout.gridTop;
-    const int gridHeight = layout.gridHeight;
-    const int cardWidth = threeCoverGrid ? (pageWidth - gap * (columns + 1)) / columns : layout.cardWidth;
-    const int cardHeight = threeCoverGrid ? gridHeight : layout.cardHeight;
-    const size_t pageStart = (selectorIndex / gridPageItems) * gridPageItems;
-    if (threeCoverGrid) renderer.fillRect(0, gridTop, pageWidth, gridHeight, false);
-    for (int slot = 0; slot < gridPageItems; ++slot) {
-      const size_t index = pageStart + static_cast<size_t>(slot);
-      if (index >= visibleBookCount) break;
-      const RecentBook& book = recentBooks[visibleBookIndexes[index]];
-      const int x = gap + (slot % columns) * (cardWidth + gap);
-      const int y = threeCoverGrid
-                        ? gridTop + std::max(0, (gridHeight - std::min(gridHeight - 20, cardWidth * 3 / 2)) / 2)
-                        : gridTop + (slot / columns) * cardHeight;
-      const int coverHeight = threeCoverGrid
-                                  ? std::min(gridHeight - 20, cardWidth * 3 / 2)
-                                  : std::max(40, std::min(cardHeight - 27, cardWidth * 3 / 2));
-      if (!threeCoverGrid) {
-        renderer.fillRect(x, y + coverHeight, cardWidth, std::max(1, cardHeight - coverHeight), false);
+    if (usesCarouselLayout()) {
+      renderFolioCarouselShelf(layout.gridTop, layout.gridHeight,
+                               activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_THREE_COVER_CAROUSEL);
+    } else {
+      const int columns = threeCoverGrid ? 3 : layout.columns;
+      const int gap = threeCoverGrid ? 10 : layout.gridGap;
+      const int gridTop = layout.gridTop;
+      const int gridHeight = layout.gridHeight;
+      const int cardWidth = threeCoverGrid ? (pageWidth - gap * (columns + 1)) / columns : layout.cardWidth;
+      const int cardHeight = threeCoverGrid ? gridHeight : layout.cardHeight;
+      const size_t pageStart = (selectorIndex / gridPageItems) * gridPageItems;
+      if (threeCoverGrid) renderer.fillRect(0, gridTop, pageWidth, gridHeight, false);
+      for (int slot = 0; slot < gridPageItems; ++slot) {
+        const size_t index = pageStart + static_cast<size_t>(slot);
+        if (index >= visibleBookCount) break;
+        const RecentBook& book = recentBooks[visibleBookIndexes[index]];
+        const int x = gap + (slot % columns) * (cardWidth + gap);
+        const int y = threeCoverGrid
+                          ? gridTop + std::max(0, (gridHeight - std::min(gridHeight - 20, cardWidth * 3 / 2)) / 2)
+                          : gridTop + (slot / columns) * cardHeight;
+        const int coverHeight = threeCoverGrid
+                                    ? std::min(gridHeight - 20, cardWidth * 3 / 2)
+                                    : std::max(40, std::min(cardHeight - 27, cardWidth * 3 / 2));
+        if (!threeCoverGrid) {
+          renderer.fillRect(x, y + coverHeight, cardWidth, std::max(1, cardHeight - coverHeight), false);
+        }
+        const bool refreshCard = !renderedFromSnapshot || (manualSingleRefresh && index == selectorIndex);
+        drawCover(book, x, y, cardWidth, coverHeight, refreshCard, false);
+        folioTheme.drawCoverProgressBadge(renderer, x, y, cardWidth, coverHeight, book.progressPercent);
       }
-      const bool refreshCard = !renderedFromSnapshot || (manualSingleRefresh && index == selectorIndex);
-      drawCover(book, x, y, cardWidth, coverHeight, refreshCard, false);
-      folioTheme.drawCoverProgressBadge(renderer, x, y, cardWidth, coverHeight, book.progressPercent);
+      const size_t pageCount = (visibleBookCount + gridPageItems - 1) / gridPageItems;
+      folioTheme.drawPageIndicator(renderer, layout, selectorIndex / gridPageItems + 1, pageCount);
     }
-    const size_t pageCount = (visibleBookCount + gridPageItems - 1) / gridPageItems;
-    folioTheme.drawPageIndicator(renderer, layout, selectorIndex / gridPageItems + 1, pageCount);
 
   }
   drawStats();
