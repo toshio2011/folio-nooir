@@ -1150,10 +1150,12 @@ void EpubReaderActivity::loop() {
   // Drop this book from the Recent Books list; if the reader then pages back into the book,
   // re-add it. So removal only sticks if the reader leaves while still on the End-of-Book
   // screen. Acts only on the transition (guarded by recentsEntryRemoved) — no per-frame writes.
-  // Folio Nooir uses the persistent recent-book record as its Finished shelf
-  // and statistics source, so completed entries must remain in the store.
+  // Folio Nooir and Carousel use the persistent recent-book record as their
+  // Finished shelf and statistics source, so completed entries must remain in
+  // the store.
   if (SETTINGS.removeReadBooksFromRecents &&
-      SETTINGS.uiTheme != CrossPointSettings::UI_THEME::FOLIO_NOOIR) {
+      SETTINGS.uiTheme != CrossPointSettings::UI_THEME::FOLIO_NOOIR &&
+      SETTINGS.uiTheme != CrossPointSettings::UI_THEME::CAROUSEL) {
     if (atEndOfBook && !recentsEntryRemoved) {
       // Only treat the book as "removed by us" if it was actually in the list, so the
       // re-add branch below doesn't insert a book the feature never removed.

@@ -1382,8 +1382,8 @@ void FolioLibraryActivity::onExit() {
 
 void FolioLibraryActivity::loop() {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const auto& theme = static_cast<const FolioNooirTheme&>(GUI);
-  const FolioShelfLayout layout = theme.shelfLayout(renderer, metrics);
+  static const FolioNooirTheme folioPresentation;
+  const FolioShelfLayout layout = folioPresentation.shelfLayout(renderer, metrics);
   const int listTop = layout.contentTop + layout.detailHeight;
   const int listHeight = renderer.getScreenHeight() - listTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
   const size_t pageStart = (selectorIndex / PAGE_SIZE) * PAGE_SIZE;
@@ -1682,11 +1682,11 @@ void FolioLibraryActivity::render(RenderLock&&) {
     return;
   }
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const auto& theme = static_cast<const FolioNooirTheme&>(GUI);
-  const FolioShelfLayout layout = theme.shelfLayout(renderer, metrics);
+  static const FolioNooirTheme folioPresentation;
+  const FolioShelfLayout layout = folioPresentation.shelfLayout(renderer, metrics);
   renderer.setUiScaleTextEnabled(true);
-  theme.drawShelfTabs(renderer, layout, 0);
-  theme.drawShelfBattery(renderer, layout, metrics);
+  folioPresentation.drawShelfTabs(renderer, layout, 0);
+  folioPresentation.drawShelfBattery(renderer, layout, metrics);
   renderer.setUiScaleTextEnabled(false);
 
   const int detailTop = layout.contentTop;

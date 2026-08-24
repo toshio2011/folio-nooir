@@ -13,7 +13,7 @@ Xteink X3/X4 devices. The primary goals are:
 - no regressions in XTC/XTCH, TXT, sleep, web, dictionary, or existing reader
   workflows.
 
-The current development line is the **Folio Nooir 1.5.11 release candidate**.
+The current development line is the **Folio Nooir 1.6.0 release candidate**.
 
 FreeInk is a real Nooir dependency through the `freeink-sdk` submodule. The
 1.5.10 baseline uses the Nooir-specific FreeInk commit
@@ -28,7 +28,7 @@ Parent repository:
 
 - Branch: `feat/cbz-persistent-read-ahead`
 - Base commit: `114a0f7d5a891ee037cbe15d75308622d1cfcc31`
-- The branch contains uncommitted 1.5.11 source, translation, web, README,
+- The branch contains uncommitted 1.6.0 source, translation, web, README,
   and handoff changes; `.gitmodules` and the `freeink-sdk` pointer are staged
   separately for review.
 - The default PlatformIO environment compiles successfully. Simulator runs,
@@ -205,7 +205,7 @@ machine before using them.
 4. Physically test X4 and X3, prioritizing CBZ image quality, Fit Width Next,
    prefetch reuse/cancellation, cache replay, page errors, EPUB images, and
    bold clipping restoration.
-5. Review the final staged diff and scratch exclusions, then create the 1.5.11
+5. Review the final staged diff and scratch exclusions, then create the 1.6.0
    tag/GitHub Release and upload firmware only when explicitly authorized.
 
 ## Useful handoff checks

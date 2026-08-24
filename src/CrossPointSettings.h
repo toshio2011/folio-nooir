@@ -221,7 +221,33 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   };
 
   // UI Theme
-  enum UI_THEME { CLASSIC = 0, LYRA = 1, LYRA_3_COVERS = 2, ROUNDEDRAFF = 3, FOLIO_NOOIR = 4 };
+  enum UI_THEME {
+    CLASSIC = 0,
+    LYRA = 1,
+    LYRA_3_COVERS = 2,
+    ROUNDEDRAFF = 3,
+    FOLIO_NOOIR = 4,
+    CAROUSEL = 5
+  };
+
+  // Folio Nooir Recent/Finished presentation. Keep Grid as value 0 so older
+  // settings files that do not contain either key naturally retain the
+  // established 4x2 default.
+  enum FOLIO_BOOK_LAYOUT {
+    FOLIO_LAYOUT_GRID = 0,
+    FOLIO_LAYOUT_THREE_COVERS = 1,
+    FOLIO_LAYOUT_THREE_COVER_CAROUSEL = 2,
+    FOLIO_LAYOUT_FIVE_COVER_CAROUSEL = 3,
+    FOLIO_BOOK_LAYOUT_COUNT
+  };
+
+  // Independent Carousel theme presentation. This is deliberately separate
+  // from Folio Nooir's Recent/Finished layout preferences.
+  enum CAROUSEL_LAYOUT {
+    CAROUSEL_LAYOUT_THREE_COVER = 0,
+    CAROUSEL_LAYOUT_FIVE_COVER = 1,
+    CAROUSEL_LAYOUT_COUNT
+  };
 
   // Image rendering in EPUB reader
   enum IMAGE_RENDERING { IMAGES_DISPLAY = 0, IMAGES_PLACEHOLDER = 1, IMAGES_SUPPRESS = 2, IMAGE_RENDERING_COUNT };
@@ -364,6 +390,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t longPressMenuFunction = LP_MENU_DISABLED;
   // UI Theme
   uint8_t uiTheme = FOLIO_NOOIR;
+  // Folio Nooir stores Recent and Finished presentation independently.
+  uint8_t recentBookLayout = FOLIO_LAYOUT_GRID;
+  uint8_t finishedBookLayout = FOLIO_LAYOUT_GRID;
+  // The standalone Carousel theme defaults to its existing 5-cover layout.
+  uint8_t carouselLayout = CAROUSEL_LAYOUT_FIVE_COVER;
   // UI text scale. Folio Nooir keeps its shelf text and geometry fixed so the
   // featured book and Recent/Finished/library grid remain stable.
   uint8_t uiScalePercent = 100;

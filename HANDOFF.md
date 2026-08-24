@@ -5,13 +5,13 @@ history, decisions, and feature inventory.
 
 ## Current position
 
-- Development line: Folio Nooir **1.5.11 release candidate**
+- Development line: Folio Nooir **1.6.0 release candidate**
 - Parent branch: `feat/cbz-persistent-read-ahead`
 - Parent base commit: `114a0f7d5a891ee037cbe15d75308622d1cfcc31`
 - FreeInk is a real Nooir dependency through the `freeink-sdk` submodule.
 - The 1.5.10 baseline uses the Nooir-specific FreeInk commit
   `958720659ea289ae325e83db20049d0ea844800d` (`9587206`).
-- The local README now inventories the current 1.5.11 release-candidate
+- The local README now inventories the current 1.6.0 release-candidate
   features. The separate `codex/folio-nooir` documentation branch was updated
   with the same README in remote commit `a6046870`.
 - The default PlatformIO environment now builds successfully after the shared
@@ -90,8 +90,8 @@ pointer; no parent commit or push has been made yet.
    source; the default environment compile is already verified.
 5. Physically test CBZ page turns/prefetch/cache replay, EPUB images, and bold
    clipping restoration on X4 and X3.
-6. After the 1.5.11 enhancement is implemented and validated, create the
-   1.5.11 tag/release and upload firmware only when explicitly authorized.
+6. After the 1.6.0 enhancement is implemented and validated, create the
+   1.6.0 tag/release and upload firmware only when explicitly authorized.
 
 ## Resource map
 

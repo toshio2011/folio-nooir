@@ -1419,6 +1419,80 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
   free(rowBytes);
 }
 
+bool GfxRenderer::drawPerspectiveBitmap(const Bitmap& bitmap, const int x, const int y, const int width,
+                                         const int leftHeight, const int rightHeight) const {
+  if (fontCacheManager_ && fontCacheManager_->isScanning()) return false;
+  if (width <= 0 || leftHeight <= 0 || rightHeight <= 0 || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) {
+    return false;
+  }
+
+  const int maxHeight = std::max(leftHeight, rightHeight);
+  const int rightX = x + width - 1;
+  const int leftTop = y + (maxHeight - leftHeight) / 2;
+  const int rightTop = y + (maxHeight - rightHeight) / 2;
+  const int leftBottom = leftTop + leftHeight - 1;
+  const int rightBottom = rightTop + rightHeight - 1;
+  const int silhouetteX[] = {x, rightX, rightX, x};
+  const int silhouetteY[] = {leftTop, rightTop, rightBottom, leftBottom};
+
+  // White-out the whole opaque silhouette before painting the bitmap. Bitmap
+  // rows omit white pixels, so clearing first prevents rear covers from
+  // showing through a nearer card.
+  fillPolygon(silhouetteX, silhouetteY, 4, false);
+
+  const int outputRowSize = (bitmap.getWidth() + 3) / 4;
+  auto* outputRow = static_cast<uint8_t*>(malloc(outputRowSize));
+  auto* rowBytes = static_cast<uint8_t*>(malloc(bitmap.getRowBytes()));
+  if (!outputRow || !rowBytes) {
+    free(outputRow);
+    free(rowBytes);
+    return false;
+  }
+
+  const int sourceWidth = bitmap.getWidth();
+  const int sourceHeight = bitmap.getHeight();
+  const int horizontalSpan = std::max(1, width - 1);
+  bool success = true;
+
+  for (int bmpY = 0; bmpY < sourceHeight; ++bmpY) {
+    if (bitmap.readNextRow(outputRow, rowBytes) != BmpReaderError::Ok) {
+      LOG_ERR("GFX", "Failed to read row %d from perspective bitmap", bmpY);
+      success = false;
+      break;
+    }
+
+    const int sourceY = bitmap.isTopDown() ? bmpY : sourceHeight - 1 - bmpY;
+    for (int dstX = 0; dstX < width; ++dstX) {
+      const int heightAtX = leftHeight + (rightHeight - leftHeight) * dstX / horizontalSpan;
+      const int topAtX = leftTop + (rightTop - leftTop) * dstX / horizontalSpan;
+      const int firstY = topAtX + sourceY * heightAtX / sourceHeight;
+      const int lastY = topAtX + (sourceY + 1) * heightAtX / sourceHeight - 1;
+      if (lastY < firstY) continue;
+
+      const int sourceX = dstX * sourceWidth / width;
+      const uint8_t rawVal = (outputRow[sourceX / 4] >> (6 - ((sourceX * 2) % 8))) & 0x3;
+      const uint8_t val = darkMode ? static_cast<uint8_t>(3 - rawVal) : rawVal;
+      const bool drawBw = darkMode ? val == 3 : val < 3;
+
+      for (int screenY = firstY; screenY <= lastY; ++screenY) {
+        const int screenX = x + dstX;
+        if (screenX < 0 || screenX >= getScreenWidth() || screenY < 0 || screenY >= getScreenHeight()) continue;
+        if (renderMode == BW && drawBw) {
+          drawPixel(screenX, screenY, true);
+        } else if (renderMode == GRAYSCALE_MSB && (val == 1 || val == 2)) {
+          drawPixel(screenX, screenY, false);
+        } else if (renderMode == GRAYSCALE_LSB && val == 1) {
+          drawPixel(screenX, screenY, false);
+        }
+      }
+    }
+  }
+
+  free(outputRow);
+  free(rowBytes);
+  return success;
+}
+
 void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y, const int maxWidth,
                                  const int maxHeight) const {
   float scale = 1.0f;

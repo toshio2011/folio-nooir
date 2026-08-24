@@ -2,7 +2,7 @@
 
 # Folio Nooir
 
-Current stable release: **v1.5.10**. Release candidate: **v1.5.11**.
+Current stable release: **v1.5.10**. Release candidate: **v1.6.0**.
 
 ## Hardware warning
 

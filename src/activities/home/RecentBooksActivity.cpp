@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <memory>
 
 #include "MappedInputManager.h"
@@ -27,7 +28,9 @@
 #include "util/BookCacheUtils.h"
 #include "util/SynopsisPreview.h"
 #include "components/UITheme.h"
+#include "components/themes/folio_nooir/CarouselTheme.h"
 #include "components/themes/folio_nooir/FolioNooirTheme.h"
+#include "util/CoverStackGeometry.h"
 #include "util/CbzDiagnostics.h"
 #include "fontIds.h"
 
@@ -110,6 +113,43 @@ size_t RecentBooksActivity::selectedRecentIndex() const {
   return visibleBookCount == 0 ? 0 : visibleBookIndexes[selectorIndex];
 }
 
+uint8_t RecentBooksActivity::activeBookLayout() const {
+  // The standalone Carousel theme has its own layout preference; the Folio
+  // Recent/Finished preferences are intentionally not consulted here.
+  if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::CAROUSEL) {
+    return SETTINGS.carouselLayout == CrossPointSettings::CAROUSEL_LAYOUT_THREE_COVER
+               ? CrossPointSettings::FOLIO_LAYOUT_THREE_COVER_CAROUSEL
+               : CrossPointSettings::FOLIO_LAYOUT_FIVE_COVER_CAROUSEL;
+  }
+  if (SETTINGS.uiTheme != CrossPointSettings::UI_THEME::FOLIO_NOOIR) {
+    return CrossPointSettings::FOLIO_LAYOUT_GRID;
+  }
+  const uint8_t layout = activeTab == 2 ? SETTINGS.finishedBookLayout : SETTINGS.recentBookLayout;
+  return layout < CrossPointSettings::FOLIO_BOOK_LAYOUT_COUNT ? layout : CrossPointSettings::FOLIO_LAYOUT_GRID;
+}
+
+bool RecentBooksActivity::usesCarouselLayout() const {
+  const uint8_t layout = activeBookLayout();
+  return layout == CrossPointSettings::FOLIO_LAYOUT_THREE_COVER_CAROUSEL ||
+         layout == CrossPointSettings::FOLIO_LAYOUT_FIVE_COVER_CAROUSEL;
+}
+
+bool RecentBooksActivity::usesThreeCoverGrid() const {
+  return SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR &&
+         activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_THREE_COVERS;
+}
+
+bool RecentBooksActivity::usesFourByTwoGrid() const {
+  return SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR &&
+         activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_GRID;
+}
+
+int RecentBooksActivity::activePageItems() const {
+  if (usesThreeCoverGrid()) return 3;
+  if (usesCarouselLayout()) return 1;
+  return BOOKS_PER_PAGE;
+}
+
 uint64_t RecentBooksActivity::snapshotKey() const {
   uint64_t hash = 1469598103934665603ULL;
   const int width = renderer.getScreenWidth();
@@ -117,6 +157,8 @@ uint64_t RecentBooksActivity::snapshotKey() const {
   hashBytes(hash, &width, sizeof(width));
   hashBytes(hash, &height, sizeof(height));
   hashBytes(hash, &activeTab, sizeof(activeTab));
+  const uint8_t layout = activeBookLayout();
+  hashBytes(hash, &layout, sizeof(layout));
   for (const auto& book : recentBooks) {
     hashBytes(hash, book.path.data(), book.path.size());
     hashBytes(hash, book.title.data(), book.title.size());
@@ -138,7 +180,7 @@ uint64_t RecentBooksActivity::snapshotKey() const {
 }
 
 bool RecentBooksActivity::restoreSnapshot() {
-  if (SETTINGS.uiTheme != CrossPointSettings::UI_THEME::FOLIO_NOOIR || !renderer.hasFrameBuffer()) return false;
+  if (!usesFourByTwoGrid() || !renderer.hasFrameBuffer()) return false;
   HalFile file;
   if (!Storage.openFileForRead("SHELF", FOLIO_HOME_SNAPSHOT, file)) return false;
 
@@ -275,6 +317,10 @@ void RecentBooksActivity::generateNextCover() {
               }
             }
           }
+          if (!refreshCarouselHqPath.empty() &&
+              UITheme::getCoverThumbPath(book.coverBmpPath, CAROUSEL_HQ_COVER_HEIGHT) == refreshCarouselHqPath) {
+            generateCarouselHqThumbnail(book, true);
+          }
         }
       }
     } else if (FsHelpers::hasXtcExtension(book.path)) {
@@ -296,6 +342,10 @@ void RecentBooksActivity::generateNextCover() {
           if (!xtc.generateThumbBmp(BOOKSHELF_COVER_HEIGHT) || !isValidBookThumbnail(thumb)) {
             LOG_ERR("SHELF", "Could not regenerate XTC thumbnail: %s", book.path.c_str());
           }
+        }
+        if (forceRebuild && !refreshCarouselHqPath.empty() &&
+            UITheme::getCoverThumbPath(book.coverBmpPath, CAROUSEL_HQ_COVER_HEIGHT) == refreshCarouselHqPath) {
+          generateCarouselHqThumbnail(book, true);
         }
       }
     } else if (FsHelpers::hasCbzExtension(book.path)) {
@@ -322,6 +372,10 @@ void RecentBooksActivity::generateNextCover() {
               LOG_ERR("SHELF", "Could not generate CBZ thumbnail: %s", book.path.c_str());
             }
           }
+          if (!refreshCarouselHqPath.empty() &&
+              UITheme::getCoverThumbPath(book.coverBmpPath, CAROUSEL_HQ_COVER_HEIGHT) == refreshCarouselHqPath) {
+            generateCarouselHqThumbnail(book, true);
+          }
         }
       }
     }
@@ -345,6 +399,7 @@ void RecentBooksActivity::generateNextCover() {
         initialRenderPending = true;
       }
       coverGenerationActive = false;
+      refreshCarouselHqPath.clear();
       // Continue until every missing recent entry has been attempted during
       // first-run warmup. Manual refresh intentionally processes one book at
       // a time so the shelf stays responsive.
@@ -366,11 +421,116 @@ void RecentBooksActivity::generateNextCover() {
   requestUpdate();
 }
 
+bool RecentBooksActivity::generateCarouselHqThumbnail(const RecentBook& book, const bool force) {
+  if (book.coverBmpPath.empty()) return false;
+
+  const std::string output = UITheme::getCoverThumbPath(book.coverBmpPath, CAROUSEL_HQ_COVER_HEIGHT);
+  if (!force && isValidBookThumbnail(output)) return true;
+  if (Storage.exists(output.c_str())) Storage.remove(output.c_str());
+
+  bool attempted = false;
+  bool generated = false;
+  if (FsHelpers::hasEpubExtension(book.path)) {
+    Epub epub(book.path, "/.crosspoint");
+    if (epub.loadMetadataOnly()) {
+      attempted = true;
+      const size_t coverBytes = epub.getCoverImageSize();
+      if (coverBytes == 0) {
+        LOG_DBG("SHELF", "No usable EPUB cover for Carousel HQ: %s", book.path.c_str());
+      } else if (coverBytes > MAX_MANUAL_THUMBNAIL_SOURCE_BYTES) {
+        LOG_DBG("SHELF", "Skipping oversized Carousel HQ source (%lu bytes): %s",
+                static_cast<unsigned long>(coverBytes), book.path.c_str());
+      } else {
+        generated = epub.generateThumbBmp(CAROUSEL_HQ_COVER_HEIGHT);
+      }
+    }
+  } else if (FsHelpers::hasXtcExtension(book.path)) {
+    Xtc xtc(book.path, "/.crosspoint");
+    if (xtc.load()) {
+      attempted = true;
+      generated = xtc.generateThumbBmp(CAROUSEL_HQ_COVER_HEIGHT);
+    }
+  } else if (FsHelpers::hasCbzExtension(book.path)) {
+    Cbz cbz(book.path, "/.crosspoint");
+    if (cbz.loadMetadataOnly()) {
+      attempted = true;
+      generated = cbz.generateThumbBmp(CAROUSEL_HQ_COVER_HEIGHT);
+    }
+  }
+
+  if (!attempted || !generated || !isValidBookThumbnail(output)) {
+    LOG_ERR("SHELF", "Could not prepare Carousel HQ thumbnail: %s", book.path.c_str());
+    if (Storage.exists(output.c_str()) && !isValidBookThumbnail(output)) Storage.remove(output.c_str());
+    return false;
+  }
+  return true;
+}
+
+void RecentBooksActivity::startCarouselHqPreparation() {
+  carouselHqQueue.clear();
+  carouselHqQueueIndex = 0;
+  carouselHqPreparationActive = false;
+  carouselHqPopupRendered = false;
+
+  std::vector<std::string> seenPaths;
+  seenPaths.reserve(recentBooks.size());
+  for (size_t index = 0; index < recentBooks.size(); ++index) {
+    const RecentBook& book = recentBooks[index];
+    if (book.coverBmpPath.empty() || RecentBooksStore::isMissing(book)) continue;
+    if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path) &&
+        !FsHelpers::hasCbzExtension(book.path)) {
+      continue;
+    }
+    if (std::find(seenPaths.begin(), seenPaths.end(), book.path) != seenPaths.end()) continue;
+    seenPaths.push_back(book.path);
+
+    const std::string hqPath = UITheme::getCoverThumbPath(book.coverBmpPath, CAROUSEL_HQ_COVER_HEIGHT);
+    if (!isValidBookThumbnail(hqPath)) carouselHqQueue.push_back(index);
+  }
+
+  if (carouselHqQueue.empty()) {
+    LOG_DBG("SHELF", "Carousel HQ preparation found no missing covers");
+    requestUpdate(true);
+    return;
+  }
+
+  carouselHqPreparationActive = true;
+  requestUpdate(true);
+}
+
+void RecentBooksActivity::prepareNextCarouselCover() {
+  if (!carouselHqPreparationActive) return;
+  if (carouselHqQueueIndex >= carouselHqQueue.size()) {
+    carouselHqPreparationActive = false;
+    carouselHqPopupRendered = false;
+    carouselHqQueue.clear();
+    requestUpdate(true);
+    return;
+  }
+  if (!carouselHqPopupRendered) return;
+
+  carouselHqPopupRendered = false;
+  requestUpdateAndWait();
+  const RecentBook& book = recentBooks[carouselHqQueue[carouselHqQueueIndex]];
+  const bool success = generateCarouselHqThumbnail(book, true);
+  if (!success) LOG_DBG("SHELF", "Carousel HQ fallback remains available: %s", book.path.c_str());
+  ++carouselHqQueueIndex;
+  if (carouselHqQueueIndex >= carouselHqQueue.size()) {
+    carouselHqPreparationActive = false;
+    carouselHqPopupRendered = false;
+    carouselHqQueue.clear();
+  }
+  requestUpdate(true);
+}
+
 void RecentBooksActivity::showMenu() {
   std::vector<std::string> options = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), tr(STR_CLOCK_WEATHER),
                                       tr(STR_TODO_LIST), tr(STR_LONG_PWR_READING_STATS), tr(STR_READING_STATS),
                                       "Bookmarks (all books)", "Clippings (all books)"};
-  menuPopup.show(StrId::STR_MENU, options, 0, [this](const int index) {
+  const bool carouselTheme = usesCarouselLayout();
+  const int prepareCarouselCoversIndex = static_cast<int>(options.size());
+  if (carouselTheme) options.emplace_back(tr(STR_PREPARE_CAROUSEL_COVERS));
+  menuPopup.show(StrId::STR_MENU, options, 0, [this, carouselTheme, prepareCarouselCoversIndex](const int index) {
     // Always close the menu before starting another activity. This is
     // especially important for Settings, which replaces the shelf activity.
     menuPopup.dismiss();
@@ -400,6 +560,8 @@ void RecentBooksActivity::showMenu() {
       startActivityForResult(std::make_unique<EpubReaderClippingListActivity>(
                                 renderer, mappedInput, std::string{}, "All books", true),
                             nullptr);
+    } else if (carouselTheme && index == prepareCarouselCoversIndex) {
+      startCarouselHqPreparation();
     }
   });
   requestUpdate();
@@ -441,6 +603,11 @@ void RecentBooksActivity::showBookActions() {
       // Refresh only the lightweight bookshelf metadata and thumbnail. Do not
       // clear the reader cache: progress, bookmarks, clippings, and cached
       // reading pages must remain usable while the EPUB is reread.
+      refreshCarouselHqPath.clear();
+      if (!selected.coverBmpPath.empty()) {
+        const std::string hqPath = UITheme::getCoverThumbPath(selected.coverBmpPath, CAROUSEL_HQ_COVER_HEIGHT);
+        if (Storage.exists(hqPath.c_str())) refreshCarouselHqPath = hqPath;
+      }
       nextCoverToGenerate = selectedRecentIndex();
       coverGenerationActive = false;
       coverGenerationRequested = false;
@@ -514,6 +681,11 @@ void RecentBooksActivity::onEnter() {
   retrievingBookCacheProgress = 0;
   retrievingBookCacheIndex = SIZE_MAX;
   retrievingBookCachePopupRendered = false;
+  carouselHqQueue.clear();
+  carouselHqQueueIndex = 0;
+  carouselHqPreparationActive = false;
+  carouselHqPopupRendered = false;
+  refreshCarouselHqPath.clear();
   // A pending write belongs to the previous shelf frame. Never carry it into
   // a new activity instance, where it could write unrelated framebuffer data
   // during the first interaction after boot.
@@ -555,15 +727,24 @@ void RecentBooksActivity::onExit() {
 }
 
 void RecentBooksActivity::loop() {
-  constexpr int pageItems = BOOKS_PER_PAGE;
+  const int pageItems = activePageItems();
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const auto& folioTheme = static_cast<const FolioNooirTheme&>(GUI);
-  const FolioShelfLayout layout = folioTheme.shelfLayout(renderer, metrics);
+  const bool carouselTheme = usesCarouselLayout();
+  const bool snapshotLayout = usesFourByTwoGrid();
+  const bool threeCoverGrid = usesThreeCoverGrid();
+  FolioShelfLayout layout{};
+  if (carouselTheme) {
+    static const FolioNooirTheme folioPresentation;
+    layout = folioPresentation.shelfLayout(renderer, metrics);
+  } else {
+    const auto& folioTheme = static_cast<const FolioNooirTheme&>(GUI);
+    layout = folioTheme.shelfLayout(renderer, metrics);
+  }
 
   // Snapshot persistence is an optimization, not part of showing the shelf.
   // Defer the SD write until the user has been idle so the first boot render
   // and the first button press do not wait behind a 48 KB filesystem write.
-  if (snapshotWritePending && millis() - snapshotWriteRequestedMs >= 500 &&
+  if (snapshotLayout && snapshotWritePending && millis() - snapshotWriteRequestedMs >= 500 &&
       !mappedInput.wasAnyPressed() && !mappedInput.wasAnyReleased() && !mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
       !mappedInput.isPressed(MappedInputManager::Button::Back) && !menuPopup.isActive() &&
       !bookActionsPopup.isActive() && !retrievingBookCache && !recentCacheWarmupActive) {
@@ -659,6 +840,20 @@ void RecentBooksActivity::loop() {
     return;
   }
 
+  if (carouselHqPreparationActive && mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    carouselHqPreparationActive = false;
+    carouselHqPopupRendered = false;
+    carouselHqQueue.clear();
+    carouselHqQueueIndex = 0;
+    requestUpdate(true);
+    return;
+  }
+
+  if (carouselHqPreparationActive) {
+    prepareNextCarouselCover();
+    return;
+  }
+
   if (visibleBookCount > 0 && mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
       mappedInput.getHeldTime() >= 1000 && !longPressActionShown) {
     longPressActionShown = true;
@@ -724,65 +919,134 @@ void RecentBooksActivity::loop() {
     return;
   }
 
-  const int columns = layout.columns;
-  const int gap = layout.gridGap;
-  const int cardWidth = layout.cardWidth;
-  const int gridTop = layout.gridTop;
-  const int cardHeight = layout.cardHeight;
-  const size_t pageStart = (selectorIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE;
   int touchX = 0;
   int touchY = 0;
-  if (mappedInput.wasScreenTouchDown(touchX, touchY)) {
-    if (touchY >= metrics.topPadding && touchY < layout.contentTop) {
-      const uint8_t touchedTab =
-          static_cast<uint8_t>(std::min(2, std::max(0, touchX * 3 / renderer.getScreenWidth())));
-      if (touchedTab == 0) {
-        activityManager.goToFileBrowser("/");
+  if (carouselTheme) {
+    const int synopsisLineHeight = std::max(1, renderer.getLineHeight(SMALL_FONT_ID));
+    int synopsisLineCount = 5;
+    if (visibleBookCount > 0) {
+      const RecentBook& layoutSelected = recentBooks[selectedRecentIndex()];
+      const std::string layoutSynopsisPreview = SynopsisPreview::firstWords(layoutSelected.synopsis);
+      const char* layoutSynopsisText =
+          layoutSynopsisPreview.empty() ? tr(STR_NO_SYNOPSIS) : layoutSynopsisPreview.c_str();
+      const auto layoutSynopsisLines =
+          renderer.wrappedText(SMALL_FONT_ID, layoutSynopsisText, std::max(1, renderer.getScreenWidth() - 48), 5);
+      synopsisLineCount = std::clamp(static_cast<int>(layoutSynopsisLines.size()), 1, 5);
+    }
+    static const CarouselTheme carouselPresentation;
+    const auto carouselLayout = carouselPresentation.carouselLayout(renderer, synopsisLineCount, synopsisLineHeight);
+    const auto stackSlots = activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_THREE_COVER_CAROUSEL
+                                ? CoverStackGeometry::layoutThree(renderer.getScreenWidth(), visibleBookCount,
+                                                                  selectorIndex, carouselLayout.centerHeight)
+                                : CoverStackGeometry::layout(renderer.getScreenWidth(), visibleBookCount, selectorIndex,
+                                                             carouselLayout.centerHeight);
+    if (mappedInput.wasScreenTouchDown(touchX, touchY)) {
+      if (touchY >= metrics.topPadding && touchY < layout.contentTop) {
+        const uint8_t touchedTab =
+            static_cast<uint8_t>(std::min(2, std::max(0, touchX * 3 / renderer.getScreenWidth())));
+        if (touchedTab == 0) {
+          activityManager.goToFileBrowser("/");
+          return;
+        }
+        activeTab = touchedTab;
+        selectorIndex = 0;
+        rebuildVisibleBooks();
+        snapshotRestored = false;
+        snapshotPageStart = SIZE_MAX;
+        snapshotSelectorIndex = SIZE_MAX;
+        lastRenderedSelectorIndex = SIZE_MAX;
+        lastRenderedPageStart = SIZE_MAX;
+        overlayFrameShown = false;
+        initialRenderPending = true;
+        requestUpdate();
         return;
       }
-      activeTab = touchedTab;
-      selectorIndex = 0;
-      rebuildVisibleBooks();
-      snapshotRestored = false;
-      snapshotPageStart = SIZE_MAX;
-      snapshotSelectorIndex = SIZE_MAX;
-      lastRenderedSelectorIndex = SIZE_MAX;
-      lastRenderedPageStart = SIZE_MAX;
-      overlayFrameShown = false;
-      initialRenderPending = true;
-      requestUpdate();
-      return;
+      for (int slot = static_cast<int>(stackSlots.size()) - 1; slot >= 0; --slot) {
+        const auto& stackSlot = stackSlots[static_cast<size_t>(slot)];
+        if (!stackSlot.valid) continue;
+        const auto& rect = stackSlot.rect;
+        if (touchX >= rect.x && touchX < rect.x + rect.width && touchY >= rect.y &&
+            touchY < rect.y + rect.height) {
+          if (selectorIndex != stackSlot.itemIndex) {
+            selectorIndex = stackSlot.itemIndex;
+            requestUpdate();
+          }
+          return;
+        }
+      }
     }
-    for (int slot = 0; slot < BOOKS_PER_PAGE; ++slot) {
+    for (int slot = static_cast<int>(stackSlots.size()) - 1; slot >= 0; --slot) {
+      const auto& stackSlot = stackSlots[static_cast<size_t>(slot)];
+      if (!stackSlot.valid) continue;
+      const auto& rect = stackSlot.rect;
+      if (mappedInput.wasTapInRect(rect.x, rect.y, rect.width, rect.height)) {
+        selectorIndex = stackSlot.itemIndex;
+        const std::string& path = recentBooks[visibleBookIndexes[selectorIndex]].path;
+        logCbzPath("recent-book-selection", path);
+        onSelectBook(path);
+        return;
+      }
+    }
+  } else {
+    const int columns = threeCoverGrid ? 3 : layout.columns;
+    const int gap = threeCoverGrid ? 10 : layout.gridGap;
+    const int cardWidth = threeCoverGrid ? (renderer.getScreenWidth() - gap * (columns + 1)) / columns : layout.cardWidth;
+    const int gridTop = layout.gridTop;
+    const int cardHeight = threeCoverGrid ? layout.gridHeight : layout.cardHeight;
+    const int pageItems = threeCoverGrid ? 3 : BOOKS_PER_PAGE;
+    const size_t pageStart = (selectorIndex / pageItems) * pageItems;
+    if (mappedInput.wasScreenTouchDown(touchX, touchY)) {
+      if (touchY >= metrics.topPadding && touchY < layout.contentTop) {
+        const uint8_t touchedTab =
+            static_cast<uint8_t>(std::min(2, std::max(0, touchX * 3 / renderer.getScreenWidth())));
+        if (touchedTab == 0) {
+          activityManager.goToFileBrowser("/");
+          return;
+        }
+        activeTab = touchedTab;
+        selectorIndex = 0;
+        rebuildVisibleBooks();
+        snapshotRestored = false;
+        snapshotPageStart = SIZE_MAX;
+        snapshotSelectorIndex = SIZE_MAX;
+        lastRenderedSelectorIndex = SIZE_MAX;
+        lastRenderedPageStart = SIZE_MAX;
+        overlayFrameShown = false;
+        initialRenderPending = true;
+        requestUpdate();
+        return;
+      }
+      for (int slot = 0; slot < pageItems; ++slot) {
+        const size_t index = pageStart + static_cast<size_t>(slot);
+        if (index >= visibleBookCount) break;
+        const int cardX = gap + (slot % columns) * (cardWidth + gap);
+        const int cardY = gridTop + (slot / columns) * cardHeight;
+        if (touchX >= cardX && touchX < cardX + cardWidth && touchY >= cardY && touchY < cardY + cardHeight) {
+          if (selectorIndex != index) {
+            selectorIndex = index;
+            requestUpdate();
+          }
+          return;
+        }
+      }
+    }
+    for (int slot = 0; slot < pageItems; ++slot) {
       const size_t index = pageStart + static_cast<size_t>(slot);
       if (index >= visibleBookCount) break;
       const int cardX = gap + (slot % columns) * (cardWidth + gap);
       const int cardY = gridTop + (slot / columns) * cardHeight;
-      if (touchX >= cardX && touchX < cardX + cardWidth && touchY >= cardY && touchY < cardY + cardHeight) {
-        if (selectorIndex != index) {
-          selectorIndex = index;
-          requestUpdate();
-        }
+      if (mappedInput.wasTapInRect(cardX, cardY, cardWidth, cardHeight)) {
+        selectorIndex = index;
+        const std::string& path = recentBooks[visibleBookIndexes[index]].path;
+        logCbzPath("recent-book-selection", path);
+        onSelectBook(path);
         return;
       }
     }
   }
-  for (int slot = 0; slot < BOOKS_PER_PAGE; ++slot) {
-    const size_t index = pageStart + static_cast<size_t>(slot);
-    if (index >= visibleBookCount) break;
-    const int cardX = gap + (slot % columns) * (cardWidth + gap);
-    const int cardY = gridTop + (slot / columns) * cardHeight;
-    if (mappedInput.wasTapInRect(cardX, cardY, cardWidth, cardHeight)) {
-      selectorIndex = index;
-      const std::string& path = recentBooks[visibleBookIndexes[index]].path;
-      logCbzPath("recent-book-selection", path);
-      onSelectBook(path);
-      return;
-    }
-  }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR)
+    if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR || carouselTheme)
       showMenu();
     else
       onGoHome();
@@ -791,12 +1055,14 @@ void RecentBooksActivity::loop() {
   int listSize = visibleBookCount;
   const auto swipe = mappedInput.wasSwipe();
   if (swipe == MappedInputManager::SwipeDir::Up) {
-    selectorIndex = ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
+    selectorIndex = carouselTheme ? ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize)
+                                  : ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
     requestUpdate();
     return;
   }
   if (swipe == MappedInputManager::SwipeDir::Down) {
-    selectorIndex = ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
+    selectorIndex = carouselTheme ? ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize)
+                                  : ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
     requestUpdate();
     return;
   }
@@ -811,13 +1077,15 @@ void RecentBooksActivity::loop() {
     requestUpdate();
   });
 
-  buttonNavigator.onNextContinuous([this, listSize, pageItems] {
-    selectorIndex = ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
+  buttonNavigator.onNextContinuous([this, listSize, pageItems, carouselTheme] {
+    selectorIndex = carouselTheme ? ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize)
+                                  : ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
     requestUpdate();
   });
 
-  buttonNavigator.onPreviousContinuous([this, listSize, pageItems] {
-    selectorIndex = ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
+  buttonNavigator.onPreviousContinuous([this, listSize, pageItems, carouselTheme] {
+    selectorIndex = carouselTheme ? ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize)
+                                  : ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
     requestUpdate();
   });
 
@@ -959,6 +1227,247 @@ void RecentBooksActivity::render(RenderLock&&) {
 }
 #endif
 
+void RecentBooksActivity::renderCarousel(const bool threeCover) {
+  const int pageWidth = renderer.getScreenWidth();
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  static const CarouselTheme carouselPresentation;
+  const int synopsisLineHeight = std::max(1, renderer.getLineHeight(SMALL_FONT_ID));
+  int synopsisLineCount = 5;
+  if (visibleBookCount > 0) {
+    const RecentBook& layoutSelected = recentBooks[selectedRecentIndex()];
+    const std::string layoutSynopsisPreview = SynopsisPreview::firstWords(layoutSelected.synopsis);
+    const char* layoutSynopsisText =
+        layoutSynopsisPreview.empty() ? tr(STR_NO_SYNOPSIS) : layoutSynopsisPreview.c_str();
+    const auto layoutSynopsisLines =
+        renderer.wrappedText(SMALL_FONT_ID, layoutSynopsisText, std::max(1, pageWidth - 48), 5);
+    synopsisLineCount = std::clamp(static_cast<int>(layoutSynopsisLines.size()), 1, 5);
+  }
+  const CarouselLayout carouselLayout =
+      carouselPresentation.carouselLayout(renderer, synopsisLineCount, synopsisLineHeight);
+  // Carousel keeps Folio Nooir's existing header, battery, summary strip, and
+  // controls. The presentation object is stateless; it is not the
+  // active UITheme instance and therefore does not depend on an unsafe cast.
+  static const FolioNooirTheme folioPresentation;
+  const FolioShelfLayout folioLayout = folioPresentation.shelfLayout(renderer, metrics);
+  folioPresentation.drawShelfTabs(renderer, folioLayout, activeTab);
+  folioPresentation.drawShelfBattery(renderer, folioLayout, metrics);
+  renderer.fillRect(carouselLayout.carouselRegion.x, carouselLayout.carouselRegion.y,
+                    carouselLayout.carouselRegion.width, carouselLayout.carouselRegion.height, false);
+
+  if (visibleBookCount == 0) {
+    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, carouselLayout.carouselRegion.y + 45,
+                      tr(STR_NO_RECENT_BOOKS));
+  } else {
+    const RecentBook& selected = recentBooks[selectedRecentIndex()];
+    const std::string title = renderer.truncatedText(UI_12_FONT_ID, selected.title.c_str(),
+                                                     carouselLayout.titleRegion.width);
+    const std::string author = renderer.truncatedText(UI_10_FONT_ID, selected.author.c_str(),
+                                                      carouselLayout.titleRegion.width);
+    const int titleWidth = renderer.getTextWidth(UI_12_FONT_ID, title.c_str());
+    const int authorWidth = renderer.getTextWidth(UI_10_FONT_ID, author.c_str());
+    renderer.drawText(UI_12_FONT_ID,
+                      carouselLayout.titleRegion.x + (carouselLayout.titleRegion.width - titleWidth) / 2,
+                      carouselLayout.titleRegion.y, title.c_str(), true);
+    renderer.drawText(UI_10_FONT_ID,
+                      carouselLayout.titleRegion.x + (carouselLayout.titleRegion.width - authorWidth) / 2,
+                      carouselLayout.titleRegion.y + 24, author.c_str());
+
+    auto drawCoverOutline = [this](const CoverStackSlot& stackSlot) {
+      const auto& rect = stackSlot.rect;
+      const int maxHeight = std::max(stackSlot.leftHeight, stackSlot.rightHeight);
+      const int rightX = rect.x + rect.width - 1;
+      const int leftTop = rect.y + (maxHeight - stackSlot.leftHeight) / 2;
+      const int rightTop = rect.y + (maxHeight - stackSlot.rightHeight) / 2;
+      const int leftBottom = leftTop + stackSlot.leftHeight - 1;
+      const int rightBottom = rightTop + stackSlot.rightHeight - 1;
+      renderer.drawLine(rect.x, leftTop, rightX, rightTop);
+      renderer.drawLine(rightX, rightTop, rightX, rightBottom);
+      renderer.drawLine(rightX, rightBottom, rect.x, leftBottom);
+      renderer.drawLine(rect.x, leftBottom, rect.x, leftTop);
+    };
+
+    auto drawCover = [this, &drawCoverOutline](const RecentBook& book, const CoverStackSlot& stackSlot) {
+      const auto& rect = stackSlot.rect;
+      const int maxHeight = std::max(stackSlot.leftHeight, stackSlot.rightHeight);
+      const int fallbackWidth = std::min(rect.width, maxHeight * 2 / 3);
+      auto drawBitmap = [this, &rect, &stackSlot](const std::string& path) {
+        HalFile file;
+        if (path.empty() || !Storage.openFileForRead("SHELF", path, file)) return false;
+        Bitmap bitmap(file);
+        if (bitmap.parseHeaders() != BmpReaderError::Ok || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) {
+          return false;
+        }
+        return renderer.drawPerspectiveBitmap(bitmap, rect.x, rect.y, rect.width, stackSlot.leftHeight,
+                                              stackSlot.rightHeight);
+      };
+
+      const bool isCenter = stackSlot.depth == 0;
+      if (isCenter && !book.coverBmpPath.empty()) {
+        const std::string hqPath = UITheme::getCoverThumbPath(book.coverBmpPath, CAROUSEL_HQ_COVER_HEIGHT);
+        if (isValidBookThumbnail(hqPath) && drawBitmap(hqPath)) {
+          drawCoverOutline(stackSlot);
+          return;
+        }
+      }
+      const std::string path = UITheme::getCoverThumbPath(book.coverBmpPath, FolioNooirTheme::COVER_HEIGHT);
+      if (drawBitmap(path)) {
+        drawCoverOutline(stackSlot);
+        return;
+      }
+
+      const int rightX = rect.x + rect.width - 1;
+      const int leftTop = rect.y + (maxHeight - stackSlot.leftHeight) / 2;
+      const int rightTop = rect.y + (maxHeight - stackSlot.rightHeight) / 2;
+      const int leftBottom = leftTop + stackSlot.leftHeight - 1;
+      const int rightBottom = rightTop + stackSlot.rightHeight - 1;
+      const int silhouetteX[] = {rect.x, rightX, rightX, rect.x};
+      const int silhouetteY[] = {leftTop, rightTop, rightBottom, leftBottom};
+      renderer.fillPolygon(silhouetteX, silhouetteY, 4, false);
+      drawCoverOutline(stackSlot);
+      const int coverX = rect.x + (rect.width - fallbackWidth) / 2;
+      const std::string placeholder = renderer.truncatedText(UI_10_FONT_ID, book.title.c_str(), fallbackWidth - 10);
+      renderer.drawText(UI_10_FONT_ID, coverX + 5, rect.y + maxHeight / 2, placeholder.c_str());
+    };
+
+    const auto stackSlots = threeCover
+                                ? CoverStackGeometry::layoutThree(pageWidth, visibleBookCount, selectorIndex,
+                                                                  carouselLayout.centerHeight)
+                                : CoverStackGeometry::layout(pageWidth, visibleBookCount, selectorIndex,
+                                                             carouselLayout.centerHeight);
+    // Slots are returned in far-to-near order so a rear cover and its ribbon
+    // can never paint over a nearer cover.
+    for (const auto& stackSlot : stackSlots) {
+      if (!stackSlot.valid) continue;
+      const RecentBook& book = recentBooks[visibleBookIndexes[stackSlot.itemIndex]];
+      const auto& rect = stackSlot.rect;
+      drawCover(book, stackSlot);
+      folioPresentation.drawCoverProgressBadge(renderer, rect.x, rect.y, rect.width, rect.height,
+                                               book.progressPercent);
+    }
+    const auto& center = stackSlots.back();
+    if (center.valid) {
+      renderer.drawRect(center.rect.x - 3, center.rect.y - 3, center.rect.width + 6, center.rect.height + 6);
+    }
+
+    const std::string synopsisPreview = SynopsisPreview::firstWords(selected.synopsis);
+    const char* synopsisText = synopsisPreview.empty() ? tr(STR_NO_SYNOPSIS) : synopsisPreview.c_str();
+    const int synopsisMaxLines = std::clamp(carouselLayout.synopsisRegion.height / synopsisLineHeight, 1, 5);
+    const auto synopsisLines = renderer.wrappedText(SMALL_FONT_ID, synopsisText,
+                                                    carouselLayout.synopsisRegion.width, synopsisMaxLines);
+    int synopsisY = carouselLayout.synopsisRegion.y;
+    for (const auto& line : synopsisLines) {
+      renderer.drawText(SMALL_FONT_ID, carouselLayout.synopsisRegion.x, synopsisY, line.c_str());
+      synopsisY += synopsisLineHeight;
+    }
+
+    const int statusY = synopsisY + 6;
+    renderer.drawLine(carouselLayout.statusRegion.x, statusY - 6,
+                      carouselLayout.statusRegion.x + carouselLayout.statusRegion.width - 1,
+                      statusY - 6);
+
+    const uint32_t readingMinutes = (selected.readingSeconds + 30) / 60;
+    const char* readingState = selected.progressPercent >= 100 ? tr(STR_COMPLETE)
+                                                                 : (selected.progressPercent > 0 ? tr(STR_ONGOING)
+                                                                                                 : tr(STR_NEW));
+    char progressValue[16];
+    char readingTimeValue[32];
+    char sessionsValue[32];
+    snprintf(progressValue, sizeof(progressValue), "%u%%", selected.progressPercent);
+    snprintf(readingTimeValue, sizeof(readingTimeValue), "%lu %s",
+             static_cast<unsigned long>(readingMinutes), tr(STR_MIN_SHORT));
+    const char* sessionLabel = selected.readingSessions == 1 ? tr(STR_SESSION_SINGULAR)
+                                                              : tr(STR_SESSION_PLURAL);
+    snprintf(sessionsValue, sizeof(sessionsValue), "%u %s", selected.readingSessions, sessionLabel);
+    const char* statusValues[] = {readingState, progressValue, readingTimeValue, sessionsValue};
+    for (int field = 0; field < 4; ++field) {
+      const int fieldLeft = carouselLayout.statusRegion.x + carouselLayout.statusRegion.width * field / 4;
+      const int fieldRight = carouselLayout.statusRegion.x + carouselLayout.statusRegion.width * (field + 1) / 4;
+      const std::string value = renderer.truncatedText(SMALL_FONT_ID, statusValues[field],
+                                                       std::max(1, fieldRight - fieldLeft - 4));
+      const int valueWidth = renderer.getTextWidth(SMALL_FONT_ID, value.c_str());
+      renderer.drawText(SMALL_FONT_ID, fieldLeft + (fieldRight - fieldLeft - valueWidth) / 2, statusY, value.c_str());
+    }
+  }
+
+  const bool accumulated = !halClock.isAvailable();
+  const uint32_t today = halClock.getDateKey();
+  uint32_t middleSeconds = 0;
+  uint16_t finishedCount = 0;
+  for (const auto& book : recentBooks) {
+    const uint32_t seconds = accumulated ? book.readingSeconds
+                                         : (today != 0 && book.dailyReadingDateKey == today
+                                                ? book.dailyReadingSeconds
+                                                : 0);
+    middleSeconds += std::min(seconds, UINT32_MAX - middleSeconds);
+    if (book.progressPercent >= 100) ++finishedCount;
+  }
+  const uint32_t lastMinutes = recentBooks.empty() ? 0 : (recentBooks.front().lastSessionSeconds + 30) / 60;
+  folioPresentation.drawShelfStats(renderer, folioLayout, lastMinutes, (middleSeconds + 30) / 60, finishedCount,
+                                   accumulated);
+
+  if (menuPopup.processRender(renderer, mappedInput)) {
+    overlayFrameShown = true;
+    return;
+  }
+  if (bookActionsPopup.processRender(renderer, mappedInput)) {
+    overlayFrameShown = true;
+    return;
+  }
+  if (carouselHqPreparationActive) {
+    const int progress = carouselHqQueue.empty()
+                             ? 100
+                             : static_cast<int>((carouselHqQueueIndex * 100) / carouselHqQueue.size());
+    const std::string message = std::string(tr(STR_PREPARE_CAROUSEL_COVERS)) + "\n" +
+                                std::to_string(carouselHqQueueIndex) + " / " +
+                                std::to_string(carouselHqQueue.size());
+    const Rect popup = GUI.drawPopup(renderer, message.c_str(), true);
+    GUI.fillPopupProgress(renderer, popup, progress);
+    const auto cancelLabels = mappedInput.mapLabels(tr(STR_CANCEL), "", "", "");
+    GUI.drawButtonHints(renderer, cancelLabels.btn1, cancelLabels.btn2, cancelLabels.btn3, cancelLabels.btn4);
+    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    carouselHqPopupRendered = true;
+    overlayFrameShown = true;
+    return;
+  }
+  if (retrievingBookCache && retrievingBookCacheIndex == selectorIndex) {
+    std::string bookName = "book";
+    if (visibleBookCount > 0 && retrievingBookCacheIndex < visibleBookCount) {
+      const RecentBook& book = recentBooks[selectedRecentIndex()];
+      bookName = book.title.empty() ? book.path : book.title;
+    }
+    const std::string prefix = std::string(tr(STR_RETRIEVING_BOOK_DETAILS)) + ": ";
+    const int nameWidth = std::max(40, renderer.getScreenWidth() -
+                                           renderer.getTextWidth(UI_10_FONT_ID, prefix.c_str()) - 100);
+    const std::string message = prefix + "\n" + renderer.truncatedText(UI_10_FONT_ID, bookName.c_str(), nameWidth) +
+                                "\nProgress: " + std::to_string(retrievingBookCacheProgress) + "%";
+    const Rect popup = GUI.drawPopup(renderer, message.c_str(), true);
+    GUI.fillPopupProgress(renderer, popup, retrievingBookCacheProgress);
+    const auto cancelLabels = mappedInput.mapLabels(tr(STR_CANCEL), "", "", "");
+    GUI.drawButtonHints(renderer, cancelLabels.btn1, cancelLabels.btn2, cancelLabels.btn3, cancelLabels.btn4);
+    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    retrievingBookCachePopupRendered = true;
+    overlayFrameShown = true;
+    return;
+  }
+  if (recentCacheWarmupActive) {
+    GUI.drawPopup(renderer, tr(STR_RETRIEVING_BOOK_DETAILS));
+    recentCacheWarmupPopupRendered = true;
+    overlayFrameShown = true;
+    return;
+  }
+
+  const auto labels = mappedInput.mapLabels(tr(STR_MENU), tr(STR_OPEN), tr(STR_LIBRARY),
+                                            activeTab == 1 ? tr(STR_FINISHED) : tr(STR_RECENT));
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  renderer.displayBuffer();
+  if (manualSingleRefresh && !retrievingBookCache) manualSingleRefresh = false;
+  initialRenderPending = false;
+  lastRenderedSelectorIndex = selectorIndex;
+  lastRenderedPageStart = (selectorIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE;
+  lastRenderedTab = activeTab;
+  snapshotRestored = false;
+}
+
 void RecentBooksActivity::render(RenderLock&&) {
   // Keep the Folio bookshelf's featured book and 4x2 grid typography fixed;
   // UI Scale applies to the surrounding application screens instead.
@@ -967,7 +1476,7 @@ void RecentBooksActivity::render(RenderLock&&) {
   // one clean shelf render; otherwise its dialog pixels would remain behind
   // the next selection.
   if (overlayFrameShown && !menuPopup.isActive() && !bookActionsPopup.isActive() && !retrievingBookCache &&
-      !recentCacheWarmupActive) {
+      !carouselHqPreparationActive && !recentCacheWarmupActive) {
     overlayFrameShown = false;
     snapshotRestored = false;
     lastRenderedSelectorIndex = SIZE_MAX;
@@ -975,11 +1484,20 @@ void RecentBooksActivity::render(RenderLock&&) {
     initialRenderPending = true;
   }
 
-  bool renderedFromSnapshot = snapshotRestored;
+  if (usesCarouselLayout()) {
+    renderer.clearScreen();
+    renderCarousel(activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_THREE_COVER_CAROUSEL);
+    return;
+  }
+
+  const bool threeCoverGrid = usesThreeCoverGrid();
+  const bool snapshotLayout = usesFourByTwoGrid();
+  bool renderedFromSnapshot = snapshotLayout && snapshotRestored;
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const size_t currentPageStart = (selectorIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE;
+  const int gridPageItems = threeCoverGrid ? 3 : BOOKS_PER_PAGE;
+  const size_t currentPageStart = (selectorIndex / gridPageItems) * gridPageItems;
 
   // Settings and other non-library screens do not change the shelf data. If
   // the persisted frame matches the current book state, show that frame once
@@ -987,7 +1505,7 @@ void RecentBooksActivity::render(RenderLock&&) {
   // (cover decoding, synopsis wrapping, and eight-card geometry) on return.
   // The snapshot key includes presentation/progress fields, so a reader exit
   // or cache update invalidates this path automatically.
-  if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR && renderedFromSnapshot &&
+  if (snapshotLayout && renderedFromSnapshot &&
       initialRenderPending && !snapshotFastPathUsed && !overlayFrameShown && !menuPopup.isActive() &&
       !bookActionsPopup.isActive() && !retrievingBookCache && !recentCacheWarmupActive && !manualSingleRefresh &&
       snapshotPageStart == currentPageStart && visibleBookCount > 0) {
@@ -1022,7 +1540,7 @@ void RecentBooksActivity::render(RenderLock&&) {
   // rebuilding all synopsis text and cover geometry and avoid another e-ink
   // refresh. Explicit cache refreshes and tab/selection changes invalidate
   // this fast path below.
-  if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR && !initialRenderPending &&
+  if (snapshotLayout && !initialRenderPending &&
       !overlayFrameShown && !menuPopup.isActive() && !bookActionsPopup.isActive() && !retrievingBookCache &&
       !recentCacheWarmupActive && !manualSingleRefresh && lastRenderedSelectorIndex == selectorIndex &&
       lastRenderedPageStart == currentPageStart && lastRenderedTab == activeTab && snapshotRestored) {
@@ -1102,12 +1620,14 @@ void RecentBooksActivity::render(RenderLock&&) {
     renderer.fillRect(0, contentTop, pageWidth, contentHeight, false);
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, tr(STR_NO_RECENT_BOOKS));
   } else {
-    auto drawCover = [this](const RecentBook& book, int x, int y, int maxWidth, int maxHeight, bool drawBitmap) {
+    auto drawCover = [this](const RecentBook& book, int x, int y, int maxWidth, int maxHeight, bool drawBitmap,
+                            bool preferCarouselHq) {
       if (!drawBitmap) return;
       int width = std::min(maxWidth, maxHeight * 2 / 3);
-      const std::string path = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
-      HalFile file;
-      if (drawBitmap && !book.coverBmpPath.empty() && Storage.openFileForRead("SHELF", path, file)) {
+      const std::string normalPath = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
+      auto drawBitmapFromPath = [this, x, y, maxWidth, maxHeight](const std::string& path) {
+        HalFile file;
+        if (path.empty() || !Storage.openFileForRead("SHELF", path, file)) return false;
         Bitmap bitmap(file);
         if (bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() > 0 && bitmap.getHeight() > 0) {
           // Fit inside the slot without distorting the cover, then center it
@@ -1130,9 +1650,17 @@ void RecentBooksActivity::render(RenderLock&&) {
           const int drawY = y + (maxHeight - drawHeight) / 2;
           renderer.drawBitmap(bitmap, drawX, drawY, drawWidth, drawHeight);
           renderer.drawRect(x, y, maxWidth, maxHeight);
-          return;
+          return true;
         }
+        return false;
+      };
+
+      if (preferCarouselHq && !book.coverBmpPath.empty()) {
+        const std::string hqPath = UITheme::getCoverThumbPath(book.coverBmpPath, CAROUSEL_HQ_COVER_HEIGHT);
+        if (isValidBookThumbnail(hqPath) && drawBitmapFromPath(hqPath)) return;
       }
+      if (drawBitmapFromPath(normalPath)) return;
+
       const int coverX = x + (maxWidth - width) / 2;
       renderer.drawRect(coverX, y, width, maxHeight);
       const std::string title = renderer.truncatedText(UI_10_FONT_ID, book.title.c_str(), width - 10);
@@ -1150,7 +1678,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     if (!featuredCoverCached) {
       renderer.fillRect(detailPadding, contentTop + 1, detailCoverWidth, detailHeight - 2, false);
     }
-    drawCover(selected, detailPadding, contentTop + 7, detailCoverWidth, detailCoverHeight, !featuredCoverCached);
+    drawCover(selected, detailPadding, contentTop + 7, detailCoverWidth, detailCoverHeight, !featuredCoverCached, true);
     lastFeaturedPath = selected.path;
     lastFeaturedCoverPath = selected.coverBmpPath;
     const int detailX = detailPadding * 2 + detailCoverWidth;
@@ -1189,26 +1717,34 @@ void RecentBooksActivity::render(RenderLock&&) {
     if (fill > 0) renderer.fillRect(detailX + 1, progressY + 1, fill, 10);
     renderer.drawLine(0, contentTop + detailHeight - 1, pageWidth - 1, contentTop + detailHeight - 1);
 
-    const int columns = layout.columns;
-    const int gap = layout.gridGap;
+    const int columns = threeCoverGrid ? 3 : layout.columns;
+    const int gap = threeCoverGrid ? 10 : layout.gridGap;
     const int gridTop = layout.gridTop;
-    const int cardWidth = layout.cardWidth;
-    const int cardHeight = layout.cardHeight;
-    const size_t pageStart = (selectorIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE;
-    for (int slot = 0; slot < BOOKS_PER_PAGE; ++slot) {
+    const int gridHeight = layout.gridHeight;
+    const int cardWidth = threeCoverGrid ? (pageWidth - gap * (columns + 1)) / columns : layout.cardWidth;
+    const int cardHeight = threeCoverGrid ? gridHeight : layout.cardHeight;
+    const size_t pageStart = (selectorIndex / gridPageItems) * gridPageItems;
+    if (threeCoverGrid) renderer.fillRect(0, gridTop, pageWidth, gridHeight, false);
+    for (int slot = 0; slot < gridPageItems; ++slot) {
       const size_t index = pageStart + static_cast<size_t>(slot);
       if (index >= visibleBookCount) break;
       const RecentBook& book = recentBooks[visibleBookIndexes[index]];
       const int x = gap + (slot % columns) * (cardWidth + gap);
-      const int y = gridTop + (slot / columns) * cardHeight;
-      const int coverHeight = std::max(40, std::min(cardHeight - 27, cardWidth * 3 / 2));
-      renderer.fillRect(x, y + coverHeight, cardWidth, std::max(1, cardHeight - coverHeight), false);
+      const int y = threeCoverGrid
+                        ? gridTop + std::max(0, (gridHeight - std::min(gridHeight - 20, cardWidth * 3 / 2)) / 2)
+                        : gridTop + (slot / columns) * cardHeight;
+      const int coverHeight = threeCoverGrid
+                                  ? std::min(gridHeight - 20, cardWidth * 3 / 2)
+                                  : std::max(40, std::min(cardHeight - 27, cardWidth * 3 / 2));
+      if (!threeCoverGrid) {
+        renderer.fillRect(x, y + coverHeight, cardWidth, std::max(1, cardHeight - coverHeight), false);
+      }
       const bool refreshCard = !renderedFromSnapshot || (manualSingleRefresh && index == selectorIndex);
-      drawCover(book, x, y, cardWidth, coverHeight, refreshCard);
+      drawCover(book, x, y, cardWidth, coverHeight, refreshCard, false);
       folioTheme.drawCoverProgressBadge(renderer, x, y, cardWidth, coverHeight, book.progressPercent);
     }
-    const size_t pageCount = (visibleBookCount + BOOKS_PER_PAGE - 1) / BOOKS_PER_PAGE;
-    folioTheme.drawPageIndicator(renderer, layout, selectorIndex / BOOKS_PER_PAGE + 1, pageCount);
+    const size_t pageCount = (visibleBookCount + gridPageItems - 1) / gridPageItems;
+    folioTheme.drawPageIndicator(renderer, layout, selectorIndex / gridPageItems + 1, pageCount);
 
   }
   drawStats();
@@ -1230,7 +1766,7 @@ void RecentBooksActivity::render(RenderLock&&) {
 
   // Persist the base frame before adding the current selection outline. The
   // next button press restores this clean frame and draws one outline only.
-  if (!renderedFromSnapshot && (initialRenderPending || snapshotPageStart != currentPageStart)) {
+  if (snapshotLayout && !renderedFromSnapshot && (initialRenderPending || snapshotPageStart != currentPageStart)) {
     // Persist after the frame has become interactive; see the idle write in
     // loop(). Keeping the old snapshot invalid until then prevents a stale
     // page from being treated as the current one during rapid navigation.
@@ -1239,7 +1775,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     snapshotRestored = false;
     snapshotPageStart = SIZE_MAX;
   }
-  if (visibleBookCount > 0) {
+  if (snapshotLayout && visibleBookCount > 0) {
     const int columns = layout.columns;
     const int gap = layout.gridGap;
     const int cardWidth = layout.cardWidth;
@@ -1300,7 +1836,13 @@ void RecentBooksActivity::render(RenderLock&&) {
   // optional SD snapshot is still waiting for the idle write. Keep using it
   // for immediate button navigation; otherwise the first button press after
   // boot would decode all eight covers again before the deferred write.
-  snapshotRestored = true;
-  snapshotPageStart = currentPageStart;
-  snapshotSelectorIndex = selectorIndex;
+  if (snapshotLayout) {
+    snapshotRestored = true;
+    snapshotPageStart = currentPageStart;
+    snapshotSelectorIndex = selectorIndex;
+  } else {
+    snapshotRestored = false;
+    snapshotPageStart = SIZE_MAX;
+    snapshotSelectorIndex = SIZE_MAX;
+  }
 }
