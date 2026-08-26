@@ -1,7 +1,9 @@
 #pragma once
 #include <I18n.h>
 
+#include <array>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -9,6 +11,7 @@
 #include "RecentBooksStore.h"
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
+#include "util/CoverStackGeometry.h"
 #include "components/OptionPopup.h"
 
 class RecentBooksActivity final : public Activity {
@@ -32,6 +35,65 @@ class RecentBooksActivity final : public Activity {
   uint8_t retrievingBookCacheProgress = 0;
   size_t retrievingBookCacheIndex = SIZE_MAX;
   volatile bool retrievingBookCachePopupRendered = false;
+  // Navigation must never cache bitmap pixels, but it can remember that a
+  // prepared 360px cover was unavailable during this activity session. This
+  // avoids reopening the same missing HQ file on every Carousel redraw.
+  struct CarouselHqProbe {
+    bool valid = false;
+    uint64_t identity = 0;
+    bool unavailable = false;
+  };
+  std::array<CarouselHqProbe, 10> carouselHqProbes{};
+  static constexpr size_t CAROUSEL_SOURCE_CACHE_SIZE = 6;
+  struct CarouselSourceCacheEntry {
+    bool valid = false;
+    uint32_t lastUsed = 0;
+    std::string path;
+    HalFile file;
+    std::unique_ptr<Bitmap> bitmap;
+  };
+  struct CarouselSourceTiming {
+    bool reused = false;
+  };
+  static constexpr size_t CAROUSEL_FRAME_SLOT_COUNT = 5;
+  static constexpr size_t CAROUSEL_FRAME_MAX_PROTECTED_PATHS = 6;
+  struct CarouselSourceFrame {
+    struct Slot {
+      bool valid = false;
+      bool hqAttempted = false;
+      bool resolvedHq = false;
+      bool resolvedFromCache = false;
+      std::string primaryPath;
+      std::string fallbackPath;
+      std::string resolvedPath;
+    };
+    std::array<Slot, CAROUSEL_FRAME_SLOT_COUNT> slots{};
+    std::array<std::string, CAROUSEL_FRAME_MAX_PROTECTED_PATHS> protectedPaths{};
+    size_t protectedCount = 0;
+
+    void protectPath(const std::string& path) {
+      if (path.empty()) return;
+      for (size_t i = 0; i < protectedCount; ++i) {
+        if (protectedPaths[i] == path) return;
+      }
+      if (protectedCount < protectedPaths.size()) protectedPaths[protectedCount++] = path;
+    }
+
+    bool protects(const std::string& path) const {
+      for (size_t i = 0; i < protectedCount; ++i) {
+        if (protectedPaths[i] == path) return true;
+      }
+      return false;
+    }
+
+    void retainResolvedPaths() {
+      protectedPaths = {};
+      protectedCount = 0;
+      for (const auto& slot : slots) protectPath(slot.resolvedPath);
+    }
+  };
+  std::array<CarouselSourceCacheEntry, CAROUSEL_SOURCE_CACHE_SIZE> carouselSourceCache{};
+  uint32_t carouselSourceCacheClock = 0;
   // Optional high-quality Carousel covers are prepared only by the explicit
   // Home-menu action. Missing HQ files never block normal shelf navigation.
   std::vector<size_t> carouselHqQueue;
@@ -78,6 +140,15 @@ class RecentBooksActivity final : public Activity {
 
   // Data loading
   void loadRecentBooks();
+  void invalidateCarouselHqProbes();
+  void invalidateCarouselSourceCache();
+  void invalidateCarouselSource(const std::string& path);
+  CarouselSourceCacheEntry* getCarouselSource(const std::string& path, CarouselSourceTiming& timing,
+                                              CarouselSourceFrame* frame = nullptr);
+  void prepareCarouselSourceFrame(const std::array<CoverStackSlot, CAROUSEL_FRAME_SLOT_COUNT>& stackSlots,
+                                  CarouselSourceFrame& frame);
+  uint64_t carouselCoverIdentity(const RecentBook& book) const;
+  CarouselHqProbe& carouselHqProbe(const RecentBook& book);
   void rebuildVisibleBooks();
   size_t selectedRecentIndex() const;
   bool hasMissingRecentCache() const;

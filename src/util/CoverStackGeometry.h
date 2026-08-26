@@ -43,24 +43,24 @@ inline std::array<CoverStackSlot, 5> layout(const int screenWidth, const size_t 
   if (screenWidth <= 0 || itemCount == 0) return slots;
 
   const size_t selected = std::min(selectedIndex, itemCount - 1);
-  const int heroHeight = std::clamp(centerHeight, 390, 410);
+  const int heroHeight = std::clamp(centerHeight, 320, 466);
   const int centerWidth = 276;
-  const int nearWidth = 64;
-  const int farWidth = 52;
+  const int nearWidth = 70;
+  const int farWidth = 56;
   const int centerY = 122;
   const int centerX = (screenWidth - centerWidth) / 2;
   const int extraWidth = std::max(0, screenWidth - 480);
-  const int nearExposure = 44 + extraWidth / 12;
-  const int farExposure = 24 + extraWidth / 16;
+  const int nearExposure = 48 + extraWidth / 12;
+  const int farExposure = 26 + extraWidth / 16;
   const int nearLeftX = centerX - nearExposure;
   const int nearRightX = screenWidth - nearLeftX - nearWidth;
   const int farLeftX = nearLeftX - farExposure;
   const int farRightX = screenWidth - farLeftX - farWidth;
   const int sideY = centerY + 30;
-  const int nearOuterHeight = heroHeight * 304 / 400;
-  const int nearInnerHeight = heroHeight * 334 / 400;
-  const int farOuterHeight = heroHeight * 276 / 400;
-  const int farInnerHeight = heroHeight * 312 / 400;
+  const int nearOuterHeight = heroHeight * 68 / 100;
+  const int nearInnerHeight = heroHeight * 88 / 100;
+  const int farOuterHeight = heroHeight * 48 / 100;
+  const int farInnerHeight = heroHeight * 72 / 100;
 
   const auto makeSlot = [&](const int x, const int y, const int width, const int height, const int leftHeight,
                             const int rightHeight, const uint8_t depth, const size_t itemIndex, const bool valid) {
@@ -113,18 +113,18 @@ inline std::array<CoverStackSlot, 5> layoutThree(const int screenWidth, const si
   if (screenWidth <= 0 || itemCount == 0) return slots;
 
   const size_t selected = std::min(selectedIndex, itemCount - 1);
-  const int heroHeight = std::clamp(centerHeight, 390, 410);
+  const int heroHeight = std::clamp(centerHeight, 320, 466);
   const int centerWidth = 300;
-  const int sideWidth = 78;
+  const int sideWidth = 86;
   const int centerY = 122;
   const int centerX = (screenWidth - centerWidth) / 2;
   const int extraWidth = std::max(0, screenWidth - 480);
-  const int sideExposure = 54 + extraWidth / 10;
+  const int sideExposure = 62 + extraWidth / 10;
   const int leftX = centerX - sideExposure;
   const int rightX = screenWidth - leftX - sideWidth;
   const int sideY = centerY + 30;
-  const int sideOuterHeight = heroHeight * 304 / 400;
-  const int sideInnerHeight = heroHeight * 334 / 400;
+  const int sideOuterHeight = heroHeight * 68 / 100;
+  const int sideInnerHeight = heroHeight * 88 / 100;
 
   const auto makeSlot = [&](const int x, const int y, const int width, const int height, const int leftHeight,
                             const int rightHeight, const uint8_t depth, const size_t itemIndex, const bool valid) {
@@ -169,10 +169,10 @@ inline std::array<CoverStackSlot, 5> layoutFolioShelf(const int screenWidth, con
   const int nearRightX = screenWidth - nearLeftX - nearWidth;
   const int farLeftX = nearLeftX - farExposure;
   const int farRightX = screenWidth - farLeftX - farWidth;
-  const int nearOuterHeight = heroHeight * (threeCover ? 70 : 64) / 100;
-  const int nearInnerHeight = heroHeight * (threeCover ? 80 : 72) / 100;
-  const int farOuterHeight = heroHeight * 55 / 100;
-  const int farInnerHeight = heroHeight * 64 / 100;
+  const int nearOuterHeight = heroHeight * (threeCover ? 66 : 62) / 100;
+  const int nearInnerHeight = heroHeight * 88 / 100;
+  const int farOuterHeight = heroHeight * 46 / 100;
+  const int farInnerHeight = heroHeight * 70 / 100;
   const int sideY = shelfTop + (shelfHeight - nearInnerHeight) / 2;
 
   const auto makeSlot = [&](const int x, const int width, const int leftHeight, const int rightHeight,

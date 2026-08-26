@@ -7,7 +7,7 @@ struct CarouselLayout {
   Rect carouselRegion;
   Rect synopsisRegion;
   Rect statusRegion;
-  int centerHeight = 400;
+  int centerHeight = 432;
 };
 
 class CarouselTheme final : public LyraTheme {
@@ -16,5 +16,5 @@ class CarouselTheme final : public LyraTheme {
   bool usesGraphicalLibrary() const override { return true; }
 
   CarouselLayout carouselLayout(const GfxRenderer& renderer, int synopsisLineCount = 5,
-                                int synopsisLineHeight = 18) const;
+                                int synopsisLineHeight = 18, int lowerContentBottom = -1) const;
 };
