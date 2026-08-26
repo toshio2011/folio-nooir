@@ -12,8 +12,8 @@
 int KOReaderSyncClient::lastHttpCode = 0;
 
 namespace {
-// Device identifier for CrossPoint reader
-constexpr char DEVICE_NAME[] = "CrossPoint";
+// Keep the identifier stable for existing sync records; the display name is
+// user-editable in KOReader settings.
 constexpr char DEVICE_ID[] = "crosspoint-reader";
 
 // KOSync's TLS-1.3 servers can't be reached through the precompiled system
@@ -37,6 +37,8 @@ constexpr char DEVICE_ID[] = "crosspoint-reader";
 // 43 KB largest block; requiring 50 KB contiguous refused syncs that fit.
 constexpr uint32_t MIN_FREE_FOR_TLS = 50000;
 constexpr uint32_t MIN_BLOCK_FOR_TLS = 20000;
+
+bool isHttpSuccess(const int status) { return status >= 200 && status < 300; }
 
 // Apply the shared KOSync auth headers after begin(). x-auth-* is the native
 // KOSync scheme; Basic auth is added for Calibre-Web-Automated compatibility.
@@ -87,7 +89,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::authenticate() {
   LOG_DBG("KOSync", "Auth response: %d", httpCode);
 
   if (httpCode <= 0) return NETWORK_ERROR;
-  if (httpCode == 200) return OK;
+  if (isHttpSuccess(httpCode)) return OK;
   if (httpCode == 401) return AUTH_FAILED;
   return SERVER_ERROR;
 }
@@ -124,7 +126,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::createUser() {
   LOG_DBG("KOSync", "Create user response: %d", httpCode);
 
   if (httpCode <= 0) return NETWORK_ERROR;
-  if (httpCode == 200 || httpCode == 201) return OK;
+  if (isHttpSuccess(httpCode)) return OK;
   if (httpCode == 402) return USER_EXISTS;
   return SERVER_ERROR;
 }
@@ -158,13 +160,26 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
     return NETWORK_ERROR;
   }
 
-  if (httpCode == 200) {
-    JsonDocument doc;
-    const DeserializationError error = deserializeJson(doc, http.getString().c_str());
+  if (isHttpSuccess(httpCode)) {
+    const std::string responseBody = http.getString();
     http.end();
+
+    if (responseBody.length() == 0) {
+      LOG_ERR("KOSync", "Successful progress response contained no payload");
+      return JSON_ERROR;
+    }
+
+    JsonDocument doc;
+    const DeserializationError error = deserializeJson(doc, responseBody.c_str());
 
     if (error) {
       LOG_ERR("KOSync", "JSON parse failed: %s", error.c_str());
+      return JSON_ERROR;
+    }
+
+    const char* progressValue = doc["progress"].as<const char*>();
+    if (progressValue == nullptr || progressValue[0] == '\0') {
+      LOG_ERR("KOSync", "Successful progress response contained no usable progress");
       return JSON_ERROR;
     }
 
@@ -225,10 +240,11 @@ KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgr
   }
   doc["progress"] = progress.progress;
   doc["percentage"] = progress.percentage;
-  doc["device"] = DEVICE_NAME;
+  doc["device"] = KOREADER_STORE.getDeviceName();
   doc["device_id"] = DEVICE_ID;
-  if (progress.position.has_value()) {
-    // Extended crosspoint-sync field; kosync servers ignore unknown keys.
+  if (progress.position.has_value() && KOREADER_STORE.usesCrossPointSyncServer()) {
+    // Extended CrossPoint field. Do not send it to generic KOReader servers;
+    // some self-hosted implementations reject unknown payload fields.
     const auto& p = *progress.position;
     auto pos = doc["position"].to<JsonObject>();
     pos["pctQ"] = p.pctQ;
@@ -260,7 +276,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgr
   LOG_DBG("KOSync", "Update progress response: %d", httpCode);
 
   if (httpCode <= 0) return NETWORK_ERROR;
-  if (httpCode == 200 || httpCode == 202) return OK;
+  if (isHttpSuccess(httpCode)) return OK;
   if (httpCode == 401) return AUTH_FAILED;
   return SERVER_ERROR;
 }

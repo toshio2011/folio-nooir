@@ -1602,13 +1602,19 @@
           <div class="convert-row">
             <label class="convert-checkbox">
               <input type="checkbox" id="convertBeforeUpload" onchange="toggleConvertOptions()">
-              <span>Optimize EPUB</span>
+              <span id="convertBeforeUploadLabel">Optimize EPUB</span>
             </label>
             <span class="convert-separator">—</span>
             <span class="advanced-options-toggle" id="advancedOptionsToggle" onclick="toggleAdvancedOptions()">
               <span class="advanced-options-arrow" id="advancedOptionsArrow">▶</span>
               <span class="advanced-options-text">Advanced Mode</span>
             </span>
+          </div>
+
+          <div id="cbzNormalizeGuide" style="display:none; margin: 0 0 10px; font-size: 0.85em; line-height: 1.35; color: #68727a;">
+            <strong>CBZ tip:</strong> Use this for colored books or pages that look blurry/blocky on the device.
+            Only progressive JPEG pages are normalized; compatible JPEGs and PNGs remain unchanged.
+            Processing may take longer for large books.
           </div>
 
           <div id="convertInfo" style="display:none; margin-bottom: 10px; font-size: 0.9em;">
@@ -2404,7 +2410,7 @@
   }
 
   function toggleAdvancedOptions() {
-    // Check if advanced options toggle is enabled (optimize EPUB must be checked)
+    // Check if advanced options toggle is enabled (book optimization must be checked)
     const convertEnabled = document.getElementById('convertBeforeUpload').checked;
     if (!convertEnabled) {
       return; // Don't toggle if optimization is disabled
@@ -2417,7 +2423,9 @@
     content.classList.toggle('visible');
     arrow.classList.toggle('expanded');
     
-    // When expanding, show image picker if an EPUB is selected
+    // When expanding, show image picker if an EPUB is selected. CBZ
+    // normalization has no per-page selection because baseline pages are
+    // intentionally left untouched.
     if (isExpanding) {
       const fileInput = document.getElementById('fileInput');
       const files = fileInput.files;
@@ -3386,9 +3394,19 @@
     const convertOptions = document.getElementById('convertOptions');
     fileInput.classList.toggle('has-files', files.length > 0);
 
-    // Show convert options only when at least one selected file is an EPUB.
+    // Show optimization options for EPUBs and CBZs.  CBZ optimization only
+    // rewrites progressive JPEG pages; ordinary CBZ uploads remain byte-for-
+    // byte unchanged when optimization is left off.
     const hasEpub = Array.from(files).some(f => f.name.toLowerCase().endsWith('.epub'));
-    if (files.length > 0 && hasEpub) {
+    const hasCbz = Array.from(files).some(f => f.name.toLowerCase().endsWith('.cbz'));
+    const convertLabel = document.getElementById('convertBeforeUploadLabel');
+    const cbzNormalizeGuide = document.getElementById('cbzNormalizeGuide');
+    if (cbzNormalizeGuide) cbzNormalizeGuide.style.display = hasCbz ? 'block' : 'none';
+    if (convertLabel) {
+      convertLabel.textContent = hasEpub && hasCbz ? 'Optimize EPUB / Normalize CBZ JPEGs'
+        : hasCbz ? 'Normalize CBZ JPEGs' : 'Optimize EPUB';
+    }
+    if (files.length > 0 && (hasEpub || hasCbz)) {
       convertOptions.style.display = 'block';
       toggleConvertOptions();
     } else {
@@ -3396,12 +3414,15 @@
       uploadBtn.textContent = 'Upload';
       uploadBtn.classList.remove('optimize');
       document.getElementById('convertInfo').style.display = 'none';
+      document.getElementById('cbzNormalizeGuide').style.display = 'none';
       document.getElementById('convertWarning').style.display = 'none';
       if (files.length === 0) clearImagePicker();
     }
 
     if (files.length > 0) {
-      // If advanced settings is expanded and single EPUB, show image picker
+      // If advanced settings is expanded and single EPUB, show image picker.
+      // CBZ normalization has no per-image picker: only progressive JPEGs are
+      // re-encoded, and all other archive entries are retained.
       const advancedContent = document.getElementById('advancedSettingsContent');
       const convertEnabled = document.getElementById('convertBeforeUpload').checked;
       if (advancedContent.classList.contains('visible') && files.length === 1 && convertEnabled && files[0].name.toLowerCase().endsWith('.epub')) {
@@ -5054,6 +5075,156 @@ async function processImage(data, imageState = 0, imagePath = '') {
   });
 }
 
+// JPEGDEC intentionally renders progressive JPEGs as 1/8-resolution DC
+// thumbnails.  Normalize only those pages before a CBZ reaches the device so
+// the reader can use its normal, full-resolution baseline JPEG path.  This is
+// deliberately opt-in and does not touch baseline JPEGs, PNGs, EPUBs, or XTC.
+function isProgressiveJpegData(data) {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return false;
+
+  let offset = 2;
+  while (offset + 1 < bytes.length) {
+    while (offset < bytes.length && bytes[offset] !== 0xff) offset++;
+    if (offset >= bytes.length) break;
+    while (offset < bytes.length && bytes[offset] === 0xff) offset++;
+    if (offset >= bytes.length) break;
+
+    const marker = bytes[offset++];
+    if (marker === 0xda || marker === 0xd9) break; // SOS/EOI
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (offset + 1 >= bytes.length) break;
+
+    const segmentLength = (bytes[offset] << 8) | bytes[offset + 1];
+    if (segmentLength < 2 || offset + segmentLength > bytes.length) break;
+    // SOF2 is the normal progressive Huffman frame.  The other progressive
+    // SOF markers are included for completeness; JPEGDEC treats them as
+    // progressive too when it probes the source header.
+    if (marker === 0xc2 || marker === 0xc6 || marker === 0xca || marker === 0xce) return true;
+    offset += segmentLength;
+  }
+  return false;
+}
+
+function loadImageForJpegNormalization(data) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(new Blob([data], { type: 'image/jpeg' }));
+    const image = new Image();
+    const timeoutId = setTimeout(() => {
+      URL.revokeObjectURL(url);
+      reject(new Error('JPEG normalization image load timeout'));
+    }, IMAGE_LOAD_TIMEOUT_MS);
+
+    image.onload = () => {
+      clearTimeout(timeoutId);
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      clearTimeout(timeoutId);
+      URL.revokeObjectURL(url);
+      reject(new Error('JPEG normalization image load failed'));
+    };
+    image.src = url;
+  });
+}
+
+async function normalizeProgressiveJpeg(data) {
+  const image = await loadImageForJpegNormalization(data);
+  if (operationCancelled) throw new Error('Cancelled by user');
+
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+  if (!width || !height) throw new Error('JPEG normalization received invalid dimensions');
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { alpha: false });
+  if (!context) throw new Error('JPEG normalization canvas unavailable');
+  context.fillStyle = '#fff';
+  context.fillRect(0, 0, width, height);
+  context.drawImage(image, 0, 0, width, height);
+
+  const normalizedBlob = await new Promise((resolve, reject) => {
+    canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('JPEG normalization encode failed')),
+                  'image/jpeg', 0.95);
+  });
+  const normalized = await normalizedBlob.arrayBuffer();
+  if (isProgressiveJpegData(normalized)) {
+    throw new Error('Browser produced a progressive JPEG; original page retained');
+  }
+  return normalized;
+}
+
+// Returns the original file when no progressive JPEG is present.  This keeps
+// the normal upload path fast and ensures the new option cannot alter already
+// compatible CBZ books.
+async function normalizeCbzFile(file, progressCallback) {
+  const startTime = Date.now();
+  const zip = await JSZip.loadAsync(file);
+  const entries = Object.entries(zip.files);
+  const progressiveEntries = [];
+
+  for (let i = 0; i < entries.length; i++) {
+    if (operationCancelled) throw new Error('Cancelled by user');
+    const [path, fileObj] = entries[i];
+    if (fileObj.dir || !/\.(jpe?g)$/i.test(path)) {
+      if (progressCallback) progressCallback(((i + 1) / Math.max(1, entries.length)) * 35);
+      continue;
+    }
+    const data = await fileObj.async('arraybuffer');
+    if (isProgressiveJpegData(data)) {
+      // Keep the JSZip entry, not another full page-sized buffer.  The page is
+      // read again only when it is actually normalized, keeping browser RAM
+      // bounded for large CBZ archives.
+      progressiveEntries.push({ path, fileObj });
+    }
+    if (progressCallback) progressCallback(((i + 1) / Math.max(1, entries.length)) * 35);
+  }
+
+  if (progressiveEntries.length === 0) {
+    log('No progressive JPEG pages found; CBZ uploaded unchanged.', 'success', 'CBZ');
+    if (progressCallback) progressCallback(100);
+    return file;
+  }
+
+  clearLog();
+  showLog();
+  log(`<strong>${escapeHtml(file.name)}</strong> <span class="log-detail">(${formatBytes(file.size)})</span>`, '', 'INFO');
+  log(`Normalizing ${progressiveEntries.length} progressive JPEG page${progressiveEntries.length === 1 ? '' : 's'} to baseline JPEG`, '', 'CBZ');
+
+  const out = new JSZip();
+  const progressivePaths = new Set(progressiveEntries.map(entry => entry.path));
+  let normalizedCount = 0;
+  for (const [path, fileObj] of entries) {
+    if (operationCancelled) throw new Error('Cancelled by user');
+    if (fileObj.dir) {
+      out.folder(path);
+      continue;
+    }
+    if (progressivePaths.has(path)) {
+      const normalized = await normalizeProgressiveJpeg(await fileObj.async('arraybuffer'));
+      if (!normalized || isProgressiveJpegData(normalized)) {
+        throw new Error(`Could not produce a baseline JPEG for ${path}`);
+      }
+      normalizedCount++;
+      out.file(path, normalized, { binary: true, compression: 'STORE', createFolders: false });
+      log(`Normalized ${path.split('/').pop()} (${normalizedCount}/${progressiveEntries.length})`, 'success', 'CBZ');
+      if (progressCallback) progressCallback(35 + (normalizedCount / progressiveEntries.length) * 55);
+    } else {
+      out.file(path, fileObj.async('uint8array'), { binary: true, compression: 'STORE', createFolders: false });
+    }
+  }
+
+  const result = await out.generateAsync({ type: 'blob', mimeType: 'application/vnd.comicbook+zip', compression: 'STORE' }, metadata => {
+    if (progressCallback) progressCallback(90 + metadata.percent * 0.1);
+  });
+  log(`CBZ normalization complete in ${((Date.now() - startTime) / 1000).toFixed(1)}s`, 'success', 'DONE');
+  if (progressCallback) progressCallback(100);
+  return result;
+}
+
 // Convert EPUB file - returns converted blob
 async function convertEpubFile(file, progressCallback) {
   const startTime = Date.now();
@@ -5671,9 +5842,10 @@ async function uploadFile() {
     // Re-enable transition after a brief delay
     setTimeout(() => progressFill.classList.remove('no-transition'), 50);
 
-    // Check if file is an EPUB and conversion is enabled
+    // Check if this is a supported book type and optimization is enabled.
     const isEpub = file.name.toLowerCase().endsWith('.epub');
-    const needsConversion = isEpub && convertEnabled;
+    const isCbz = file.name.toLowerCase().endsWith('.cbz');
+    const needsConversion = (isEpub || isCbz) && convertEnabled;
     let conversionSucceeded = false;
     let conversionFailed = false;  // Track if conversion actually failed
     let convOriginalSize = 0;      // Picked-file size; 0 unless conversion succeeded
@@ -5699,7 +5871,7 @@ async function uploadFile() {
     }
 
     const methodText = useWebSocket ? ' [WS]' : ' [HTTP]';
-    const stageText = needsConversion ? 'Converting & uploading' : 'Uploading';
+    const stageText = needsConversion ? (isCbz ? 'Normalizing & uploading' : 'Converting & uploading') : 'Uploading';
     progressText.style.color = '';
     progressText.textContent = `${stageText} ${file.name} (${currentIndex + 1}/${files.length})${methodText}`;
 
@@ -5708,7 +5880,7 @@ async function uploadFile() {
       // If conversion succeeded, display goes from 50-100%, otherwise 0-100%
       const displayPercent = conversionSucceeded ? 50 + Math.round(uploadPercent / 2) : uploadPercent;
       progressFill.style.width = displayPercent + '%';
-      const prefix = conversionSucceeded ? 'Converting & uploading' : 'Uploading';
+      const prefix = conversionSucceeded ? (isCbz ? 'Normalizing & uploading' : 'Converting & uploading') : 'Uploading';
       progressText.textContent = `${prefix} ${file.name} (${currentIndex + 1}/${files.length})${methodText} — ${uploadPercent}%`;
     };
 
@@ -5764,10 +5936,10 @@ async function uploadFile() {
     };
 
     try {
-      // Convert EPUB if needed
+      // Convert EPUB or normalize progressive JPEGs in a CBZ if requested.
       if (needsConversion) {
         progressFill.style.backgroundColor = '#9b59b6'; // Purple for conversion
-        progressText.textContent = `Converting ${file.name} (${currentIndex + 1}/${files.length})...`;
+        progressText.textContent = `${isCbz ? 'Normalizing' : 'Converting'} ${file.name} (${currentIndex + 1}/${files.length})...`;
 
         // Clear log for single file mode, or just add separator for batch mode
         if (!useBatchLog) {
@@ -5780,13 +5952,19 @@ async function uploadFile() {
         const origFileSize = file.size;
 
         try {
-          const convertedBlob = await convertEpubFile(file, (percent) => {
+          const convertedBlob = isCbz
+            ? await normalizeCbzFile(file, (percent) => {
+              progressFill.style.width = (percent * 0.5) + '%';
+            })
+            : await convertEpubFile(file, (percent) => {
             // Pass current quality setting to converter
             progressFill.style.width = (percent * 0.5) + '%'; // Conversion takes first 50%
-          });
+            });
 
           // Create new File from converted blob
-          file = new File([convertedBlob], file.name, { type: 'application/epub+zip' });
+          file = new File([convertedBlob], file.name, {
+            type: isCbz ? 'application/vnd.comicbook+zip' : 'application/epub+zip'
+          });
           progressFill.style.backgroundColor = '#27ae60'; // Back to green for upload
           conversionSucceeded = true;
           convOriginalSize = origFileSize;

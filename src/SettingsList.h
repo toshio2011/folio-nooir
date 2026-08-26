@@ -173,8 +173,19 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
             "refreshFrequency", StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_UI_THEME, &CrossPointSettings::uiTheme,
                           {StrId::STR_THEME_CLASSIC, StrId::STR_THEME_LYRA, StrId::STR_THEME_LYRA_EXTENDED,
-                           StrId::STR_THEME_ROUNDEDRAFF, StrId::STR_THEME_FOLIO_NOOIR},
+                           StrId::STR_THEME_ROUNDEDRAFF, StrId::STR_THEME_FOLIO_NOOIR, StrId::STR_THEME_CAROUSEL},
                           "uiTheme", StrId::STR_CAT_DISPLAY),
+        SettingInfo::Enum(StrId::STR_CAROUSEL_LAYOUT, &CrossPointSettings::carouselLayout,
+                          {StrId::STR_LAYOUT_3_COVER_CAROUSEL, StrId::STR_LAYOUT_5_COVER_CAROUSEL}, "carouselLayout",
+                          StrId::STR_CAT_DISPLAY),
+        SettingInfo::Enum(StrId::STR_RECENT_BOOK_LAYOUT, &CrossPointSettings::recentBookLayout,
+                          {StrId::STR_LAYOUT_GRID_4X2, StrId::STR_LAYOUT_3_COVERS,
+                           StrId::STR_LAYOUT_3_COVER_CAROUSEL, StrId::STR_LAYOUT_5_COVER_CAROUSEL},
+                          "recentBookLayout", StrId::STR_CAT_DISPLAY),
+        SettingInfo::Enum(StrId::STR_FINISHED_BOOK_LAYOUT, &CrossPointSettings::finishedBookLayout,
+                          {StrId::STR_LAYOUT_GRID_4X2, StrId::STR_LAYOUT_3_COVERS,
+                           StrId::STR_LAYOUT_3_COVER_CAROUSEL, StrId::STR_LAYOUT_5_COVER_CAROUSEL},
+                          "finishedBookLayout", StrId::STR_CAT_DISPLAY),
         SettingInfo::Value(StrId::STR_UI_SCALE, &CrossPointSettings::uiScalePercent, {80, 120, 10}, "uiScalePercent",
                            StrId::STR_CAT_DISPLAY),
         SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix, "fadingFix",
@@ -250,6 +261,9 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         SettingInfo::Enum(StrId::STR_IMAGES, &CrossPointSettings::imageRendering,
                           {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS},
                           "imageRendering", StrId::STR_CAT_READER),
+        SettingInfo::Enum(StrId::STR_PAGE_NUMBER_MODE, &CrossPointSettings::pageNumberMode,
+                          {StrId::STR_CURRENT_PAGES, StrId::STR_STABLE_PAGES}, "pageNumberMode",
+                          StrId::STR_CAT_READER),
         // --- Controls ---
         SettingInfo::Enum(StrId::STR_SIDE_BTN_LAYOUT, &CrossPointSettings::sideButtonLayout,
                           {StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV, StrId::STR_DISABLED}, "sideButtonLayout",
@@ -336,6 +350,13 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
               KOREADER_STORE.saveToFile();
             },
             "koServerUrl", StrId::STR_KOREADER_SYNC),
+        SettingInfo::DynamicString(
+            StrId::STR_SYNC_DEVICE_NAME, [] { return KOREADER_STORE.getDeviceName(); },
+            [](const std::string& v) {
+              KOREADER_STORE.setDeviceName(v);
+              KOREADER_STORE.saveToFile();
+            },
+            "koDeviceName", StrId::STR_KOREADER_SYNC),
         SettingInfo::DynamicEnum(
             StrId::STR_DOCUMENT_MATCHING, {StrId::STR_FILENAME, StrId::STR_BINARY},
             [] { return static_cast<uint8_t>(KOREADER_STORE.getMatchMethod()); },

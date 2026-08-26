@@ -5,12 +5,15 @@
 #include "./FileBrowserActivity.h"
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
+#include "components/OptionPopup.h"
 
 struct RecentBook;
 struct Rect;
 
 class HomeActivity final : public Activity {
   ButtonNavigator buttonNavigator;
+  OptionPopup menuPopup;
+  OptionPopup bookActionsPopup;
   int selectorIndex = 0;
   bool recentsLoading = false;
   bool recentsLoaded = false;
@@ -22,6 +25,10 @@ class HomeActivity final : public Activity {
   // Home can be entered while Back is still held (e.g. leaving Settings with
   // Back): ignore that stale release until a fresh press is seen here.
   bool backPressSeen = false;
+  bool longPressActionShown = false;
+  bool swallowBookConfirmRelease = false;
+  bool swallowBookBackRelease = false;
+  bool swallowMenuBackRelease = false;
   uint8_t* coverBuffer = nullptr;  // HomeActivity's own buffer for cover image
   size_t coverBufferSize = 0;      // Bytes allocated to coverBuffer
   // Logical rect last passed to drawRecentBookCover. The cover snapshot only
@@ -72,6 +79,8 @@ class HomeActivity final : public Activity {
   void freeCoverBuffer();     // Free the stored cover buffer
   void loadRecentBooks(int maxBooks);
   void loadRecentCovers(int coverHeight);
+  void showMenu();
+  void showBookActions();
 
  public:
   explicit HomeActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,

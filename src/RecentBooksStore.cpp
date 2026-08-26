@@ -1,6 +1,7 @@
 #include "RecentBooksStore.h"
 
 #include <Epub.h>
+#include <Cbz.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
 #include <Logging.h>
@@ -292,6 +293,19 @@ RecentBook RecentBooksStore::getDataFromBook(std::string path) const {
       applyMetadataOverride(result);
       return result;
     }
+  } else if (FsHelpers::hasCbzExtension(lastBookFileName)) {
+    // Recent must remain lightweight: only use the already-written CBZ
+    // metadata/thumbnail cache and never rescan the archive during shelf boot.
+    Cbz cbz(path, "/.crosspoint");
+    if (cbz.loadCachedMetadataOnly()) {
+      RecentBook result{path, cbz.getTitle(), cbz.getAuthor(), cbz.getThumbBmpPath(), cbz.getSynopsis().substr(0, 384)};
+      applyMetadataOverride(result);
+      return result;
+    }
+    const size_t dot = lastBookFileName.find_last_of('.');
+    RecentBook result{path, dot == std::string::npos ? lastBookFileName : lastBookFileName.substr(0, dot), "", ""};
+    applyMetadataOverride(result);
+    return result;
   } else if (FsHelpers::hasTxtExtension(lastBookFileName) || FsHelpers::hasMarkdownExtension(lastBookFileName)) {
     RecentBook result{path, lastBookFileName, "", ""};
     applyMetadataOverride(result);

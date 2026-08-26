@@ -16,7 +16,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/QrUtils.h"
-#include "util/TaskWatchdog.h"
+#include <TaskWatchdog.h>
 
 namespace {
 // AP Mode configuration
@@ -279,8 +279,9 @@ void CrossPointWebServerActivity::loop() {
       if (millis() - lastWifiCheck > 2000) {  // Check every 2 seconds
         lastWifiCheck = millis();
         const wl_status_t wifiStatus = WiFi.status();
-        // Driver auto-reconnect handles retries; abandon (via onGoHome) only
-        // after WIFI_ABANDON_MS, otherwise the activity freezes on a blip.
+        // Driver auto-reconnect handles retries. Keep the web activity alive
+        // across a temporary STA loss so the browser can reconnect when the
+        // network returns; the user can still leave with Back/home.
         bool repaint = false;
         if (wifiStatus != WL_CONNECTED) {
           if (consecutiveDisconnects == 0) {
@@ -290,12 +291,6 @@ void CrossPointWebServerActivity::loop() {
           consecutiveDisconnects++;
           LOG_DBG("WEBACT", "WiFi not connected (status=%d, consecutive=%d, total=%lu ms)", wifiStatus,
                   consecutiveDisconnects, millis() - firstDisconnectAt);
-          if (millis() - firstDisconnectAt > WIFI_ABANDON_MS) {
-            LOG_DBG("WEBACT", "WiFi unavailable for >%lu s; returning to network selection", WIFI_ABANDON_MS / 1000UL);
-            state = WebServerActivityState::SHUTTING_DOWN;
-            onGoHome();
-            return;
-          }
         } else {
           if (consecutiveDisconnects > 0) {
             LOG_DBG("WEBACT", "WiFi recovered after %d failed checks (%lu ms)", consecutiveDisconnects,

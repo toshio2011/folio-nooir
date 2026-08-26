@@ -5,7 +5,7 @@
 #include <Logging.h>
 
 #include "util/BookCacheUtils.h"
-#include "util/TaskWatchdog.h"
+#include <TaskWatchdog.h>
 
 namespace {
 constexpr const char* HIDDEN_ITEMS[] = {"System Volume Information", "XTCache"};

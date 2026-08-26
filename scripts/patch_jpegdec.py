@@ -1,11 +1,10 @@
 """
 PlatformIO pre-build script: apply CrossPoint's JPEGDEC patches via `git apply`.
 
-The upstream JPEGDEC pin still has the wild-pointer + DC-write bugs in
-JPEGDecodeMCU_P that surface when EIGHT_BIT_GRAYSCALE decodes a 3-component
-progressive JPEG (each Y MCU drags two MCU_SKIP calls behind it for Cb/Cr).
-The patches in `scripts/jpegdec_patches/` carry the fix; this script applies
-each one against the libdep working tree.
+The upstream JPEGDEC pin still has progressive-decoder safety and scan
+component-selection bugs that surface when EIGHT_BIT_GRAYSCALE decodes a
+3-component progressive JPEG. The patches in `scripts/jpegdec_patches/` carry
+the fixes; this script applies each one against the libdep working tree.
 
 Each patch's idempotency is decided by git itself:
   * `git apply --check --reverse` succeeds  -> already applied, skip

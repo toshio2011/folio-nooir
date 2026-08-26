@@ -85,10 +85,19 @@ bool streamXtchRenderPass(const Xtc& xtc, const uint32_t pageIndex, const uint16
 }
 }  // namespace
 
+void XtcReaderActivity::requestExitToHome() {
+  if (exitHomePending) return;
+  exitHomePending = true;
+  exitPopupShown = false;
+  requestUpdate(true);
+}
+
 void XtcReaderActivity::onEnter() {
   Activity::onEnter();
   mappedInput.setReaderMappingMode(true);
   readingSessionStartedMs = millis();
+  exitHomePending = false;
+  exitPopupShown = false;
 
   if (!xtc) {
     return;
@@ -125,8 +134,10 @@ void XtcReaderActivity::onExit() {
 
   ReaderUtils::clearGhostingOnExit(renderer);
 
-  APP_STATE.readerActivityLoadCount = 0;
-  APP_STATE.saveToFile();
+  if (APP_STATE.readerActivityLoadCount != 0) {
+    APP_STATE.readerActivityLoadCount = 0;
+    APP_STATE.saveToFile();
+  }
   xtc.reset();
 }
 
@@ -142,6 +153,13 @@ void XtcReaderActivity::openChapterSelection() {
 }
 
 void XtcReaderActivity::loop() {
+  // Match EPUB's exit sequence: let the render task show the saving message before
+  // the activity transition runs onExit() and persists the reading session.
+  if (exitHomePending) {
+    if (exitPopupShown) activityManager.goHome();
+    return;
+  }
+
   if (skipNextButtonCheck) {
     skipNextButtonCheck = false;
     return;
@@ -178,6 +196,7 @@ void XtcReaderActivity::loop() {
     } else if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_DARK_MODE) {
       SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
       SETTINGS.saveToFile();
+      pagesUntilFullRefresh = 1;
       darkShortcutFired = true;
       requestUpdate();
     }
@@ -208,6 +227,7 @@ void XtcReaderActivity::loop() {
       mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && !darkShortcutFired) {
     SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
     SETTINGS.saveToFile();
+    pagesUntilFullRefresh = 1;
     darkShortcutFired = true;
     requestUpdate();
     return;
@@ -249,7 +269,7 @@ void XtcReaderActivity::loop() {
         activityManager.goToReader(openPath);
         return;
       case EndOfBookOptions::Action::GoHome:
-        onGoHome();
+        requestExitToHome();
         return;
       case EndOfBookOptions::Action::LastPage:
         currentPage = xtc->getPageCount() > 0 ? xtc->getPageCount() - 1 : 0;
@@ -269,7 +289,7 @@ void XtcReaderActivity::loop() {
   }
 
   if (ReaderUtils::handleBackNavigation(mappedInput, activityManager, xtc ? xtc->getPath().c_str() : "",
-                                        {this, [](void* ctx) { static_cast<XtcReaderActivity*>(ctx)->onGoHome(); }})) {
+                                        {this, [](void* ctx) { static_cast<XtcReaderActivity*>(ctx)->requestExitToHome(); }})) {
     return;
   }
 
@@ -289,7 +309,7 @@ void XtcReaderActivity::loop() {
       return;
     }
     if (nextTriggered) {
-      onGoHome();
+      requestExitToHome();
     } else {
       currentPage = xtc->getPageCount() - 1;
       requestUpdate();
@@ -352,6 +372,16 @@ void XtcReaderActivity::render(RenderLock&&) {
 
   renderer.setDarkMode(SETTINGS.readerDarkMode != 0);
   renderer.setRenderMode(GfxRenderer::BW);
+
+  // Keep the current page visible while onExit() persists Recent, per-book,
+  // and daily reading data, matching the EPUB reader's exit feedback.
+  if (exitHomePending) {
+    if (!exitPopupShown) {
+      GUI.drawPopup(renderer, tr(STR_SAVING_READING_DATA), true);
+      exitPopupShown = true;
+    }
+    return;
+  }
 
   // Bounds check
   if (currentPage >= xtc->getPageCount()) {
@@ -473,7 +503,7 @@ void XtcReaderActivity::renderPage() {
     if (pagesUntilFullRefresh <= 1) {
       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
       renderer.preconditionGrayscale();
-      pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
+      pagesUntilFullRefresh = ReaderUtils::refreshCadence(renderer);
     } else {
       renderer.displayGrayscaleBase(HalDisplay::FAST_REFRESH);
       pagesUntilFullRefresh--;
@@ -585,7 +615,7 @@ void XtcReaderActivity::renderPage() {
       // the display sync, so only the gentle reinforcement cells fire).
       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
       renderer.preconditionGrayscale();
-      pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
+      pagesUntilFullRefresh = ReaderUtils::refreshCadence(renderer);
     } else {
       // OEM grayscale pipeline base: differential "AA-pre-BW(mid)" update as
       // the page turn on X3; plain FAST refresh on X4 (previous behavior).

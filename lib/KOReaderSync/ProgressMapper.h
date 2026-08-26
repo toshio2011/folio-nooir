@@ -15,6 +15,10 @@ struct CrossPointPosition {
   int spineIndex;                  // Current spine item (chapter) index
   int pageNumber;                  // Current page within the spine item
   int totalPages;                  // Total pages in the current spine item
+  // Content-relative anchor resolved while streaming the XHTML. This is more
+  // stable than a page number when reader settings differ between devices.
+  uint32_t visibleTextOffset = 0;
+  bool hasVisibleTextOffset = false;
   uint16_t paragraphIndex = 0;     // 1-based synthetic paragraph index from XPath p[N]
   bool hasParagraphIndex = false;  // True when paragraphIndex was resolved from XPath
   uint16_t liIndex = 0;            // Running <li> count at the matched XPath element
@@ -70,17 +74,17 @@ class ProgressMapper {
 
   /**
    * Convert a rich CrossPoint position (downloaded from a crosspoint-sync
-   * server) directly to a CrossPoint position, without XPath approximation.
-   * When the local layout matches the uploader's (same spine page count) the
-   * page transfers losslessly; otherwise the paragraph LUT or the intra-spine
-   * page fraction is used.
+   * server) to a CrossPoint position. When xpathAlreadyTried is false, the
+   * portable KOReader XPath is attempted first; the rich page/paragraph data
+   * then provides a layout-aware fallback.
    *
    * @return The position, or std::nullopt when the rich position cannot be
    *         applied (spine out of range, no section cache) and the caller
    *         should fall back to toCrossPoint().
    */
   static std::optional<CrossPointPosition> fromRichPosition(const std::shared_ptr<Epub>& epub,
-                                                            const KOReaderRichPosition& rich, GfxRenderer& renderer);
+                                                            const KOReaderRichPosition& rich, GfxRenderer& renderer,
+                                                            bool xpathAlreadyTried = false);
 
  private:
   /**

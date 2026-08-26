@@ -14,6 +14,7 @@
 #include "components/themes/lyra/Lyra3CoversTheme.h"
 #include "components/themes/lyra/LyraTheme.h"
 #include "components/themes/roundedraff/RoundedRaffTheme.h"
+#include "components/themes/folio_nooir/CarouselTheme.h"
 #include "components/themes/folio_nooir/FolioNooirTheme.h"
 
 UITheme UITheme::instance;
@@ -53,6 +54,11 @@ void UITheme::setTheme(CrossPointSettings::UI_THEME type) {
     case CrossPointSettings::UI_THEME::FOLIO_NOOIR:
       LOG_DBG("UI", "Using Folio Nooir theme");
       currentTheme = std::make_unique<FolioNooirTheme>();
+      currentMetrics = &LyraMetrics::values;
+      break;
+    case CrossPointSettings::UI_THEME::CAROUSEL:
+      LOG_DBG("UI", "Using Carousel theme");
+      currentTheme = std::make_unique<CarouselTheme>();
       currentMetrics = &LyraMetrics::values;
       break;
   }
@@ -143,7 +149,8 @@ UIIcon UITheme::getFileIcon(const std::string& filename) {
   if (filename.back() == '/') {
     return Folder;
   }
-  if (FsHelpers::hasEpubExtension(filename) || FsHelpers::hasXtcExtension(filename)) {
+  if (FsHelpers::hasEpubExtension(filename) || FsHelpers::hasXtcExtension(filename) ||
+      FsHelpers::hasCbzExtension(filename)) {
     return Book;
   }
   if (FsHelpers::hasTxtExtension(filename) || FsHelpers::hasMarkdownExtension(filename)) {

@@ -1,32 +1,62 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <utility>
-#include <vector>
 
+#include "StatisticsSnapshot.h"
 #include "activities/Activity.h"
 
-// A small, read-only statistics screen designed for the X4's e-ink display.
-// With a book path it shows per-book totals; without one it shows the overall
-// reading summary and the latest persisted day buckets.
 class ReadingStatsActivity final : public Activity {
  public:
+  enum class Tab : uint8_t { Overview, Calendar, Books, Achievements };
+
   ReadingStatsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string bookPath = {},
                        bool calendarMode = false)
       : Activity(calendarMode ? "ReadingCalendar" : "ReadingStats", renderer, mappedInput),
-        bookPath(std::move(bookPath)), calendarMode(calendarMode) {}
+        entryBookPath(std::move(bookPath)), calendarEntry(calendarMode) {}
 
   void onEnter() override;
   void loop() override;
   void render(RenderLock&&) override;
 
  private:
-  std::string bookPath;
-  bool calendarMode = false;
-  std::string heading;
-  std::vector<std::string> lines;
-  size_t firstLine = 0;
+  std::string entryBookPath;
+  bool calendarEntry = false;
+  bool directBookEntry = false;
+  bool bookDetail = false;
+  Tab activeTab = Tab::Overview;
+  StatisticsSnapshot snapshot;
+  size_t selectedBook = 0;
+  size_t selectedAchievement = 0;
+  int calendarYear = 0;
+  int calendarMonth = 0;
+  int selectedCalendarDay = 1;
+  int minCalendarMonth = 0;
+  int maxCalendarMonth = 0;
+  uint32_t calendarMaxSeconds = 0;
+  std::array<ReadingDayStat, 31> calendarDays{};
 
-  void buildLines();
-  void movePage(int direction);
+  int contentTop() const;
+  int contentBottom() const;
+  int tabBarTop() const;
+  void switchTab(int direction);
+  void moveSelection(int direction);
+  void handleConfirm();
+  void handleTap(int x, int y);
+  void initializeCalendar();
+  void prepareCalendarMonth(bool preserveDay = false);
+  void changeMonth(int direction);
+  void cycleCalendarDay();
+  ReadingDayStat selectedCalendarStat() const;
+
+  void renderTabs() const;
+  void renderOverview();
+  void renderCalendar();
+  void renderBooks();
+  void renderBookDetail();
+  void renderAchievements();
+  void drawSevenDayChart(int x, int y, int width, int height) const;
 };

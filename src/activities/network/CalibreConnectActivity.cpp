@@ -10,7 +10,7 @@
 #include "WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-#include "util/TaskWatchdog.h"
+#include <TaskWatchdog.h>
 
 namespace {
 constexpr const char* HOSTNAME = "crosspoint";

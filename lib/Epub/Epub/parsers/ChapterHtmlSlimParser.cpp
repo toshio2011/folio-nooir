@@ -777,6 +777,34 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                   }
                 }
 
+                // The initial size calculation fits the image to the complete
+                // content viewport.  Vertical spacing is resolved afterwards,
+                // though, so a CSS margin/padding can make an otherwise valid
+                // image extend below the actual page content (most visible on
+                // the X3's 528x792 geometry).  Fit once more against the space
+                // left between those margins.  Scale both dimensions together
+                // so the source/requested aspect ratio is preserved, and keep
+                // the existing render-time bounds guard as the final safety net.
+                const int availableImageHeight = std::max(
+                    1, static_cast<int>(self->viewportHeight) - static_cast<int>(imageMarginTop) -
+                           static_cast<int>(imageMarginBottom));
+                if (displayHeight > availableImageHeight) {
+                  const float scale = static_cast<float>(availableImageHeight) / static_cast<float>(displayHeight);
+                  displayWidth = std::max(1, static_cast<int>(displayWidth * scale + 0.5f));
+                  displayHeight = availableImageHeight;
+
+                  // Keep the horizontal container constraint after the vertical
+                  // rescale as well. This is normally already satisfied, but it
+                  // protects unusual CSS aspect ratios without cropping.
+                  if (displayWidth > containerWidth) {
+                    const float widthScale = static_cast<float>(containerWidth) / static_cast<float>(displayWidth);
+                    displayWidth = std::max(1, containerWidth);
+                    displayHeight = std::max(1, static_cast<int>(displayHeight * widthScale + 0.5f));
+                  }
+                  LOG_DBG("EHP", "Fitted image inside vertical spacing: %dx%d (available height %d)", displayWidth,
+                          displayHeight, availableImageHeight);
+                }
+
                 // Create page for image - only break if image won't fit remaining space
                 if (self->currentPage && !self->currentPage->elements.empty() &&
                     (self->currentPageNextY + imageMarginTop + displayHeight + imageMarginBottom >

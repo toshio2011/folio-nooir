@@ -8,11 +8,14 @@
 #include <Serialization.h>
 
 #include <cstdlib>
+#include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <new>
 
 #include "Epub/converters/DirectPixelWriter.h"
 #include "Epub/converters/ImageDecoderFactory.h"
+#include "Epub/converters/JpegToFramebufferConverter.h"
 #include "Epub/converters/TjpgdToFramebufferConverter.h"
 
 // Cache file format:
@@ -47,6 +50,10 @@ std::string getCachePath(const std::string& imagePath) {
 bool readValidCacheHeader(HalFile& cacheFile, const int expectedWidth, const int expectedHeight, uint16_t& cachedWidth,
                           uint16_t& cachedHeight) {
   if (cacheFile.read(&cachedWidth, 2) != 2 || cacheFile.read(&cachedHeight, 2) != 2) {
+    return false;
+  }
+
+  if (expectedWidth <= 0 || expectedHeight <= 0 || cachedWidth == 0 || cachedHeight == 0) {
     return false;
   }
 
@@ -109,6 +116,12 @@ constexpr size_t PXC_CHUNK_SIZE = 1u << PXC_CHUNK_SHIFT;
 constexpr size_t PXC_MAX_CHUNKS = 6;  // 96 KB: a full-screen 2bpp image
 constexpr size_t PXC_HEAP_RESERVE = 24 * 1024;
 constexpr size_t PXC_MAX_ALLOC_RESERVE = 8 * 1024;
+// A grayscale render visits each visible strip twice (LSB/MSB). Keep only the
+// currently active physical strip in RAM so the second plane replays without
+// reopening the full .pxc. The bound is deliberately below the existing
+// PixelCache decode-band ceiling and is skipped when heap headroom is
+// insufficient.
+constexpr size_t PXC_REPLAY_BAND_MAX_BYTES = 24 * 1024;
 // Rows can straddle a chunk boundary; they are reassembled into a stack
 // buffer. (screenWidth + 3) / 4 caps at 200 B for an 800px panel.
 constexpr int PXC_MAX_BYTES_PER_ROW = 208;
@@ -118,12 +131,42 @@ uint64_t pxcSlotHash = 0;
 uint16_t pxcSlotWidth = 0;
 uint16_t pxcSlotHeight = 0;
 
+std::unique_ptr<uint8_t[]> pxcReplayBand;
+uint64_t pxcReplayBandHash = 0;
+uint16_t pxcReplayBandWidth = 0;
+uint16_t pxcReplayBandHeight = 0;
+int pxcReplayBandX = 0;
+int pxcReplayBandY = 0;
+int pxcReplayBandFirstRow = 0;
+int pxcReplayBandLastRow = 0;
+int pxcReplayBandFirstCol = 0;
+int pxcReplayBandLastCol = 0;
+bool pxcReplayBandIsColumnBand = false;
+int pxcReplayBandOrientation = -1;
+ImageBlock::PixelCacheReplayStats pxcReplayStats;
+
 void releasePxcSlot() {
   for (auto& chunk : pxcChunks) chunk.reset();
   pxcSlotHash = 0;
   pxcSlotWidth = 0;
   pxcSlotHeight = 0;
+  pxcReplayBand.reset();
+  pxcReplayBandHash = 0;
+  pxcReplayBandWidth = 0;
+  pxcReplayBandHeight = 0;
+  pxcReplayBandX = 0;
+  pxcReplayBandY = 0;
+  pxcReplayBandFirstRow = 0;
+  pxcReplayBandLastRow = 0;
+  pxcReplayBandFirstCol = 0;
+  pxcReplayBandLastCol = 0;
+  pxcReplayBandIsColumnBand = false;
+  pxcReplayBandOrientation = -1;
 }
+
+void resetPixelCacheReplayStatsInternal() { pxcReplayStats = {}; }
+
+ImageBlock::PixelCacheReplayStats getPixelCacheReplayStatsInternal() { return pxcReplayStats; }
 
 const uint8_t* pxcRowPtr(size_t rowStart, int bytesPerRow, uint8_t* tempRow) {
   const size_t chunk = rowStart >> PXC_CHUNK_SHIFT;
@@ -160,6 +203,7 @@ bool loadPxcSlot(uint64_t cacheHash, HalFile& cacheFile, uint16_t cachedWidth, u
       releasePxcSlot();
       return false;
     }
+    pxcReplayStats.bytesRead += want;
     remaining -= want;
   }
   pxcSlotHash = cacheHash;
@@ -190,7 +234,8 @@ void renderRowsFromPxcSlot(GfxRenderer& renderer, int x, int y) {
 }
 
 bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x, int y, int expectedWidth,
-                     int expectedHeight) {
+                     int expectedHeight, const bool activeBandOnly) {
+  ++pxcReplayStats.replayCalls;
   // A later pass of the same page render: the payload is already in RAM, skip
   // the file entirely.
   const uint64_t cacheHash = imagePathHash(cachePath);
@@ -199,10 +244,97 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
     return true;
   }
 
+  const auto renderPackedBand = [&](const uint8_t* packed, const int packedWidth, const int firstRow,
+                                    const int lastRow) {
+    const int bytesPerRow = (packedWidth + 3) / 4;
+    DirectPixelWriter pw;
+    pw.init(renderer);
+    for (int row = firstRow; row < lastRow; ++row) {
+      const uint8_t* rowBuffer = packed + static_cast<size_t>(row - firstRow) * bytesPerRow;
+      pw.beginRow(y + row);
+      int colStart, colEnd;
+      pw.bandColRange(x, packedWidth, colStart, colEnd);
+      for (int col = colStart; col < colEnd; ++col) {
+        const int byteIdx = col >> 2;
+        const int bitShift = 6 - (col & 3) * 2;
+        pw.writePixel(x + col, (rowBuffer[byteIdx] >> bitShift) & 0x03);
+      }
+    }
+  };
+
+  const auto renderPackedColumnBand = [&](const uint8_t* packed, const int firstCol, const int lastCol,
+                                          const int cachedHeight) {
+    const int columnSpan = lastCol - firstCol;
+    const int bytesPerRow = (columnSpan + 3) / 4;
+    DirectPixelWriter pw;
+    pw.init(renderer);
+    for (int row = 0; row < cachedHeight; ++row) {
+      const uint8_t* rowBuffer = packed + static_cast<size_t>(row) * bytesPerRow;
+      pw.beginRow(y + row);
+      int colStart, colEnd;
+      pw.bandColRange(x + firstCol, columnSpan, colStart, colEnd);
+      for (int col = colStart; col < colEnd; ++col) {
+        const int byteIdx = col >> 2;
+        const int bitShift = 6 - (col & 3) * 2;
+        pw.writePixel(x + firstCol + col, (rowBuffer[byteIdx] >> bitShift) & 0x03);
+      }
+    }
+  };
+
+  const auto getColumnBand = [&](const int cachedWidth, int& firstCol, int& lastCol) {
+    firstCol = 0;
+    lastCol = 0;
+    const int originY = renderer.getWriteOriginY();
+    const int rows = renderer.getWriteRows();
+    int logicalFirst = 0;
+    int logicalLast = 0;
+    if (renderer.getOrientation() == GfxRenderer::Portrait) {
+      logicalFirst = renderer.getDisplayHeight() - (originY + rows);
+      logicalLast = renderer.getDisplayHeight() - originY;
+    } else if (renderer.getOrientation() == GfxRenderer::PortraitInverted) {
+      logicalFirst = originY;
+      logicalLast = originY + rows;
+    } else {
+      return;
+    }
+    firstCol = std::max(0, logicalFirst - x);
+    lastCol = std::min(cachedWidth, logicalLast - x);
+    if (firstCol > lastCol) firstCol = lastCol;
+  };
+
+  // The second grayscale plane for the same strip can avoid even the header
+  // open/stat/read. The key includes the cache, destination origin, and exact
+  // active row interval, so panning or a page transition cannot reuse it.
+  const bool cacheBandCandidate = activeBandOnly && renderer.getWriteRows() < renderer.getDisplayHeight();
+  if (cacheBandCandidate && pxcReplayBand && pxcReplayBandHash == cacheHash &&
+      std::abs(static_cast<int>(pxcReplayBandWidth) - expectedWidth) <= 1 &&
+      std::abs(static_cast<int>(pxcReplayBandHeight) - expectedHeight) <= 1 && pxcReplayBandX == x &&
+      pxcReplayBandY == y && pxcReplayBandOrientation == static_cast<int>(renderer.getOrientation())) {
+    if (pxcReplayBandIsColumnBand) {
+      int firstCol, lastCol;
+      getColumnBand(pxcReplayBandWidth, firstCol, lastCol);
+      if (firstCol == pxcReplayBandFirstCol && lastCol == pxcReplayBandLastCol) {
+        renderPackedColumnBand(pxcReplayBand.get(), firstCol, lastCol, pxcReplayBandHeight);
+        LOG_DBG("IMG", "Cache render complete (band RAM) cols=%d..%d", firstCol, lastCol);
+        return true;
+      }
+    } else {
+      const int firstRow = std::max(0, renderer.getWriteOriginY() - y);
+      const int lastRow = std::min<int>(pxcReplayBandHeight, renderer.getWriteOriginY() + renderer.getWriteRows() - y);
+      if (firstRow == pxcReplayBandFirstRow && lastRow == pxcReplayBandLastRow) {
+        renderPackedBand(pxcReplayBand.get(), pxcReplayBandWidth, firstRow, lastRow);
+        LOG_DBG("IMG", "Cache render complete (band RAM) rows=%d..%d", firstRow, lastRow);
+        return true;
+      }
+    }
+  }
+
   HalFile cacheFile;
   if (!Storage.openFileForRead("IMG", cachePath, cacheFile)) {
     return false;
   }
+  ++pxcReplayStats.cachePasses;
+  pxcReplayStats.bytesRead += 4;
 
   uint16_t cachedWidth, cachedHeight;
   if (!readValidCacheHeader(cacheFile, expectedWidth, expectedHeight, cachedWidth, cachedHeight)) {
@@ -225,6 +357,40 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
 
   const int bytesPerRow = (cachedWidth + 3) / 4;  // 2 bits per pixel, 4 pixels per byte
 
+  const bool cacheBandMode = activeBandOnly && renderer.getWriteRows() < renderer.getDisplayHeight();
+  const bool columnBandMode = cacheBandMode &&
+                              (renderer.getOrientation() == GfxRenderer::Portrait ||
+                               renderer.getOrientation() == GfxRenderer::PortraitInverted);
+
+  int firstRow = 0;
+  int lastRow = cachedHeight;
+  int firstCol = 0;
+  int lastCol = cachedWidth;
+  if (cacheBandMode && !columnBandMode) {
+    firstRow = std::max(0, renderer.getWriteOriginY() - y);
+    lastRow = std::min<int>(cachedHeight, renderer.getWriteOriginY() + renderer.getWriteRows() - y);
+    if (firstRow >= lastRow) {
+      cacheFile.close();
+      return true;
+    }
+  } else if (columnBandMode) {
+    getColumnBand(cachedWidth, firstCol, lastCol);
+    if (firstCol >= lastCol) {
+      cacheFile.close();
+      return true;
+    }
+  }
+
+  const uint64_t replayHash = cacheHash;
+  if (cacheBandMode) {
+    // A different strip/pan must not retain an unusable old band when the new
+    // allocation is rejected by the heap guards below.
+    pxcReplayBand.reset();
+    pxcReplayBandHash = 0;
+    pxcReplayBandIsColumnBand = false;
+    pxcReplayBandOrientation = -1;
+  }
+
   // First pass of a page render: try to pull the payload into the RAM slot so
   // the remaining ~12 passes skip SD entirely. Only an EMPTY slot is claimed:
   // the slot lives until the page render completes, so a populated slot with a
@@ -232,15 +398,90 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
   // here would make 2+ image pages reload each other from SD on every pass
   // (all the SD traffic of streaming plus the slot alloc churn); instead later
   // images take the streaming path below, unchanged from pre-cache behavior.
-  if (pxcSlotHash == 0 && loadPxcSlot(cacheHash, cacheFile, cachedWidth, cachedHeight, bytesPerRow)) {
+  if (!cacheBandMode && pxcSlotHash == 0 &&
+      loadPxcSlot(cacheHash, cacheFile, cachedWidth, cachedHeight, bytesPerRow)) {
     renderRowsFromPxcSlot(renderer, x, y);
     LOG_DBG("IMG", "Cache render complete (payload now in RAM)");
     return true;
   }
 
   // Streaming fallback (slot didn't fit). A failed slot load may have consumed
-  // part of the payload; rewind to just past the header.
-  cacheFile.seek(4);
+  // part of the payload; seek to just past the header. A bounded active band
+  // is used for every orientation: landscape bands are contiguous cache rows,
+  // while portrait bands compact the visible logical columns from each row.
+  const bool canStreamActiveBand = cacheBandMode;
+  if (canStreamActiveBand) {
+    const int columnSpan = lastCol - firstCol;
+    const int bandBytesPerRow = columnBandMode ? (columnSpan + 3) / 4 : bytesPerRow;
+    const size_t bandBytes = columnBandMode ? static_cast<size_t>(cachedHeight) * bandBytesPerRow
+                                            : static_cast<size_t>(lastRow - firstRow) * bytesPerRow;
+    if (bandBytes > 0 && bandBytes <= PXC_REPLAY_BAND_MAX_BYTES &&
+        ESP.getFreeHeap() >= bandBytes + PXC_HEAP_RESERVE &&
+        ESP.getMaxAllocHeap() >= bandBytes + PXC_MAX_ALLOC_RESERVE) {
+      pxcReplayBand = makeUniqueNoThrow<uint8_t[]>(bandBytes);
+      bool bandReadOk = false;
+      if (pxcReplayBand && columnBandMode && cacheFile.seek(4u)) {
+        auto sourceRow = makeUniqueNoThrow<uint8_t[]>(bytesPerRow);
+        if (sourceRow) {
+          bandReadOk = true;
+          std::memset(pxcReplayBand.get(), 0, bandBytes);
+          for (int row = 0; row < cachedHeight; ++row) {
+            if (cacheFile.read(sourceRow.get(), bytesPerRow) != bytesPerRow) {
+              bandReadOk = false;
+              break;
+            }
+            pxcReplayStats.bytesRead += bytesPerRow;
+            uint8_t* destination = pxcReplayBand.get() + static_cast<size_t>(row) * bandBytesPerRow;
+            for (int col = firstCol; col < lastCol; ++col) {
+              const int srcByte = col >> 2;
+              const int srcShift = 6 - (col & 3) * 2;
+              const int outCol = col - firstCol;
+              const int outByte = outCol >> 2;
+              const int outShift = 6 - (outCol & 3) * 2;
+              destination[outByte] |= static_cast<uint8_t>(((sourceRow[srcByte] >> srcShift) & 0x03) << outShift);
+            }
+          }
+        }
+      } else if (pxcReplayBand && cacheFile.seek(4u + static_cast<size_t>(firstRow) * bytesPerRow) &&
+                 cacheFile.read(pxcReplayBand.get(), bandBytes) == static_cast<int>(bandBytes)) {
+        pxcReplayStats.bytesRead += bandBytes;
+        bandReadOk = true;
+      }
+      if (bandReadOk) {
+        pxcReplayBandHash = replayHash;
+        pxcReplayBandWidth = cachedWidth;
+        pxcReplayBandHeight = cachedHeight;
+        pxcReplayBandX = x;
+        pxcReplayBandY = y;
+        pxcReplayBandFirstRow = firstRow;
+        pxcReplayBandLastRow = lastRow;
+        pxcReplayBandFirstCol = firstCol;
+        pxcReplayBandLastCol = lastCol;
+        pxcReplayBandIsColumnBand = columnBandMode;
+        pxcReplayBandOrientation = static_cast<int>(renderer.getOrientation());
+        if (columnBandMode) {
+          renderPackedColumnBand(pxcReplayBand.get(), firstCol, lastCol, cachedHeight);
+        } else {
+          renderPackedBand(pxcReplayBand.get(), cachedWidth, firstRow, lastRow);
+        }
+        ++pxcReplayStats.bandsRead;
+        cacheFile.close();
+        LOG_DBG("IMG", "Cache render complete (band loaded) %s=%d..%d bytes=%lu",
+                columnBandMode ? "cols" : "rows", columnBandMode ? firstCol : firstRow,
+                columnBandMode ? lastCol : lastRow, static_cast<unsigned long>(bandBytes));
+        return true;
+      }
+      pxcReplayBand.reset();
+      pxcReplayBandHash = 0;
+      pxcReplayBandIsColumnBand = false;
+      pxcReplayBandOrientation = -1;
+    }
+  }
+  const size_t rowOffset = 4u + static_cast<size_t>(firstRow) * static_cast<size_t>(bytesPerRow);
+  if (!cacheFile.seek(rowOffset)) {
+    LOG_ERR("IMG", "Cache seek error at row %d: %s", firstRow, cachePath.c_str());
+    return false;
+  }
 
   // Read several rows per SD access. A one-row-per-read loop here means
   // cachedHeight (~728) tiny reads through the storage mutex + SdFat; batching
@@ -248,7 +489,7 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
   // whole image.
   int rowsPerRead = 4096 / bytesPerRow;
   if (rowsPerRead < 1) rowsPerRead = 1;
-  if (rowsPerRead > cachedHeight) rowsPerRead = cachedHeight;
+  if (rowsPerRead > lastRow - firstRow) rowsPerRead = lastRow - firstRow;
   uint8_t* readBuffer = (uint8_t*)malloc((size_t)rowsPerRead * bytesPerRow);
   if (!readBuffer) {
     // Fall back to a single-row buffer under memory pressure.
@@ -265,15 +506,16 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
 
   int rowsInBuffer = 0;
   int bufferRow = 0;
-  for (int row = 0; row < cachedHeight; row++) {
+  for (int row = firstRow; row < lastRow; row++) {
     if (bufferRow >= rowsInBuffer) {
-      const int toRead = (cachedHeight - row < rowsPerRead) ? (cachedHeight - row) : rowsPerRead;
+      const int toRead = (lastRow - row < rowsPerRead) ? (lastRow - row) : rowsPerRead;
       const size_t bytes = (size_t)toRead * bytesPerRow;
       if (cacheFile.read(readBuffer, bytes) != static_cast<int>(bytes)) {
         LOG_ERR("IMG", "Cache read error at row %d", row);
         free(readBuffer);
         return false;
       }
+      pxcReplayStats.bytesRead += bytes;
       rowsInBuffer = toRead;
       bufferRow = 0;
     }
@@ -297,7 +539,8 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
   }
 
   free(readBuffer);
-  LOG_DBG("IMG", "Cache render complete");
+  LOG_DBG("IMG", "Cache render complete%s rows=%d..%d", canStreamActiveBand ? " (band)" : "", firstRow,
+          lastRow);
   return true;
 }
 
@@ -322,10 +565,37 @@ void ImageBlock::clearSessionRenderFailures() { failedImageCount = 0; }
 
 void ImageBlock::releaseRenderCache() { releasePxcSlot(); }
 
+void ImageBlock::resetPixelCacheReplayStats() { resetPixelCacheReplayStatsInternal(); }
+
+ImageBlock::PixelCacheReplayStats ImageBlock::getPixelCacheReplayStats() { return getPixelCacheReplayStatsInternal(); }
+
+bool ImageBlock::renderFromPixelCache(GfxRenderer& renderer, const std::string& cachePath, const int x, const int y,
+                                      const int width, const int height) {
+  return renderFromCache(renderer, cachePath, x, y, width, height, false);
+}
+
+bool ImageBlock::renderFromPixelCacheBand(GfxRenderer& renderer, const std::string& cachePath, const int x,
+                                          const int y, const int width, const int height) {
+  return renderFromCache(renderer, cachePath, x, y, width, height, true);
+}
+
 void ImageBlock::renderPlaceholder(GfxRenderer& renderer, const int x, const int y) const {
-  renderer.fillRect(x, y, width, height, true);
-  if (width > 2 && height > 2) {
-    renderer.fillRect(x + 1, y + 1, width - 2, height - 2, false);
+  // Keep a malformed/stale page cache from handing an out-of-range rectangle
+  // to the renderer. This is only the fail-soft path; valid images keep the
+  // same fast rendering path as before.
+  const int screenWidth = renderer.getScreenWidth();
+  const int screenHeight = renderer.getScreenHeight();
+  const int64_t right64 = static_cast<int64_t>(x) + width;
+  const int64_t bottom64 = static_cast<int64_t>(y) + height;
+  const int left = std::max(0, x);
+  const int top = std::max(0, y);
+  const int right = std::min<int64_t>(screenWidth, right64);
+  const int bottom = std::min<int64_t>(screenHeight, bottom64);
+  if (right <= left || bottom <= top) return;
+
+  renderer.fillRect(left, top, right - left, bottom - top, true);
+  if (right - left > 2 && bottom - top > 2) {
+    renderer.fillRect(left + 1, top + 1, right - left - 2, bottom - top - 2, false);
   }
 }
 
@@ -343,10 +613,15 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   const int screenWidth = renderer.getScreenWidth();
   const int screenHeight = renderer.getScreenHeight();
 
-  // Bounds check render position using logical screen dimensions
-  if (x < 0 || y < 0 || x + width > screenWidth || y + height > screenHeight) {
+  // Use 64-bit arithmetic for corrupted page geometry. Keep the existing
+  // fail-soft behavior, but draw a clipped placeholder instead of risking an
+  // invalid rectangle or re-entering a decoder repeatedly.
+  const int64_t right = static_cast<int64_t>(x) + width;
+  const int64_t bottom = static_cast<int64_t>(y) + height;
+  if (width <= 0 || height <= 0 || x < 0 || y < 0 || right > screenWidth || bottom > screenHeight) {
     LOG_ERR("IMG", "Invalid render position: (%d,%d) size (%dx%d) screen (%dx%d)", x, y, width, height, screenWidth,
             screenHeight);
+    renderPlaceholder(renderer, x, y);
     return;
   }
 
@@ -367,13 +642,17 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
 
   // Try to render from cache first
   std::string cachePath = getCachePath(imagePath);
-  const bool cacheExistedBeforeRender = Storage.exists(cachePath.c_str());
-  if (renderFromCache(renderer, cachePath, x, y, width, height)) {
+  const bool cacheExistedBeforeRender = cachePresenceKnown ? cachePresent : Storage.exists(cachePath.c_str());
+  cachePresenceKnown = true;
+  cachePresent = cacheExistedBeforeRender;
+  if (renderFromCache(renderer, cachePath, x, y, width, height, false)) {
+    cachePresent = true;
     return;  // Successfully rendered from cache
   }
   // renderFromCache() removes a malformed cache. Remember that fact so a
   // decode failure can receive one controlled retry from the original image.
   const bool staleCacheWasRemoved = cacheExistedBeforeRender && !Storage.exists(cachePath.c_str());
+  if (staleCacheWasRemoved) cachePresent = false;
 
   // The build only header-probed the image for dimensions; pull the actual
   // file out of the book now, on first visit to the page.  A failed/partial
@@ -444,6 +723,7 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   config.performanceMode = false;
   config.useExactDimensions = true;  // Use pre-calculated dimensions to avoid rounding mismatches
   config.cachePath = cachePath;      // Enable caching during decode
+  config.allowBoundedLargeSource = true;
 
   ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(imagePath);
   if (!decoder) {
@@ -460,9 +740,15 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   // the bounded TJpgDec fallback before JPEGDEC can touch the unsupported
   // entropy tables. Ordinary EPUB JPEGs are unaffected.
   TjpgdToFramebufferConverter tjpgd;
-  const bool useTjpgd = strcmp(decoder->getFormatName(), "JPEG") == 0 &&
+  const bool progressiveJpeg = strcmp(decoder->getFormatName(), "JPEG") == 0 &&
+                               JpegToFramebufferConverter::isProgressive(imagePath);
+  const bool useTjpgd = strcmp(decoder->getFormatName(), "JPEG") == 0 && !progressiveJpeg &&
                         TjpgdToFramebufferConverter::requiresFallback(imagePath);
-  if (useTjpgd) LOG_DBG("IMG", "Using TJpgDec fallback for long-Huffman JPEG: %s", imagePath.c_str());
+  if (progressiveJpeg) {
+    LOG_INF("EPUBIMG", "fallback=JPEGDEC reason=progressive_jpeg path=%s", imagePath.c_str());
+  } else if (useTjpgd) {
+    LOG_DBG("EPUBIMG", "fallback=TJpgDec reason=long_huffman path=%s", imagePath.c_str());
+  }
 
   auto decodeImage = [&](const RenderConfig& decodeConfig) {
     return useTjpgd ? tjpgd.decodeToFramebuffer(imagePath, renderer, decodeConfig)
@@ -499,14 +785,21 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   }
   if (!success) {
     LOG_ERR("IMG", "Failed to decode image: %s", imagePath.c_str());
+    LOG_ERR("EPUBIMG", "failure=decode progressive=%d fallback=%s path=%s", progressiveJpeg ? 1 : 0,
+            useTjpgd ? "TJpgDec" : "JPEGDEC/PNGDEC", imagePath.c_str());
     // Do not retry a known unsupported/corrupt image on every BW/grayscale
     // pass. That loop can keep the reader busy for seconds and repeatedly
     // enters a decoder that has already rejected the source. A new reader
     // session clears this bounded failure record and permits another attempt.
     rememberImageFailure(imagePath);
+    cachePresent = false;
     renderPlaceholder(renderer, x, y);
     return;
   }
+  // A successful decoder pass normally writes the cache atomically before
+  // returning. Verify that once so a failed cache write does not get memoized
+  // as present and cause later passes to skip a needed retry.
+  cachePresent = Storage.exists(cachePath.c_str());
 
   LOG_DBG("IMG", "Decode successful");
 }
@@ -527,5 +820,9 @@ std::unique_ptr<ImageBlock> ImageBlock::deserialize(HalFile& file) {
   int16_t w, h;
   serialization::readPod(file, w);
   serialization::readPod(file, h);
+  if (w <= 0 || h <= 0) {
+    LOG_ERR("IMG", "Deserialization failed: invalid image dimensions (%d,%d)", w, h);
+    return nullptr;
+  }
   return std::unique_ptr<ImageBlock>(new (std::nothrow) ImageBlock(path, src, w, h));
 }

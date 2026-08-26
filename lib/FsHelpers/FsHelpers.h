@@ -55,6 +55,12 @@ inline bool hasEpubExtension(const String& fileName) {
 // Check for either .xtc or .xtch extension (case-insensitive)
 bool hasXtcExtension(std::string_view fileName);
 
+// Check for .cbz extension (case-insensitive)
+bool hasCbzExtension(std::string_view fileName);
+inline bool hasCbzExtension(const String& fileName) {
+  return hasCbzExtension(std::string_view{fileName.c_str(), fileName.length()});
+}
+
 // Check for .txt extension (case-insensitive)
 bool hasTxtExtension(std::string_view fileName);
 inline bool hasTxtExtension(const String& fileName) {

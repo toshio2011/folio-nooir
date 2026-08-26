@@ -232,18 +232,17 @@ void KOReaderSyncActivity::performSync() {
     return;
   }
 
-  // Prefer the exact spine/page from a crosspoint-sync rich position (lossless
-  // CrossPoint<->CrossPoint sync); fall back to the approximate XPath mapping
-  // for plain kosync servers or when the rich position cannot be applied.
-  std::optional<CrossPointPosition> richMapped;
-  if (remoteProgress.position.has_value()) {
-    richMapped = ProgressMapper::fromRichPosition(epub, *remoteProgress.position, renderer);
-  }
-  if (richMapped.has_value()) {
-    remotePosition = *richMapped;
-  } else {
-    SavedProgressPosition koPos = {remoteProgress.progress, remoteProgress.percentage};
-    remotePosition = ProgressMapper::toCrossPoint(epub, koPos, renderer, currentSpineIndex, totalPagesInSpine);
+  // KOReader's XPath/percentage is portable across readers and render
+  // settings, so it is authoritative. CrossPoint's rich page/paragraph data
+  // is used only when the standard mapping cannot resolve a content anchor.
+  SavedProgressPosition koPos = {remoteProgress.progress, remoteProgress.percentage};
+  remotePosition = ProgressMapper::toCrossPoint(epub, koPos, renderer, currentSpineIndex, totalPagesInSpine);
+  if (!remotePosition.hasVisibleTextOffset && remoteProgress.position.has_value()) {
+    const bool sameXPath = remoteProgress.position->xpath == remoteProgress.progress;
+    const auto richMapped = ProgressMapper::fromRichPosition(epub, *remoteProgress.position, renderer, sameXPath);
+    if (richMapped.has_value()) {
+      remotePosition = *richMapped;
+    }
   }
 
   if (smartSyncEnabled()) {
@@ -298,9 +297,10 @@ void KOReaderSyncActivity::performUpload() {
   progress.progress = localProgress.xpath;
   progress.percentage = localProgress.percentage;
 
-  // Rich CrossPoint position for crosspoint-sync servers (lossless
-  // CrossPoint<->CrossPoint sync); plain kosync servers ignore the extra field.
-  {
+  // Rich CrossPoint position for crosspoint-sync servers. Generic KOReader
+  // servers receive the standard fields only, keeping their payload strictly
+  // protocol-compatible.
+  if (KOREADER_STORE.usesCrossPointSyncServer()) {
     KOReaderRichPosition pos;
     const float pct = localProgress.percentage < 0.0f   ? 0.0f
                       : localProgress.percentage > 1.0f ? 1.0f

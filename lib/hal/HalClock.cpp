@@ -2,6 +2,8 @@
 
 #include <Logging.h>
 #include <WiFi.h>
+
+#include <TaskWatchdog.h>
 #include <esp_sntp.h>
 #include <sys/time.h>
 #include <time.h>
@@ -138,6 +140,10 @@ bool HalClock::syncFromNTP() {
   // Wait for SNTP sync to complete (up to 5 seconds)
   constexpr int maxAttempts = 50;
   for (int i = 0; i < maxAttempts; i++) {
+    // The web server registers the main task with the watchdog. NTP can wait
+    // for several seconds, so feed it between polls instead of letting a
+    // slow response reboot the device and drop the browser session.
+    resetTaskWatchdogIfSubscribed();
     if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
       time_t now = time(nullptr);
       struct tm timeinfo;

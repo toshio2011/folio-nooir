@@ -1,9 +1,12 @@
 #include "ReadingStatsStore.h"
 
+#include <HalClock.h>
 #include <Logging.h>
 
 #include <algorithm>
 #include <iterator>
+
+#include "util/StatisticsDate.h"
 
 namespace {
 // Return a monotonically increasing day number for a Gregorian date. This is
@@ -114,17 +117,24 @@ uint32_t ReadingStatsStore::pagesForDate(const uint32_t dateKey) const {
 }
 
 uint32_t ReadingStatsStore::currentStreakDays() const {
+  const int64_t today = StatisticsDate::ordinal(halClock.getDateKey());
+  if (today < 0) return 0;
+
   int64_t previous = -1;
   uint32_t streak = 0;
   for (auto it = days.rbegin(); it != days.rend(); ++it) {
-    const int64_t ordinal = dayOrdinal(it->dateKey);
+    const int64_t ordinal = StatisticsDate::ordinal(it->dateKey);
     if (ordinal < 0) continue;
-    if (previous < 0 || previous - ordinal == 1) {
+    if (previous < 0) {
+      if (ordinal != today && ordinal != today - 1) return 0;
       ++streak;
       previous = ordinal;
-    } else {
-      break;
+      continue;
     }
+    if (ordinal == previous) continue;
+    if (previous - ordinal != 1) break;
+    ++streak;
+    previous = ordinal;
   }
   return streak;
 }

@@ -33,14 +33,18 @@ void HalPowerManager::setPowerSaving(bool enabled) {
     enabled = false;
   }
 
-  // Note: We don't use mutex here to avoid too much overhead,
-  // it's not very important if we read a slightly stale value for currentLockMode
+  // Serialize CPU-frequency transitions with render/prefetch lock ownership.
+  // Calling setCpuFrequencyMhz concurrently from the main and render tasks can
+  // leave the firmware stuck during a reader handoff.
+  const bool hasMutex = modeMutex != nullptr;
+  if (hasMutex) xSemaphoreTake(modeMutex, portMAX_DELAY);
   const LockMode mode = currentLockMode;
 
   if (mode == None && enabled && !isLowPower) {
     LOG_DBG("PWR", "Going to low-power mode");
     if (!setCpuFrequencyMhz(LOW_POWER_FREQ)) {
       LOG_DBG("PWR", "Failed to set CPU frequency = %d MHz", LOW_POWER_FREQ);
+      if (hasMutex) xSemaphoreGive(modeMutex);
       return;
     }
     isLowPower = true;
@@ -49,12 +53,14 @@ void HalPowerManager::setPowerSaving(bool enabled) {
     LOG_DBG("PWR", "Restoring normal CPU frequency");
     if (!setCpuFrequencyMhz(normalFreq)) {
       LOG_DBG("PWR", "Failed to set CPU frequency = %d MHz", normalFreq);
+      if (hasMutex) xSemaphoreGive(modeMutex);
       return;
     }
     isLowPower = false;
   }
 
   // Otherwise, no change needed
+  if (hasMutex) xSemaphoreGive(modeMutex);
 }
 
 void HalPowerManager::startDeepSleep(HalGPIO& gpio) const {
@@ -118,26 +124,29 @@ uint16_t HalPowerManager::getBatteryPercentage() const {
 }
 
 HalPowerManager::Lock::Lock() {
+  if (powerManager.modeMutex == nullptr) return;
   xSemaphoreTake(powerManager.modeMutex, portMAX_DELAY);
-  // Current limitation: only one lock at a time
-  if (powerManager.currentLockMode != None) {
-    LOG_ERR("PWR", "Lock already held, ignore");
-    valid = false;
-  } else {
+  const bool firstOwner = powerManager.lockCount == 0;
+  const bool restoreFrequency = firstOwner && powerManager.isLowPower;
+  if (powerManager.lockCount < UINT16_MAX) ++powerManager.lockCount;
+  if (firstOwner) {
     powerManager.currentLockMode = NormalSpeed;
-    valid = true;
   }
+  valid = true;
   xSemaphoreGive(powerManager.modeMutex);
-  if (valid) {
-    // Immediately restore normal CPU frequency if currently in low-power mode
+
+  // Only the first owner needs to request a frequency restore. A second
+  // overlapping owner shares the existing normal-speed state without another
+  // hardware transition.
+  if (restoreFrequency) {
     powerManager.setPowerSaving(false);
   }
 }
 
 HalPowerManager::Lock::~Lock() {
+  if (!valid || powerManager.modeMutex == nullptr) return;
   xSemaphoreTake(powerManager.modeMutex, portMAX_DELAY);
-  if (valid) {
-    powerManager.currentLockMode = None;
-  }
+  if (powerManager.lockCount > 0) --powerManager.lockCount;
+  if (powerManager.lockCount == 0) powerManager.currentLockMode = None;
   xSemaphoreGive(powerManager.modeMutex);
 }

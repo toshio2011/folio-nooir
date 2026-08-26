@@ -3,6 +3,7 @@
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <Bitmap.h>
+#include <Cbz.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <Txt.h>
@@ -52,10 +53,12 @@ bool isBookCacheDirectoryName(const char* name) {
   constexpr char EPUB_PREFIX[] = "epub_";
   constexpr char TXT_PREFIX[] = "txt_";
   constexpr char XTC_PREFIX[] = "xtc_";
+  constexpr char CBZ_PREFIX[] = "cbz_";
 
   return strncmp(name, EPUB_PREFIX, std::size(EPUB_PREFIX) - 1) == 0 ||
          strncmp(name, TXT_PREFIX, std::size(TXT_PREFIX) - 1) == 0 ||
-         strncmp(name, XTC_PREFIX, std::size(XTC_PREFIX) - 1) == 0;
+         strncmp(name, XTC_PREFIX, std::size(XTC_PREFIX) - 1) == 0 ||
+         strncmp(name, CBZ_PREFIX, std::size(CBZ_PREFIX) - 1) == 0;
 }
 
 void clearBookCache(const std::string& path) {
@@ -74,8 +77,29 @@ void clearBookCache(const std::string& path) {
     Txt book(path, "/.crosspoint");
     clearCachePreservingProgress(book.getCachePath(), 4, [&book] { return book.clearCache(); },
                                  [&book] { book.setupCacheDir(); });
+  } else if (FsHelpers::hasCbzExtension(path)) {
+    Cbz book(path, "/.crosspoint");
+    clearCachePreservingProgress(book.getCachePath(), 4, [&book] { return book.clearCache(); },
+                                 [&book] { book.setupCacheDir(); });
   } else {
     return;
   }
   LOG_DBG("BookCache", "Done checking metadata cache for: %s", path.c_str());
+}
+
+void resetBookProgress(const std::string& path) {
+  if (!FsHelpers::hasCbzExtension(path)) return;
+
+  Cbz book(path, "/.crosspoint");
+  book.setupCacheDir();
+  const char* progressFiles[] = {"/progress.bin", "/progress.bin.tmp"};
+  for (const char* suffix : progressFiles) {
+    const std::string progressPath = book.getCachePath() + suffix;
+    if (!Storage.exists(progressPath.c_str())) continue;
+    if (Storage.remove(progressPath.c_str())) {
+      LOG_DBG("BookCache", "Reset CBZ progress: %s", progressPath.c_str());
+    } else {
+      LOG_ERR("BookCache", "Could not reset CBZ progress: %s", progressPath.c_str());
+    }
+  }
 }

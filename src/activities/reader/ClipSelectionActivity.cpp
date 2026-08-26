@@ -3,6 +3,7 @@
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <Logging.h>
 #include <Memory.h>
 
 #include <algorithm>
@@ -30,6 +31,27 @@ bool isSelectableToken(const char* text) {
     }
   }
   return false;
+}
+
+void drawStyledWord(GfxRenderer& renderer, const int fontId, const int x, const int y, const char* text,
+                    const EpdFontFamily::Style style, const uint8_t focusBoundary, const uint16_t focusSuffixX,
+                    const bool black) {
+  if (!text || *text == '\0') return;
+  if (focusBoundary == 0) {
+    renderer.drawText(fontId, x, y, text, black, style);
+    return;
+  }
+
+  static constexpr size_t MAX_FOCUS_PREFIX_BYTES = 9 * 4 + 1;
+  char boldPrefix[MAX_FOCUS_PREFIX_BYTES + 3]{};
+  const size_t textLength = strlen(text);
+  const size_t prefixLength = std::min<size_t>({static_cast<size_t>(focusBoundary), textLength,
+                                                sizeof(boldPrefix) - 1});
+  memcpy(boldPrefix, text, prefixLength);
+  boldPrefix[prefixLength] = '\0';
+  const auto boldStyle = static_cast<EpdFontFamily::Style>(style | EpdFontFamily::BOLD);
+  renderer.drawText(fontId, x, y, boldPrefix, black, boldStyle);
+  if (prefixLength < textLength) renderer.drawText(fontId, x + focusSuffixX, y, text + prefixLength, black, style);
 }
 
 }  // namespace
@@ -85,11 +107,14 @@ void ClipSelectionActivity::extractWords() {
       word.row = rowCount;
       word.text = text;
       word.style = block->wordStyle(i);
+      word.focusBoundary = block->focusBoundary(i);
+      word.focusSuffixX = block->focusSuffixX(i);
       words.push_back(word);
       rowHasWords = true;
       pageText.append(text);
       pageText.push_back(' ');
       styleMask |= static_cast<uint8_t>(1u << (static_cast<uint8_t>(word.style) & 0x03));
+      if (word.focusBoundary > 0) styleMask |= static_cast<uint8_t>(1u << 1);
     }
     if (rowHasWords) rowCount++;
   }
@@ -97,7 +122,14 @@ void ClipSelectionActivity::extractWords() {
   if (styleMask == 0) styleMask = 0x01;
   renderer.ensureSdCardFontReady(fontId, pageText.c_str(), styleMask);
   // Re-measure after the SD font advance table has been primed.
-  for (auto& word : words) word.width = static_cast<int16_t>(renderer.getTextAdvanceX(fontId, word.text, word.style));
+  for (auto& word : words) {
+    const size_t textLength = strlen(word.text);
+    const size_t prefixLength = std::min<size_t>(word.focusBoundary, textLength);
+    const int fullWidth = prefixLength > 0
+                              ? word.focusSuffixX + renderer.getTextAdvanceX(fontId, word.text + prefixLength, word.style)
+                              : renderer.getTextAdvanceX(fontId, word.text, word.style);
+    word.width = static_cast<int16_t>(std::max(0, fullWidth));
+  }
 }
 
 int ClipSelectionActivity::closestInRow(const uint16_t row, const int centerX) const {
@@ -175,6 +207,24 @@ bool ClipSelectionActivity::saveSelection() {
     clipping.lastWord = static_cast<uint16_t>(last);
     clipping.hasWordRange = true;
   }
+  uint8_t styleMask = 0;
+  bool hasBold = false;
+  for (int i = first; i <= last && i >= 0 && i < static_cast<int>(words.size()); ++i) {
+    const uint8_t sourceStyle = static_cast<uint8_t>(words[i].style);
+    const bool runBold = words[i].focusBoundary > 0 || (sourceStyle & static_cast<uint8_t>(EpdFontFamily::BOLD)) != 0;
+    styleMask |= static_cast<uint8_t>(1u << (sourceStyle & 0x03));
+    hasBold = hasBold || runBold;
+    if (words[i].focusBoundary > 0) styleMask |= static_cast<uint8_t>(1u << 1);
+    LOG_DBG("CLP", "source_run index=%d style=%u bold=%u", i, static_cast<unsigned>(sourceStyle),
+            runBold ? 1u : 0u);
+    LOG_DBG("CLP", "selection_run index=%d style=%u bold=%u", i, static_cast<unsigned>(sourceStyle),
+            runBold ? 1u : 0u);
+  }
+  clipping.styleMask = styleMask;
+  clipping.bold = hasBold;
+  LOG_DBG("CLP", "selection start=%d end=%d", first, last);
+  LOG_DBG("CLP", "action=highlight bold=%u", hasBold ? 1u : 0u);
+  LOG_DBG("CLP", "save style=%u bold=%u highlighted=1", static_cast<unsigned>(styleMask), hasBold ? 1u : 0u);
   return ClipFile::append(bookPath, bookTitle, std::move(clipping));
 }
 
@@ -273,13 +323,13 @@ void ClipSelectionActivity::drawSelection() {
     renderer.setDarkMode(false);
     for (int i = first; i <= last; ++i) {
       const auto& word = words[i];
-      renderer.drawText(fontId, word.x, word.y, word.text, true, word.style);
+      drawStyledWord(renderer, fontId, word.x, word.y, word.text, word.style, word.focusBoundary, word.focusSuffixX, true);
     }
     renderer.setDarkMode(true);
   } else {
     for (int i = first; i <= last; ++i) {
       const auto& word = words[i];
-      renderer.drawText(fontId, word.x, word.y, word.text, false, word.style);
+      drawStyledWord(renderer, fontId, word.x, word.y, word.text, word.style, word.focusBoundary, word.focusSuffixX, false);
     }
   }
 }

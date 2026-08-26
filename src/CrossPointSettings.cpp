@@ -232,6 +232,12 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
 
   if (!currentSleepModeLayout) needsResave = true;
 
+  // Persist the explicit default values when an older settings file first
+  // receives the independent Folio layout options. Missing keys already use
+  // the struct defaults above; this only ensures the migration is durable.
+  if (doc["recentBookLayout"].isNull() || doc["finishedBookLayout"].isNull() || doc["carouselLayout"].isNull())
+    needsResave = true;
+
   if (doc["sleepTimeoutMinutes"].isNull() && !doc["sleepTimeout"].isNull()) {
     const uint8_t legacyValue =
         clamp(doc["sleepTimeout"] | (uint8_t)SLEEP_10_MIN, SLEEP_TIMEOUT_COUNT, (uint8_t)SLEEP_10_MIN);

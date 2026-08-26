@@ -3,7 +3,11 @@
 .DS_Store
 .vscode
 open-x4-sdk
+# Native simulator SD-card data (books, caches, fonts, sleep images).
 fs_
+# Native simulator screenshots and ad-hoc host logs.
+simulator_screenshots/
+simulator_logs/
 lib/EpdFont/fontsrc
 lib/I18n/I18nKeys.h
 lib/I18n/I18nStrings.h
@@ -19,6 +23,11 @@ build
 /.pio-home
 /.logs
 /artifacts
+/.codex-*/
+/.codex-*.log
+/_epub-inspect*/
+/_wsl_carousel_recovery/
+/codex-work-monitor/
 *.local*
 *.cpfont
 lib/EpdFont/scripts/downloaded_fonts/

@@ -612,6 +612,7 @@
 
   // --- One-shot clock and weather sync ---
   let clockWeatherState = null;
+  let clockWeatherRequestInFlight = false;
 
   function formatSyncDate(dateKey) {
     if (!dateKey) return 'Never';
@@ -647,22 +648,31 @@
       '<div class="setting-row"><span class="setting-name">Cached weather</span><span class="setting-control">' + weather + '</span></div>' +
       '<div class="setting-row"><span class="setting-name">Automatic refresh</span><span class="setting-control"><label><input type="checkbox" id="cw-clock-enabled"' + (s.clockSyncEnabled ? ' checked' : '') + '> clock</label> <label><input type="checkbox" id="cw-weather-enabled"' + (s.weatherSyncEnabled ? ' checked' : '') + '> weather</label></span></div>' +
       '<div class="opds-actions"><button class="btn-small btn-save-server" onclick="saveClockWeather(false)">Save</button><button class="btn-small btn-add" onclick="saveClockWeather(true)">Sync now</button></div>' +
-      '<p style="color:var(--label-color);font-size:0.9em;margin-bottom:0;">Sync uses Wi-Fi once, stores the result locally, and the device disconnects after a device-initiated sync.</p>' +
+      '<p style="color:var(--label-color);font-size:0.9em;margin-bottom:0;">Sync uses the current web connection and keeps this web session open. Wi-Fi is released only after a device-initiated sync, or when you leave the web server yourself.</p>' +
       '</div>';
   }
 
-  async function loadClockWeather() {
+  function setClockWeatherBusy(busy) {
+    document.querySelectorAll('#clock-weather-container button').forEach((button) => {
+      button.disabled = busy;
+    });
+  }
+
+  async function loadClockWeather(force = false) {
+    if (clockWeatherRequestInFlight && !force) return;
     try {
-      const response = await fetch('/api/clock-weather');
+      const response = await fetch('/api/clock-weather?_=' + Date.now(), {cache: 'no-store'});
       if (!response.ok) throw new Error('Failed to load clock/weather state');
       clockWeatherState = await response.json();
       renderClockWeather();
+      setClockWeatherBusy(clockWeatherRequestInFlight);
     } catch (e) {
       console.error('Clock/weather load error:', e);
     }
   }
 
   async function saveClockWeather(syncNow) {
+    if (clockWeatherRequestInFlight) return;
     const payload = {
       location: document.getElementById('cw-location').value.trim(),
       latitude: document.getElementById('cw-latitude').value.trim(),
@@ -672,9 +682,13 @@
       weatherSyncEnabled: document.getElementById('cw-weather-enabled').checked,
       sync: !!syncNow
     };
+    clockWeatherRequestInFlight = true;
+    setClockWeatherBusy(true);
+    showMessage(syncNow ? 'Syncing clock and weather…' : 'Saving clock and weather settings…', false);
     try {
       const response = await fetch('/api/clock-weather', {
-        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+        method: 'POST', headers: {'Content-Type': 'application/json', 'Cache-Control': 'no-cache'},
+        cache: 'no-store', body: JSON.stringify(payload)
       });
       if (!response.ok) throw new Error(await response.text());
       const result = await response.json();
@@ -683,9 +697,12 @@
         : (result.weatherSkippedNoLocation ? 'Saved. Set a weather location before syncing.'
           : (result.clockSynced ? 'Clock synced; weather unavailable.' : 'Clock/weather sync failed.'));
       showMessage(syncNow ? syncMessage : 'Clock/weather settings saved.', !!result.failed);
-      await loadClockWeather();
+      await loadClockWeather(true);
     } catch (e) {
       showMessage('Error: ' + e.message, true);
+    } finally {
+      clockWeatherRequestInFlight = false;
+      setClockWeatherBusy(false);
     }
   }
 

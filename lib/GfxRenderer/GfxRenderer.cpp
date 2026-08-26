@@ -1419,6 +1419,139 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
   free(rowBytes);
 }
 
+bool GfxRenderer::drawPerspectiveBitmap(const Bitmap& bitmap, const int x, const int y, const int width,
+                                         const int leftHeight, const int rightHeight) const {
+  if (fontCacheManager_ && fontCacheManager_->isScanning()) return false;
+  if (width <= 0 || leftHeight <= 0 || rightHeight <= 0 || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) {
+    return false;
+  }
+
+  const int maxHeight = std::max(leftHeight, rightHeight);
+  const int rightX = x + width - 1;
+  const int leftTop = y + (maxHeight - leftHeight) / 2;
+  const int rightTop = y + (maxHeight - rightHeight) / 2;
+  const int leftBottom = leftTop + leftHeight - 1;
+  const int rightBottom = rightTop + rightHeight - 1;
+  const int silhouetteX[] = {x, rightX, rightX, x};
+  const int silhouetteY[] = {leftTop, rightTop, rightBottom, leftBottom};
+
+  // White-out the whole opaque silhouette before painting the bitmap. Bitmap
+  // rows omit white pixels, so clearing first prevents rear covers from
+  // showing through a nearer card.
+  fillPolygon(silhouetteX, silhouetteY, 4, false);
+
+  const int outputRowSize = (bitmap.getWidth() + 3) / 4;
+  auto* outputRow = static_cast<uint8_t*>(malloc(outputRowSize));
+  auto* rowBytes = static_cast<uint8_t*>(malloc(bitmap.getRowBytes()));
+  if (!outputRow || !rowBytes) {
+    free(outputRow);
+    free(rowBytes);
+    return false;
+  }
+
+  const int sourceWidth = bitmap.getWidth();
+  const int sourceHeight = bitmap.getHeight();
+  const int horizontalSpan = std::max(1, width - 1);
+
+  // These maps are local to one cover render (at most a few KB for the
+  // Carousel slots). They remove three invariant divisions from every source
+  // row without becoming a persistent image/geometry cache.
+  auto* sourceXMap = static_cast<int*>(malloc(static_cast<size_t>(width) * sizeof(int)));
+  auto* heightMap = static_cast<int*>(malloc(static_cast<size_t>(width) * sizeof(int)));
+  auto* topMap = static_cast<int*>(malloc(static_cast<size_t>(width) * sizeof(int)));
+  const bool hasMaps = sourceXMap != nullptr && heightMap != nullptr && topMap != nullptr;
+  if (!hasMaps) {
+    free(sourceXMap);
+    free(heightMap);
+    free(topMap);
+    sourceXMap = nullptr;
+    heightMap = nullptr;
+    topMap = nullptr;
+  } else {
+    for (int dstX = 0; dstX < width; ++dstX) {
+      sourceXMap[dstX] = dstX * sourceWidth / width;
+      heightMap[dstX] = leftHeight + (rightHeight - leftHeight) * dstX / horizontalSpan;
+      topMap[dstX] = leftTop + (rightTop - leftTop) * dstX / horizontalSpan;
+    }
+  }
+
+  // Home/theme rendering is portrait and targets the full framebuffer. In
+  // that common path, write the already-clipped logical pixel directly using
+  // the same orientation and polarity rules as drawPixel(). Other callers,
+  // including tiled grayscale rendering, retain the generic implementation.
+  const bool portraitFastPath = orientation == Portrait && !_stripActive && frameBuffer != nullptr;
+  const int logicalScreenWidth = getScreenWidth();
+  const int logicalScreenHeight = getScreenHeight();
+  const int firstDstX = std::max(0, -x);
+  const int lastDstX = std::min(width, logicalScreenWidth - x);
+  bool success = true;
+
+  for (int bmpY = 0; bmpY < sourceHeight; ++bmpY) {
+    if (bitmap.readNextRow(outputRow, rowBytes) != BmpReaderError::Ok) {
+      LOG_ERR("GFX", "Failed to read row %d from perspective bitmap", bmpY);
+      success = false;
+      break;
+    }
+
+    const int sourceY = bitmap.isTopDown() ? bmpY : sourceHeight - 1 - bmpY;
+    for (int dstX = firstDstX; dstX < lastDstX; ++dstX) {
+      const int heightAtX = hasMaps ? heightMap[dstX]
+                                    : leftHeight + (rightHeight - leftHeight) * dstX / horizontalSpan;
+      const int topAtX = hasMaps ? topMap[dstX] : leftTop + (rightTop - leftTop) * dstX / horizontalSpan;
+      const int firstY = topAtX + sourceY * heightAtX / sourceHeight;
+      const int lastY = topAtX + (sourceY + 1) * heightAtX / sourceHeight - 1;
+      if (lastY < firstY) continue;
+
+      const int sourceX = hasMaps ? sourceXMap[dstX] : dstX * sourceWidth / width;
+      const uint8_t rawVal = (outputRow[sourceX / 4] >> (6 - ((sourceX * 2) % 8))) & 0x3;
+      const uint8_t val = darkMode ? static_cast<uint8_t>(3 - rawVal) : rawVal;
+      const bool drawBw = darkMode ? val == 3 : val < 3;
+
+      const bool shouldDraw = (renderMode == BW && drawBw) ||
+                              (renderMode == GRAYSCALE_MSB && (val == 1 || val == 2)) ||
+                              (renderMode == GRAYSCALE_LSB && val == 1);
+      if (!shouldDraw) continue;
+
+      const int clippedFirstY = std::max(firstY, 0);
+      const int clippedLastY = std::min(lastY, logicalScreenHeight - 1);
+      if (clippedLastY < clippedFirstY) continue;
+      const int screenX = x + dstX;
+      const bool state = renderMode == BW;
+      if (portraitFastPath) {
+        const int physicalY = panelHeight - 1 - screenX;
+        const uint32_t byteIndexBase = static_cast<uint32_t>(physicalY) * panelWidthBytes;
+        const bool outputState = (darkMode && renderMode == BW) ? !state : state;
+        for (int screenY = clippedFirstY; screenY <= clippedLastY; ++screenY) {
+          const uint32_t byteIndex = byteIndexBase + static_cast<uint32_t>(screenY / 8);
+          const uint8_t bitMask = static_cast<uint8_t>(1U << (7 - (screenY & 7)));
+          if (outputState) {
+            frameBuffer[byteIndex] &= static_cast<uint8_t>(~bitMask);
+          } else {
+            frameBuffer[byteIndex] |= bitMask;
+          }
+        }
+      } else {
+        for (int screenY = clippedFirstY; screenY <= clippedLastY; ++screenY) {
+          if (renderMode == BW && drawBw) {
+            drawPixel(screenX, screenY, true);
+          } else if (renderMode == GRAYSCALE_MSB && (val == 1 || val == 2)) {
+            drawPixel(screenX, screenY, false);
+          } else if (renderMode == GRAYSCALE_LSB && val == 1) {
+            drawPixel(screenX, screenY, false);
+          }
+        }
+      }
+    }
+  }
+
+  free(sourceXMap);
+  free(heightMap);
+  free(topMap);
+  free(outputRow);
+  free(rowBytes);
+  return success;
+}
+
 void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y, const int maxWidth,
                                  const int maxHeight) const {
   float scale = 1.0f;

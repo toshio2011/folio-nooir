@@ -51,8 +51,16 @@ void SettingsActivity::rebuildSettingsLists() {
   std::vector<DictionaryEntry> dictionaries;
   DictionaryRegistry::discover(dictionaries);
 
+  const bool folioNooir = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR;
+  const bool carouselTheme = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::CAROUSEL;
+  const auto isFolioLayoutSetting = [](const StrId id) {
+    return id == StrId::STR_RECENT_BOOK_LAYOUT || id == StrId::STR_FINISHED_BOOK_LAYOUT;
+  };
+  const auto isCarouselLayoutSetting = [](const StrId id) { return id == StrId::STR_CAROUSEL_LAYOUT; };
   for (auto& setting : getSettingsList(&sdFontSystem.registry(), &dictionaries)) {
     if (setting.category == StrId::STR_NONE_OPT) continue;
+    if (isFolioLayoutSetting(setting.nameId) && !folioNooir) continue;
+    if (isCarouselLayoutSetting(setting.nameId) && !carouselTheme) continue;
     if (setting.category == StrId::STR_CAT_DISPLAY) {
       displaySettings.push_back(setting);
     } else if (setting.category == StrId::STR_CAT_READER) {
@@ -136,6 +144,9 @@ void SettingsActivity::rebuildSettingsLists() {
                               StrId::STR_TODO_SLEEP_MODE,
                               StrId::STR_QUICK_RESUME_TIMEOUT,
                               StrId::STR_UI_THEME,
+                              StrId::STR_CAROUSEL_LAYOUT,
+                              StrId::STR_RECENT_BOOK_LAYOUT,
+                              StrId::STR_FINISHED_BOOK_LAYOUT,
                               StrId::STR_UI_SCALE,
                               StrId::STR_HIDE_BATTERY,
                               StrId::STR_REFRESH_FREQ,
@@ -143,6 +154,7 @@ void SettingsActivity::rebuildSettingsLists() {
                           });
   reorder(readerSettings, {
                              StrId::STR_TEXT_SETTINGS,
+                             StrId::STR_PAGE_NUMBER_MODE,
                              StrId::STR_DICTIONARY,
                              StrId::STR_DICTIONARY_SETTINGS,
                              StrId::STR_DICTIONARY_INDEXES,

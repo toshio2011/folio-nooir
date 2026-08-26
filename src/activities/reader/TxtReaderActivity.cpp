@@ -77,8 +77,10 @@ void TxtReaderActivity::onExit() {
 
   pageOffsets.clear();
   currentPageLines.clear();
-  APP_STATE.readerActivityLoadCount = 0;
-  APP_STATE.saveToFile();
+  if (APP_STATE.readerActivityLoadCount != 0) {
+    APP_STATE.readerActivityLoadCount = 0;
+    APP_STATE.saveToFile();
+  }
   txt.reset();
 }
 
@@ -118,6 +120,7 @@ void TxtReaderActivity::loop() {
     } else if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_DARK_MODE) {
       SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
       SETTINGS.saveToFile();
+      pagesUntilFullRefresh = 1;
       darkShortcutFired = true;
       requestUpdate();
     }
@@ -152,6 +155,7 @@ void TxtReaderActivity::loop() {
       mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && !darkShortcutFired) {
     SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
     SETTINGS.saveToFile();
+    pagesUntilFullRefresh = 1;
     darkShortcutFired = true;
     requestUpdate();
     return;

@@ -25,6 +25,9 @@ class XtcReaderActivity final : public Activity {
   bool darkShortcutFired = false;
   bool longPowerShortcutFired = false;
   bool skipNextButtonCheck = false;
+  // Render the same saving feedback as EPUB before queuing the home transition.
+  bool exitHomePending = false;
+  bool exitPopupShown = false;
   // Next-book suggestion menu for the End-of-Book screen
   EndOfBookOptions endOfBookOptions;
 
@@ -42,6 +45,7 @@ class XtcReaderActivity final : public Activity {
   StatusBarInfo getStatusBarInfo() const;
   void saveProgress() const;
   void loadProgress();
+  void requestExitToHome();
 
  public:
   explicit XtcReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Xtc> xtc)

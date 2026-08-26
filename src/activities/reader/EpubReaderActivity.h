@@ -8,9 +8,11 @@
 #include "BookmarkEntry.h"
 #include "ClippingEntry.h"
 #include "EndOfBookOptions.h"
+#include "StablePageCache.h"
 #include "EpubReaderMenuActivity.h"
 #include "ProgressMapper.h"
 #include "activities/Activity.h"
+#include "components/LongOperationIndicator.h"
 
 class EpubReaderActivity final : public Activity {
   std::shared_ptr<Epub> epub;
@@ -19,6 +21,10 @@ class EpubReaderActivity final : public Activity {
   // remain unchanged.
   std::optional<ProgressChangeResult> initialBookmark;
   std::unique_ptr<Section> section = nullptr;
+  // Optional font-independent page map. It is built only when the user selects
+  // Stable Pages; Current Pages never touches this cache or changes behavior.
+  StablePageCache::Index stablePageIndex;
+  bool stablePagesReady = false;
   int currentSpineIndex = 0;
   int nextPageNumber = 0;
   std::optional<uint16_t> pendingPageJump;
@@ -39,6 +45,12 @@ class EpubReaderActivity final : public Activity {
   float pendingSpineProgress = 0.0f;
   bool pendingScreenshot = false;
   bool pendingSyncSaveError = false;
+  // Exit feedback: render one modal popup before the relatively expensive
+  // statistics/cache cleanup, then ignore repeated exit presses until the
+  // activity transition is queued.
+  bool exitHomePending = false;
+  bool exitPopupShown = false;
+  HomeMenuItem exitHomeItem = HomeMenuItem::NONE;
   // Consecutive page-load failures. Each failure drops the section and rebuilds on the next render,
   // which recovers a transiently corrupt cache; capped so a persistently bad page can't spin forever.
   uint8_t pageLoadRetryCount = 0;
@@ -66,6 +78,24 @@ class EpubReaderActivity final : public Activity {
   bool bookmarkRemoved = false;  // true when last toggle removed (controls popup text)
   std::vector<BookmarkEntry> cachedBookmarks;
   std::vector<ClippingEntry> cachedClippings;
+  // A font/line-spacing change can move a clipping to another page. Keep the
+  // resolved word spans for the current page so the BW and grayscale passes
+  // never repeat the text search. The vector is bounded by ClipFile's per-book
+  // clipping limit and is reserved when annotations are loaded.
+  struct SavedHighlightMatch {
+    uint16_t firstWord = 0;
+    uint16_t lastWord = 0;
+    uint8_t savedStyleMask = 0;
+    bool savedBold = false;
+  };
+  std::vector<SavedHighlightMatch> highlightMatches;
+  const Page* highlightMatchPageObject = nullptr;
+  int highlightMatchSpine = -1;
+  int highlightMatchPage = -1;
+  bool highlightLookupDone = false;
+  // Enabled on entry and after typography changes. It allows content matching
+  // to recover annotations whose old page number is no longer valid.
+  bool allowClippingRelocation = true;
   // Tracks whether this book is currently removed from Recent Books by the
   // removeReadBooksFromRecents feature (set at End-of-Book, cleared if paged back in).
   bool recentsEntryRemoved = false;
@@ -75,6 +105,7 @@ class EpubReaderActivity final : public Activity {
   bool pendingReadFolderMove = false;
   // Next-book suggestion menu for the End-of-Book screen
   EndOfBookOptions endOfBookOptions;
+  LongOperationIndicator longOperationIndicator;
 
   // Footnote support
   std::vector<FootnoteEntry> currentPageFootnotes;
@@ -94,6 +125,10 @@ class EpubReaderActivity final : public Activity {
   // Set when the lazy extension start failed, so loop() doesn't retry (and log) every
   // tick; the blocking extension in render() remains the fallback past the watermark.
   bool partialRebuildStartFailed = false;
+  // Page requests use a short event-loop phase to show the loading line on
+  // the already-presented page before synchronous parsing/rendering starts.
+  bool loadingUiPending = false;
+  bool loadingUiRenderArmed = false;
 
   // Last position persisted by render()'s saveProgress, used to skip redundant
   // writeAtomic calls on no-op re-renders (menu/bookmark/screenshot).
@@ -103,6 +138,7 @@ class EpubReaderActivity final : public Activity {
 
   void renderContents(std::unique_ptr<Page> page, int orientedMarginTop, int orientedMarginRight,
                       int orientedMarginBottom, int orientedMarginLeft);
+  void requestPageRender(bool immediate = false);
   void renderSavedHighlights(const Page& page, int fontId, int marginLeft, int marginTop);
   void renderStatusBar() const;
   // Pages laid out per incremental-build pump: on the render path (catching up to the page
@@ -183,6 +219,7 @@ class EpubReaderActivity final : public Activity {
   void openReaderOptions();
   void refreshAfterReaderSettings();
   void openDictionaryWordSelect();
+  void requestExitToHome(HomeMenuItem item = HomeMenuItem::NONE);
   // Returns true if sync acted (launched, or surfaced a save error); false if it was a no-op
   // because no KOReader credentials are stored.
   bool launchKOReaderSync();
@@ -194,6 +231,7 @@ class EpubReaderActivity final : public Activity {
   void addBookmark();
   void openClipSelection();
   void updateBookmarkFlag();
+  void prepareStablePages();
 
   // Footnote navigation
   void navigateToHref(const std::string& href, bool savePosition = false);
@@ -201,12 +239,13 @@ class EpubReaderActivity final : public Activity {
 
  public:
   explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub)
-      : Activity("EpubReader", renderer, mappedInput), epub(std::move(epub)) {}
+      : Activity("EpubReader", renderer, mappedInput), epub(std::move(epub)), longOperationIndicator(renderer) {}
   EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub,
                      std::optional<ProgressChangeResult> initialBookmark)
       : Activity("EpubReader", renderer, mappedInput),
         epub(std::move(epub)),
-        initialBookmark(std::move(initialBookmark)) {}
+        initialBookmark(std::move(initialBookmark)),
+        longOperationIndicator(renderer) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;

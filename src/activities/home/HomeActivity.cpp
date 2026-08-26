@@ -1,23 +1,34 @@
 #include "HomeActivity.h"
 
 #include <Bitmap.h>
+#include <Cbz.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <Logging.h>
 #include <Utf8.h>
 #include <Xtc.h>
 
 #include <cstring>
+#include <memory>
 #include <vector>
 
+#include "BookStateStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
+#include "activities/home/ClockWeatherActivity.h"
+#include "activities/home/ToDoListActivity.h"
 #include "RecentBooksStore.h"
+#include "activities/home/ReadingStatsActivity.h"
+#include "activities/home/SynopsisActivity.h"
+#include "activities/reader/EpubReaderBookmarksActivity.h"
+#include "activities/reader/EpubReaderClippingListActivity.h"
 #include "util/BookCacheUtils.h"
+#include "util/CbzDiagnostics.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -74,11 +85,20 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             attempted = true;
             success = xtc.generateThumbBmp(coverHeight);
           }
+        } else if (FsHelpers::hasCbzExtension(book.path)) {
+          Cbz cbz(book.path, "/.crosspoint");
+          if (cbz.loadMetadataOnly()) {
+            attempted = true;
+            success = cbz.generateThumbBmp(coverHeight);
+          }
         }
 
         if (attempted && !success) {
-          RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
-          book.coverBmpPath.clear();
+          // A failed conversion can be transient (low heap, an interrupted
+          // write, or a malformed cached BMP). Keep the source cover path so
+          // Home can show its placeholder and retry later; do not erase a
+          // working cover reference from RecentBooksStore.
+          LOG_DBG("HOME", "Keeping cover reference after thumbnail retry failure: %s", book.path.c_str());
         }
         if (attempted) {
           // Yield back to the normal activity/render cycle after one expensive
@@ -97,6 +117,150 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
 
   recentsLoaded = true;
   recentsLoading = false;
+}
+
+void HomeActivity::showMenu() {
+  std::vector<std::string> options = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER),
+                                      tr(STR_SETTINGS_TITLE)};
+  if (hasOpdsServers) options.insert(options.begin() + 2, tr(STR_OPDS_BROWSER));
+
+  const int fileTransferIndex = hasOpdsServers ? 3 : 2;
+  const int settingsIndex = hasOpdsServers ? 4 : 3;
+  const int clockWeatherIndex = settingsIndex + 1;
+  const int todoListIndex = settingsIndex + 2;
+  const int readingStatsIndex = settingsIndex + 3;
+  const int bookmarksIndex = settingsIndex + 4;
+  const int clippingsIndex = settingsIndex + 5;
+  options.insert(options.end(), {tr(STR_CLOCK_WEATHER), tr(STR_TODO_LIST), tr(STR_READING_STATS),
+                                 "Bookmarks (all books)", "Clippings (all books)"});
+
+  menuPopup.show(StrId::STR_MENU, options, 0,
+                 [this, fileTransferIndex, settingsIndex, clockWeatherIndex, todoListIndex, readingStatsIndex,
+                  bookmarksIndex, clippingsIndex](const int index) {
+    menuPopup.dismiss();
+    if (index == 0) {
+      activityManager.goToFileBrowser();
+    } else if (index == 1) {
+      activityManager.goToRecentBooks();
+    } else if (hasOpdsServers && index == 2) {
+      activityManager.goToBrowser();
+    } else if (index == fileTransferIndex) {
+      activityManager.goToFileTransfer();
+    } else if (index == settingsIndex) {
+      activityManager.goToSettings();
+    } else if (index == clockWeatherIndex) {
+      startActivityForResult(std::make_unique<ClockWeatherActivity>(renderer, mappedInput), nullptr);
+    } else if (index == todoListIndex) {
+      startActivityForResult(std::make_unique<ToDoListActivity>(renderer, mappedInput), nullptr);
+    } else if (index == readingStatsIndex) {
+      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), nullptr);
+    } else if (index == bookmarksIndex) {
+      startActivityForResult(
+          std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, std::string{}, true),
+          [this](const ActivityResult& result) {
+            if (result.isCancelled) return;
+            const auto* bookmark = std::get_if<ProgressChangeResult>(&result.data);
+            if (bookmark && !bookmark->bookPath.empty()) {
+              activityManager.goToReaderAtBookmark(bookmark->bookPath, *bookmark);
+            }
+          });
+    } else if (index == clippingsIndex) {
+      startActivityForResult(std::make_unique<EpubReaderClippingListActivity>(
+                                renderer, mappedInput, std::string{}, "All books", true),
+                            nullptr);
+    }
+  });
+  requestUpdate();
+}
+
+void HomeActivity::showBookActions() {
+  if (selectorIndex >= recentBooks.size()) return;
+  const RecentBook selectedBook = recentBooks[selectorIndex];
+  std::vector<std::string> actions = {tr(STR_OPEN), tr(STR_MARK_READING), tr(STR_MARK_ON_HOLD), tr(STR_FINISHED),
+                                      tr(STR_RESET_PROGRESS), tr(STR_REFRESH_BOOK_CACHE),
+                                      tr(STR_DELETE_CACHE), tr(STR_REMOVE_FROM_LIST), tr(STR_READ_FULL_SYNOPSIS),
+                                      tr(STR_BOOK_STATISTICS)};
+  if (FsHelpers::hasEpubExtension(selectedBook.path)) {
+    actions.emplace_back(tr(STR_BOOKMARKS));
+    actions.emplace_back(tr(STR_CLIPPINGS));
+  }
+
+  bookActionsPopup.show(StrId::STR_BOOK_ACTIONS, actions, 0, [this](const int action) {
+    if (selectorIndex >= recentBooks.size()) return;
+    const RecentBook selected = recentBooks[selectorIndex];
+    if (action == 0) {
+      logCbzPath("home-book-selection", selected.path);
+      onSelectBook(selected.path);
+      return;
+    }
+    if (action == 1 || action == 2) {
+      BOOK_STATES.setStatus(selected.path, action == 1 ? BookStatus::Reading : BookStatus::OnHold);
+      if (selected.progressPercent >= 100) {
+        recentBooks[selectorIndex].progressPercent = 99;
+        RECENT_BOOKS.recordReading(selected.path, 99, 0);
+      }
+    } else if (action == 3) {
+      BOOK_STATES.setStatus(selected.path, BookStatus::Finished);
+      recentBooks[selectorIndex].progressPercent = 100;
+      RECENT_BOOKS.recordReading(selected.path, 100, 0);
+    } else if (action == 4) {
+      BOOK_STATES.reset(selected.path);
+      resetBookProgress(selected.path);
+      recentBooks[selectorIndex].progressPercent = 0;
+      RECENT_BOOKS.recordReading(selected.path, 0, 0);
+    } else if (action == 5) {
+      const int coverHeight = UITheme::getInstance().getMetrics().homeCoverHeight;
+      if (!selected.coverBmpPath.empty()) {
+        Storage.remove(UITheme::getCoverThumbPath(selected.coverBmpPath, coverHeight).c_str());
+      }
+      freeCoverBuffer();
+      coverRendered = false;
+      nextRecentCover = selectorIndex;
+      recentsLoaded = false;
+      recentsLoading = false;
+    } else if (action == 6) {
+      // Keep progress, but discard CBZ reader pages so the next open rebuilds
+      // them with the current decoder/cache behavior.
+      clearBookCache(selected.path);
+    } else if (action == 7) {
+      RECENT_BOOKS.removeByPath(selected.path);
+      BOOK_STATES.removeByPath(selected.path);
+      loadRecentBooks(UITheme::getInstance().getMetrics().homeRecentBooksCount);
+      selectorIndex = 0;
+      nextRecentCover = 0;
+      recentsLoaded = false;
+      recentsLoading = false;
+      coverRendered = false;
+      freeCoverBuffer();
+    } else if (action == 8) {
+      startActivityForResult(
+          std::make_unique<SynopsisActivity>(renderer, mappedInput, selected.title, selected.author, selected.synopsis,
+                                             selected.path),
+          nullptr);
+      return;
+    } else if (action == 9) {
+      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, selected.path), nullptr);
+      return;
+    } else if (action == 10 && FsHelpers::hasEpubExtension(selected.path)) {
+      startActivityForResult(
+          std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, selected.path),
+          [this](const ActivityResult& result) {
+            if (result.isCancelled) return;
+            const auto* bookmark = std::get_if<ProgressChangeResult>(&result.data);
+            if (bookmark && !bookmark->bookPath.empty()) {
+              activityManager.goToReaderAtBookmark(bookmark->bookPath, *bookmark);
+            }
+          });
+      return;
+    } else if (action == 11 && FsHelpers::hasEpubExtension(selected.path)) {
+      startActivityForResult(
+          std::make_unique<EpubReaderClippingListActivity>(renderer, mappedInput, selected.path, selected.title),
+          nullptr);
+      return;
+    }
+    requestUpdate(true);
+  });
+  requestUpdate();
 }
 
 void HomeActivity::onEnter() {
@@ -161,6 +325,36 @@ void HomeActivity::loop() {
   const int menuCount = getMenuItemCount();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
+  const bool menuActive = menuPopup.isActive();
+  const bool menuBackPressed = menuActive && mappedInput.wasPressed(MappedInputManager::Button::Back);
+  if (menuPopup.handleInput(mappedInput, [this] { requestUpdate(); })) {
+    if (menuBackPressed) swallowMenuBackRelease = true;
+    return;
+  }
+  if (swallowMenuBackRelease) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) swallowMenuBackRelease = false;
+    return;
+  }
+
+  const bool bookPopupActive = bookActionsPopup.isActive();
+  const bool bookPopupConfirmPressed = bookPopupActive && mappedInput.wasPressed(MappedInputManager::Button::Confirm);
+  const bool bookPopupBackPressed = bookPopupActive && mappedInput.wasPressed(MappedInputManager::Button::Back);
+  if (bookActionsPopup.handleInput(mappedInput, [this] { requestUpdate(); })) {
+    if (bookPopupConfirmPressed) swallowBookConfirmRelease = true;
+    if (bookPopupBackPressed) swallowBookBackRelease = true;
+    return;
+  }
+  if (swallowBookBackRelease) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) swallowBookBackRelease = false;
+    return;
+  }
+
+  if (!bookActionsPopup.isActive() && !mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      !mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    longPressActionShown = false;
+    swallowBookConfirmRelease = false;
+  }
+
   auto activateSelection = [this] {
     if (selectorIndex < recentBooks.size()) {
       onSelectBook(recentBooks[selectorIndex].path);
@@ -212,12 +406,20 @@ void HomeActivity::loop() {
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) backPressSeen = true;
 
-  // Back is otherwise unused on the home menu: open the most recently read
-  // book directly (recentBooks is most-recent-first and already pruned of
-  // files missing from the SD card). backPressSeen guards against the stale
-  // release of the Back press that closed the previous activity.
+  // The first front-button hint used to say Resume and open the most recent
+  // book directly. Match Folio Nooir's home behavior: the button now opens
+  // the menu, while Confirm still opens the selected book normally.
   if (mappedInput.wasReleased(MappedInputManager::Button::Back) && backPressSeen && !recentBooks.empty()) {
-    onSelectBook(recentBooks[0].path);
+    backPressSeen = false;
+    showMenu();
+    return;
+  }
+
+  if (selectorIndex < recentBooks.size() && mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      mappedInput.getHeldTime() >= 1000 && !longPressActionShown) {
+    longPressActionShown = true;
+    swallowBookConfirmRelease = true;
+    showBookActions();
     return;
   }
 
@@ -263,6 +465,11 @@ void HomeActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    longPressActionShown = false;
+    if (swallowBookConfirmRelease) {
+      swallowBookConfirmRelease = false;
+      return;
+    }
     activateSelection();
     return;
   }
@@ -319,9 +526,11 @@ void HomeActivity::render(RenderLock&&) {
       [&menuItems](int index) { return std::string(menuItems[index]); },
       [&menuIcons](int index) { return menuIcons[index]; });
 
-  const auto labels = mappedInput.mapLabels(recentBooks.empty() ? "" : tr(STR_RESUME), tr(STR_SELECT), tr(STR_DIR_UP),
+  const auto labels = mappedInput.mapLabels(recentBooks.empty() ? "" : tr(STR_MENU), tr(STR_SELECT), tr(STR_DIR_UP),
                                             tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+
+  if (menuPopup.processRender(renderer, mappedInput) || bookActionsPopup.processRender(renderer, mappedInput)) return;
 
   renderer.displayBuffer();
 
@@ -331,7 +540,10 @@ void HomeActivity::render(RenderLock&&) {
   }
 }
 
-void HomeActivity::onSelectBook(const std::string& path) { activityManager.goToReader(path); }
+void HomeActivity::onSelectBook(const std::string& path) {
+  logCbzPath("home-book-selection", path);
+  activityManager.goToReader(path);
+}
 
 void HomeActivity::onFileBrowserOpen() { activityManager.goToFileBrowser(); }
 

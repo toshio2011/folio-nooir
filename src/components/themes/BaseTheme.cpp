@@ -811,7 +811,8 @@ void BaseTheme::fillPopupProgress(const GfxRenderer& renderer, const Rect& layou
 
 void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, const int currentPage,
                               const int pageCount, std::string title, const int paddingBottom, const int textYOffset,
-                              const bool fillMargin, const bool isPageBookmarked, const bool pageCountEstimated) const {
+                              const bool fillMargin, const bool isPageBookmarked, const bool pageCountEstimated,
+                              const bool stablePageCount) const {
   auto metrics = UITheme::getInstance().getMetrics();
   int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
   renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
@@ -858,7 +859,7 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     const int progressBarY = renderer.getScreenHeight() - orientedMarginBottom - sb.progressBarHeightPx -
                              paddingBottom + (fillMargin ? 1 : 0);
     size_t progress;
-    if (sb.progressBarMode == CrossPointSettings::STATUS_BAR_PROGRESS_BAR::BOOK_PROGRESS) {
+    if (sb.progressBarMode == CrossPointSettings::STATUS_BAR_PROGRESS_BAR::BOOK_PROGRESS || stablePageCount) {
       progress = static_cast<size_t>(bookProgress);
     } else {
       // Chapter progress

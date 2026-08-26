@@ -14,7 +14,7 @@
 # Folio Nooir
 
 Current development line: **v1.6.0 release candidate**.
-Current stable release: **v1.5.10**. Release candidate: **v1.5.11**.
+Current stable release: **v1.5.10**. Release candidate: **v1.6.0**.
 
 ## Hardware warning
 
@@ -182,12 +182,17 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
   only.
 - EPUB chapter navigation, footnotes, bookmarks, go-to-percent, auto page turn, orientation control, screenshots, and custom fonts.
 - Image preview from the file browser, plus the existing X3 tilt-page-turn path where supported.
-- Wi-Fi setup, browser-based file transfer, and the built-in web server.
+- Wi-Fi setup, browser-based file transfer, Calibre wireless transfer, and the
+  built-in web server, including station and hotspot modes.
 - OPDS browsing, KOReader Sync, and OTA update support.
 - Sleep cover, battery/status screens, SD-card firmware update, and recovery tools.
 - One-shot Clock & Weather sync with cached clock/date/weather data; device-started sync powers Wi-Fi back off when finished.
 - Persistent To-Do List storage at `/.crosspoint/todo.json` with on-device add, edit, delete, reorder, complete, priority, and clear-completed actions.
 - Existing input mappings, themes/settings storage, status-bar controls, localization, and device configuration.
+- Classic, Lyra, Lyra 3-Cover, Rounded Raff, Folio Nooir, and standalone
+  Carousel themes, with persisted display, typography, orientation, refresh,
+  battery, and input controls. Optional touch-reader controls are available on
+  hardware that provides the supported touch interface.
 - Settings Profiles for saving, applying, and deleting named device-setting snapshots without copying reading data.
 - **Clear Reading Data** clears Recent entries, Book State records, reading statistics, and the Folio shelf snapshot while preserving covers, thumbnails, `metadata.bin`, `book.bin`, bookmarks, clippings, and highlights.
 - Per-book **Clear Reading Cache** removes that book's generated reader cache while preserving its saved reading position.
@@ -211,6 +216,9 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Folio Recent and Finished independently support **3 Covers**, **4 x 2 Grid**,
   **3-Cover Carousel**, and **5-Cover Carousel** without changing the graphical
   Library UI.
+- Recent and Finished layout preferences remain independent, while the
+  standalone Carousel theme has its own persisted 3/5-Cover layout setting and
+  reuses the shared Carousel implementation.
 - Carousel center covers can use an explicitly prepared 360px thumbnail and
   immediately fall back to the existing 220px thumbnail; side covers remain
   220px, and navigation never generates an HQ cover synchronously. Bounded
@@ -517,10 +525,18 @@ If a particular CBZ behaves unexpectedly, useful information for a bug report in
 - Persistent per-book reading time, session count, progress, status, and dates.
 - Persistent page-turn counts for each book and recorded day, plus pages-per-minute pace.
 - Current and best consecutive reading-day streaks.
+- Overview includes Today, the seven-day chart, current/best streaks, books
+  started/finished, retained reading totals, and average-session information.
+- Calendar provides month navigation, selected-day details, and monochrome daily
+  intensity from the retained history.
+- Books provides circular navigation, cached 220px covers, progress/status,
+  synopsis, dates, reading time, sessions, and pages without HQ generation or
+  filesystem scanning.
 - Daily reading history is retained for up to 730 days; Calendar uses the
   retained daily data, while Books uses only existing cached 220px covers.
-- Twenty derived achievements show earned/locked state and progress without
-  changing the underlying reading-data schema.
+- Twenty derived achievements show earned/locked state and progress with safe
+  two-column X3/X4 layout behavior, without changing the underlying reading-data
+  schema.
 - On-device book statistics from the long-press menu.
 - Reading Summary from the home/Library menu.
 - On-device reading calendar with month navigation and monochrome daily

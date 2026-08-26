@@ -22,6 +22,7 @@
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
 #include "util/FullScreenMessageActivity.h"
+#include "util/CbzDiagnostics.h"
 
 static portMUX_TYPE activityManagerSpinlock = portMUX_INITIALIZER_UNLOCKED;
 
@@ -251,10 +252,12 @@ void ActivityManager::goToBrowser() {
 }
 
 void ActivityManager::goToReader(std::string path) {
+  logCbzPath("activity-manager-go-to-reader", path);
   replaceActivity(std::make_unique<ReaderActivity>(renderer, mappedInput, std::move(path)));
 }
 
 void ActivityManager::goToReaderAtBookmark(std::string path, ProgressChangeResult bookmark) {
+  logCbzPath("activity-manager-go-to-reader-bookmark", path);
   replaceActivity(std::make_unique<ReaderActivity>(renderer, mappedInput, std::move(path), std::move(bookmark)));
 }
 
