@@ -29,12 +29,46 @@ adding a Folio Nooir interface and reading tools.
 ## Native Simulator
 
 Folio Nooir provides native PlatformIO profiles for `simulator_x4` and
-`simulator_x3`. They can test the Nooir UI, library behavior, EPUB rendering
-and navigation, and supported simulated inputs without flashing a physical
-device. The X3 profile also includes simulated tilt testing. Real-device
-testing is still recommended. See the complete [native simulator guide](docs/simulator.md)
+`simulator_x3`. They can test the shared Nooir UI, library behavior, Carousel,
+EPUB rendering and navigation, and supported simulated inputs without flashing
+a physical device. The X3 profile also includes simulated tilt testing.
+Real-device testing is still recommended. See the complete [native simulator guide](docs/simulator.md)
 for WSL/Linux setup, build/run commands, controls, virtual SD-card use, and
 troubleshooting.
+
+## v1.6.0 changes
+
+The current 1.6.0 release candidate adds the following to the existing Folio
+Nooir and CrossPoint feature set:
+
+- A standalone **Carousel** theme with independent **3-Cover Carousel** and
+  **5-Cover Carousel** settings. Its layout preference is separate from the
+  Folio Nooir Recent and Finished preferences.
+- Folio Nooir Recent and Finished layout choices for **3 Covers**, **4 x 2
+  Grid**, **3-Cover Carousel**, and **5-Cover Carousel**, with circular
+  navigation and safe behavior for small collections.
+- Shared X3/X4 Carousel rendering with a large selected cover, mirrored
+  perspective/trapezoid side covers, opaque far-to-near-to-center layering,
+  progress ribbons, content-aware synopsis, and a compact four-field status
+  row. Carousel layouts do not use the traditional page indicator.
+- Explicit Carousel cover preparation with an optional cached 360px center
+  cover, immediate fallback to the existing 220px cover, and 220px side
+  covers. Navigation never generates an HQ cover synchronously.
+- Frame-safe source-cache reuse and bounded cover rendering so visible Carousel
+  sources cannot evict one another during a frame, without caching decoded
+  pixel buffers or increasing the six-handle cache.
+- A new on-device **Reading Statistics** screen with Overview, Calendar,
+  Books, and Achievements tabs, persistent daily/book totals, pages, sessions,
+  reading time, streaks, book states, compact charts, and safe empty states.
+- **Reading Stats** and **Minimal Stats** sleep screens. Statistics sleep may
+  use an existing valid 360px cover and falls back to 220px without generating
+  or preparing a cover during sleep. Legacy full-screen Cover, Cover + Overlay,
+  and Clipping + Cover behavior remains separate.
+- Featured-book sizing and source selection refinements so the Featured panel
+  remains visually consistent with the Folio shelf covers.
+
+PDF and FB2 reader support are not implemented; the repository contains
+feasibility notes only.
 
 ## v1.5.11 changes
 
@@ -164,15 +198,21 @@ is not a new v1.5.8 change:
 
 Folio Nooir is an interface and feature layer on top of CrossPoint rather than a replacement reader. The existing CrossPoint workflows remain available:
 
-- EPUB, XTC/XTCH, TXT, Markdown, and PDF/file-browser workflows.
+- EPUB, XTC/XTCH, TXT, Markdown, and file-browser workflows.
+- PDF and FB2 reader support are not implemented; only feasibility notes exist
+  for those formats.
 - EPUB chapter navigation, footnotes, bookmarks, go-to-percent, auto page turn, orientation control, screenshots, and custom fonts.
 - Image preview from the file browser, plus the existing X3 tilt-page-turn path where supported.
-- Wi-Fi setup, browser-based file transfer, and the built-in web server.
+- Wi-Fi setup, browser-based file transfer, Calibre wireless transfers, and the
+  built-in web server, including station and hotspot modes.
 - OPDS browsing, KOReader Sync, and OTA update support.
 - Sleep cover, battery/status screens, SD-card firmware update, and recovery tools.
 - One-shot Clock & Weather sync with cached clock/date/weather data; device-started sync powers Wi-Fi back off when finished.
 - Persistent To-Do List storage at `/.crosspoint/todo.json` with on-device add, edit, delete, reorder, complete, priority, and clear-completed actions.
 - Existing input mappings, themes/settings storage, status-bar controls, localization, and device configuration.
+- Classic, Lyra, Lyra 3-Cover, Rounded Raff, Folio Nooir, and standalone
+  Carousel themes, with persisted display, typography, orientation, refresh,
+  battery, and input controls.
 - Settings Profiles for saving, applying, and deleting named device-setting snapshots without copying reading data.
 - **Clear Reading Data** clears Recent entries, Book State records, reading statistics, and the Folio shelf snapshot while preserving covers, thumbnails, `metadata.bin`, `book.bin`, bookmarks, clippings, and highlights.
 - Per-book **Clear Reading Cache** removes that book's generated reader cache while preserving its saved reading position.
@@ -193,6 +233,13 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Automatic movement to Finished when a book reaches 100%.
 - Shelf buttons stay context-aware: Library opens the menu, while Recent and Finished provide direct Library/Recent/Finished navigation without leaving the shelf.
 - Library menu access to Clock & Weather, To-Do List, Reading Summary, Reading Calendar, bookmarks, clippings, and Retrieve All Book Details.
+- Folio Recent and Finished layout settings are independent and keep the
+  graphical Nooir Library unchanged. The standalone Carousel theme has its own
+  persisted layout setting and reuses the same Carousel implementation.
+- Carousel center covers prefer a valid prepared 360px thumbnail and fall back
+  immediately to 220px; side covers and the Folio shelf use the existing 220px
+  cache. The Featured panel uses the shelf-compatible source and runtime-sized
+  cover bounds for consistent grayscale rendering.
 
 ### Reader and typography
 
@@ -225,6 +272,8 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Dictionary font and dictionary font-size settings are available independently from reading typography.
 - Reader Options can be opened while reading from the reader menu, mapped front button, long-press menu, or configured power-button action.
 - Bluetooth HID/page-turner support is present in the codebase but remains experimental and is not considered stable for release yet.
+- Touch reader controls are available on supported boards, and X3 tilt page
+  turning remains available where the hardware path supports it.
 
 #### Dictionary setup and use
 
@@ -293,12 +342,24 @@ paragraph position used as a fallback when needed.
 
 ### Reading statistics
 
+- The Statistics screen contains **Overview**, **Calendar**, **Books**, and
+  **Achievements** tabs.
 - Persistent per-book reading time, session count, progress, status, and dates.
 - Persistent page-turn counts for each book and recorded day, plus pages-per-minute pace.
 - Current and best consecutive reading-day streaks.
+- Overview shows Today, the seven-day chart, current/best streaks, books
+  started/finished, retained reading totals, and average-session information.
+- Calendar provides month navigation, selected-day details, and monochrome
+  daily intensity from the retained history.
+- Books provides circular navigation, cached 220px covers, progress/status,
+  synopsis, dates, reading time, sessions, and pages without HQ generation or
+  filesystem scanning.
+- Achievements derives twenty lightweight earned/locked goals with progress
+  bars and safe two-column X3/X4 layout behavior.
+- Daily totals retain up to 730 days; the UI does not present that bounded
+  store as unlimited lifetime history.
 - On-device book statistics from the long-press menu.
 - Reading Summary from the home/Library menu.
-- On-device reading calendar showing the last 30 recorded days.
 - Web statistics cards and JSON export include pages, pace, streaks, and daily page counts.
 - The on-device summary includes total time, sessions, average session, pages, pace, streaks, book states, today, and recent recorded days.
 - Featured-book summary such as `Ongoing - 12% - 18 min - 22 sessions`.
@@ -333,11 +394,21 @@ When the device is connected to the same network, the built-in web interface pro
 
 ### Sleep and display
 
+- Dark, Light, Blank, Custom, Cover, Quick Resume, Page Overlay, Cover +
+  Overlay, Reading Stats, Minimal Stats, Clipping + Cover, and To-Do List
+  sleep modes are available where supported by the selected settings.
 - Custom PNG/BMP sleep images.
 - Random sleep images from `/.sleep/`.
 - Transparent PNG page-overlay sleep mode that keeps the last reader page visible beneath the overlay, rendered with the full four-level grayscale pipeline.
 - `Cover + Overlay`: use the current/recent book cover as the background and composite the transparent page overlay above it.
 - `Reading Stats`, `Minimal Stats`, and `Clipping + Cover` sleep modes.
+- Reading Stats sleep keeps the current book, progress, Today, current streak,
+  and weekly context visible. Minimal Stats sleep makes the cached book cover
+  the visual centerpiece. Both use bounded, aspect-preserving cover fitting;
+  only existing cached thumbnails are used while asleep.
+- Legacy full-screen Cover, Cover + Overlay, and Clipping + Cover modes retain
+  their cover fit/crop behavior rather than being forced into the bounded
+  Statistics layout.
 - To-Do List sleep mode with Unchecked, Completed, Random, and All task choices; the All mode uses a centered card up to 98% of the display height.
 - Quick Resume and Resume Reader on Wake are separate controls: Quick Resume chooses whether the current page is retained while asleep, while Resume Reader on Wake chooses Reader versus Recent/Library after waking.
 - Ghosting mitigation and clean refreshes when leaving books or entering sleep.
