@@ -63,12 +63,16 @@ const ThemeMetrics& UITheme::getMetrics() const {
   // hasTouch() can flip once touch init completes after static construction, so the
   // cached copy is refreshed when the flag differs instead of copying the struct per call.
   const bool touch = gpio.hasTouch();
-  if (!metricsValid || touch != metricsForTouch) {
+  if (!metricsValid || touch != metricsForTouch || metricsScalePercent != SETTINGS.uiScalePercent) {
     adjustedMetrics = *currentMetrics;
     if (touch) {
       adjustedMetrics.buttonHintsHeight = 0;
     }
+    // UI Scale changes font selection in GfxRenderer only. Keep all metrics
+    // unchanged so the bookshelf, settings rows, and button positions remain
+    // stable at every scale choice.
     metricsForTouch = touch;
+    metricsScalePercent = SETTINGS.uiScalePercent;
     metricsValid = true;
   }
   return adjustedMetrics;

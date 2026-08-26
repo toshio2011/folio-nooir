@@ -2,6 +2,7 @@
 
 #include <BoardConfig.h>
 #include <GfxRenderer.h>
+#include <HalStorage.h>
 #include <Logging.h>
 
 #include <algorithm>
@@ -10,7 +11,11 @@
 
 #include "ButtonRemapActivity.h"
 #include "ClearCacheActivity.h"
+#include "../home/ToDoListActivity.h"
+#include "ClockSyncActivity.h"
 #include "CrossPointSettings.h"
+#include "CrossPointState.h"
+#include "DictionaryIndexActivity.h"
 #include "FontDownloadActivity.h"
 #include "KOReaderSettingsActivity.h"
 #include "LanguageSelectActivity.h"
@@ -19,6 +24,7 @@
 #include "OtaUpdateActivity.h"
 #include "SdCardFontSystem.h"
 #include "SdFirmwareUpdateActivity.h"
+#include "SettingsProfilesActivity.h"
 #include "SettingsList.h"
 #include "StatusBarSettingsActivity.h"
 #include "TextSettingsActivity.h"
@@ -65,12 +71,28 @@ void SettingsActivity::rebuildSettingsLists() {
     }
   }
 
+  // Device-only display action. The favorite path lives in CrossPointState,
+  // not CrossPointSettings, so it is intentionally kept out of the web
+  // settings API and added only when a favorite is actually configured.
+  if (!APP_STATE.favoriteSleepImagePath.empty() ||
+      (!APP_STATE.legacySleepImageDisabled &&
+       (Storage.exists("/sleep.bmp") || Storage.exists("/sleep.png")))) {
+    displaySettings.push_back(
+        SettingInfo::Action(StrId::STR_CLEAR_FAVORITE_SLEEP, SettingAction::ClearFavoriteSleepImage));
+  }
+
   // Append device-only ACTION items
   if (!BoardConfig::hasTouch()) {
     controlsSettings.insert(controlsSettings.begin(),
                             SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS, SettingAction::RemapFrontButtons));
+    controlsSettings.insert(controlsSettings.begin() + 1,
+                            SettingInfo::Action(StrId::STR_REMAP_READER_FRONT_BUTTONS,
+                                                SettingAction::RemapReaderFrontButtons));
   }
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_CLOCK_WEATHER_SYNC, SettingAction::ClockWeatherSync));
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_TODO_LIST, SettingAction::ToDoList));
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_SETTINGS_PROFILES, SettingAction::SettingsProfiles));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
@@ -83,8 +105,86 @@ void SettingsActivity::rebuildSettingsLists() {
   readerSettings.insert(readerSettings.begin(),
                         SettingInfo::Action(StrId::STR_TEXT_SETTINGS, SettingAction::TextSettings));
   readerSettings.insert(readerSettings.begin() + 1,
+                        SettingInfo::Action(StrId::STR_DICTIONARY_SETTINGS, SettingAction::DictionarySettings));
+  readerSettings.insert(readerSettings.begin() + 2,
+                        SettingInfo::Action(StrId::STR_DICTIONARY_INDEXES, SettingAction::DictionaryIndexes));
+  readerSettings.insert(readerSettings.begin() + 3,
                         SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts));
   readerSettings.push_back(SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
+
+  // Keep the four tabs as the stable settings categories, but present each
+  // category in a predictable, task-oriented order.  This is deliberately a
+  // UI-only sort: SettingInfo keys, categories, and actions are untouched, so
+  // persistence, profiles, and the web settings API keep their existing
+  // behavior.  Stable sorting also keeps any future setting that is not yet in
+  // one of these lists at the end instead of silently hiding it.
+  const auto reorder = [](std::vector<SettingInfo>& settings, const std::vector<StrId>& preferred) {
+    const auto rank = [&preferred](const StrId id) {
+      const auto it = std::find(preferred.begin(), preferred.end(), id);
+      return it == preferred.end() ? preferred.size() : static_cast<size_t>(std::distance(preferred.begin(), it));
+    };
+    std::stable_sort(settings.begin(), settings.end(), [&rank](const SettingInfo& left, const SettingInfo& right) {
+      return rank(left.nameId) < rank(right.nameId);
+    });
+  };
+
+  reorder(displaySettings, {
+                              StrId::STR_SLEEP_SCREEN,
+                              StrId::STR_SLEEP_COVER_MODE,
+                              StrId::STR_SLEEP_COVER_FILTER,
+                              StrId::STR_CLEAR_FAVORITE_SLEEP,
+                              StrId::STR_TODO_SLEEP_MODE,
+                              StrId::STR_QUICK_RESUME_TIMEOUT,
+                              StrId::STR_UI_THEME,
+                              StrId::STR_UI_SCALE,
+                              StrId::STR_HIDE_BATTERY,
+                              StrId::STR_REFRESH_FREQ,
+                              StrId::STR_SUNLIGHT_FADING_FIX,
+                          });
+  reorder(readerSettings, {
+                             StrId::STR_TEXT_SETTINGS,
+                             StrId::STR_DICTIONARY,
+                             StrId::STR_DICTIONARY_SETTINGS,
+                             StrId::STR_DICTIONARY_INDEXES,
+                             StrId::STR_MANAGE_FONTS,
+                             StrId::STR_IMAGES,
+                             StrId::STR_ORIENTATION,
+                             StrId::STR_CUSTOMISE_STATUS_BAR,
+                         });
+  reorder(controlsSettings, {
+                               StrId::STR_REMAP_FRONT_BUTTONS,
+                               StrId::STR_REMAP_READER_FRONT_BUTTONS,
+                               StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION,
+                               StrId::STR_SIDE_BTN_LAYOUT,
+                               StrId::STR_SIDE_LONG_PRESS_ACTION,
+                               StrId::STR_LONG_PRESS_BEHAVIOR,
+                               StrId::STR_SHORT_PWR_BTN,
+                               StrId::STR_LONG_PWR_BTN,
+                               StrId::STR_LONG_PRESS_MENU,
+                               StrId::STR_TOUCH_READER_CONTROLS,
+                               StrId::STR_TILT_PAGE_TURN,
+                               StrId::STR_PWR_BTN_FOOTNOTE_BACK,
+                               StrId::STR_BACK_SHORT_TO_FILE_BROWSER,
+                           });
+  reorder(systemSettings, {
+                             StrId::STR_TIME_TO_SLEEP,
+                             StrId::STR_RESUME_READER_ON_WAKE,
+                             StrId::STR_WIFI_NETWORKS,
+                             StrId::STR_CLOCK_WEATHER_SYNC,
+                             StrId::STR_CLOCK_SYNC_ENABLED,
+                             StrId::STR_WEATHER_SYNC_ENABLED,
+                             StrId::STR_OPDS_SERVERS,
+                             StrId::STR_KOREADER_SYNC,
+                             StrId::STR_TODO_LIST,
+                             StrId::STR_SETTINGS_PROFILES,
+                             StrId::STR_CLEAR_READING_CACHE,
+                             StrId::STR_SHOW_HIDDEN_FILES,
+                             StrId::STR_REMOVE_READ_FROM_RECENTS,
+                             StrId::STR_MOVE_FINISHED_TO_READ,
+                             StrId::STR_CHECK_UPDATES,
+                             StrId::STR_SD_FIRMWARE_UPDATE,
+                             StrId::STR_LANGUAGE,
+                         });
 
   // Update currentSettings pointer and count for the active category
   switch (selectedCategoryIndex) {
@@ -306,7 +406,8 @@ void SettingsActivity::toggleCurrentSetting() {
   }
 
   const auto& setting = (*currentSettings)[selectedSetting];
-  const bool sleepScreenChanged = setting.valuePtr == &CrossPointSettings::sleepScreen;
+  const bool sleepScreenChanged = setting.nameId == StrId::STR_SLEEP_SCREEN ||
+                                  setting.valuePtr == &CrossPointSettings::sleepScreen;
   const bool quickResumeTimeoutChanged = setting.valuePtr == &CrossPointSettings::quickResumeSleepScreen;
 
   if (setting.nameId == StrId::STR_TIME_TO_SLEEP) {
@@ -320,19 +421,27 @@ void SettingsActivity::toggleCurrentSetting() {
     SETTINGS.*(setting.valuePtr) = !currentValue;
   } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
     const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
-    if (setting.enumValues.size() > 2) {
+    const uint8_t totalValues = setting.enumStringValues.empty()
+                                    ? static_cast<uint8_t>(setting.enumValues.size())
+                                    : static_cast<uint8_t>(setting.enumStringValues.size());
+    if (totalValues > 2) {
       const auto valuePtr = setting.valuePtr;
-      optionPopup.show(setting.nameId, setting.enumValues.data(), static_cast<int>(setting.enumValues.size()),
-                       currentValue, [this, valuePtr, sleepScreenChanged, quickResumeTimeoutChanged](int idx) {
-                         SETTINGS.*valuePtr = idx;
-                         syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
-                         SETTINGS.saveToFile();
-                         rebuildSettingsLists();
-                       });
+      auto onSelect = [this, valuePtr, sleepScreenChanged, quickResumeTimeoutChanged](int idx) {
+        SETTINGS.*valuePtr = idx;
+        syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
+        SETTINGS.saveToFile();
+        rebuildSettingsLists();
+      };
+      if (!setting.enumStringValues.empty()) {
+        optionPopup.show(setting.nameId, setting.enumStringValues, currentValue, std::move(onSelect));
+      } else {
+        optionPopup.show(setting.nameId, setting.enumValues.data(), static_cast<int>(setting.enumValues.size()),
+                         currentValue, std::move(onSelect));
+      }
       requestUpdate();
       return;
     }
-    SETTINGS.*(setting.valuePtr) = (currentValue + 1) % static_cast<uint8_t>(setting.enumValues.size());
+    SETTINGS.*(setting.valuePtr) = (currentValue + 1) % totalValues;
   } else if (setting.type == SettingType::ENUM && setting.valueGetter && setting.valueSetter) {
     const uint8_t totalValues = setting.enumStringValues.empty()
                                     ? static_cast<uint8_t>(setting.enumValues.size())
@@ -370,6 +479,9 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::RemapFrontButtons:
         startActivityForResult(std::make_unique<ButtonRemapActivity>(renderer, mappedInput), resultHandler);
         break;
+      case SettingAction::RemapReaderFrontButtons:
+        startActivityForResult(std::make_unique<ButtonRemapActivity>(renderer, mappedInput, true), resultHandler);
+        break;
       case SettingAction::CustomiseStatusBar:
         startActivityForResult(std::make_unique<StatusBarSettingsActivity>(renderer, mappedInput), resultHandler);
         break;
@@ -381,6 +493,26 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       case SettingAction::Network:
         startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, false), resultHandler);
+        break;
+      case SettingAction::ClockWeatherSync:
+        startActivityForResult(std::make_unique<ClockSyncActivity>(renderer, mappedInput, true), resultHandler);
+        break;
+      case SettingAction::ToDoList:
+        startActivityForResult(std::make_unique<ToDoListActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::SettingsProfiles:
+        startActivityForResult(std::make_unique<SettingsProfilesActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::ClearFavoriteSleepImage:
+        APP_STATE.favoriteSleepImagePath.clear();
+        if (!APP_STATE.favoriteSleepImageBmpPath.empty()) {
+          Storage.remove(APP_STATE.favoriteSleepImageBmpPath.c_str());
+          APP_STATE.favoriteSleepImageBmpPath.clear();
+        }
+        APP_STATE.legacySleepImageDisabled = true;
+        APP_STATE.saveToFile();
+        rebuildSettingsLists();
+        requestUpdate();
         break;
       case SettingAction::ClearCache:
         startActivityForResult(std::make_unique<ClearCacheActivity>(renderer, mappedInput), resultHandler);
@@ -405,6 +537,17 @@ void SettingsActivity::toggleCurrentSetting() {
                                  SETTINGS.saveToFile();
                                  rebuildSettingsLists();
                                });
+        break;
+      case SettingAction::DictionarySettings:
+        startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
+                                                                      TextSettingsActivity::Tab::Dictionary),
+                               [this](const ActivityResult&) {
+                                 SETTINGS.saveToFile();
+                                 rebuildSettingsLists();
+                               });
+        break;
+      case SettingAction::DictionaryIndexes:
+        startActivityForResult(std::make_unique<DictionaryIndexActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::Language:
         startActivityForResult(std::make_unique<LanguageSelectActivity>(renderer, mappedInput), resultHandler);
@@ -499,7 +642,11 @@ void SettingsActivity::render(RenderLock&&) {
           valueText = value ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
         } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
           const uint8_t value = SETTINGS.*(setting.valuePtr);
-          valueText = I18N.get(setting.enumValues[value]);
+          if (!setting.enumStringValues.empty() && value < setting.enumStringValues.size()) {
+            valueText = setting.enumStringValues[value];
+          } else if (value < setting.enumValues.size()) {
+            valueText = I18N.get(setting.enumValues[value]);
+          }
         } else if (setting.type == SettingType::ENUM && setting.valueGetter) {
           const uint8_t value = setting.valueGetter();
           if (!setting.enumStringValues.empty() && value < setting.enumStringValues.size()) {
@@ -519,6 +666,7 @@ void SettingsActivity::render(RenderLock&&) {
             }
           } else {
             valueText = std::to_string(SETTINGS.*(setting.valuePtr));
+            if (setting.nameId == StrId::STR_UI_SCALE) valueText += "%";
           }
         }
         return valueText;
@@ -531,7 +679,10 @@ void SettingsActivity::render(RenderLock&&) {
           ? I18N.get(categoryNames[(selectedCategoryIndex + 1) % categoryCount])
           : (selectedSettingIndex > 0 && (*currentSettings)[selectedSettingIndex - 1].nameId == StrId::STR_TIME_TO_SLEEP
                  ? tr(STR_SELECT)
-                 : tr(STR_TOGGLE));
+                 : (selectedSettingIndex > 0 &&
+                            (*currentSettings)[selectedSettingIndex - 1].type == SettingType::VALUE
+                        ? tr(STR_SELECT)
+                        : tr(STR_TOGGLE)));
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

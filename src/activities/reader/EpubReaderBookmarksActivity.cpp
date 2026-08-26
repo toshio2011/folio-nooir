@@ -6,7 +6,11 @@
 #include <algorithm>
 
 #include "../../util/BookmarkFile.h"
+#include "BookStateStore.h"
 #include "MappedInputManager.h"
+#include <FsHelpers.h>
+#include "ProgressMapper.h"
+#include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -19,15 +23,46 @@ constexpr int LINE_HEIGHT = 60;
 
 void EpubReaderBookmarksActivity::onEnter() {
   Activity::onEnter();
+  swallowInitialConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);
 
-  if (!epub) {
-    return;
+  bookmarks.clear();
+  if (allBooks) {
+    for (const auto& recent : RECENT_BOOKS.getBooks()) {
+      if (!FsHelpers::hasEpubExtension(recent.path)) continue;
+      std::vector<BookmarkEntry> bookBookmarks;
+      if (!BookmarkFile::load(recent.path, bookBookmarks)) continue;
+      for (auto& bookmark : bookBookmarks) {
+        bookmarks.push_back(BookmarkItem{recent.path, recent.title, std::move(bookmark)});
+      }
+    }
+    for (const auto& state : BOOK_STATES.getBooks()) {
+      if (!FsHelpers::hasEpubExtension(state.path) ||
+          std::find_if(bookmarks.begin(), bookmarks.end(), [&](const BookmarkItem& item) {
+            return item.bookPath == state.path;
+          }) != bookmarks.end())
+        continue;
+      std::vector<BookmarkEntry> bookBookmarks;
+      if (!BookmarkFile::load(state.path, bookBookmarks)) continue;
+      for (auto& bookmark : bookBookmarks) {
+        bookmarks.push_back(BookmarkItem{state.path, {}, std::move(bookmark)});
+      }
+    }
+  } else {
+    if (!epub) {
+      epub = std::make_shared<Epub>(epubPath, "/.crosspoint");
+      if (!epub->load(false, true)) {
+        epub.reset();
+        return;
+      }
+    }
+    std::vector<BookmarkEntry> bookBookmarks;
+    if (BookmarkFile::load(epubPath, bookBookmarks)) {
+      for (auto& bookmark : bookBookmarks) {
+        bookmarks.push_back(BookmarkItem{epubPath, {}, std::move(bookmark)});
+      }
+    }
   }
-
-  if (!BookmarkFile::load(epubPath, bookmarks)) {
-    bookmarks.shrink_to_fit();
-  }
-  LOG_DBG("EPB", "Loaded %d bookmarks for book: %s", static_cast<int>(bookmarks.size()), epubPath.c_str());
+  LOG_DBG("EPB", "Loaded %d bookmarks (%s)", static_cast<int>(bookmarks.size()), allBooks ? "all books" : epubPath.c_str());
 
   // Trigger first update
   requestUpdate();
@@ -47,20 +82,40 @@ int EpubReaderBookmarksActivity::getListHeight(const GfxRenderer& renderer) {
 }
 
 void EpubReaderBookmarksActivity::loop() {
+  renderer.setUiScaleTextEnabled(true);
   auto openBookmark = [this] {
     if (bookmarks.empty()) {
       return;
     }
-    auto bookmark = bookmarks.at(selectorIndex);
+    const auto& item = bookmarks.at(selectorIndex);
+    if (allBooks && (epubPath != item.bookPath || !epub)) {
+      epubPath = item.bookPath;
+      epub = std::make_shared<Epub>(epubPath, "/.crosspoint");
+      if (!epub->load(false, true)) {
+        epub.reset();
+        return;
+      }
+    }
+    if (!epub) return;
+    const auto& bookmark = item.bookmark;
     ProgressChangeResult result{};
     result.xpath = bookmark.xpath;
     result.percentage = bookmark.percentage;
     result.hasSavedProgress = true;
+    result.bookPath = item.bookPath;
     if (bookmark.computedChapterPageCount > 0 && bookmark.computedChapterProgress < bookmark.computedChapterPageCount &&
         bookmark.computedSpineIndex < epub->getSpineItemsCount()) {
       result.spineIndex = bookmark.computedSpineIndex;
       result.page = bookmark.computedChapterProgress;
       result.totalPages = bookmark.computedChapterPageCount;
+    } else if (!bookmark.xpath.empty()) {
+      // Older bookmark files may not have the computed chapter fields. Resolve
+      // their saved XPath/percentage while the selected EPUB is already open,
+      // so the reader still lands on the actual bookmark instead of page 1.
+      const auto mapped = ProgressMapper::toCrossPoint(epub, {bookmark.xpath, bookmark.percentage}, renderer);
+      result.spineIndex = mapped.spineIndex;
+      result.page = mapped.pageNumber;
+      result.totalPages = mapped.totalPages;
     }
     setResult(std::move(result));
     finish();
@@ -72,6 +127,13 @@ void EpubReaderBookmarksActivity::loop() {
     // Popup dismissed without a selection (Back button or tap outside): cancel delete
     confirmingDelete = false;
     requestUpdate();
+    return;
+  }
+
+  if (swallowInitialConfirmRelease) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      swallowInitialConfirmRelease = false;
+    }
     return;
   }
 
@@ -172,9 +234,24 @@ void EpubReaderBookmarksActivity::loop() {
 }
 
 void EpubReaderBookmarksActivity::deleteSelectedBookmark() {
+  if (selectorIndex < 0 || selectorIndex >= static_cast<int>(bookmarks.size())) return;
+  const std::string sourcePath = bookmarks[selectorIndex].bookPath;
   bookmarks.erase(bookmarks.begin() + selectorIndex);
-  if (!BookmarkFile::save(epubPath, bookmarks)) {
-    LOG_ERR("EPB", "Failed to save bookmarks after delete");
+  if (!allBooks) {
+    std::vector<BookmarkEntry> remaining;
+    remaining.reserve(bookmarks.size());
+    for (const auto& item : bookmarks) remaining.push_back(item.bookmark);
+    if (!BookmarkFile::save(epubPath, remaining)) {
+      LOG_ERR("EPB", "Failed to save bookmarks after delete");
+    }
+  } else {
+    std::vector<BookmarkEntry> remaining;
+    for (const auto& item : bookmarks) {
+      if (item.bookPath == sourcePath) remaining.push_back(item.bookmark);
+    }
+    if (!BookmarkFile::save(sourcePath, remaining)) {
+      LOG_ERR("EPB", "Failed to save bookmarks after delete");
+    }
   }
 
   // Move selector up if we deleted the last item
@@ -191,6 +268,7 @@ void EpubReaderBookmarksActivity::deleteSelectedBookmark() {
 }
 
 void EpubReaderBookmarksActivity::render(RenderLock&&) {
+  renderer.setUiScaleTextEnabled(true);
   renderer.clearScreen();
 
   const auto pageWidth = renderer.getScreenWidth();
@@ -219,17 +297,19 @@ void EpubReaderBookmarksActivity::render(RenderLock&&) {
   renderer.drawText(UI_12_FONT_ID, titleX, 15 + contentY, tr(STR_BOOKMARKS), true, EpdFontFamily::BOLD);
 
   const auto getBookmarkTitle = [this](int index) {
-    return bookmarks.at(confirmingDelete ? selectorIndex : index).summary;
+    return bookmarks.at(confirmingDelete ? selectorIndex : index).bookmark.summary;
   };
   const auto getBookmarkSubtitle = [this](int index) {
-    auto bookmark = bookmarks.at(confirmingDelete ? selectorIndex : index);
-    auto tocIndex = epub->getTocIndexForSpineIndex(bookmark.computedSpineIndex);
-    auto tocTitle = (tocIndex >= 0) ? (epub->getTocItem(tocIndex)).title : tr(STR_UNNAMED);
+    const auto& item = bookmarks.at(confirmingDelete ? selectorIndex : index);
+    const auto& bookmark = item.bookmark;
     std::string subtitle = std::to_string((int)(std::clamp(bookmark.percentage, 0.0f, 1.0f) * 100.0f + 0.5f)) + "% - ";
     if (bookmark.computedChapterPageCount > 0) {
       subtitle += std::to_string(bookmark.computedChapterProgress + 1) + "/" +
                   std::to_string(bookmark.computedChapterPageCount) + " - ";
     }
+    if (allBooks) return item.bookTitle + " - " + subtitle + tr(STR_BOOKMARKS);
+    auto tocIndex = epub->getTocIndexForSpineIndex(bookmark.computedSpineIndex);
+    auto tocTitle = (tocIndex >= 0) ? (epub->getTocItem(tocIndex)).title : tr(STR_UNNAMED);
     return subtitle + tocTitle;
   };
   const auto getBookmarkIcon = [isPortrait](int index) {

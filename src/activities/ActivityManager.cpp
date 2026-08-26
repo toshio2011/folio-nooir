@@ -15,6 +15,8 @@
 #include "home/FolioLibraryActivity.h"
 #include "home/HomeActivity.h"
 #include "home/RecentBooksActivity.h"
+#include "home/ToDoListActivity.h"
+#include "home/ReadingStatsActivity.h"
 #include "network/CrossPointWebServerActivity.h"
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
@@ -52,6 +54,10 @@ void ActivityManager::renderTaskLoop() {
     RenderLock lock;
     if (currentActivity) {
       HalPowerManager::Lock powerLock;  // Ensure we don't go into low-power mode while rendering
+      // Each activity starts with UI text scaling enabled. The Folio shelf
+      // activities explicitly disable it for their featured book and grid so
+      // changing UI Scale cannot alter the bookshelf presentation.
+      renderer.setUiScaleTextEnabled(true);
       currentActivity->render(std::move(lock));
     }
     // Notify any task blocked in requestUpdateAndWait() that the render is done.
@@ -67,6 +73,21 @@ void ActivityManager::renderTaskLoop() {
 }
 
 void ActivityManager::loop() {
+  if (suppressRestoredReaderInput) {
+    const auto button = [this](const MappedInputManager::Button input) {
+      return mappedInput.isPressed(input) || mappedInput.wasReleased(input);
+    };
+    const bool closingInput = button(MappedInputManager::Button::Back) ||
+                              button(MappedInputManager::Button::Confirm) ||
+                              button(MappedInputManager::Button::Power) ||
+                              button(MappedInputManager::Button::Left) ||
+                              button(MappedInputManager::Button::Right) ||
+                              button(MappedInputManager::Button::Up) ||
+                              button(MappedInputManager::Button::Down);
+    if (!closingInput) suppressRestoredReaderInput = false;
+    return;
+  }
+
   if (currentActivity) {
     if (!currentActivity->isHomeActivity() && mappedInput.wasHomeGesture()) {
       if (currentActivity->handleHomeGesture()) {
@@ -107,6 +128,9 @@ void ActivityManager::loop() {
         currentActivity = std::move(stackActivities.back());
         stackActivities.pop_back();
         LOG_DBG("ACT", "Popped from activity stack, new size = %zu", stackActivities.size());
+        if (currentActivity->isReaderActivity()) {
+          suppressRestoredReaderInput = true;
+        }
         // Handle result if necessary
         if (currentActivity->resultHandler) {
           LOG_DBG("ACT", "Handling result for popped activity");
@@ -208,6 +232,14 @@ void ActivityManager::goToRecentBooks() {
   replaceActivity(std::make_unique<RecentBooksActivity>(renderer, mappedInput));
 }
 
+void ActivityManager::goToReadingStats() {
+  replaceActivity(std::make_unique<ReadingStatsActivity>(renderer, mappedInput));
+}
+
+void ActivityManager::goToToDoList() {
+  replaceActivity(std::make_unique<ToDoListActivity>(renderer, mappedInput));
+}
+
 void ActivityManager::goToBrowser() {
   const auto& servers = OPDS_STORE.getServers();
   // Skip the server picker when there's only one server configured
@@ -220,6 +252,10 @@ void ActivityManager::goToBrowser() {
 
 void ActivityManager::goToReader(std::string path) {
   replaceActivity(std::make_unique<ReaderActivity>(renderer, mappedInput, std::move(path)));
+}
+
+void ActivityManager::goToReaderAtBookmark(std::string path, ProgressChangeResult bookmark) {
+  replaceActivity(std::make_unique<ReaderActivity>(renderer, mappedInput, std::move(path), std::move(bookmark)));
 }
 
 void ActivityManager::goToSleep(bool fromTimeout) {
@@ -276,6 +312,14 @@ void ActivityManager::popActivity() {
 }
 
 bool ActivityManager::preventAutoSleep() const { return currentActivity && currentActivity->preventAutoSleep(); }
+
+void ActivityManager::requestSleep() { sleepRequested = true; }
+
+bool ActivityManager::consumeSleepRequest() {
+  const bool requested = sleepRequested;
+  sleepRequested = false;
+  return requested;
+}
 
 bool ActivityManager::isReaderActivity() const {
   return std::any_of(stackActivities.begin(), stackActivities.end(),

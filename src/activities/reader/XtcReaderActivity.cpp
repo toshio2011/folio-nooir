@@ -9,6 +9,7 @@
 
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <HalClock.h>
 #include <HalStorage.h>
 #include <I18n.h>
 
@@ -17,16 +18,76 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "MappedInputManager.h"
+#include "SdCardFontSystem.h"
+#include "activities/home/ReadingStatsActivity.h"
+#include "activities/settings/TextSettingsActivity.h"
 #include "ProgressFile.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
 #include "BookStateStore.h"
+#include "ReadingStatsStore.h"
 #include "XtcReaderChapterSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/ScreenshotUtil.h"
+
+namespace {
+enum class XtchRenderPass { Base, Lsb, Msb };
+
+// XTCH stores two 2-bit planes in column-major order. Keep the page itself out
+// of heap memory, but use a larger SD chunk and preserve the B/W framebuffer in
+// GfxRenderer's non-contiguous 8 KB chunks so the base plane is not reread.
+bool streamXtchRenderPass(const Xtc& xtc, const uint32_t pageIndex, const uint16_t pageWidth,
+                          const uint16_t pageHeight, GfxRenderer& renderer, const XtchRenderPass pass) {
+  const size_t planeSize = (static_cast<size_t>(pageWidth) * pageHeight + 7) / 8;
+  const size_t colBytes = (pageHeight + 7) / 8;
+  const xtc::XtcError error = xtc.loadPageStreaming(
+      pageIndex,
+      [&](const uint8_t* data, const size_t size, const size_t offset) {
+        for (size_t i = 0; i < size; ++i) {
+          const size_t absoluteOffset = offset + i;
+          const bool secondPlane = absoluteOffset >= planeSize;
+          const size_t planeOffset = secondPlane ? absoluteOffset - planeSize : absoluteOffset;
+          const size_t column = planeOffset / colBytes;
+          if (column >= pageWidth) continue;
+
+          const uint16_t x = static_cast<uint16_t>(pageWidth - 1 - column);
+          const uint16_t yBase = static_cast<uint16_t>((planeOffset % colBytes) * 8);
+          for (uint8_t bit = 0; bit < 8 && yBase + bit < pageHeight; ++bit) {
+            const uint16_t y = static_cast<uint16_t>(yBase + bit);
+            const bool bitSet = ((data[i] >> (7 - bit)) & 1U) != 0;
+            switch (pass) {
+              case XtchRenderPass::Base:
+                if (bitSet) renderer.drawPixel(x, y, true);
+                break;
+              case XtchRenderPass::Lsb:
+                if (!secondPlane) {
+                  if (!bitSet) renderer.drawPixel(x, y, false);
+                } else if (!bitSet) {
+                  renderer.drawPixel(x, y, true);
+                }
+                break;
+              case XtchRenderPass::Msb:
+                if (!secondPlane && bitSet) {
+                  renderer.drawPixel(x, y, false);
+                } else if (secondPlane && bitSet) {
+                  renderer.drawPixel(x, y, !renderer.isPixelBlack(x, y));
+                }
+                break;
+            }
+          }
+        }
+      },
+      8192);
+  if (error == xtc::XtcError::OK) return true;
+  LOG_ERR("XTR", "Failed to stream XTCH page %lu: %s", pageIndex, xtc::errorToString(error));
+  return false;
+}
+}  // namespace
 
 void XtcReaderActivity::onEnter() {
   Activity::onEnter();
+  mappedInput.setReaderMappingMode(true);
   readingSessionStartedMs = millis();
 
   if (!xtc) {
@@ -49,13 +110,17 @@ void XtcReaderActivity::onEnter() {
 
 void XtcReaderActivity::onExit() {
   Activity::onExit();
+  mappedInput.setReaderMappingMode(false);
+  renderer.setDarkMode(false);
 
   if (xtc) {
     const ScreenshotInfo info = getScreenshotInfo();
-    RECENT_BOOKS.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent),
-                               (millis() - readingSessionStartedMs) / 1000UL);
-    BOOK_STATES.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent),
-                              (millis() - readingSessionStartedMs) / 1000UL);
+    const uint32_t elapsedSeconds = (millis() - readingSessionStartedMs) / 1000UL;
+    RECENT_BOOKS.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds,
+                               sessionPagesTurned);
+    BOOK_STATES.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds,
+                              sessionPagesTurned);
+    READING_STATS.recordSession(halClock.getDateKey(), elapsedSeconds, sessionPagesTurned);
   }
 
   ReaderUtils::clearGhostingOnExit(renderer);
@@ -77,7 +142,95 @@ void XtcReaderActivity::openChapterSelection() {
 }
 
 void XtcReaderActivity::loop() {
+  if (skipNextButtonCheck) {
+    skipNextButtonCheck = false;
+    return;
+  }
+
   if (!xtc) {
+    return;
+  }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Power) && longPowerShortcutFired) {
+    longPowerShortcutFired = false;
+    return;
+  }
+  if (SETTINGS.longPwrBtn != CrossPointSettings::LP_PWR_SLEEP &&
+      SETTINGS.longPwrBtn != CrossPointSettings::LP_PWR_IGNORE && gpio.isPressed(HalGPIO::BTN_POWER) &&
+      gpio.getPowerButtonHeldTime() >= ReaderUtils::GO_HOME_MS && !longPowerShortcutFired) {
+    longPowerShortcutFired = true;
+    if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_READER_OPTIONS) {
+      startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
+                                                                    TextSettingsActivity::Tab::Size),
+                             [this](const ActivityResult&) {
+                               SETTINGS.saveToFile();
+                               darkShortcutFired = false;
+                               longPowerShortcutFired = false;
+                               skipNextButtonCheck = true;
+                               requestUpdate();
+                             });
+    } else if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_READING_STATS) {
+      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, xtc->getPath()),
+                             [this](const ActivityResult&) { requestUpdate(); });
+    } else if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_SCREENSHOT) {
+      RenderLock lock(*this);
+      ScreenshotUtil::takeScreenshot(renderer);
+    } else if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_DARK_MODE) {
+      SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
+      SETTINGS.saveToFile();
+      darkShortcutFired = true;
+      requestUpdate();
+    }
+    return;
+  }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) && darkShortcutFired) {
+    darkShortcutFired = false;
+    return;
+  }
+  if (SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_READER_OPTIONS &&
+      mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && !darkShortcutFired) {
+    darkShortcutFired = true;
+    startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
+                                                                  TextSettingsActivity::Tab::Size),
+                           [this](const ActivityResult&) {
+                             SETTINGS.saveToFile();
+                             darkShortcutFired = false;
+                             longPowerShortcutFired = false;
+                             skipNextButtonCheck = true;
+                             requestUpdate();
+                           });
+    return;
+  }
+  if (SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_DARK_MODE &&
+      mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && !darkShortcutFired) {
+    SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
+    SETTINGS.saveToFile();
+    darkShortcutFired = true;
+    requestUpdate();
+    return;
+  }
+  if ((SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_SLEEP ||
+       SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_READING_STATS ||
+       SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_SCREENSHOT) &&
+      mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && !darkShortcutFired) {
+    darkShortcutFired = true;
+    if (SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_SLEEP) {
+      activityManager.requestSleep();
+    } else if (SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_READING_STATS) {
+      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, xtc->getPath()),
+                             [this](const ActivityResult&) {
+                               darkShortcutFired = false;
+                               skipNextButtonCheck = true;
+                               requestUpdate();
+                             });
+    } else {
+      RenderLock lock(*this);
+      ScreenshotUtil::takeScreenshot(renderer);
+    }
     return;
   }
 
@@ -120,7 +273,7 @@ void XtcReaderActivity::loop() {
     return;
   }
 
-  auto [prevTriggered, nextTriggered, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
+  auto [prevTriggered, nextTriggered, fromTilt, fromSide] = ReaderUtils::detectPageTurn(mappedInput);
   prevTriggered = prevTriggered || touch.prev;
   nextTriggered = nextTriggered || touch.next;
   if (!prevTriggered && !nextTriggered) {
@@ -145,9 +298,35 @@ void XtcReaderActivity::loop() {
   }
 
   const unsigned long heldMs = (touch.prev || touch.next) ? touch.heldMs : mappedInput.getHeldTime();
+  const auto longPressBehavior = fromSide
+                                     ? (SETTINGS.sideLongPressAction == CrossPointSettings::SIDE_LONG_CHAPTER_SKIP
+                                            ? CrossPointSettings::CHAPTER_SKIP
+                                        : SETTINGS.sideLongPressAction == CrossPointSettings::SIDE_LONG_ORIENTATION
+                                            ? CrossPointSettings::ORIENTATION_CHANGE
+                                            : CrossPointSettings::OFF)
+                                     : SETTINGS.longPressButtonBehavior;
   const bool skipPages =
-      !fromTilt && SETTINGS.longPressButtonBehavior == SETTINGS.CHAPTER_SKIP && heldMs > ReaderUtils::SKIP_HOLD_MS;
+      !fromTilt && longPressBehavior == SETTINGS.CHAPTER_SKIP && heldMs > ReaderUtils::SKIP_HOLD_MS;
+  if (!fromTilt && longPressBehavior == CrossPointSettings::ORIENTATION_CHANGE &&
+      heldMs > ReaderUtils::SKIP_HOLD_MS) {
+    SETTINGS.orientation = nextTriggered
+                               ? static_cast<uint8_t>((SETTINGS.orientation - 1 + CrossPointSettings::ORIENTATION_COUNT) %
+                                                      CrossPointSettings::ORIENTATION_COUNT)
+                               : static_cast<uint8_t>((SETTINGS.orientation + 1) % CrossPointSettings::ORIENTATION_COUNT);
+    SETTINGS.saveToFile();
+    ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+    requestUpdate();
+    return;
+  }
+  if (!fromTilt && !fromSide && longPressBehavior == CrossPointSettings::CHANGE_FONT_SIZE &&
+      heldMs > ReaderUtils::SKIP_HOLD_MS) {
+    SETTINGS.fontSize = static_cast<uint8_t>((SETTINGS.fontSize + 1) % CrossPointSettings::FONT_SIZE_COUNT);
+    SETTINGS.saveToFile();
+    requestUpdate();
+    return;
+  }
   const int skipAmount = skipPages ? 10 : 1;
+  const uint32_t oldPage = currentPage;
 
   if (prevTriggered) {
     if (currentPage >= static_cast<uint32_t>(skipAmount)) {
@@ -163,12 +342,16 @@ void XtcReaderActivity::loop() {
     }
     requestUpdate();
   }
+  if (currentPage != oldPage && sessionPagesTurned < UINT32_MAX) ++sessionPagesTurned;
 }
 
 void XtcReaderActivity::render(RenderLock&&) {
   if (!xtc) {
     return;
   }
+
+  renderer.setDarkMode(SETTINGS.readerDarkMode != 0);
+  renderer.setRenderMode(GfxRenderer::BW);
 
   // Bounds check
   if (currentPage >= xtc->getPageCount()) {
@@ -265,10 +448,68 @@ void XtcReaderActivity::renderPage() {
   // XTG (1-bit): Row-major, ((width+7)/8) * height bytes
   // XTH (2-bit): Two bit planes, column-major, ((width * height + 7) / 8) * 2 bytes
   size_t pageBufferSize;
+  const bool darkMode = renderer.isDarkMode();
   if (bitDepth == 2) {
     pageBufferSize = ((static_cast<size_t>(pageWidth) * pageHeight + 7) / 8) * 2;
   } else {
     pageBufferSize = ((pageWidth + 7) / 8) * pageHeight;
+  }
+
+  if (bitDepth == 2 && !darkMode) {
+    auto showStreamError = [&]() {
+      renderer.clearScreen();
+      const char* message =
+          xtc->getLastError() == xtc::XtcError::MEMORY_ERROR ? tr(STR_MEMORY_ERROR) : tr(STR_PAGE_LOAD_ERROR);
+      renderer.drawCenteredText(UI_12_FONT_ID, 300, message, true, EpdFontFamily::BOLD);
+      renderer.displayBuffer();
+    };
+
+    renderer.clearScreen();
+    if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Base)) {
+      showStreamError();
+      return;
+    }
+
+    if (pagesUntilFullRefresh <= 1) {
+      renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+      renderer.preconditionGrayscale();
+      pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
+    } else {
+      renderer.displayGrayscaleBase(HalDisplay::FAST_REFRESH);
+      pagesUntilFullRefresh--;
+    }
+
+    // Preserve the already-rendered B/W base in small non-contiguous chunks.
+    // This removes the fourth full SD read used by the old streaming path.
+    const bool storedBw = renderer.storeBwBuffer();
+
+    renderer.clearScreen(0x00);
+    if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Lsb)) {
+      if (storedBw) renderer.restoreBwBuffer();
+      showStreamError();
+      return;
+    }
+    renderer.copyGrayscaleLsbBuffers();
+
+    renderer.clearScreen(0x00);
+    if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Msb)) {
+      if (storedBw) renderer.restoreBwBuffer();
+      showStreamError();
+      return;
+    }
+    renderer.copyGrayscaleMsbBuffers();
+    renderer.displayGrayBuffer();
+
+    if (storedBw) {
+      renderer.restoreBwBuffer();
+    } else {
+      // Very low-memory devices can still fall back to the final base pass.
+      renderer.clearScreen();
+      if (streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Base)) {
+        renderer.cleanupGrayscaleWithFrameBuffer();
+      }
+    }
+    return;
   }
 
   // Allocate page buffer
@@ -321,26 +562,18 @@ void XtcReaderActivity::renderPage() {
       const size_t byteOffset = colIndex * colBytes + byteInCol;
       const uint8_t bit1 = (plane1[byteOffset] >> bitInByte) & 1;
       const uint8_t bit2 = (plane2[byteOffset] >> bitInByte) & 1;
-      return (bit1 << 1) | bit2;
+      const uint8_t value = (bit1 << 1) | bit2;
+      return darkMode ? static_cast<uint8_t>(3 - value) : value;
     };
 
     // Optimized grayscale rendering without storeBwBuffer (saves 48KB peak memory)
     // Flow: BW display → LSB/MSB passes → grayscale display → re-render BW for next frame
 
-    // Count pixel distribution for debugging
-    uint32_t pixelCounts[4] = {0, 0, 0, 0};
-    for (uint16_t y = 0; y < pageHeight; y++) {
-      for (uint16_t x = 0; x < pageWidth; x++) {
-        pixelCounts[getPixelValue(x, y)]++;
-      }
-    }
-    LOG_DBG("XTR", "Pixel distribution: White=%lu, DarkGrey=%lu, LightGrey=%lu, Black=%lu", pixelCounts[0],
-            pixelCounts[1], pixelCounts[2], pixelCounts[3]);
-
     // Pass 1: BW buffer - draw all non-white pixels as black
     for (uint16_t y = 0; y < pageHeight; y++) {
       for (uint16_t x = 0; x < pageWidth; x++) {
-        if (getPixelValue(x, y) >= 1) {
+        const uint8_t value = getPixelValue(x, y);
+        if (darkMode ? value == 3 : value >= 1) {
           renderer.drawPixel(x, y, true);
         }
       }
@@ -389,10 +622,12 @@ void XtcReaderActivity::renderPage() {
     renderer.displayGrayBuffer();
 
     // Pass 4: Re-render BW to framebuffer (restore for next frame, instead of restoreBwBuffer)
+    renderer.setRenderMode(GfxRenderer::BW);
     renderer.clearScreen();
     for (uint16_t y = 0; y < pageHeight; y++) {
       for (uint16_t x = 0; x < pageWidth; x++) {
-        if (getPixelValue(x, y) >= 1) {
+        const uint8_t value = getPixelValue(x, y);
+        if (darkMode ? value == 3 : value >= 1) {
           renderer.drawPixel(x, y, true);
         }
       }
@@ -416,7 +651,8 @@ void XtcReaderActivity::renderPage() {
         // Read source pixel (MSB first, bit 7 = leftmost pixel)
         const size_t srcByte = srcRowStart + srcX / 8;
         const size_t srcBit = 7 - (srcX % 8);
-        const bool isBlack = !((pageBuffer[srcByte] >> srcBit) & 1);  // XTC: 0 = black, 1 = white
+        const bool sourceBlack = !((pageBuffer[srcByte] >> srcBit) & 1);  // XTC: 0 = black, 1 = white
+        const bool isBlack = darkMode ? !sourceBlack : sourceBlack;
 
         if (isBlack) {
           renderer.drawPixel(srcX, srcY, true);

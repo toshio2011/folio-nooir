@@ -11,6 +11,7 @@
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "activities/util/ConfirmationActivity.h"
+#include "activities/util/BmpViewerActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/BookCacheUtils.h"
@@ -54,7 +55,8 @@ void FileBrowserActivity::loadFiles() {
         }
       } else if (FsHelpers::hasEpubExtension(filename) || FsHelpers::hasXtcExtension(filename) ||
                  FsHelpers::hasTxtExtension(filename) || FsHelpers::hasMarkdownExtension(filename) ||
-                 FsHelpers::hasBmpExtension(filename)) {
+                 FsHelpers::hasBmpExtension(filename) || FsHelpers::hasPngExtension(filename) ||
+                 FsHelpers::hasJpgExtension(filename)) {
         files.emplace_back(filename);
       }
     }
@@ -278,7 +280,12 @@ void FileBrowserActivity::loop() {
         selectorIndex = 0;
         requestUpdate();
       } else {
-        onSelectBook(basepath + entry);
+        const std::string path = basepath + entry;
+        if (FsHelpers::hasBmpExtension(path) || FsHelpers::hasPngExtension(path) || FsHelpers::hasJpgExtension(path)) {
+          activityManager.replaceActivity(std::make_unique<BmpViewerActivity>(renderer, mappedInput, path));
+        } else {
+          onSelectBook(path);
+        }
       }
     }
     return;

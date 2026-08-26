@@ -16,6 +16,41 @@ bool isTagStart(const std::string& input, size_t pos) {
 
 enum class TagBreak : uint8_t { None, Line, Paragraph };
 
+bool tagNameEquals(const std::string& input, size_t start, size_t end, const char* expected, bool* closing = nullptr) {
+  bool isClosing = false;
+  while (start < end && std::isspace(static_cast<unsigned char>(input[start]))) start++;
+  if (start < end && input[start] == '/') {
+    isClosing = true;
+    start++;
+  }
+  while (start < end && std::isspace(static_cast<unsigned char>(input[start]))) start++;
+  const size_t nameStart = start;
+  while (start < end && std::isalpha(static_cast<unsigned char>(input[start]))) start++;
+  const size_t nameLen = start - nameStart;
+  const size_t expectedLen = strlen(expected);
+  if (nameLen != expectedLen) return false;
+  for (size_t i = 0; i < nameLen; i++) {
+    if (std::tolower(static_cast<unsigned char>(input[nameStart + i])) != expected[i]) return false;
+  }
+  if (closing != nullptr) *closing = isClosing;
+  return true;
+}
+
+// Skip the contents of non-rendered elements. Dictionary HTML occasionally
+// embeds a stylesheet or a complete <head>; showing its CSS declarations as
+// prose is both confusing and needlessly expensive to wrap.
+size_t skipHiddenElement(const std::string& input, size_t from, const char* name) {
+  size_t pos = input.find('<', from);
+  while (pos != std::string::npos) {
+    const size_t close = input.find('>', pos + 1);
+    if (close == std::string::npos) return input.size();
+    bool closing = false;
+    if (tagNameEquals(input, pos + 1, close, name, &closing) && closing) return close + 1;
+    pos = input.find('<', close + 1);
+  }
+  return input.size();
+}
+
 TagBreak tagBreak(const std::string& input, size_t start, size_t end) {
   while (start < end && (input[start] == '/' || std::isspace(static_cast<unsigned char>(input[start])))) start++;
   const size_t nameStart = start;
@@ -33,10 +68,15 @@ TagBreak tagBreak(const std::string& input, size_t start, size_t end) {
   };
 
   if (equals("p") || equals("h1") || equals("h2") || equals("h3") || equals("h4") || equals("h5") || equals("h6") ||
-      equals("hr")) {
+      equals("hr") || equals("blockquote") || equals("pre") || equals("section") || equals("article") ||
+      equals("figure") || equals("figcaption")) {
     return TagBreak::Paragraph;
   }
-  if (equals("br") || equals("div") || equals("li") || equals("tr")) return TagBreak::Line;
+  if (equals("br") || equals("div") || equals("li") || equals("tr") || equals("th") || equals("td") ||
+      equals("caption") || equals("thead") || equals("tbody") || equals("tfoot") || equals("ul") || equals("ol") ||
+      equals("dl") || equals("dt") || equals("dd")) {
+    return TagBreak::Line;
+  }
   return TagBreak::None;
 }
 
@@ -107,6 +147,22 @@ std::string htmlToPlainText(const std::string& html) {
       const size_t close = html.find('>', i + 1);
       if (close == std::string::npos) {
         output.push_back(html[i++]);
+        continue;
+      }
+      bool closing = false;
+      if (!closing && (tagNameEquals(html, i + 1, close, "style", &closing) ||
+                       tagNameEquals(html, i + 1, close, "script", &closing) ||
+                       tagNameEquals(html, i + 1, close, "head", &closing) ||
+                       tagNameEquals(html, i + 1, close, "template", &closing)) &&
+          !closing) {
+        // The name is checked again below only to select the matching end
+        // tag; this avoids retaining a second parser buffer on the device.
+        const char* hiddenName = tagNameEquals(html, i + 1, close, "style")
+                                     ? "style"
+                                     : tagNameEquals(html, i + 1, close, "script")
+                                           ? "script"
+                                           : tagNameEquals(html, i + 1, close, "head") ? "head" : "template";
+        i = skipHiddenElement(html, close + 1, hiddenName);
         continue;
       }
       const TagBreak separator = tagBreak(html, i + 1, close);

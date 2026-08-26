@@ -37,6 +37,7 @@ class PageLine final : public PageElement {
       : PageElement(xPos, yPos), block(std::move(block)) {}
   const std::shared_ptr<TextBlock>& getBlock() const { return block; }
   void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset) override;
+  void renderWithGuideDots(GfxRenderer& renderer, int fontId, int xOffset, int yOffset) const;
   bool serialize(HalFile& file) override;
   PageElementTag getTag() const override { return TAG_PageLine; }
   static std::unique_ptr<PageLine> deserialize(HalFile& file);
@@ -88,10 +89,17 @@ class Page {
     footnotes.push_back(entry);
   }
 
-  void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset) const;
+  void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset, bool guideDots = false) const;
   void renderImages(GfxRenderer& renderer, int fontId, int xOffset, int yOffset) const;
+  // Decode missing image caches before font prewarming. JPEGDEC/PNGdec need a
+  // large contiguous heap block; doing this after the font scan can fragment
+  // the heap and turn a valid EPUB image into the outlined fallback rectangle.
+  // The decoder paints as a side effect, so the caller clears the framebuffer
+  // before the real page render begins.
+  void warmImageCaches(GfxRenderer& renderer, int xOffset, int yOffset) const;
   void blankImages(GfxRenderer& renderer, int xOffset, int yOffset) const;
-  void renderWithImagePlaceholders(GfxRenderer& renderer, int fontId, int xOffset, int yOffset) const;
+  void renderWithImagePlaceholders(GfxRenderer& renderer, int fontId, int xOffset, int yOffset,
+                                   bool guideDots = false) const;
   bool serialize(HalFile& file) const;
   static std::unique_ptr<Page> deserialize(HalFile& file);
 

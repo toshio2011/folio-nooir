@@ -14,7 +14,9 @@
 #include <string>
 
 namespace {
-constexpr char latestReleaseUrl[] = "https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/latest";
+// Folio Nooir publishes its own compatible releases. Keep this separate from
+// upstream CrossPoint so users never get offered an unrelated upstream image.
+constexpr char latestReleaseUrl[] = "https://api.github.com/repos/toshio2011/folio-nooir/releases/latest";
 }  // namespace
 
 OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {

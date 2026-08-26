@@ -3,17 +3,52 @@
 #include <Logging.h>
 #include <WiFi.h>
 #include <esp_sntp.h>
+#include <sys/time.h>
 #include <time.h>
 
 HalClock halClock;  // Singleton instance
 
 void HalClock::begin() {
   _available = _sdkRtc.begin();
+  _systemTimeSynced = false;
+  _hasCachedTime = false;
   LOG_INF("CLK", _available ? "SDK RTC found" : "RTC not found");
 }
 
+bool HalClock::hasUsableTime() const {
+  if (_available || _hasCachedTime) return true;
+  if (!_systemTimeSynced) return false;
+  const time_t now = time(nullptr);
+  return now > 100000;
+}
+
+bool HalClock::restoreFromEpoch(const int64_t epoch) {
+  if (epoch <= 100000) return false;
+  const timeval tv{static_cast<time_t>(epoch), 0};
+  if (settimeofday(&tv, nullptr) != 0) return false;
+  _systemTimeSynced = true;
+  _lastPollMs = 0;
+  const time_t now = time(nullptr);
+  struct tm timeinfo;
+  gmtime_r(&now, &timeinfo);
+  _cachedHour = static_cast<uint8_t>(timeinfo.tm_hour);
+  _cachedMinute = static_cast<uint8_t>(timeinfo.tm_min);
+  _hasCachedTime = true;
+  LOG_DBG("CLK", "Restored cached system time from %lld", static_cast<long long>(epoch));
+  return true;
+}
+
 bool HalClock::getTime(uint8_t& hour, uint8_t& minute) const {
-  if (!_available) return false;
+  if (!_available) {
+    if (!_systemTimeSynced) return false;
+    const time_t now = time(nullptr);
+    if (now <= 100000) return false;
+    struct tm timeinfo;
+    gmtime_r(&now, &timeinfo);
+    hour = static_cast<uint8_t>(timeinfo.tm_hour);
+    minute = static_cast<uint8_t>(timeinfo.tm_min);
+    return true;
+  }
 
   const unsigned long now = millis();
   if (_lastPollMs != 0 && (now - _lastPollMs) < CLOCK_POLL_MS) {
@@ -40,9 +75,27 @@ bool HalClock::getTime(uint8_t& hour, uint8_t& minute) const {
 }
 
 uint32_t HalClock::getDateKey() const {
-  if (!_available) return 0;
+  if (!_available) {
+    if (!_systemTimeSynced) return 0;
+    const time_t now = time(nullptr);
+    if (now <= 100000) return 0;
+    struct tm timeinfo;
+    gmtime_r(&now, &timeinfo);
+    return static_cast<uint32_t>(timeinfo.tm_year + 1900) * 10000UL +
+           static_cast<uint32_t>(timeinfo.tm_mon + 1) * 100UL +
+           static_cast<uint32_t>(timeinfo.tm_mday);
+  }
   Rtc::DateTime dt;
-  if (!_sdkRtc.now(dt)) return 0;
+  if (!_sdkRtc.now(dt)) {
+    if (!_systemTimeSynced) return 0;
+    const time_t now = time(nullptr);
+    if (now <= 100000) return 0;
+    struct tm timeinfo;
+    gmtime_r(&now, &timeinfo);
+    return static_cast<uint32_t>(timeinfo.tm_year + 1900) * 10000UL +
+           static_cast<uint32_t>(timeinfo.tm_mon + 1) * 100UL +
+           static_cast<uint32_t>(timeinfo.tm_mday);
+  }
   return static_cast<uint32_t>(dt.year) * 10000UL + static_cast<uint32_t>(dt.month) * 100UL + dt.day;
 }
 
@@ -74,8 +127,6 @@ bool HalClock::formatTime(char* buf, size_t bufSize, uint8_t utcOffsetQuarterHou
 }
 
 bool HalClock::syncFromNTP() {
-  if (!_available) return false;
-
   if (WiFi.status() != WL_CONNECTED) {
     LOG_ERR("CLK", "WiFi not connected, cannot sync NTP");
     return false;
@@ -100,16 +151,19 @@ bool HalClock::syncFromNTP() {
       dt.minute = static_cast<uint8_t>(timeinfo.tm_min);
       dt.second = static_cast<uint8_t>(timeinfo.tm_sec);
       dt.weekday = static_cast<uint8_t>(timeinfo.tm_wday);
-      if (_sdkRtc.set(dt)) {
-        _lastPollMs = 0;
-        _cachedHour = dt.hour;
-        _cachedMinute = dt.minute;
-        _hasCachedTime = true;
-        LOG_INF("CLK", "RTC set to %04u-%02u-%02u %02u:%02u:%02u UTC", dt.year, dt.month, dt.day, dt.hour, dt.minute,
-                dt.second);
+      _systemTimeSynced = true;
+      _lastPollMs = 0;
+      _cachedHour = dt.hour;
+      _cachedMinute = dt.minute;
+      _hasCachedTime = true;
+      if (_available && !_sdkRtc.set(dt)) {
+        LOG_ERR("CLK", "System time synced but RTC write failed");
         return true;
       }
-      return false;
+      LOG_INF("CLK", _available ? "RTC/system clock set to %04u-%02u-%02u %02u:%02u:%02u UTC"
+                                : "System clock set to %04u-%02u-%02u %02u:%02u:%02u UTC",
+              dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second);
+      return true;
     }
     delay(100);
   }

@@ -17,6 +17,7 @@
 struct DirectPixelWriter {
   uint8_t* fb;
   GfxRenderer::RenderMode mode;
+  bool darkMode;
   uint16_t displayWidthBytes;  // Runtime framebuffer stride (X4: 100, X3: 99)
   // Active write target: for tiled grayscale, fb is the band scratch, originY is
   // the band's top physical row, and clipRows is the band height. Off-band
@@ -40,6 +41,7 @@ struct DirectPixelWriter {
     originY = renderer.getWriteOriginY();
     clipRows = renderer.getWriteRows();
     mode = renderer.getRenderMode();
+    darkMode = renderer.isDarkMode();
     displayWidthBytes = renderer.getDisplayWidthBytes();
 
     const int phyW = renderer.getDisplayWidth();
@@ -148,17 +150,18 @@ struct DirectPixelWriter {
     // Determine whether to draw based on render mode
     bool draw;
     bool state;
+    const uint8_t level = darkMode ? static_cast<uint8_t>(3 - pixelValue) : pixelValue;
     switch (mode) {
       case GfxRenderer::BW:
-        draw = (pixelValue < 3);
+        draw = darkMode ? (level == 3) : (level < 3);
         state = true;
         break;
       case GfxRenderer::GRAYSCALE_MSB:
-        draw = (pixelValue == 1 || pixelValue == 2);
+        draw = (level == 1 || level == 2);
         state = false;
         break;
       case GfxRenderer::GRAYSCALE_LSB:
-        draw = (pixelValue == 1);
+        draw = (level == 1);
         state = false;
         break;
       default:

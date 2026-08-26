@@ -61,6 +61,12 @@ class DictionaryWordSelectActivity final : public Activity {
   Dictionary dict;
   bool dictOpenAttempted = false;
   bool dictOpenOk = false;
+  std::string activeDictionaryName;
+  // Filled only after the first primary-dictionary miss. Keeping the ready
+  // names avoids rescanning both dictionary roots (and rechecking every
+  // sidecar) for every later miss on the same page.
+  std::vector<std::string> readyFallbackDictionaryNames;
+  bool fallbackDictionaryCacheReady = false;
 
   Popup popup = Popup::None;
   StrId popupMsg = StrId::STR_DICT_NOT_FOUND;

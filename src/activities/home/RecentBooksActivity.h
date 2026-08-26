@@ -25,8 +25,32 @@ class RecentBooksActivity final : public Activity {
   std::vector<RecentBook> recentBooks;
   size_t nextCoverToGenerate = 0;
   bool coverGenerationActive = false;
+  bool coverGenerationRequested = false;
+  bool manualSingleRefresh = false;
+  bool retrievingBookCache = false;
+  uint8_t retrievingBookCacheProgress = 0;
+  size_t retrievingBookCacheIndex = SIZE_MAX;
+  volatile bool retrievingBookCachePopupRendered = false;
+  unsigned long retrievingBookCacheStartedMs = 0;
+  // One-time post-install/update bootstrap: build missing recent-book
+  // metadata and thumbnails one book at a time while showing feedback.
+  bool recentCacheWarmupActive = false;
+  bool recentCacheBootstrapProbePending = false;
+  unsigned long recentCacheWarmupNextMs = 0;
+  volatile bool recentCacheWarmupPopupRendered = false;
   bool snapshotRestored = false;
+  size_t snapshotPageStart = SIZE_MAX;
+  size_t snapshotSelectorIndex = SIZE_MAX;
+  size_t lastRenderedSelectorIndex = SIZE_MAX;
+  size_t lastRenderedPageStart = SIZE_MAX;
+  // The selector can point to a different book after Recent reorders entries
+  // when a reader closes. Track the actual featured book instead of relying on
+  // its numeric position in the shelf snapshot.
+  std::string lastFeaturedPath;
+  std::string lastFeaturedCoverPath;
+  bool overlayFrameShown = false;
   bool snapshotWritePending = false;
+  unsigned long snapshotWriteRequestedMs = 0;
   bool initialRenderPending = true;
   bool swallowMenuBackRelease = false;
   bool longPressActionShown = false;
@@ -34,12 +58,13 @@ class RecentBooksActivity final : public Activity {
   bool swallowBookBackRelease = false;
 
   static constexpr int BOOKS_PER_PAGE = 8;
-  static constexpr int BOOKSHELF_COVER_HEIGHT = 150;
+  static constexpr int BOOKSHELF_COVER_HEIGHT = 220;
 
   // Data loading
   void loadRecentBooks();
   void rebuildVisibleBooks();
   size_t selectedRecentIndex() const;
+  bool hasMissingRecentCache() const;
   void generateNextCover();
   void showMenu();
   void showBookActions();

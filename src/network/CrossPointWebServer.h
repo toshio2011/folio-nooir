@@ -14,6 +14,7 @@ struct FileInfo {
   String name;
   size_t size;
   bool isEpub;
+  bool isBook;
   bool isDirectory;
 };
 
@@ -97,6 +98,11 @@ class CrossPointWebServer {
   void handleLibrary() const;
   void handleLibraryData() const;
   void handleLibraryCover() const;
+  void handleStatsPage() const;
+  void handleStatsData() const;
+  void handleStatsExport() const;
+  void handleGetBookInfo() const;
+  void handlePostBookUpdate();
   void handleFileList() const;
   void handleFileListData() const;
   void handleDownload() const;
@@ -143,4 +149,11 @@ class CrossPointWebServer {
   void handleGetWifiNetworks() const;
   void handlePostWifiNetwork();
   void handleDeleteWifiNetwork();
+
+  // Clock/weather cache and one-shot synchronization.
+  void handleGetClockWeather() const;
+  void handlePostClockWeather();
+  void handleToDoPage() const;
+  void handleGetToDo() const;
+  void handlePostToDo();
 };

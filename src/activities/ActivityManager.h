@@ -12,6 +12,7 @@
 
 #include "GfxRenderer.h"
 #include "MappedInputManager.h"
+#include "ActivityResult.h"
 #include "util/ScreenshotInfo.h"
 
 class Activity;    // forward declaration
@@ -66,6 +67,13 @@ class ActivityManager {
   // This variable must only be set by the main loop, to avoid race conditions
   std::atomic<bool> requestedUpdate{false};
 
+  // A button can still be held (or report its release edge) when a modal
+  // activity finishes.  Keep the restored reader input-gated until that
+  // closing gesture is idle, otherwise Reader Options can immediately be
+  // interpreted as Home/Back and leave the book.
+  bool suppressRestoredReaderInput = false;
+  bool sleepRequested = false;
+
  public:
   explicit ActivityManager(GfxRenderer& renderer, MappedInputManager& mappedInput)
       : renderer(renderer), mappedInput(mappedInput), renderingMutex(xSemaphoreCreateMutex()) {
@@ -86,8 +94,13 @@ class ActivityManager {
   void goToFileBrowser(std::string path = {});
   void goToFolioShelf(uint8_t tab = 1);
   void goToRecentBooks();
+  void goToReadingStats();
+  void goToToDoList();
   void goToBrowser();
   void goToReader(std::string path);
+  // Open a book and land on a saved bookmark position selected from a
+  // cross-book bookmark list.
+  void goToReaderAtBookmark(std::string path, ProgressChangeResult bookmark);
   void goToSleep(bool fromTimeout = false);
   void goToBoot();
   void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);
@@ -102,6 +115,10 @@ class ActivityManager {
   void popActivity();
 
   bool preventAutoSleep() const;
+  // Activities request a real deep sleep through the main loop so the normal
+  // reader-exit, sleep-screen, and hardware shutdown sequence is preserved.
+  void requestSleep();
+  bool consumeSleepRequest();
   bool isReaderActivity() const;
   bool bluetoothShouldBeActive() const;
   bool skipLoopDelay() const;

@@ -27,6 +27,10 @@
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "BookStateStore.h"
+#include "BookMetadataOverridesStore.h"
+#include "ReadingStatsStore.h"
+#include "WeatherStore.h"
+#include "ToDoStore.h"
 #include "SdCardFontSystem.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
@@ -309,10 +313,30 @@ void setup() {
 
   HalSystem::checkPanic();
 
-  SETTINGS.loadFromFile();
+  const bool settingsLoaded = SETTINGS.loadFromFile();
+  if (!settingsLoaded) {
+    const bool settingsFilePresent = Storage.exists(CrossPointSettings::getFilePath()) ||
+                                     Storage.exists("/.crosspoint/settings.json.bak") ||
+                                     Storage.exists("/.crosspoint/settings.json.tmp");
+    if (settingsFilePresent) {
+      LOG_ERR("MAIN", "Settings could not be loaded; using built-in defaults (recovery failed)");
+    } else {
+      LOG_INF("MAIN", "No settings file found; using first-boot defaults");
+    }
+  }
+  renderer.setUiScalePercent(SETTINGS.uiScalePercent);
   APP_STATE.loadFromFile();
+  BOOK_METADATA_OVERRIDES.loadFromFile();
   RECENT_BOOKS.loadFromFile();
   BOOK_STATES.loadFromFile();
+  READING_STATS.loadFromFile();
+  WEATHER_STORE.loadFromFile();
+  TODO_STORE.loadFromFile();
+  if (!halClock.isAvailable() && WEATHER_STORE.lastClockSyncEpoch > 100000) {
+    // X4 has no RTC. Restore the last known UTC time so the clock page is
+    // useful immediately after boot; an explicit Sync now can refresh it.
+    halClock.restoreFromEpoch(WEATHER_STORE.lastClockSyncEpoch);
+  }
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   KOREADER_STORE.loadFromFile();
   OPDS_STORE.loadFromFile();
@@ -413,6 +437,7 @@ void setup() {
     // openEpubPath + lastSleepFromReader from a prior session.
     activityManager.goHome();
   } else if (APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||
+             !SETTINGS.resumeReaderOnWake ||
              mappedInputManager.isPressed(MappedInputManager::Button::Back) || APP_STATE.readerActivityLoadCount > 0) {
     // Boot to home screen if no book is open, last sleep was not from reader, back button is held, or reader activity
     // crashed (indicated by readerActivityLoadCount > 0)
@@ -424,6 +449,14 @@ void setup() {
     APP_STATE.readerActivityLoadCount++;
     APP_STATE.saveToFile();
     activityManager.goToReader(path);
+  }
+
+  // lastSleepFromReader is a one-boot routing hint.  Clear it after the wake
+  // destination has been selected so a later, ordinary reader exit does not
+  // accidentally skip its ghost-clearing refresh when overlay sleep is enabled.
+  if (resume != BootResume::Splash) {
+    APP_STATE.lastSleepFromReader = false;
+    APP_STATE.saveToFile();
   }
 
   if (resume == BootResume::Silent) {
@@ -476,6 +509,7 @@ void loop() {
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
 
   renderer.setFadingFix(SETTINGS.fadingFix);
+  renderer.setUiScalePercent(SETTINGS.uiScalePercent);
 
   if (Serial && millis() - lastMemPrint >= 10000) {
     LOG_INF("MEM", "Free: %d bytes, Total: %d bytes, Min Free: %d bytes, MaxAlloc: %d bytes", ESP.getFreeHeap(),
@@ -540,8 +574,10 @@ void loop() {
     return;
   }
 
+  const bool readerOwnsLongPower = activityManager.isReaderActivity() &&
+                                   SETTINGS.longPwrBtn != CrossPointSettings::LP_PWR_SLEEP;
   if (millis() >= allowSleepAt && gpio.isPressed(HalGPIO::BTN_POWER) &&
-      gpio.getPowerButtonHeldTime() > SETTINGS.getPowerButtonDuration()) {
+      gpio.getPowerButtonHeldTime() > SETTINGS.getPowerButtonDuration() && !readerOwnsLongPower) {
     // If the screenshot combination is potentially being pressed, don't sleep
     if (gpio.isPressed(HalGPIO::BTN_DOWN)) {
       return;
@@ -568,6 +604,14 @@ void loop() {
   const unsigned long activityStartTime = millis();
   activityManager.loop();
   const unsigned long activityDuration = millis() - activityStartTime;
+
+  // A reader shortcut may request sleep after it has handled the button hold.
+  // Consume it here so the normal SleepActivity/deep-sleep sequence runs from
+  // the main task instead of leaving a static sleep screen on the panel.
+  if (activityManager.consumeSleepRequest()) {
+    enterDeepSleep();
+    return;
+  }
 
   const unsigned long loopDuration = millis() - loopStartTime;
   if (loopDuration > maxLoopDuration) {

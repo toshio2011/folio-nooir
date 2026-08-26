@@ -23,6 +23,9 @@ class Epub {
   std::string contentBasePath;
   // Uniq cache key based on filepath
   std::string cachePath;
+  // Lightweight metadata used by the bookshelf before a reader cache exists.
+  BookMetadataCache::BookMetadata metadataOnly;
+  bool metadataOnlyLoaded = false;
   // Spine and TOC cache
   std::unique_ptr<BookMetadataCache> bookMetadataCache;
   // CSS parser for styling
@@ -32,6 +35,7 @@ class Epub {
 
   bool findContentOpfFile(std::string* contentOpfFile) const;
   bool parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, bool writeSpineEntries = true);
+  const BookMetadataCache::BookMetadata* activeMetadata() const;
   bool parseTocNcxFile() const;
   bool parseTocNavFile() const;
   void discoverCssFilesFromZip();
@@ -45,6 +49,12 @@ class Epub {
   ~Epub() = default;
   std::string& getBasePath() { return contentBasePath; }
   bool load(bool buildIfMissing = true, bool skipLoadingCss = false);
+  // Read only the already-generated metadata header. No EPUB parsing, CSS
+  // setup, or spine/TOC work is performed; intended for responsive shelves.
+  bool loadCachedMetadataOnly();
+  // Parse only the metadata needed by the bookshelf. The full spine/TOC cache
+  // is deferred until the EPUB is opened for reading.
+  bool loadMetadataOnly();
   bool clearCache() const;
   void setupCacheDir() const;
   const std::string& getCachePath() const;
@@ -54,6 +64,9 @@ class Epub {
   const std::string& getLanguage() const;
   const std::string& getDescription() const;
   std::string getCoverBmpPath(bool cropped = false) const;
+  // Size of the source cover item, when metadata has identified one. Used by
+  // lightweight shelf retrieval to avoid decoding pathological giant covers.
+  size_t getCoverImageSize() const;
   bool generateCoverBmp(bool cropped = false) const;
   std::string getThumbBmpPath() const;
   std::string getThumbBmpPath(int height) const;

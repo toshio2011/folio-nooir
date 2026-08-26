@@ -86,6 +86,10 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["frontButtonConfirm"] = frontButtonConfirm;
   doc["frontButtonLeft"] = frontButtonLeft;
   doc["frontButtonRight"] = frontButtonRight;
+  doc["readerFrontButtonBack"] = readerFrontButtonBack;
+  doc["readerFrontButtonConfirm"] = readerFrontButtonConfirm;
+  doc["readerFrontButtonLeft"] = readerFrontButtonLeft;
+  doc["readerFrontButtonRight"] = readerFrontButtonRight;
   doc["bluetoothEnabled"] = bluetoothEnabled;
   JsonArray bleMap = doc["bleKeyMap"].to<JsonArray>();
   for (const auto& entry : bleKeyMap) {
@@ -105,15 +109,25 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   if (dictionaryName[0] != '\0') {
     doc["dictionaryName"] = dictionaryName;
   }
+  // Sleep screen uses a UI index map so the legacy Cover + Custom option can
+  // be hidden without renumbering the persisted modes.
+  doc["sleepScreen"] = sleepScreen;
+  doc["dictionaryFontFamily"] = dictionaryFontFamily;
+  doc["dictionaryFontSize"] = dictionaryFontSize;
 
   // Language -- managed by LanguageSelectActivity, not in SettingsList.
   // Stored as ISO code string ("EN", "DE", ...) for stability across enum reorders.
   doc["language"] = (language < getLanguageCount()) ? LANGUAGE_CODES[language] : "EN";
+  // Sleep modes 8+ were simplified in Folio Nooir 1.5.2. Keep a small
+  // layout marker so settings written by this firmware are not mistaken for
+  // legacy values during the next boot.
+  doc["sleepModeLayoutVersion"] = 1;
 }
 
 bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   CrossPointSettings& s = *this;
   bool needsResave = false;
+  const bool currentSleepModeLayout = (doc["sleepModeLayoutVersion"] | (uint8_t)0) == 1;
 
   auto clamp = [](uint8_t val, uint8_t maxVal, uint8_t def) -> uint8_t { return val < maxVal ? val : def; };
 
@@ -158,8 +172,25 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     } else {
       const uint8_t fieldDefault = s.*(info.valuePtr);  // struct-initializer default, read before we overwrite it
       uint8_t v = doc[info.key] | fieldDefault;
+      // Older Folio Nooir builds exposed two cover/overlay variants. Collapse
+      // both legacy values into the single current Cover + Overlay mode. The
+      // marker keeps new values stable across subsequent boots.
+      if (info.key && strcmp(info.key, "sleepScreen") == 0 && !currentSleepModeLayout) {
+        const uint8_t legacyValue = v;
+        if (legacyValue == 8 || legacyValue == 9) {
+          v = COVER_OVERLAY;
+        } else if (legacyValue == 10) {
+          v = READING_STATS_SLEEP;
+        } else if (legacyValue == 11) {
+          v = MINIMAL_STATS;
+        } else if (legacyValue == 12) {
+          v = CLIPPING_COVER;
+        }
+        if (v != legacyValue) needsResave = true;
+      }
       if (info.type == SettingType::ENUM) {
-        v = clamp(v, (uint8_t)info.enumValues.size(), fieldDefault);
+        const auto optionCount = info.enumStringValues.empty() ? info.enumValues.size() : info.enumStringValues.size();
+        v = clamp(v, (uint8_t)optionCount, fieldDefault);
       } else if (info.type == SettingType::TOGGLE) {
         v = clamp(v, (uint8_t)2, fieldDefault);
       } else if (info.type == SettingType::VALUE) {
@@ -171,6 +202,35 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
       s.*(info.valuePtr) = v;
     }
   }
+
+  // Sleep screen is dynamically presented to hide the legacy Cover + Custom
+  // option, so load its persisted value explicitly. Keep the old 8+ migration
+  // for settings files written before the current sleep-mode layout marker.
+  uint8_t loadedSleepScreen = doc["sleepScreen"] | s.sleepScreen;
+  if (!currentSleepModeLayout) {
+    const uint8_t legacyValue = loadedSleepScreen;
+    if (legacyValue == 8 || legacyValue == 9) {
+      loadedSleepScreen = COVER_OVERLAY;
+    } else if (legacyValue == 10) {
+      loadedSleepScreen = READING_STATS_SLEEP;
+    } else if (legacyValue == 11) {
+      loadedSleepScreen = MINIMAL_STATS;
+    } else if (legacyValue == 12) {
+      loadedSleepScreen = CLIPPING_COVER;
+    }
+    if (loadedSleepScreen != legacyValue) needsResave = true;
+  }
+  if (loadedSleepScreen == COVER_CUSTOM) {
+    loadedSleepScreen = COVER;
+    needsResave = true;
+  }
+  if (loadedSleepScreen >= SLEEP_SCREEN_MODE_COUNT) {
+    loadedSleepScreen = DARK;
+    needsResave = true;
+  }
+  s.sleepScreen = loadedSleepScreen;
+
+  if (!currentSleepModeLayout) needsResave = true;
 
   if (doc["sleepTimeoutMinutes"].isNull() && !doc["sleepTimeout"].isNull()) {
     const uint8_t legacyValue =
@@ -186,6 +246,35 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   frontButtonRight =
       clamp(doc["frontButtonRight"] | (uint8_t)FRONT_HW_RIGHT, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_RIGHT);
   validateFrontButtonMapping(s);
+
+  readerFrontButtonBack =
+      clamp(doc["readerFrontButtonBack"] | (uint8_t)FRONT_HW_BACK, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_BACK);
+  readerFrontButtonConfirm =
+      clamp(doc["readerFrontButtonConfirm"] | (uint8_t)FRONT_HW_CONFIRM, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_CONFIRM);
+  readerFrontButtonLeft =
+      clamp(doc["readerFrontButtonLeft"] | (uint8_t)FRONT_HW_LEFT, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_LEFT);
+  readerFrontButtonRight =
+      clamp(doc["readerFrontButtonRight"] | (uint8_t)FRONT_HW_RIGHT, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_RIGHT);
+  // Reuse the same duplicate protection for the reader mapping without
+  // changing the user's global/home mapping.
+  const uint8_t readerMapping[] = {readerFrontButtonBack, readerFrontButtonConfirm, readerFrontButtonLeft,
+                                   readerFrontButtonRight};
+  bool duplicateReaderMapping = false;
+  for (size_t i = 0; i < 4 && !duplicateReaderMapping; ++i) {
+    for (size_t j = i + 1; j < 4; ++j) {
+      if (readerMapping[i] == readerMapping[j]) {
+        duplicateReaderMapping = true;
+        break;
+      }
+    }
+  }
+  if (duplicateReaderMapping) {
+    readerFrontButtonBack = FRONT_HW_BACK;
+    readerFrontButtonConfirm = FRONT_HW_CONFIRM;
+    readerFrontButtonLeft = FRONT_HW_LEFT;
+    readerFrontButtonRight = FRONT_HW_RIGHT;
+    needsResave = true;
+  }
 
   bluetoothEnabled = clamp(doc["bluetoothEnabled"] | (uint8_t)0, 2, 0);
   for (auto& entry : bleKeyMap) entry = BleKeyMapEntry{};
@@ -224,6 +313,22 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   }
   // Dictionary folder name — uses dynamic getter/setter in SettingsList, load manually
   copyToField(dictionaryName, doc["dictionaryName"] | "", sizeof(dictionaryName));
+  dictionaryFontFamily = clamp(doc["dictionaryFontFamily"] | static_cast<uint8_t>(DICT_USE_READER),
+                               DICT_FONT_FAMILY_COUNT, DICT_USE_READER);
+  dictionaryFontSize = clamp(doc["dictionaryFontSize"] | static_cast<uint8_t>(MEDIUM), FONT_SIZE_COUNT, MEDIUM);
+
+  // Line spacing was historically stored as the enum 0=Tight, 1=Normal,
+  // 2=Wide. The public key remains "lineSpacing" for compatibility, while
+  // the value is now a precise percentage.
+  const uint16_t storedLineSpacing = doc["lineSpacing"] | static_cast<uint16_t>(LINE_SPACING_DEFAULT_PERCENT);
+  if (storedLineSpacing <= WIDE) {
+    static constexpr uint8_t LEGACY_LINE_SPACING[] = {95, 100, 110};
+    lineSpacingPercent = LEGACY_LINE_SPACING[storedLineSpacing];
+    needsResave = true;
+  } else {
+    lineSpacingPercent = static_cast<uint8_t>(
+        std::clamp<uint16_t>(storedLineSpacing, LINE_SPACING_MIN_PERCENT, LINE_SPACING_MAX_PERCENT));
+  }
 
   // Language -- stored as code string for stability across enum reorders.
   if (doc["language"].is<const char*>()) {
@@ -270,46 +375,17 @@ ReaderRenderSpec CrossPointSettings::readerRenderSpec(const uint16_t viewportWid
   spec.embeddedStyle = embeddedStyle != 0;
   spec.imageRendering = imageRendering;
   spec.focusReadingEnabled = focusReadingEnabled != 0;
+  spec.forceParagraphIndents = forceParagraphIndents != 0;
   return spec;
 }
 
 float CrossPointSettings::getReaderLineCompression() const {
-  // SD card fonts use same compression as Bookerly (the most neutral values)
-  if (sdFontFamilyName[0] != '\0') {
-    switch (lineSpacing) {
-      case TIGHT:
-        return 0.95f;
-      case NORMAL:
-      default:
-        return 1.0f;
-      case WIDE:
-        return 1.1f;
-    }
-  }
-
-  switch (fontFamily) {
-    case NOTOSERIF:
-    default:
-      switch (lineSpacing) {
-        case TIGHT:
-          return 0.95f;
-        case NORMAL:
-        default:
-          return 1.0f;
-        case WIDE:
-          return 1.1f;
-      }
-    case NOTOSANS:
-      switch (lineSpacing) {
-        case TIGHT:
-          return 0.90f;
-        case NORMAL:
-        default:
-          return 0.95f;
-        case WIDE:
-          return 1.0f;
-      }
-  }
+  const float percent = static_cast<float>(std::clamp<uint8_t>(
+      lineSpacingPercent, LINE_SPACING_MIN_PERCENT, LINE_SPACING_MAX_PERCENT));
+  // Preserve the previous family-specific baseline at 100%, then apply the
+  // precise percentage uniformly to built-in and SD-card fonts.
+  const float familyBaseline = (sdFontFamilyName[0] != '\0' || fontFamily == NOTOSERIF) ? 1.0f : 0.95f;
+  return familyBaseline * percent / 100.0f;
 }
 
 unsigned long CrossPointSettings::getSleepTimeoutMs() const {
@@ -369,5 +445,46 @@ int CrossPointSettings::getReaderFontId() const {
         case EXTRA_LARGE:
           return NOTOSANS_18_FONT_ID;
       }
+  }
+}
+
+int CrossPointSettings::getDictionaryFontId() const {
+  const uint8_t size = dictionaryFontSize < FONT_SIZE_COUNT ? dictionaryFontSize : MEDIUM;
+  // "Use Reader Font" follows the reader family (including an SD-card font),
+  // while retaining the dictionary-specific point size. This keeps the two
+  // controls independent instead of silently ignoring Dictionary Font Size.
+  if (dictionaryFontFamily == DICT_USE_READER) {
+    if (sdFontFamilyName[0] != '\0' && sdFontIdResolver) {
+      const int id = sdFontIdResolver(sdFontResolverCtx, sdFontFamilyName, size);
+      if (id != 0) return id;
+    }
+  }
+
+  const bool useSans = dictionaryFontFamily == DICT_NOTOSANS ||
+                       (dictionaryFontFamily == DICT_USE_READER && fontFamily == NOTOSANS);
+  if (useSans) {
+    switch (size) {
+      case SMALL:
+        return NOTOSANS_12_FONT_ID;
+      case MEDIUM:
+        return NOTOSANS_14_FONT_ID;
+      case LARGE:
+        return NOTOSANS_16_FONT_ID;
+      case EXTRA_LARGE:
+      default:
+        return NOTOSANS_18_FONT_ID;
+    }
+  }
+
+  switch (size) {
+    case SMALL:
+      return NOTOSERIF_12_FONT_ID;
+    case MEDIUM:
+      return NOTOSERIF_14_FONT_ID;
+    case LARGE:
+      return NOTOSERIF_16_FONT_ID;
+    case EXTRA_LARGE:
+    default:
+      return NOTOSERIF_18_FONT_ID;
   }
 }

@@ -10,6 +10,17 @@
 #include <iterator>
 
 #include "HalClock.h"
+#include "BookMetadataOverridesStore.h"
+
+namespace {
+void applyMetadataOverride(RecentBook& book) {
+  const BookMetadataOverride* overrideData = BOOK_METADATA_OVERRIDES.find(book.path);
+  if (!overrideData) return;
+  book.title = overrideData->title;
+  book.author = overrideData->author;
+  book.synopsis = overrideData->synopsis;
+}
+}  // namespace
 
 void RecentBooksStore::toJson(JsonDocument& doc) const {
   JsonArray arr = doc["books"].to<JsonArray>();
@@ -26,6 +37,7 @@ void RecentBooksStore::toJson(JsonDocument& doc) const {
     obj["dailyReadingSeconds"] = book.dailyReadingSeconds;
     obj["dailyReadingDateKey"] = book.dailyReadingDateKey;
     obj["readingSessions"] = book.readingSessions;
+    obj["pagesTurned"] = book.pagesTurned;
   }
 }
 
@@ -49,6 +61,8 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
     book.dailyReadingSeconds = obj["dailyReadingSeconds"] | 0;
     book.dailyReadingDateKey = obj["dailyReadingDateKey"] | 0;
     book.readingSessions = obj["readingSessions"] | 0;
+    book.pagesTurned = obj["pagesTurned"] | 0;
+    applyMetadataOverride(book);
     recentBooks.push_back(book);
   }
 
@@ -59,12 +73,13 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
 void RecentBooksStore::addBook(const std::string& path, const std::string& title, const std::string& author,
                                const std::string& coverBmpPath, const std::string& synopsis) {
   // Drop stale entries first so a new add can't evict a valid book in their stead.
-  pruneMissing();
+  const bool pruned = pruneMissing();
 
   // Remove existing entry if present
   auto it =
       std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
   RecentBook entry{path, title, author, coverBmpPath, synopsis.substr(0, 384)};
+  applyMetadataOverride(entry);
   if (it != recentBooks.end()) {
     if (entry.synopsis.empty()) entry.synopsis = it->synopsis;
     entry.progressPercent = it->progressPercent;
@@ -73,6 +88,20 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
     entry.dailyReadingSeconds = it->dailyReadingSeconds;
     entry.dailyReadingDateKey = it->dailyReadingDateKey;
     entry.readingSessions = it->readingSessions;
+    entry.pagesTurned = it->pagesTurned;
+
+    // Reopening the same book is common. If it is already at the front and
+    // none of its cached presentation fields changed, there is nothing to
+    // persist. This avoids an SD JSON write on every reader entry.
+    const bool unchanged = it == recentBooks.begin() && it->title == entry.title && it->author == entry.author &&
+                           it->coverBmpPath == entry.coverBmpPath && it->synopsis == entry.synopsis &&
+                           it->progressPercent == entry.progressPercent && it->readingSeconds == entry.readingSeconds &&
+                           it->lastSessionSeconds == entry.lastSessionSeconds &&
+                           it->dailyReadingSeconds == entry.dailyReadingSeconds &&
+                           it->dailyReadingDateKey == entry.dailyReadingDateKey &&
+                           it->readingSessions == entry.readingSessions &&
+                           it->pagesTurned == entry.pagesTurned;
+    if (unchanged && !pruned) return;
     recentBooks.erase(it);
   }
 
@@ -87,11 +116,16 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
   saveToFile();
 }
 
-void RecentBooksStore::recordReading(const std::string& path, uint8_t progress, uint32_t elapsedSeconds) {
+void RecentBooksStore::recordReading(const std::string& path, uint8_t progress, uint32_t elapsedSeconds,
+                                     const uint32_t pagesTurned) {
   auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
                          [&](const RecentBook& book) { return book.path == path; });
   if (it == recentBooks.end()) return;
-  it->progressPercent = std::min<uint8_t>(progress, 100);
+  const uint8_t nextProgress = std::min<uint8_t>(progress, 100);
+  // A reader opened and closed without advancing or spending time does not
+  // change Recent data, so skip the filesystem write entirely.
+  if (elapsedSeconds == 0 && pagesTurned == 0 && it->progressPercent == nextProgress) return;
+  it->progressPercent = nextProgress;
   if (elapsedSeconds > 0) {
     const uint32_t room = UINT32_MAX - it->readingSeconds;
     it->readingSeconds += std::min(elapsedSeconds, room);
@@ -107,11 +141,12 @@ void RecentBooksStore::recordReading(const std::string& path, uint8_t progress, 
     }
     if (it->readingSessions < UINT16_MAX) ++it->readingSessions;
   }
+  it->pagesTurned += std::min<uint32_t>(pagesTurned, UINT32_MAX - it->pagesTurned);
   if (!saveToFile()) LOG_ERR("RBS", "Failed to persist reading statistics");
 }
 
 void RecentBooksStore::updateBook(const std::string& path, const std::string& title, const std::string& author,
-                                  const std::string& coverBmpPath) {
+                                  const std::string& coverBmpPath, const std::string& synopsis) {
   auto it =
       std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
   if (it != recentBooks.end()) {
@@ -119,8 +154,70 @@ void RecentBooksStore::updateBook(const std::string& path, const std::string& ti
     book.title = title;
     book.author = author;
     book.coverBmpPath = coverBmpPath;
+    if (!synopsis.empty()) book.synopsis = synopsis.substr(0, 384);
+    applyMetadataOverride(book);
     saveToFile();
   }
+}
+
+void RecentBooksStore::refreshBookMetadata(const std::string& path, const std::string& title,
+                                           const std::string& author, const std::string& coverBmpPath,
+                                           const std::string& synopsis) {
+  auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
+                         [&](const RecentBook& book) { return book.path == path; });
+  if (it == recentBooks.end()) return;
+
+  RecentBook& book = *it;
+  // A device-side refresh must never erase a working synopsis because a
+  // transient metadata pass returned an empty description. Explicit web
+  // metadata edits use updateMetadata() and can still intentionally clear it.
+  const std::string boundedSynopsis = synopsis.substr(0, 384);
+  const std::string nextSynopsis = boundedSynopsis.empty() ? book.synopsis : boundedSynopsis;
+  if (book.title == title && book.author == author && book.coverBmpPath == coverBmpPath &&
+      book.synopsis == nextSynopsis) {
+    return;
+  }
+  book.title = title;
+  book.author = author;
+  book.coverBmpPath = coverBmpPath;
+  book.synopsis = nextSynopsis;
+  applyMetadataOverride(book);
+  if (!saveToFile()) LOG_ERR("RBS", "Failed to persist refreshed metadata: %s", path.c_str());
+}
+
+bool RecentBooksStore::updateMetadata(const std::string& path, const std::string& title, const std::string& author,
+                                      const std::string& synopsis) {
+  auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
+                         [&](const RecentBook& book) { return book.path == path; });
+  if (it == recentBooks.end()) return false;
+  it->title = title.substr(0, 192);
+  it->author = author.substr(0, 128);
+  // Metadata edited explicitly through the web UI should not be truncated;
+  // the shelf's generated EPUB cache remains bounded separately.
+  it->synopsis = synopsis;
+  if (!saveToFile()) {
+    LOG_ERR("RBS", "Failed to save edited metadata: %s", path.c_str());
+    return false;
+  }
+  return true;
+}
+
+bool RecentBooksStore::resetReading(const std::string& path) {
+  auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
+                         [&](const RecentBook& book) { return book.path == path; });
+  if (it == recentBooks.end()) return false;
+  it->progressPercent = 0;
+  it->readingSeconds = 0;
+  it->lastSessionSeconds = 0;
+  it->dailyReadingSeconds = 0;
+  it->dailyReadingDateKey = 0;
+  it->readingSessions = 0;
+  it->pagesTurned = 0;
+  if (!saveToFile()) {
+    LOG_ERR("RBS", "Failed to reset reading data: %s", path.c_str());
+    return false;
+  }
+  return true;
 }
 
 bool RecentBooksStore::removeByPath(const std::string& path) {
@@ -183,16 +280,22 @@ RecentBook RecentBooksStore::getDataFromBook(std::string path) const {
   if (FsHelpers::hasEpubExtension(lastBookFileName)) {
     Epub epub(path, "/.crosspoint");
     epub.load(false, true);
-    return RecentBook{path, epub.getTitle(), epub.getAuthor(), epub.getThumbBmpPath(),
+    RecentBook result{path, epub.getTitle(), epub.getAuthor(), epub.getThumbBmpPath(),
                       epub.getDescription().substr(0, 384)};
+    applyMetadataOverride(result);
+    return result;
   } else if (FsHelpers::hasXtcExtension(lastBookFileName)) {
     // Handle XTC file
     Xtc xtc(path, "/.crosspoint");
     if (xtc.load()) {
-      return RecentBook{path, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath()};
+      RecentBook result{path, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath()};
+      applyMetadataOverride(result);
+      return result;
     }
   } else if (FsHelpers::hasTxtExtension(lastBookFileName) || FsHelpers::hasMarkdownExtension(lastBookFileName)) {
-    return RecentBook{path, lastBookFileName, "", ""};
+    RecentBook result{path, lastBookFileName, "", ""};
+    applyMetadataOverride(result);
+    return result;
   }
   return RecentBook{path, "", "", ""};
 }

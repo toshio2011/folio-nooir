@@ -1,6 +1,7 @@
 #pragma once
 
 #include <CrossPointSettings.h>
+#include <CrossPointState.h>
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
 #include <HalTiltSensor.h>
@@ -42,23 +43,33 @@ inline void applyOrientation(GfxRenderer& renderer, const uint8_t orientation) {
   }
 }
 
-// Reader pages use many differential FAST refreshes. Before leaving a book or
-// painting the sleep screen, run one white full-waveform pass to discharge the
-// accumulated text ghosts and establish a clean panel baseline. Reader onExit()
-// is invoked while ActivityManager already holds the render lock.
+// Reader pages use many differential FAST refreshes. Clear the RAM framebuffer
+// before the destination activity paints, but do not refresh an intermediate
+// white frame here: that caused a slow blank flash before the bookshelf. The
+// next activity paints its complete frame and performs the only visible refresh.
+// Reader onExit() is invoked while ActivityManager already holds the render lock.
 inline void clearGhostingOnExit(GfxRenderer& renderer) {
+  // Overlay sleep is intentionally composited over the page that is currently
+  // on the reader.  enterDeepSleep() marks lastSleepFromReader before the
+  // reader's onExit() runs, so do not erase that framebuffer here; the sleep
+  // activity will add the PNG and perform the panel refresh itself.  All other
+  // exits retain the normal clean full refresh to prevent reader ghosting.
+  if (APP_STATE.lastSleepFromReader && SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY) {
+    return;
+  }
   renderer.clearScreen();
-  renderer.displayBuffer(HalDisplay::FULL_REFRESH);
 }
 
 struct PageTurnResult {
   bool prev;
   bool next;
   bool fromTilt;
+  bool fromSide;
 };
 
 inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
-  const bool usePress = SETTINGS.longPressButtonBehavior == SETTINGS.OFF;
+  const bool sideLongAction = SETTINGS.sideLongPressAction != CrossPointSettings::SIDE_LONG_OFF;
+  const bool usePress = SETTINGS.longPressButtonBehavior == SETTINGS.OFF && !sideLongAction;
   const bool tiltNext = SETTINGS.tiltPageTurn && halTiltSensor.wasTiltedForward();
   const bool tiltPrev = SETTINGS.tiltPageTurn && halTiltSensor.wasTiltedBack();
   const bool swapFront = input.isNavDirectionSwapped();
@@ -74,7 +85,11 @@ inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
                                              input.wasPressed(nextButton))
                                           : (input.wasReleased(MappedInputManager::Button::PageForward) || powerTurn ||
                                              input.wasReleased(nextButton)));
-  return {prev, next, tiltPrev || tiltNext};
+  const bool sideEdge = usePress ? (input.wasPressed(MappedInputManager::Button::PageBack) ||
+                                    input.wasPressed(MappedInputManager::Button::PageForward))
+                                 : (input.wasReleased(MappedInputManager::Button::PageBack) ||
+                                    input.wasReleased(MappedInputManager::Button::PageForward));
+  return {prev, next, tiltPrev || tiltNext, sideEdge};
 }
 
 struct TouchPageTurn {

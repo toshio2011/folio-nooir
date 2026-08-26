@@ -150,13 +150,17 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         // --- Display ---
         SettingInfo::Enum(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen,
                           {StrId::STR_DARK, StrId::STR_LIGHT, StrId::STR_CUSTOM, StrId::STR_COVER,
-                           StrId::STR_COVER_CUSTOM, StrId::STR_NONE_OPT, StrId::STR_QUICK_RESUME},
+                           StrId::STR_NONE_OPT, StrId::STR_QUICK_RESUME, StrId::STR_PAGE_OVERLAY},
                           "sleepScreen", StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_SLEEP_COVER_MODE, &CrossPointSettings::sleepScreenCoverMode,
                           {StrId::STR_FIT, StrId::STR_CROP}, "sleepScreenCoverMode", StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_SLEEP_COVER_FILTER, &CrossPointSettings::sleepScreenCoverFilter,
-                          {StrId::STR_NONE_OPT, StrId::STR_FILTER_CONTRAST, StrId::STR_INVERTED},
-                          "sleepScreenCoverFilter", StrId::STR_CAT_DISPLAY),
+                           {StrId::STR_NONE_OPT, StrId::STR_FILTER_CONTRAST, StrId::STR_INVERTED},
+            "sleepScreenCoverFilter", StrId::STR_CAT_DISPLAY),
+        SettingInfo::Enum(StrId::STR_TODO_SLEEP_MODE, &CrossPointSettings::todoSleepMode,
+                          {StrId::STR_TODO_UNCHECKED, StrId::STR_TODO_COMPLETED, StrId::STR_TODO_RANDOM,
+                           StrId::STR_TODO_ALL},
+                          "todoSleepMode", StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_QUICK_RESUME_TIMEOUT, &CrossPointSettings::quickResumeSleepScreen,
                           {StrId::STR_STATE_OFF, StrId::STR_STATE_ON}, "quickResumeSleepScreen",
                           StrId::STR_CAT_DISPLAY),
@@ -171,6 +175,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                           {StrId::STR_THEME_CLASSIC, StrId::STR_THEME_LYRA, StrId::STR_THEME_LYRA_EXTENDED,
                            StrId::STR_THEME_ROUNDEDRAFF, StrId::STR_THEME_FOLIO_NOOIR},
                           "uiTheme", StrId::STR_CAT_DISPLAY),
+        SettingInfo::Value(StrId::STR_UI_SCALE, &CrossPointSettings::uiScalePercent, {80, 120, 10}, "uiScalePercent",
+                           StrId::STR_CAT_DISPLAY),
         SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix, "fadingFix",
                             StrId::STR_CAT_DISPLAY),
 
@@ -185,8 +191,19 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                            StrId::STR_FONT_18_PT}, "fontSize",
                           StrId::STR_CAT_READER)
             .withTextSettings(),
-        SettingInfo::Enum(StrId::STR_LINE_SPACING, &CrossPointSettings::lineSpacing,
-                          {StrId::STR_TIGHT, StrId::STR_NORMAL, StrId::STR_WIDE}, "lineSpacing", StrId::STR_CAT_READER)
+        SettingInfo::Enum(StrId::STR_DICTIONARY_FONT, &CrossPointSettings::dictionaryFontFamily,
+                          {StrId::STR_USE_READER_FONT, StrId::STR_NOTO_SERIF, StrId::STR_NOTO_SANS},
+                          "dictionaryFontFamily", StrId::STR_CAT_READER)
+            .withTextSettings(),
+        SettingInfo::Enum(StrId::STR_DICTIONARY_FONT_SIZE, &CrossPointSettings::dictionaryFontSize,
+                          {StrId::STR_FONT_12_PT, StrId::STR_FONT_14_PT, StrId::STR_FONT_16_PT,
+                           StrId::STR_FONT_18_PT}, "dictionaryFontSize",
+                          StrId::STR_CAT_READER)
+            .withTextSettings(),
+        SettingInfo::Value(StrId::STR_LINE_SPACING, &CrossPointSettings::lineSpacingPercent,
+                           {CrossPointSettings::LINE_SPACING_MIN_PERCENT,
+                            CrossPointSettings::LINE_SPACING_MAX_PERCENT, 1},
+                           "lineSpacing", StrId::STR_CAT_READER)
             .withTextSettings(),
         SettingInfo::Value(StrId::STR_SCREEN_MARGIN, &CrossPointSettings::screenMargin,
                            {CrossPointSettings::SCREEN_MARGIN_MIN, CrossPointSettings::SCREEN_MARGIN_MAX,
@@ -201,8 +218,21 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         SettingInfo::Toggle(StrId::STR_EMBEDDED_STYLE, &CrossPointSettings::embeddedStyle, "embeddedStyle",
                             StrId::STR_CAT_READER)
             .withTextSettings(),
+        SettingInfo::Toggle(StrId::STR_DARK, &CrossPointSettings::readerDarkMode, "readerDarkMode",
+                            StrId::STR_CAT_READER)
+            .withTextSettings(),
+        SettingInfo::Enum(StrId::STR_HIGHLIGHT_COLOR, &CrossPointSettings::highlightColor,
+                          {StrId::STR_HIGHLIGHT_BLACK, StrId::STR_HIGHLIGHT_DARK_GRAY,
+                           StrId::STR_HIGHLIGHT_LIGHT_GRAY, StrId::STR_HIGHLIGHT_WHITE},
+                          "highlightColor", StrId::STR_CAT_READER)
+            .withTextSettings(),
         SettingInfo::Toggle(StrId::STR_FOCUS_READING, &CrossPointSettings::focusReadingEnabled, "focusReadingEnabled",
                             StrId::STR_CAT_READER)
+            .withTextSettings(),
+        SettingInfo::Toggle(StrId::STR_FORCE_PARAGRAPH_INDENTS, &CrossPointSettings::forceParagraphIndents,
+                            "forceParagraphIndents", StrId::STR_CAT_READER)
+            .withTextSettings(),
+        SettingInfo::Toggle(StrId::STR_GUIDE_DOTS, &CrossPointSettings::guideDots, "guideDots", StrId::STR_CAT_READER)
             .withTextSettings(),
         SettingInfo::Toggle(StrId::STR_HYPHENATION, &CrossPointSettings::hyphenationEnabled, "hyphenationEnabled",
                             StrId::STR_CAT_READER)
@@ -230,15 +260,27 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                             "frontButtonFollowOrientation", StrId::STR_CAT_CONTROLS),
         SettingInfo::Enum(StrId::STR_LONG_PRESS_BEHAVIOR, &CrossPointSettings::longPressButtonBehavior,
                           {StrId::STR_LONG_PRESS_BEHAVIOR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
-                           StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION},
+                           StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION, StrId::STR_SIDE_LONG_PRESS_FONT_SIZE},
                           "longPressButtonBehavior", StrId::STR_CAT_CONTROLS),
+        SettingInfo::Enum(StrId::STR_SIDE_LONG_PRESS_ACTION, &CrossPointSettings::sideLongPressAction,
+                          {StrId::STR_SIDE_LONG_PRESS_OFF, StrId::STR_SIDE_LONG_PRESS_CHAPTER,
+                           StrId::STR_SIDE_LONG_PRESS_FONT_SIZE, StrId::STR_SIDE_LONG_PRESS_ORIENTATION},
+                          "sideLongPressAction", StrId::STR_CAT_CONTROLS),
         SettingInfo::Enum(StrId::STR_LONG_PRESS_MENU, &CrossPointSettings::longPressMenuFunction,
-                          {StrId::STR_KOSYNC, StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION, StrId::STR_DICTIONARY},
+                          {StrId::STR_KOSYNC, StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION, StrId::STR_DICTIONARY,
+                           StrId::STR_DARK, StrId::STR_LONG_PRESS_MENU_READER_OPTIONS, StrId::STR_LONG_PWR_SLEEP,
+                           StrId::STR_LONG_PWR_READING_STATS, StrId::STR_LONG_PWR_SCREENSHOT},
                           "longPressMenuFunction", StrId::STR_CAT_CONTROLS),
         SettingInfo::Enum(
             StrId::STR_SHORT_PWR_BTN, &CrossPointSettings::shortPwrBtn,
-            {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH, StrId::STR_FOOTNOTES},
+            {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH, StrId::STR_FOOTNOTES,
+             StrId::STR_BOOKMARK_OPTION, StrId::STR_DARK},
             "shortPwrBtn", StrId::STR_CAT_CONTROLS),
+        SettingInfo::Enum(StrId::STR_LONG_PWR_BTN, &CrossPointSettings::longPwrBtn,
+                          {StrId::STR_LONG_PWR_SLEEP, StrId::STR_LONG_PWR_READER_OPTIONS,
+                           StrId::STR_LONG_PWR_READING_STATS, StrId::STR_LONG_PWR_SCREENSHOT, StrId::STR_LONG_PWR_IGNORE,
+                           StrId::STR_BOOKMARK_OPTION, StrId::STR_DICTIONARY, StrId::STR_DARK, StrId::STR_KOSYNC},
+                          "longPwrBtn", StrId::STR_CAT_CONTROLS),
         SettingInfo::Toggle(StrId::STR_PWR_BTN_FOOTNOTE_BACK, &CrossPointSettings::pwrBtnFootnoteBack,
                             "pwrBtnFootnoteBack", StrId::STR_CAT_CONTROLS),
         SettingInfo::Toggle(StrId::STR_BACK_SHORT_TO_FILE_BROWSER, &CrossPointSettings::backShortToFileBrowser,
@@ -255,6 +297,12 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                             "removeReadBooksFromRecents", StrId::STR_CAT_SYSTEM),
         SettingInfo::Toggle(StrId::STR_MOVE_FINISHED_TO_READ, &CrossPointSettings::moveFinishedToReadFolder,
                             "moveFinishedToReadFolder", StrId::STR_CAT_SYSTEM),
+        SettingInfo::Toggle(StrId::STR_CLOCK_SYNC_ENABLED, &CrossPointSettings::clockSyncEnabled,
+                            "clockSyncEnabled", StrId::STR_CAT_SYSTEM),
+        SettingInfo::Toggle(StrId::STR_WEATHER_SYNC_ENABLED, &CrossPointSettings::weatherSyncEnabled,
+                            "weatherSyncEnabled", StrId::STR_CAT_SYSTEM),
+        SettingInfo::Toggle(StrId::STR_RESUME_READER_ON_WAKE, &CrossPointSettings::resumeReaderOnWake,
+                            "resumeReaderOnWake", StrId::STR_CAT_SYSTEM),
 
         // OPDS download folder: persisted + web-exposed, but category-less so it
         // is hidden from the on-device Settings screen (edited via OPDS UI).
@@ -362,6 +410,87 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
   }();
 
   std::vector<SettingInfo> v = baseList;
+  // Build the extended sleep labels per call so a language change is reflected
+  // without regenerating the translation table. Legacy mode values are
+  // migrated by CrossPointSettings when the settings file is loaded.
+  if (!v.empty() && v.front().nameId == StrId::STR_SLEEP_SCREEN) {
+    // Keep COVER_CUSTOM as a persisted compatibility value, but hide it from
+    // the selectable UI. The getter/setter map keeps all later on-disk values
+    // stable while presenting a compact list without that legacy option.
+    auto& sleepSetting = v.front();
+    sleepSetting.valuePtr = nullptr;
+    sleepSetting.valueGetter = []() -> uint8_t {
+      switch (SETTINGS.sleepScreen) {
+        case CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM:
+          return 3;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::BLANK:
+          return 4;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME:
+          return 5;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY:
+          return 6;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::COVER_OVERLAY:
+          return 7;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::READING_STATS_SLEEP:
+          return 8;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::MINIMAL_STATS:
+          return 9;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::CLIPPING_COVER:
+          return 10;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::TODO_LIST:
+          return 11;
+        default:
+          return SETTINGS.sleepScreen <= CrossPointSettings::SLEEP_SCREEN_MODE::COVER ? SETTINGS.sleepScreen : 3;
+      }
+    };
+    sleepSetting.valueSetter = [](const uint8_t index) {
+      switch (index) {
+        case 0:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::DARK;
+          break;
+        case 1:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::LIGHT;
+          break;
+        case 2:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM;
+          break;
+        case 3:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::COVER;
+          break;
+        case 4:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::BLANK;
+          break;
+        case 5:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME;
+          break;
+        case 6:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY;
+          break;
+        case 7:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::COVER_OVERLAY;
+          break;
+        case 8:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::READING_STATS_SLEEP;
+          break;
+        case 9:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::MINIMAL_STATS;
+          break;
+        case 10:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::CLIPPING_COVER;
+          break;
+        case 11:
+        default:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::TODO_LIST;
+          break;
+      }
+    };
+    v.front().enumStringValues = {
+        I18N.get(StrId::STR_DARK), I18N.get(StrId::STR_LIGHT), I18N.get(StrId::STR_CUSTOM),
+        I18N.get(StrId::STR_COVER), I18N.get(StrId::STR_NONE_OPT), I18N.get(StrId::STR_QUICK_RESUME),
+        I18N.get(StrId::STR_PAGE_OVERLAY),
+        "Cover + Overlay", "Reading Stats", "Minimal Stats", "Clipping + Cover"};
+  v.front().enumStringValues.push_back(I18N.get(StrId::STR_TODO_LIST));
+  }
   if (!BoardConfig::hasTouch()) {
     v.erase(std::remove_if(v.begin(), v.end(),
                            [](const SettingInfo& s) { return s.nameId == StrId::STR_TOUCH_READER_CONTROLS; }),

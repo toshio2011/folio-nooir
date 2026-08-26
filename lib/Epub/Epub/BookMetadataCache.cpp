@@ -12,7 +12,10 @@
 
 namespace {
 constexpr uint8_t BOOK_CACHE_VERSION = 10;  // v10: normalized HTML synopsis metadata
+constexpr uint8_t METADATA_CACHE_VERSION = 1;
 constexpr char bookBinFile[] = "/book.bin";
+constexpr char metadataBinFile[] = "/metadata.bin";
+constexpr char metadataBinTempFile[] = "/metadata.bin.tmp";
 constexpr char tmpSpineBinFile[] = "/spine.bin.tmp";
 constexpr char tmpTocBinFile[] = "/toc.bin.tmp";
 // Buffer size for the buildBookBin streams. 3 buffers x 4KB, transient (freed on
@@ -458,6 +461,66 @@ void BookMetadataCache::createTocEntry(const std::string& title, const std::stri
 }
 
 /* ============= READING / LOADING FUNCTIONS ================ */
+
+bool BookMetadataCache::saveMetadataOnly(const BookMetadata& metadata) {
+  const std::string finalPath = cachePath + metadataBinFile;
+  const std::string tempPath = cachePath + metadataBinTempFile;
+  Storage.remove(tempPath.c_str());
+  {
+    HalFile metadataFile;
+    if (!Storage.openFileForWrite("BMC", tempPath, metadataFile)) {
+      LOG_ERR("BMC", "Could not open lightweight metadata cache for writing");
+      return false;
+    }
+
+    serialization::writePod(metadataFile, METADATA_CACHE_VERSION);
+    serialization::writeString(metadataFile, metadata.title);
+    serialization::writeString(metadataFile, metadata.author);
+    serialization::writeString(metadataFile, metadata.language);
+    serialization::writeString(metadataFile, metadata.description);
+    serialization::writeString(metadataFile, metadata.coverItemHref);
+    serialization::writeString(metadataFile, metadata.textReferenceHref);
+    metadataFile.flush();
+  }
+
+  // SdFat does not overwrite rename destinations. Remove the old committed
+  // file only after the temporary file is closed and fully written.
+  Storage.remove(finalPath.c_str());
+  if (!Storage.rename(tempPath.c_str(), finalPath.c_str())) {
+    Storage.remove(tempPath.c_str());
+    LOG_ERR("BMC", "Could not commit lightweight metadata cache");
+    return false;
+  }
+  return true;
+}
+
+bool BookMetadataCache::loadMetadataOnly() {
+  HalFile metadataFile;
+  if (!Storage.openFileForRead("BMC", cachePath + metadataBinFile, metadataFile)) return false;
+
+  uint8_t version = 0;
+  serialization::readPod(metadataFile, version);
+  if (version != METADATA_CACHE_VERSION) {
+    metadataFile.close();
+    return false;
+  }
+
+  serialization::readString(metadataFile, coreMetadata.title);
+  serialization::readString(metadataFile, coreMetadata.author);
+  serialization::readString(metadataFile, coreMetadata.language);
+  serialization::readString(metadataFile, coreMetadata.description);
+  serialization::readString(metadataFile, coreMetadata.coverItemHref);
+  serialization::readString(metadataFile, coreMetadata.textReferenceHref);
+  metadataFile.close();
+
+  lutOffset = 0;
+  spineCount = 0;
+  tocCount = 0;
+  loaded = true;
+  buildMode = false;
+  LOG_DBG("BMC", "Loaded lightweight metadata cache");
+  return true;
+}
 
 bool BookMetadataCache::load() {
   if (!Storage.openFileForRead("BMC", cachePath + bookBinFile, bookFile)) {

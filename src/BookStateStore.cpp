@@ -17,6 +17,7 @@ void BookStateStore::toJson(JsonDocument& doc) const {
     item["lastOpenedDate"] = book.lastOpenedDate;
     item["readingSeconds"] = book.readingSeconds;
     item["sessions"] = book.readingSessions;
+    item["pagesTurned"] = book.pagesTurned;
   }
 }
 
@@ -36,6 +37,7 @@ bool BookStateStore::fromJson(JsonVariantConst doc) {
     state.lastOpenedDate = item["lastOpenedDate"] | 0;
     state.readingSeconds = item["readingSeconds"] | 0;
     state.readingSessions = item["sessions"] | 0;
+    state.pagesTurned = item["pagesTurned"] | 0;
     books.push_back(std::move(state));
   }
   return true;
@@ -54,7 +56,8 @@ const BookState* BookStateStore::find(const std::string& path) const {
   return it == books.end() ? nullptr : &*it;
 }
 
-void BookStateStore::recordReading(const std::string& path, const uint8_t progress, const uint32_t elapsedSeconds) {
+void BookStateStore::recordReading(const std::string& path, const uint8_t progress, const uint32_t elapsedSeconds,
+                                   const uint32_t pagesTurned) {
   BookState& state = ensure(path);
   const uint32_t today = halClock.getDateKey();
   state.progressPercent = std::min<uint8_t>(progress, 100);
@@ -71,7 +74,26 @@ void BookStateStore::recordReading(const std::string& path, const uint8_t progre
     state.readingSeconds += std::min<uint32_t>(elapsedSeconds, UINT32_MAX - state.readingSeconds);
     if (state.readingSessions < UINT16_MAX) ++state.readingSessions;
   }
+  state.pagesTurned += std::min<uint32_t>(pagesTurned, UINT32_MAX - state.pagesTurned);
   if (!saveToFile()) LOG_ERR("BST", "Failed to save reading state");
+}
+
+bool BookStateStore::updateEditable(const std::string& path, const BookStatus status, const uint8_t progress,
+                                    const uint32_t startDate, const uint32_t finishDate) {
+  if (path.empty()) return false;
+  BookState& state = ensure(path);
+  state.progressPercent = std::min<uint8_t>(progress, 100);
+  state.status = status;
+  state.startDate = startDate;
+  state.finishDate = finishDate;
+  if (state.progressPercent >= 100) state.status = BookStatus::Finished;
+  if (state.status == BookStatus::Finished) state.progressPercent = 100;
+  if (state.status != BookStatus::Finished && state.progressPercent < 100) state.finishDate = finishDate;
+  if (!saveToFile()) {
+    LOG_ERR("BST", "Failed to save edited book state: %s", path.c_str());
+    return false;
+  }
+  return true;
 }
 
 void BookStateStore::setStatus(const std::string& path, const BookStatus status) {

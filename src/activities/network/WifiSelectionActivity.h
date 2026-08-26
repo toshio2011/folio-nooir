@@ -76,6 +76,11 @@ class WifiSelectionActivity final : public Activity {
   // Whether to attempt auto-connect on entry
   const bool allowAutoConnect;
 
+  // Whether a successful connection should perform the once-per-day clock /
+  // weather refresh. Explicit sync activities disable this to avoid a double
+  // request; web/file-transfer activities keep it enabled by default.
+  const bool autoSyncClockWeather;
+
   // Whether we are attempting to auto-connect or auto-scan saved networks.
   bool autoConnecting = false;
 
@@ -120,8 +125,11 @@ class WifiSelectionActivity final : public Activity {
   void onComplete(bool connected);
 
  public:
-  explicit WifiSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool autoConnect = true)
-      : Activity("WifiSelection", renderer, mappedInput), allowAutoConnect(autoConnect) {}
+  explicit WifiSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool autoConnect = true,
+                                bool syncClockWeather = true)
+      : Activity("WifiSelection", renderer, mappedInput),
+        allowAutoConnect(autoConnect),
+        autoSyncClockWeather(syncClockWeather) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;

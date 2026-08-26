@@ -11,9 +11,9 @@
 EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                const std::string& title, const int currentPage, const int totalPages,
                                                const int bookProgressPercent, const uint8_t currentOrientation,
-                                               const bool hasFootnotes, const bool hasBookmarks)
+                                               const bool hasFootnotes, const bool hasBookmarks, const bool hasClippings)
     : Activity("EpubReaderMenu", renderer, mappedInput),
-      menuItems(buildMenuItems(hasFootnotes, hasBookmarks)),
+      menuItems(buildMenuItems(hasFootnotes, hasBookmarks, hasClippings)),
       title(title),
       pendingOrientation(currentOrientation),
       currentPage(currentPage),
@@ -21,18 +21,23 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
       bookProgressPercent(bookProgressPercent) {}
 
 std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuItems(bool hasFootnotes,
-                                                                                     bool hasBookmarks) {
+                                                                                     bool hasBookmarks, bool hasClippings) {
   std::vector<MenuItem> items;
-  items.reserve(14);
+  items.reserve(16);
   items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
+  items.push_back({MenuAction::READER_OPTIONS, StrId::STR_READER_OPTIONS});
   if (hasFootnotes) {
     items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
   }
   if (hasBookmarks) {
     items.push_back({MenuAction::BOOKMARKS, StrId::STR_BOOKMARKS});
   }
+  if (hasClippings) {
+    items.push_back({MenuAction::CLIPPINGS, StrId::STR_CLIPPINGS});
+  }
   items.push_back({MenuAction::TOGGLE_BOOKMARK, StrId::STR_TOGGLE_BOOKMARK});
   items.push_back({MenuAction::DICTIONARY, StrId::STR_LOOKUP});
+  items.push_back({MenuAction::CLIP_TEXT, StrId::STR_CLIP_TEXT});
   items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
   items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN});
   items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
@@ -65,6 +70,10 @@ bool EpubReaderMenuActivity::handleHomeGesture() {
 }
 
 void EpubReaderMenuActivity::loop() {
+  // OptionPopup measures its rows on the main task. Keep UI text scaling
+  // active here as well as during render so Reader Menu/Reader Options use
+  // the configured size consistently.
+  renderer.setUiScaleTextEnabled(true);
   if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) {
     // The popup acts on button press; if that input closed it, the trailing
     // release must be swallowed below (Back would close the menu, Confirm
@@ -160,6 +169,7 @@ void EpubReaderMenuActivity::loop() {
 }
 
 void EpubReaderMenuActivity::render(RenderLock&&) {
+  renderer.setUiScaleTextEnabled(true);
   if (optionPopup.processRender(renderer, mappedInput)) return;
 
   renderer.clearScreen();

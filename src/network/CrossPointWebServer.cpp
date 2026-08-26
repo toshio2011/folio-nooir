@@ -1,31 +1,46 @@
 #include "CrossPointWebServer.h"
 
 #include <ArduinoJson.h>
+#include <Epub.h>
 #include <FsHelpers.h>
 #include <HalGPIO.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <WiFi.h>
+#include <Xtc.h>
 #include <esp_efuse.h>
 #include <esp_efuse_table.h>
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
+#include <string_view>
 
 #include "CrossPointSettings.h"
+#include "ClockWeatherSyncService.h"
 #include "components/UITheme.h"
 #include "FontInstaller.h"
 #include "OpdsServerStore.h"
+#include "BookStateStore.h"
+#include "BookMetadataOverridesStore.h"
 #include "RecentBooksStore.h"
+#include "ReadingStatsStore.h"
+#include "HalClock.h"
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
 #include "WebDAVHandler.h"
 #include "WifiCredentialStore.h"
+#include "WeatherStore.h"
+#include "ToDoStore.h"
 #include "html/FilesPageHtml.generated.h"
 #include "html/FontsPageHtml.generated.h"
 #include "html/HomePageHtml.generated.h"
 #include "html/LibraryPageHtml.generated.h"
+#include "html/StatsPageHtml.generated.h"
 #include "html/SettingsPageHtml.generated.h"
+#include "html/ToDoPageHtml.generated.h"
 #include "html/js/jszip_minJs.generated.h"
 #include "util/BookCacheUtils.h"
 #include "util/TaskWatchdog.h"
@@ -82,6 +97,12 @@ bool isProtectedItemName(const String& name) {
     }
   }
   return false;
+}
+
+bool isBookFile(const String& filename) {
+  const std::string_view view(filename.c_str(), filename.length());
+  return FsHelpers::hasEpubExtension(view) || FsHelpers::hasXtcExtension(view) || FsHelpers::hasTxtExtension(view) ||
+         FsHelpers::hasMarkdownExtension(view);
 }
 }  // namespace
 
@@ -150,6 +171,11 @@ void CrossPointWebServer::begin() {
   server->on("/library", HTTP_GET, [this] { handleLibrary(); });
   server->on("/api/library", HTTP_GET, [this] { handleLibraryData(); });
   server->on("/api/library/cover", HTTP_GET, [this] { handleLibraryCover(); });
+  server->on("/stats", HTTP_GET, [this] { handleStatsPage(); });
+  server->on("/api/stats", HTTP_GET, [this] { handleStatsData(); });
+  server->on("/api/stats/export", HTTP_GET, [this] { handleStatsExport(); });
+  server->on("/api/book", HTTP_GET, [this] { handleGetBookInfo(); });
+  server->on("/api/book", HTTP_POST, [this] { handlePostBookUpdate(); });
   server->on("/api/files", HTTP_GET, [this] { handleFileListData(); });
   server->on("/download", HTTP_GET, [this] { handleDownload(); });
 
@@ -170,6 +196,9 @@ void CrossPointWebServer::begin() {
 
   // Settings endpoints
   server->on("/settings", HTTP_GET, [this] { handleSettingsPage(); });
+  server->on("/todo", HTTP_GET, [this] { handleToDoPage(); });
+  server->on("/api/todo", HTTP_GET, [this] { handleGetToDo(); });
+  server->on("/api/todo", HTTP_POST, [this] { handlePostToDo(); });
   server->on("/api/settings", HTTP_GET, [this] { handleGetSettings(); });
   server->on("/api/settings", HTTP_POST, [this] { handlePostSettings(); });
 
@@ -188,6 +217,8 @@ void CrossPointWebServer::begin() {
   server->on("/api/wifi", HTTP_GET, [this] { handleGetWifiNetworks(); });
   server->on("/api/wifi", HTTP_POST, [this] { handlePostWifiNetwork(); });
   server->on("/api/wifi/delete", HTTP_POST, [this] { handleDeleteWifiNetwork(); });
+  server->on("/api/clock-weather", HTTP_GET, [this] { handleGetClockWeather(); });
+  server->on("/api/clock-weather", HTTP_POST, [this] { handlePostClockWeather(); });
 
   server->onNotFound([this] { handleNotFound(); });
   LOG_DBG("WEB", "[MEM] Free heap after route setup: %d bytes", ESP.getFreeHeap());
@@ -393,7 +424,15 @@ void CrossPointWebServer::handleLibraryData() const {
     doc["progress"] = book.progressPercent;
     doc["seconds"] = book.readingSeconds;
     doc["sessions"] = book.readingSessions;
-    doc["hasCover"] = !book.coverBmpPath.empty();
+    // Only advertise an already-valid thumbnail. The web Bookshelf must not
+    // trigger cover extraction while a Transfer upload is using the SD/SPI
+    // bus; missing covers fall back to the title card in the browser.
+    bool hasCover = false;
+    if (!book.coverBmpPath.empty()) {
+      const int coverHeight = UITheme::getInstance().getMetrics().homeCoverHeight;
+      hasCover = isValidBookThumbnail(UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight));
+    }
+    doc["hasCover"] = hasCover;
     String row;
     serializeJson(doc, row);
     if (!first) server->sendContent(",");
@@ -423,8 +462,16 @@ void CrossPointWebServer::handleLibraryCover() const {
     server->send(404, "text/plain", "Cover not found");
     return;
   }
-  const std::string coverPath = UITheme::getCoverThumbPath(
-      selected->coverBmpPath, UITheme::getInstance().getMetrics().homeCoverHeight);
+  const int coverHeight = UITheme::getInstance().getMetrics().homeCoverHeight;
+  const std::string coverPath = UITheme::getCoverThumbPath(selected->coverBmpPath, coverHeight);
+  // The Web Bookshelf is presentation-only. Never parse an EPUB or decode an
+  // image from this request: opening the page should not compete with a file
+  // transfer for the SD/SPI bus or Wi-Fi task. Device-side Library retrieval
+  // remains available when the user highlights a book or uses Retrieve All.
+  if (!isValidBookThumbnail(coverPath)) {
+    server->send(404, "text/plain", "Cover not cached");
+    return;
+  }
   HalFile file = Storage.open(coverPath.c_str());
   if (!file || file.isDirectory()) {
     server->send(404, "text/plain", "Cover not found");
@@ -440,7 +487,296 @@ void CrossPointWebServer::handleLibraryCover() const {
     if (count <= 0) break;
     if (client.write(buffer, static_cast<size_t>(count)) != static_cast<size_t>(count)) break;
     resetTaskWatchdogIfSubscribed();
+    yield();
   }
+}
+
+void CrossPointWebServer::handleStatsPage() const {
+  sendHtmlContent(server.get(), StatsPageHtml, sizeof(StatsPageHtml));
+}
+
+void CrossPointWebServer::handleStatsExport() const {
+  server->sendHeader("Content-Disposition", "attachment; filename=folio-nooir-reading-stats.json");
+  handleStatsData();
+}
+
+void CrossPointWebServer::handleStatsData() const {
+  JsonDocument doc;
+  const uint32_t today = halClock.getDateKey();
+  // Older installations already have cumulative per-book counters but do
+  // not have the newer day-bucket file yet. Keep those users' totals visible
+  // until the aggregate store catches up through the next completed session.
+  uint32_t bookSeconds = 0;
+  uint32_t bookSessions = 0;
+  uint32_t bookPages = 0;
+  for (const auto& book : BOOK_STATES.getBooks()) {
+    bookSeconds += std::min(book.readingSeconds, UINT32_MAX - bookSeconds);
+    bookSessions += std::min<uint32_t>(book.readingSessions, UINT32_MAX - bookSessions);
+    bookPages += std::min(book.pagesTurned, UINT32_MAX - bookPages);
+  }
+  const uint32_t totalSeconds = std::max(bookSeconds, READING_STATS.totalSeconds());
+  const uint32_t totalSessions = std::max(bookSessions, READING_STATS.totalSessions());
+  const uint32_t totalPages = std::max(bookPages, READING_STATS.totalPagesTurned());
+  doc["totalSeconds"] = totalSeconds;
+  doc["sessions"] = totalSessions;
+  doc["pagesTurned"] = totalPages;
+  doc["pagesPerMinute"] = totalSeconds == 0 ? 0 : totalPages / std::max<uint32_t>(1, (totalSeconds + 30) / 60);
+  doc["streak"] = READING_STATS.currentStreakDays();
+  doc["bestStreak"] = READING_STATS.longestStreakDays();
+  doc["today"] = today;
+  doc["todaySeconds"] = today == 0 ? 0 : READING_STATS.secondsForDate(today);
+  doc["todayPages"] = today == 0 ? 0 : READING_STATS.pagesForDate(today);
+
+  JsonArray days = doc["days"].to<JsonArray>();
+  const auto& dayRows = READING_STATS.getDays();
+  const size_t firstDay = dayRows.size() > 90 ? dayRows.size() - 90 : 0;
+  for (size_t i = firstDay; i < dayRows.size(); ++i) {
+    JsonObject row = days.add<JsonObject>();
+    row["date"] = dayRows[i].dateKey;
+    row["seconds"] = dayRows[i].seconds;
+    row["sessions"] = dayRows[i].sessions;
+    row["pages"] = dayRows[i].pagesTurned;
+  }
+
+  JsonArray books = doc["books"].to<JsonArray>();
+  auto appendBook = [&](const std::string& path, const BookState* state, const RecentBook* recent) {
+    const uint8_t progress = std::max<uint8_t>(state ? state->progressPercent : 0,
+                                                recent ? recent->progressPercent : 0);
+    const uint32_t seconds = std::max<uint32_t>(state ? state->readingSeconds : 0,
+                                                recent ? recent->readingSeconds : 0);
+    const uint16_t sessions = std::max<uint16_t>(state ? state->readingSessions : 0,
+                                                 recent ? recent->readingSessions : 0);
+    const uint32_t pages = std::max<uint32_t>(state ? state->pagesTurned : 0,
+                                               recent ? recent->pagesTurned : 0);
+    uint8_t status = state ? static_cast<uint8_t>(state->status) : static_cast<uint8_t>(BookStatus::New);
+    if (progress >= 100) status = static_cast<uint8_t>(BookStatus::Finished);
+    else if (status == static_cast<uint8_t>(BookStatus::New) && progress > 0)
+      status = static_cast<uint8_t>(BookStatus::Reading);
+    JsonObject row = books.add<JsonObject>();
+    row["path"] = path;
+    row["title"] = recent && !recent->title.empty() ? recent->title : path;
+    row["author"] = recent ? recent->author : "";
+    row["synopsis"] = recent ? recent->synopsis : "";
+    row["progress"] = progress;
+    row["status"] = status;
+    row["seconds"] = seconds;
+    row["sessions"] = sessions;
+    row["pagesTurned"] = pages;
+    row["pagesPerMinute"] = seconds == 0 ? 0 : pages / std::max<uint32_t>(1, (seconds + 30) / 60);
+    row["startDate"] = state ? state->startDate : 0;
+    row["finishDate"] = state ? state->finishDate : 0;
+    row["lastOpenedDate"] = state ? state->lastOpenedDate : 0;
+    int coverIndex = -1;
+    int visibleIndex = 0;
+    for (const auto& candidate : RECENT_BOOKS.getBooks()) {
+      if (RecentBooksStore::isMissing(candidate)) continue;
+      if (candidate.path == path) {
+        coverIndex = visibleIndex;
+        break;
+      }
+      ++visibleIndex;
+    }
+    row["coverIndex"] = coverIndex;
+  };
+  for (const auto& book : BOOK_STATES.getBooks()) {
+    const RecentBook* recent = nullptr;
+    for (const auto& candidate : RECENT_BOOKS.getBooks()) {
+      if (candidate.path == book.path) {
+        recent = &candidate;
+        break;
+      }
+    }
+    appendBook(book.path, &book, recent);
+  }
+  // A book can exist in Recent Books before its first reader session creates
+  // a BookState entry. Include it too, so the web view and long-press flow do
+  // not look empty on a fresh installation.
+  for (const auto& recent : RECENT_BOOKS.getBooks()) {
+    if (!BOOK_STATES.find(recent.path)) appendBook(recent.path, nullptr, &recent);
+  }
+
+  String response;
+  serializeJson(doc, response);
+  server->send(200, "application/json", response);
+}
+
+void CrossPointWebServer::handleGetBookInfo() const {
+  if (!server->hasArg("path")) {
+    server->send(400, "application/json", "{\"error\":\"Missing path\"}");
+    return;
+  }
+  const String itemPath = normalizeWebPath(server->arg("path"));
+  if (itemPath == "/" || !Storage.exists(itemPath.c_str()) || !isBookFile(itemPath)) {
+    server->send(404, "application/json", "{\"error\":\"Book not found\"}");
+    return;
+  }
+
+  const std::string path = itemPath.c_str();
+  const std::string_view pathView(itemPath.c_str(), itemPath.length());
+  const BookMetadataOverride* overrideData = BOOK_METADATA_OVERRIDES.find(path);
+  const RecentBook* recent = nullptr;
+  for (const auto& candidate : RECENT_BOOKS.getBooks()) {
+    if (candidate.path == path) {
+      recent = &candidate;
+      break;
+    }
+  }
+
+  std::string title;
+  std::string author;
+  std::string synopsis;
+  if (recent) {
+    title = recent->title;
+    author = recent->author;
+    synopsis = recent->synopsis;
+  } else if (FsHelpers::hasEpubExtension(itemPath)) {
+    Epub epub(path, "/.crosspoint");
+    bool loaded = epub.loadCachedMetadataOnly();
+    if (!loaded) loaded = epub.loadMetadataOnly();
+    if (loaded) {
+      title = epub.getTitle();
+      author = epub.getAuthor();
+      synopsis = epub.getDescription();
+    }
+  } else if (FsHelpers::hasXtcExtension(pathView)) {
+    Xtc xtc(path, "/.crosspoint");
+    if (xtc.load()) {
+      title = xtc.getTitle();
+      author = xtc.getAuthor();
+    }
+  }
+  if (title.empty()) {
+    const int slash = itemPath.lastIndexOf('/');
+    title = itemPath.substring(slash + 1).c_str();
+  }
+  if (overrideData) {
+    title = overrideData->title;
+    author = overrideData->author;
+    synopsis = overrideData->synopsis;
+  }
+
+  JsonDocument response;
+  const BookState* state = BOOK_STATES.find(path);
+  uint8_t progress = state ? state->progressPercent : (recent ? recent->progressPercent : 0);
+  uint8_t status = state ? static_cast<uint8_t>(state->status) : static_cast<uint8_t>(BookStatus::New);
+  if (progress >= 100) status = static_cast<uint8_t>(BookStatus::Finished);
+  else if (status == static_cast<uint8_t>(BookStatus::New) && progress > 0)
+    status = static_cast<uint8_t>(BookStatus::Reading);
+  response["path"] = path;
+  response["title"] = title;
+  response["author"] = author;
+  response["synopsis"] = synopsis;
+  response["edited"] = overrideData != nullptr;
+  response["status"] = status;
+  response["progress"] = progress;
+  response["startDate"] = state ? state->startDate : 0;
+  response["finishDate"] = state ? state->finishDate : 0;
+  String body;
+  serializeJson(response, body);
+  server->send(200, "application/json", body);
+}
+
+void CrossPointWebServer::handlePostBookUpdate() {
+  if (!server->hasArg("plain")) {
+    server->send(400, "application/json", "{\"error\":\"Missing JSON body\"}");
+    return;
+  }
+  JsonDocument doc;
+  const DeserializationError err = deserializeJson(doc, server->arg("plain"));
+  if (err) {
+    server->send(400, "application/json", String("{\"error\":\"Invalid JSON: ") + err.c_str() + "\"}");
+    return;
+  }
+
+  const std::string path = doc["path"] | "";
+  bool knownBook = BOOK_STATES.find(path) != nullptr;
+  if (!knownBook) {
+    for (const auto& candidate : RECENT_BOOKS.getBooks()) {
+      if (candidate.path == path) {
+        knownBook = true;
+        break;
+      }
+    }
+  }
+  const bool metadataRequest = doc["title"].is<const char*>() || doc["author"].is<const char*>() ||
+                               doc["synopsis"].is<const char*>();
+  const bool stateRequest = !doc["progress"].isNull() || !doc["status"].isNull() || !doc["startDate"].isNull() ||
+                            !doc["finishDate"].isNull();
+  if (path.empty() || !Storage.exists(path.c_str()) || !isBookFile(path.c_str()) ||
+      (!knownBook && !metadataRequest)) {
+    server->send(404, "application/json", "{\"error\":\"Book not found\"}");
+    return;
+  }
+
+  const std::string action = doc["action"] | "update";
+  if (action == "reset") {
+    if (!knownBook) {
+      server->send(404, "application/json", "{\"error\":\"Book has no reading state\"}");
+      return;
+    }
+    BOOK_STATES.reset(path);
+    RECENT_BOOKS.resetReading(path);
+    server->send(200, "application/json", "{\"ok\":true,\"action\":\"reset\"}");
+    return;
+  }
+
+  const BookState* existing = BOOK_STATES.find(path);
+  const RecentBook* recent = nullptr;
+  for (const auto& candidate : RECENT_BOOKS.getBooks()) {
+    if (candidate.path == path) {
+      recent = &candidate;
+      break;
+    }
+  }
+
+  // Metadata edits are stored separately from the EPUB/XTCH container. This
+  // keeps uploads fast and makes edits available to the device Library even
+  // before the book has been opened or added to Recent Books.
+  bool metadataUpdated = false;
+  if (metadataRequest) {
+    std::string title = recent ? recent->title : "";
+    std::string author = recent ? recent->author : "";
+    std::string synopsis = recent ? recent->synopsis : "";
+    if (doc["title"].is<const char*>()) title = doc["title"].as<const char*>();
+    if (doc["author"].is<const char*>()) author = doc["author"].as<const char*>();
+    if (doc["synopsis"].is<const char*>()) synopsis = doc["synopsis"].as<const char*>();
+    metadataUpdated = BOOK_METADATA_OVERRIDES.update(path, title, author, synopsis);
+    if (recent) metadataUpdated = RECENT_BOOKS.updateMetadata(path, title, author, synopsis) && metadataUpdated;
+  }
+
+  // A transfer-page metadata edit does not need to create a reading-state
+  // row. Return immediately for a newly uploaded/unopened book.
+  if (metadataRequest && !stateRequest) {
+    server->send(200, "application/json", metadataUpdated ? "{\"ok\":true,\"metadata\":true}"
+                                                           : "{\"ok\":false,\"metadata\":false}");
+    return;
+  }
+
+  uint8_t progress = existing ? existing->progressPercent : (recent ? recent->progressPercent : 0);
+  uint32_t startDate = existing ? existing->startDate : 0;
+  uint32_t finishDate = existing ? existing->finishDate : 0;
+  BookStatus status = existing ? existing->status : BookStatus::New;
+  if (!doc["progress"].isNull())
+    progress = static_cast<uint8_t>(std::max(0, std::min(100, doc["progress"].as<int>())));
+  if (!doc["startDate"].isNull()) startDate = doc["startDate"].as<uint32_t>();
+  if (!doc["finishDate"].isNull()) finishDate = doc["finishDate"].as<uint32_t>();
+  if (!doc["status"].isNull() && doc["status"].is<int>()) {
+    status = static_cast<BookStatus>(std::min(3, std::max(0, doc["status"].as<int>())));
+  } else if (!doc["status"].isNull() && doc["status"].is<const char*>()) {
+    const String value = doc["status"].as<const char*>();
+    if (value.equalsIgnoreCase("reading")) status = BookStatus::Reading;
+    else if (value.equalsIgnoreCase("on hold")) status = BookStatus::OnHold;
+    else if (value.equalsIgnoreCase("finished")) status = BookStatus::Finished;
+    else status = BookStatus::New;
+  }
+  if (!BOOK_STATES.updateEditable(path, status, progress, startDate, finishDate)) {
+    server->send(500, "application/json", "{\"error\":\"Could not save book state\"}");
+    return;
+  }
+  if (recent) RECENT_BOOKS.recordReading(path, progress, 0);
+
+  server->send(200, "application/json", metadataUpdated ? "{\"ok\":true,\"metadata\":true}"
+                                                          : "{\"ok\":true,\"metadata\":false}");
 }
 
 void CrossPointWebServer::handleJszip() const {
@@ -552,9 +888,11 @@ void CrossPointWebServer::scanFiles(const char* path, const std::function<void(F
       if (info.isDirectory) {
         info.size = 0;
         info.isEpub = false;
+        info.isBook = false;
       } else {
         info.size = file.size();
         info.isEpub = isEpubFile(info.name);
+        info.isBook = isBookFile(info.name);
       }
 
       callback(info);
@@ -603,6 +941,7 @@ void CrossPointWebServer::handleFileListData() const {
     doc["size"] = info.size;
     doc["isDirectory"] = info.isDirectory;
     doc["isEpub"] = info.isEpub;
+    doc["isBook"] = info.isBook;
 
     const size_t written = serializeJson(doc, output, outputSize);
     if (written >= outputSize) {
@@ -701,6 +1040,7 @@ void CrossPointWebServer::handleDownload() const {
       }
       totalWritten += wrote;
     }
+    yield();
   }
   client.clear();
   file.close();
@@ -726,6 +1066,10 @@ static bool flushUploadBuffer(CrossPointWebServer::UploadState& state) {
       return false;
     }
     state.bufferPos = 0;
+    // Let the Wi-Fi driver run between SD writes during long uploads. This is
+    // intentionally a scheduler yield only; it does not add a fixed delay to
+    // normal small transfers.
+    yield();
   }
   return true;
 }
@@ -1011,6 +1355,7 @@ void CrossPointWebServer::handleRename() const {
 
   if (success) {
     LOG_DBG("WEB", "Renamed file: %s -> %s", itemPath.c_str(), newPath.c_str());
+    BOOK_METADATA_OVERRIDES.updatePath(itemPath.c_str(), newPath.c_str());
     server->send(200, "text/plain", "Renamed successfully");
   } else {
     LOG_ERR("WEB", "Failed to rename file: %s -> %s", itemPath.c_str(), newPath.c_str());
@@ -1104,6 +1449,7 @@ void CrossPointWebServer::handleMove() const {
 
   if (success) {
     LOG_DBG("WEB", "Moved file: %s -> %s", itemPath.c_str(), newPath.c_str());
+    BOOK_METADATA_OVERRIDES.updatePath(itemPath.c_str(), newPath.c_str());
     server->send(200, "text/plain", "Moved successfully");
   } else {
     LOG_ERR("WEB", "Failed to move file: %s -> %s", itemPath.c_str(), newPath.c_str());
@@ -1218,6 +1564,7 @@ void CrossPointWebServer::handleDelete() const {
       if (f) f.close();
       success = Storage.remove(itemPath.c_str());
       clearBookCache(itemPath.c_str());
+      if (success) BOOK_METADATA_OVERRIDES.removeByPath(itemPath.c_str());
     }
 
     if (!success) {
@@ -1657,6 +2004,170 @@ void CrossPointWebServer::handleDeleteWifiNetwork() {
   server->send(200, "text/plain", "OK");
 }
 
+namespace {
+bool validWeatherCoordinate(const char* text, const double minValue, const double maxValue) {
+  if (!text || !*text) return false;
+  char* end = nullptr;
+  const double value = std::strtod(text, &end);
+  return end != text && *end == '\0' && std::isfinite(value) && value >= minValue && value <= maxValue;
+}
+}  // namespace
+
+void CrossPointWebServer::handleGetClockWeather() const {
+  JsonDocument doc;
+  doc["location"] = WEATHER_STORE.location;
+  doc["latitude"] = WEATHER_STORE.latitude;
+  doc["longitude"] = WEATHER_STORE.longitude;
+  doc["timezone"] = WEATHER_STORE.timezone;
+  doc["utcOffsetSeconds"] = WEATHER_STORE.locationUtcOffsetSeconds;
+  doc["fahrenheit"] = WEATHER_STORE.fahrenheit != 0;
+  doc["clockSyncEnabled"] = SETTINGS.clockSyncEnabled != 0;
+  doc["weatherSyncEnabled"] = SETTINGS.weatherSyncEnabled != 0;
+  doc["wifiConnected"] = WiFi.status() == WL_CONNECTED;
+  doc["clockLastSyncDate"] = WEATHER_STORE.lastClockSyncDateKey;
+  doc["weatherLastSyncDate"] = WEATHER_STORE.lastWeatherSyncDateKey;
+  doc["clockLastSyncEpoch"] = WEATHER_STORE.lastClockSyncEpoch;
+  doc["weatherLastSyncEpoch"] = WEATHER_STORE.lastWeatherSyncEpoch;
+  doc["hasWeather"] = WEATHER_STORE.hasWeather != 0;
+  if (WEATHER_STORE.hasWeather) {
+    doc["temperature"] = WEATHER_STORE.temperatureTenths / 10.0f;
+    doc["weatherCode"] = WEATHER_STORE.weatherCode;
+    doc["description"] = ClockWeatherSyncService::weatherDescription(WEATHER_STORE.weatherCode);
+  }
+  String response;
+  serializeJson(doc, response);
+  server->send(200, "application/json", response);
+}
+
+void CrossPointWebServer::handlePostClockWeather() {
+  if (!server->hasArg("plain")) {
+    server->send(400, "text/plain", "Missing JSON body");
+    return;
+  }
+
+  JsonDocument doc;
+  const DeserializationError error = deserializeJson(doc, server->arg("plain"));
+  if (error) {
+    server->send(400, "text/plain", String("Invalid JSON: ") + error.c_str());
+    return;
+  }
+
+  if (!doc["location"].isNull()) {
+    const char* value = doc["location"] | "";
+    if (strlen(value) >= sizeof(WEATHER_STORE.location)) {
+      server->send(400, "text/plain", "Location is too long");
+      return;
+    }
+    strncpy(WEATHER_STORE.location, value, sizeof(WEATHER_STORE.location) - 1);
+    WEATHER_STORE.location[sizeof(WEATHER_STORE.location) - 1] = '\0';
+  }
+  if (!doc["latitude"].isNull()) {
+    const char* value = doc["latitude"] | "";
+    if (strlen(value) >= sizeof(WEATHER_STORE.latitude) || !validWeatherCoordinate(value, -90.0, 90.0)) {
+      server->send(400, "text/plain", "Invalid latitude");
+      return;
+    }
+    strncpy(WEATHER_STORE.latitude, value, sizeof(WEATHER_STORE.latitude) - 1);
+    WEATHER_STORE.latitude[sizeof(WEATHER_STORE.latitude) - 1] = '\0';
+  }
+  if (!doc["longitude"].isNull()) {
+    const char* value = doc["longitude"] | "";
+    if (strlen(value) >= sizeof(WEATHER_STORE.longitude) || !validWeatherCoordinate(value, -180.0, 180.0)) {
+      server->send(400, "text/plain", "Invalid longitude");
+      return;
+    }
+    strncpy(WEATHER_STORE.longitude, value, sizeof(WEATHER_STORE.longitude) - 1);
+    WEATHER_STORE.longitude[sizeof(WEATHER_STORE.longitude) - 1] = '\0';
+  }
+  if (!doc["fahrenheit"].isNull()) WEATHER_STORE.fahrenheit = (doc["fahrenheit"] | false) ? 1 : 0;
+  if (!doc["clockSyncEnabled"].isNull()) SETTINGS.clockSyncEnabled = (doc["clockSyncEnabled"] | false) ? 1 : 0;
+  if (!doc["weatherSyncEnabled"].isNull()) SETTINGS.weatherSyncEnabled = (doc["weatherSyncEnabled"] | false) ? 1 : 0;
+
+  WEATHER_STORE.saveToFile();
+  SETTINGS.saveToFile();
+
+  const bool shouldSync = doc["sync"] | false;
+  ClockWeatherSyncResult result;
+  if (shouldSync) {
+    if (WiFi.status() != WL_CONNECTED) {
+      server->send(409, "text/plain", "Wi-Fi is not connected");
+      return;
+    }
+    // Keep Wi-Fi alive: this request is being served by the web session.
+    result = ClockWeatherSyncService::sync(true, true);
+  }
+
+  JsonDocument response;
+  response["ok"] = true;
+  response["clockSynced"] = result.clockSynced;
+  response["weatherSynced"] = result.weatherSynced;
+  response["weatherSkippedNoLocation"] = result.weatherSkippedNoLocation;
+  response["failed"] = result.failed;
+  String output;
+  serializeJson(response, output);
+  server->send(200, "application/json", output);
+}
+
+void CrossPointWebServer::handleToDoPage() const {
+  // ToDoPageHtml is gzip-compressed like the other embedded pages.  Set the
+  // encoding header through the shared helper so browsers inflate it instead
+  // of displaying the compressed bytes as plain text.
+  sendHtmlContent(server.get(), ToDoPageHtml, ToDoPageHtmlCompressedSize);
+}
+
+void CrossPointWebServer::handleGetToDo() const {
+  JsonDocument response;
+  JsonArray items = response["items"].to<JsonArray>();
+  for (const auto& item : TODO_STORE.getItems()) {
+    JsonObject row = items.add<JsonObject>();
+    row["id"] = item.id;
+    row["text"] = item.text;
+    row["completed"] = item.completed;
+    row["priority"] = item.priority;
+    row["order"] = item.order;
+    row["createdAt"] = item.createdAt;
+    row["updatedAt"] = item.updatedAt;
+  }
+  String output;
+  serializeJson(response, output);
+  server->send(200, "application/json", output);
+}
+
+void CrossPointWebServer::handlePostToDo() {
+  if (!server->hasArg("plain")) {
+    server->send(400, "application/json", "{\"error\":\"Missing JSON body\"}");
+    return;
+  }
+  JsonDocument doc;
+  const DeserializationError error = deserializeJson(doc, server->arg("plain"));
+  if (error) {
+    server->send(400, "application/json", String("{\"error\":\"") + error.c_str() + "\"}");
+    return;
+  }
+  const std::string action = doc["action"] | "";
+  bool ok = false;
+  if (action == "add") {
+    ok = TODO_STORE.add(doc["text"] | "");
+  } else if (action == "update") {
+    ok = TODO_STORE.update(doc["id"] | 0, doc["text"] | "", doc["completed"] | false);
+  } else if (action == "toggle") {
+    ok = TODO_STORE.toggle(doc["id"] | 0);
+  } else if (action == "togglePriority") {
+    ok = TODO_STORE.togglePriority(doc["id"] | 0);
+  } else if (action == "delete") {
+    ok = TODO_STORE.remove(doc["id"] | 0);
+  } else if (action == "move") {
+    ok = TODO_STORE.move(doc["id"] | 0, doc["direction"] | 0);
+  } else if (action == "clearCompleted") {
+    ok = TODO_STORE.clearCompleted();
+  }
+  if (!ok) {
+    server->send(400, "application/json", "{\"error\":\"Invalid or failed to-do action\"}");
+    return;
+  }
+  server->send(200, "application/json", "{\"ok\":true}");
+}
+
 // WebSocket callback trampoline
 void CrossPointWebServer::wsEventCallback(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
   if (wsInstance) {
@@ -1794,6 +2305,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
       resetTaskWatchdogIfSubscribed();
       size_t written = wsUploadFile.write(payload, length);
       resetTaskWatchdogIfSubscribed();
+      yield();
 
       if (written != length) {
         abortWsUpload("WS");

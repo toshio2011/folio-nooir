@@ -28,6 +28,9 @@ struct BlockStyle {
   int16_t paddingRight = 0;   // treated same as margin for rendering
   int16_t textIndent = 0;
   bool textIndentDefined = false;  // true if text-indent was explicitly set in CSS
+  // Set only during layout for paragraph-like blocks. It is intentionally not
+  // serialized: the resolved positions are already stored in TextBlock.
+  bool forceParagraphIndent = false;
   bool textAlignDefined = false;   // true if text-align was explicitly set in CSS
   bool isRtl = false;              // true if resolved direction is RTL
   bool directionDefined = false;   // true if direction was explicitly set in CSS/HTML
@@ -79,6 +82,9 @@ struct BlockStyle {
       if (!child.textIndentDefined && textIndentDefined) {
         result.textIndent = textIndent;
         result.textIndentDefined = true;
+      }
+      if (!child.forceParagraphIndent && forceParagraphIndent) {
+        result.forceParagraphIndent = true;
       }
       if (!child.textAlignDefined && textAlignDefined) {
         result.alignment = alignment;

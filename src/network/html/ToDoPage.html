@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Folio Nooir · To-Do List</title>
+  <style>
+    :root{--ink:#1d1b1a;--paper:#f3eee4;--card:#fffaf0;--muted:#756d63;--accent:#7b4635;--line:#d8cdbd}
+    @media(prefers-color-scheme:dark){:root{--ink:#eee8dd;--paper:#181614;--card:#24201c;--muted:#b8ada0;--accent:#d39a78;--line:#4a423a}}
+    *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:Georgia,"Times New Roman",serif}
+    header{max-width:900px;margin:auto;padding:30px 22px 18px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:clamp(2rem,7vw,4rem);font-weight:500;letter-spacing:-.04em}.noo{color:var(--accent)}
+    nav{display:flex;gap:16px;margin-top:15px;flex-wrap:wrap}nav a{color:var(--ink);text-decoration:none}nav a.active{color:var(--accent);border-bottom:2px solid}
+    main{max-width:900px;margin:auto;padding:24px 22px 60px}.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px}.toolbar h2{margin:0;flex:1}.button,button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:8px 12px;cursor:pointer}.button:hover,button:hover{border-color:var(--accent);color:var(--accent)}
+    .task{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line)}.task input[type=checkbox]{width:20px;height:20px;accent-color:var(--accent)}.task-text{flex:1;min-width:0}.task.done .task-text{text-decoration:line-through;color:var(--muted)}.priority{font-weight:700;color:var(--accent);width:1em}.task-actions{display:flex;gap:5px}.task-actions button{padding:5px 8px}.muted{color:var(--muted)}#message{min-height:1.3em;color:var(--muted)}
+    .add-row{display:flex;gap:8px;margin:18px 0}.add-row input{font:inherit;flex:1;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:8px}
+  </style>
+</head>
+<body>
+  <header><h1>Folio <span class="noo">Nooir</span></h1><nav><a href="/">Device</a><a href="/library">Bookshelf</a><a href="/stats">Reading Stats</a><a href="/todo" class="active">To-Do List</a><a href="/files">Transfer</a><a href="/settings">Settings</a><a href="/fonts">Typography</a></nav></header>
+  <main><div class="toolbar"><h2>To-Do List</h2><span id="summary" class="muted"></span><button onclick="load()">Refresh</button><button onclick="clearCompleted()">Clear completed</button></div><p id="message" class="muted">Loading…</p><div class="add-row"><input id="newText" placeholder="Add a task…" maxlength="256" onkeydown="if(event.key==='Enter')addTask()"><button onclick="addTask()">Add</button></div><section id="tasks"></section></main>
+  <script>
+    const esc=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    let items=[];
+    const message=t=>document.getElementById('message').textContent=t||'';
+    async function api(payload){const r=await fetch('/api/todo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Could not save');return d}
+    function render(){const open=items.filter(x=>!x.completed).length,done=items.length-open;document.getElementById('summary').textContent=`${open} open · ${done} done`;const el=document.getElementById('tasks');el.innerHTML=items.length?items.map((x,i)=>`<div class="task ${x.completed?'done':''}"><input type="checkbox" ${x.completed?'checked':''} onchange="toggle(${x.id})"><span class="priority">${x.priority?'!':''}</span><span class="task-text">${esc(x.text)}</span><span class="task-actions"><button onclick="togglePriority(${x.id})" title="Toggle priority">${x.priority?'★':'☆'}</button><button onclick="move(${x.id},-1)" title="Move up">↑</button><button onclick="move(${x.id},1)" title="Move down">↓</button><button onclick="edit(${x.id})">Edit</button><button onclick="removeTask(${x.id})">Delete</button></span></div>`).join(''):'<p class="muted">No tasks yet.</p>'}
+    async function load(){message('Syncing with device…');try{const r=await fetch('/api/todo?_='+Date.now());if(!r.ok)throw Error('Could not load');items=(await r.json()).items||[];render();message('Synced');}catch(e){message(e.message)}}
+    async function addTask(){const input=document.getElementById('newText'),text=input.value.trim();if(!text)return;try{await api({action:'add',text});input.value='';await load()}catch(e){message(e.message)}}
+    async function toggle(id){try{await api({action:'toggle',id});await load()}catch(e){message(e.message)}}
+    async function togglePriority(id){try{await api({action:'togglePriority',id});await load()}catch(e){message(e.message)}}
+    async function move(id,direction){try{await api({action:'move',id,direction});await load()}catch(e){message(e.message)}}
+    async function removeTask(id){if(!confirm('Delete this task?'))return;try{await api({action:'delete',id});await load()}catch(e){message(e.message)}}
+    async function edit(id){const item=items.find(x=>x.id===id),text=prompt('Edit task',item?.text||'');if(text===null||!text.trim())return;try{await api({action:'update',id,text:text.trim(),completed:!!item.completed});await load()}catch(e){message(e.message)}}
+    async function clearCompleted(){try{await api({action:'clearCompleted'});await load()}catch(e){message(e.message)}}
+    load();setInterval(load,15000);
+  </script>
+</body>
+</html>

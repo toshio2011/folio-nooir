@@ -9,6 +9,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <new>
 #include <vector>
 
 #include "hyphenation/Hyphenator.h"
@@ -455,12 +456,12 @@ int ParsedText::resolveFirstLineIndent(const bool isFirstLine, const GfxRenderer
     return 0;
   }
   if (blockStyle.textIndentDefined) {
-    if (blockStyle.textIndent < 0 || !extraParagraphSpacing) {
+    if (blockStyle.textIndent < 0 || !extraParagraphSpacing || blockStyle.forceParagraphIndent) {
       return blockStyle.textIndent;
     }
     return 0;
   }
-  if (!extraParagraphSpacing) {
+  if (!extraParagraphSpacing || blockStyle.forceParagraphIndent) {
     return renderer.getSpaceWidth(fontId, EpdFontFamily::REGULAR) * 3;
   }
   return 0;
@@ -1137,8 +1138,12 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
 
   if (!lineHasFocusSplit) {
     // TextBlock flattens the vectors into its arena; they stay owned here and die at return.
-    auto block = std::make_shared<TextBlock>(lineWords, lineXPos, lineWordStyles, std::vector<uint8_t>{},
-                                             std::vector<uint16_t>{}, blockStyle);
+    auto block = std::shared_ptr<TextBlock>(new (std::nothrow) TextBlock(
+        lineWords, lineXPos, lineWordStyles, std::vector<uint8_t>{}, std::vector<uint16_t>{}, blockStyle));
+    if (!block) {
+      LOG_ERR("PTX", "Dropping line: TextBlock allocation failed");
+      return;
+    }
     if (!block->valid()) {
       LOG_ERR("PTX", "Dropping line: TextBlock arena allocation failed");
       return;
@@ -1188,7 +1193,12 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     }
   }
 
-  auto block = std::make_shared<TextBlock>(outWords, outXPos, outStyles, outBoundaries, outSuffixX, blockStyle);
+  auto block = std::shared_ptr<TextBlock>(
+      new (std::nothrow) TextBlock(outWords, outXPos, outStyles, outBoundaries, outSuffixX, blockStyle));
+  if (!block) {
+    LOG_ERR("PTX", "Dropping line: TextBlock allocation failed");
+    return;
+  }
   if (!block->valid()) {
     LOG_ERR("PTX", "Dropping line: TextBlock arena allocation failed");
     return;

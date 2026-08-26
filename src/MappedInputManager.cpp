@@ -30,20 +30,24 @@ bool MappedInputManager::isNavDirectionSwapped() const {
 
 bool MappedInputManager::mapButton(const Button button, bool (HalGPIO::*fn)(uint8_t) const) const {
   const auto sideLayout = SETTINGS.sideButtonLayout;
+  const uint8_t frontBack = readerMappingMode ? SETTINGS.readerFrontButtonBack : SETTINGS.frontButtonBack;
+  const uint8_t frontConfirm = readerMappingMode ? SETTINGS.readerFrontButtonConfirm : SETTINGS.frontButtonConfirm;
+  const uint8_t frontLeft = readerMappingMode ? SETTINGS.readerFrontButtonLeft : SETTINGS.frontButtonLeft;
+  const uint8_t frontRight = readerMappingMode ? SETTINGS.readerFrontButtonRight : SETTINGS.frontButtonRight;
 
   switch (button) {
     case Button::Back:
       // Logical Back maps to user-configured front button.
-      return (gpio.*fn)(SETTINGS.frontButtonBack);
+      return (gpio.*fn)(frontBack);
     case Button::Confirm:
       // Logical Confirm maps to user-configured front button.
-      return (gpio.*fn)(SETTINGS.frontButtonConfirm);
+      return (gpio.*fn)(frontConfirm);
     case Button::Left:
       // Logical Left maps to user-configured front button.
-      return (gpio.*fn)(SETTINGS.frontButtonLeft);
+      return (gpio.*fn)(frontLeft);
     case Button::Right:
       // Logical Right maps to user-configured front button.
-      return (gpio.*fn)(SETTINGS.frontButtonRight);
+      return (gpio.*fn)(frontRight);
     case Button::Up:
       // Side buttons remain fixed for Up/Down.
       return (gpio.*fn)(HalGPIO::BTN_UP);
@@ -388,18 +392,22 @@ MappedInputManager::Labels MappedInputManager::mapLabels(const char* back, const
   const char* rightLabel = swapLabels ? previous : next;
 
   // Build the label order based on the configured hardware mapping.
+  const uint8_t frontBack = readerMappingMode ? SETTINGS.readerFrontButtonBack : SETTINGS.frontButtonBack;
+  const uint8_t frontConfirm = readerMappingMode ? SETTINGS.readerFrontButtonConfirm : SETTINGS.frontButtonConfirm;
+  const uint8_t frontLeft = readerMappingMode ? SETTINGS.readerFrontButtonLeft : SETTINGS.frontButtonLeft;
+  const uint8_t frontRight = readerMappingMode ? SETTINGS.readerFrontButtonRight : SETTINGS.frontButtonRight;
   auto labelForHardware = [&](uint8_t hw) -> const char* {
     // Compare against configured logical roles and return the matching label.
-    if (hw == SETTINGS.frontButtonBack) {
+    if (hw == frontBack) {
       return back;
     }
-    if (hw == SETTINGS.frontButtonConfirm) {
+    if (hw == frontConfirm) {
       return confirm;
     }
-    if (hw == SETTINGS.frontButtonLeft) {
+    if (hw == frontLeft) {
       return leftLabel;
     }
-    if (hw == SETTINGS.frontButtonRight) {
+    if (hw == frontRight) {
       return rightLabel;
     }
     return "";

@@ -18,10 +18,26 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LIGHT = 1,
     CUSTOM = 2,
     COVER = 3,
+    // Legacy persisted value; hidden from the sleep-mode selector.
     COVER_CUSTOM = 4,
     BLANK = 5,
     QUICK_RESUME = 6,
+    // Keep new sleep modes at the end: these values are persisted in settings.
+    OVERLAY = 7,
+    // Recent/current book cover with a transparent page overlay above it.
+    COVER_OVERLAY = 8,
+    READING_STATS_SLEEP = 9,
+    MINIMAL_STATS = 10,
+    CLIPPING_COVER = 11,
+    TODO_LIST = 12,
     SLEEP_SCREEN_MODE_COUNT
+  };
+  enum TODO_SLEEP_MODE {
+    TODO_UNCHECKED = 0,
+    TODO_COMPLETED = 1,
+    TODO_RANDOM = 2,
+    TODO_ALL = 3,
+    TODO_SLEEP_MODE_COUNT
   };
   enum SLEEP_SCREEN_COVER_MODE { FIT = 0, CROP = 1, SLEEP_SCREEN_COVER_MODE_COUNT };
   enum SLEEP_SCREEN_COVER_FILTER {
@@ -91,7 +107,24 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   static constexpr uint8_t BUILTIN_FONT_COUNT = FONT_FAMILY_COUNT;
   // Font size options
   enum FONT_SIZE { SMALL = 0, MEDIUM = 1, LARGE = 2, EXTRA_LARGE = 3, FONT_SIZE_COUNT };
+  // Dictionary typography: the family can follow the reader (including an SD
+  // font), while the dictionary point size remains independently selectable.
+  enum DICTIONARY_FONT_FAMILY {
+    DICT_USE_READER = 0,
+    DICT_NOTOSERIF = 1,
+    DICT_NOTOSANS = 2,
+    DICT_FONT_FAMILY_COUNT
+  };
   enum LINE_COMPRESSION { TIGHT = 0, NORMAL = 1, WIDE = 2, LINE_COMPRESSION_COUNT };
+  // Saved clipping highlight background in light reader mode. Dark mode keeps
+  // its existing white highlight automatically for reliable contrast.
+  enum HIGHLIGHT_COLOR {
+    HIGHLIGHT_BLACK = 0,
+    HIGHLIGHT_DARK_GRAY = 1,
+    HIGHLIGHT_LIGHT_GRAY = 2,
+    HIGHLIGHT_WHITE = 3,
+    HIGHLIGHT_COLOR_COUNT
+  };
   enum PARAGRAPH_ALIGNMENT {
     JUSTIFIED = 0,
     LEFT_ALIGN = 1,
@@ -122,7 +155,17 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   };
 
   // Short power button press actions
-  enum SHORT_PWRBTN { IGNORE = 0, SLEEP = 1, PAGE_TURN = 2, FORCE_REFRESH = 3, FOOTNOTES = 4, SHORT_PWRBTN_COUNT };
+  // Keep new actions appended: these values are persisted in settings.json.
+  enum SHORT_PWRBTN {
+    IGNORE = 0,
+    SLEEP = 1,
+    PAGE_TURN = 2,
+    FORCE_REFRESH = 3,
+    FOOTNOTES = 4,
+    BOOKMARK = 5,
+    DARK_MODE = 6,
+    SHORT_PWRBTN_COUNT
+  };
 
   // Long-press Confirm action while reading an EPUB. The setting cycles through these values.
   // Persisted in settings.json by index: any new function (e.g. dictionary, bookmark) MUST use a
@@ -133,7 +176,26 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LP_MENU_DISABLED = 1,
     LP_MENU_BOOKMARK = 2,
     LP_MENU_DICTIONARY = 3,
+    LP_MENU_DARK_MODE = 4,
+    LP_MENU_READER_OPTIONS = 5,
+    LP_MENU_SLEEP = 6,
+    LP_MENU_READING_STATS = 7,
+    LP_MENU_SCREENSHOT = 8,
     LONG_PRESS_MENU_FUNCTION_COUNT
+  };
+
+  // Long-press power actions. Keep values append-only for settings.json compatibility.
+  enum LONG_PWRBTN {
+    LP_PWR_SLEEP = 0,
+    LP_PWR_READER_OPTIONS = 1,
+    LP_PWR_READING_STATS = 2,
+    LP_PWR_SCREENSHOT = 3,
+    LP_PWR_IGNORE = 4,
+    LP_PWR_BOOKMARK = 5,
+    LP_PWR_DICTIONARY = 6,
+    LP_PWR_DARK_MODE = 7,
+    LP_PWR_KOSYNC = 8,
+    LONG_PWRBTN_COUNT
   };
 
   // Hide battery percentage
@@ -144,7 +206,18 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     OFF = 0,
     CHAPTER_SKIP = 1,
     ORIENTATION_CHANGE = 2,
+    CHANGE_FONT_SIZE = 3,
     LONG_PRESS_BUTTON_BEHAVIOR_COUNT
+  };
+
+  // Side-button-specific long-press action. The legacy longPressButtonBehavior
+  // remains available for compatibility and for front-button holds.
+  enum SIDE_LONG_PRESS_ACTION {
+    SIDE_LONG_OFF = 0,
+    SIDE_LONG_CHAPTER_SKIP = 1,
+    SIDE_LONG_FONT_SIZE = 2,
+    SIDE_LONG_ORIENTATION = 3,
+    SIDE_LONG_PRESS_ACTION_COUNT
   };
 
   // UI Theme
@@ -169,6 +242,10 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t sleepScreenCoverMode = FIT;
   // Sleep screen cover filter
   uint8_t sleepScreenCoverFilter = NO_FILTER;
+  // New installations show the complete list so checked tasks remain visible.
+  // Existing saved values remain untouched and can still select Unchecked,
+  // Completed, or Random explicitly.
+  uint8_t todoSleepMode = TODO_ALL;
   // Status bar settings
   uint8_t statusBarChapterPageCount = 1;
   uint8_t statusBarBookProgressPercentage = 1;
@@ -188,6 +265,16 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Set once an NTP sync succeeds. Used to skip re-syncing on every WiFi connect.
   // Resetting to 0 (e.g. via the web UI) forces a re-sync on next WiFi connect.
   uint8_t clockHasBeenSynced = 0;
+  // Automatic one-shot NTP sync when Wi-Fi is connected. The RTC itself keeps
+  // running while this is disabled, so turning this off avoids Wi-Fi work
+  // without breaking reading dates/statistics.
+  uint8_t clockSyncEnabled = 1;
+  // Automatic once-per-day weather refresh when Wi-Fi is connected. Manual
+  // Sync Clock & Weather remains available even when this automatic toggle is off.
+  uint8_t weatherSyncEnabled = 1;
+  // When waking from a normal or quick-resume sleep screen, choose whether to
+  // reopen the last reader or show the bookshelf.
+  uint8_t resumeReaderOnWake = 1;
   // Text rendering settings
   uint8_t extraParagraphSpacing = 1;
   uint8_t textAntiAliasing = 1;
@@ -206,6 +293,12 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t frontButtonConfirm = FRONT_HW_CONFIRM;
   uint8_t frontButtonLeft = FRONT_HW_LEFT;
   uint8_t frontButtonRight = FRONT_HW_RIGHT;
+  // Optional reader-only front-button mapping. Home/settings keep the global
+  // mapping above; reader activities select these values while open.
+  uint8_t readerFrontButtonBack = FRONT_HW_BACK;
+  uint8_t readerFrontButtonConfirm = FRONT_HW_CONFIRM;
+  uint8_t readerFrontButtonLeft = FRONT_HW_LEFT;
+  uint8_t readerFrontButtonRight = FRONT_HW_RIGHT;
   // --- Bluetooth (BLE HID page-turner) ---
   // Master on/off for the BLE HID host. Persisted; auto-restored on boot/wake.
   // Managed by BluetoothSettingsActivity and the in-reader "Toggle Bluetooth" menu item.
@@ -225,8 +318,17 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Reader font settings
   uint8_t fontFamily = NOTOSERIF;
   uint8_t fontSize = MEDIUM;
+  // Legacy three-way value retained for migration from older settings files.
   uint8_t lineSpacing = NORMAL;
+  // Global reader line-height multiplier, expressed as a percentage.
+  // 100% preserves the current default line height for each font family.
+  static constexpr uint8_t LINE_SPACING_MIN_PERCENT = 70;
+  static constexpr uint8_t LINE_SPACING_MAX_PERCENT = 200;
+  static constexpr uint8_t LINE_SPACING_DEFAULT_PERCENT = 100;
+  uint8_t lineSpacingPercent = LINE_SPACING_DEFAULT_PERCENT;
   uint8_t paragraphAlignment = JUSTIFIED;
+  uint8_t dictionaryFontFamily = DICT_USE_READER;
+  uint8_t dictionaryFontSize = MEDIUM;
   // Auto-sleep timeout setting (default 10 minutes). Legacy sleepTimeout enum values are migration-only.
   uint8_t sleepTimeoutMinutes = 10;
   // E-ink refresh frequency (default 15 pages)
@@ -250,19 +352,35 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t hideBatteryPercentage = HIDE_NEVER;
   // Long-press page turn button behavior
   uint8_t longPressButtonBehavior = OFF;
+  uint8_t longPwrBtn = LP_PWR_SLEEP;
+  uint8_t sideLongPressAction = SIDE_LONG_OFF;
   // Long-press Confirm function in EPUB reader (cycles through LONG_PRESS_MENU_FUNCTION values).
   // Defaults to Disabled so shortcut-based bookmark toggling remains opt-in.
   uint8_t longPressMenuFunction = LP_MENU_DISABLED;
   // UI Theme
   uint8_t uiTheme = FOLIO_NOOIR;
+  // UI text scale. Folio Nooir keeps its shelf text and geometry fixed so the
+  // featured book and Recent/Finished/library grid remain stable.
+  uint8_t uiScalePercent = 100;
   // Sunlight fading compensation
   uint8_t fadingFix = 0;
   // Power button return from footnotes (1 = enabled, 0 = disabled)
   uint8_t pwrBtnFootnoteBack = 1;
   // Use book's embedded CSS styles for EPUB rendering (1 = enabled, 0 = disabled)
   uint8_t embeddedStyle = 1;
+  // Reader dark mode: invert the page polarity while preserving four-level
+  // grayscale relationships (1 = dark page, 0 = normal page).
+  uint8_t readerDarkMode = 0;
+  uint8_t highlightColor = HIGHLIGHT_BLACK;
   // Focus Reading - emphasizes the first part of words with bold
   uint8_t focusReadingEnabled = 0;
+  // Force a modest first-line indent for paragraph-like blocks that do not
+  // provide one themselves. This is a layout option and invalidates EPUB
+  // section caches when changed.
+  uint8_t forceParagraphIndents = 0;
+  // Draw small guide dots between words at render time. This intentionally
+  // does not change pagination or section-cache size.
+  uint8_t guideDots = 0;
   // SD card font family name (empty = use built-in fontFamily)
   char sdFontFamilyName[32] = "";
   // Dictionary folder name under /dictionaries (empty = no dictionary)
@@ -300,6 +418,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     return (shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP) ? 10 : 400;
   }
   int getReaderFontId() const;
+  int getDictionaryFontId() const;
 
   // Resolved status-bar composition. Consumers read the spec; only settings
   // editors read the raw fields.

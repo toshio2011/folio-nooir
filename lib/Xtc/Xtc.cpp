@@ -306,6 +306,11 @@ bool Xtc::generateThumbBmp(int height) const {
   int THUMB_TARGET_WIDTH = height * 0.6;
   int THUMB_TARGET_HEIGHT = height;
 
+  if (pageInfo.width == 0 || pageInfo.height == 0) {
+    LOG_DBG("XTC", "Skipping invalid thumbnail source dimensions (%ux%u)", pageInfo.width, pageInfo.height);
+    return false;
+  }
+
   // Calculate scale factor
   float scaleX = static_cast<float>(THUMB_TARGET_WIDTH) / pageInfo.width;
   float scaleY = static_cast<float>(THUMB_TARGET_HEIGHT) / pageInfo.height;
@@ -338,12 +343,31 @@ bool Xtc::generateThumbBmp(int height) const {
   LOG_DBG("XTC", "Generating thumb BMP: %dx%d -> %dx%d (scale: %.3f)", pageInfo.width, pageInfo.height, thumbWidth,
           thumbHeight, scale);
 
-  // Allocate buffer for page data
+  // Allocate buffer for page data. Keep the multiplication bounded before it
+  // happens: XTC dimensions are 16-bit and a malformed file could otherwise
+  // wrap a 32-bit size calculation on the ESP32-C3.
+  constexpr size_t MAX_THUMB_BITMAP_BYTES = 128u * 1024u;
+  const size_t planes = bitDepth == 2 ? 2u : 1u;
+  const size_t maxPixels = (MAX_THUMB_BITMAP_BYTES * 8u) / planes;
+  if (static_cast<size_t>(pageInfo.width) > maxPixels / pageInfo.height) {
+    LOG_DBG("XTC", "Skipping oversized thumbnail source (%ux%u)", pageInfo.width, pageInfo.height);
+    return false;
+  }
+
   size_t bitmapSize;
   if (bitDepth == 2) {
     bitmapSize = ((static_cast<size_t>(pageInfo.width) * pageInfo.height + 7) / 8) * 2;
   } else {
     bitmapSize = ((pageInfo.width + 7) / 8) * pageInfo.height;
+  }
+  // Retrieve All must never allocate an unbounded page buffer for a malformed
+  // or unusually large XTCH image. A normal X3/X4 page is well below this
+  // limit; oversized pages can still be opened later through the reader's
+  // normal streaming path or repaired manually.
+  if (bitmapSize > MAX_THUMB_BITMAP_BYTES) {
+    LOG_DBG("XTC", "Skipping oversized thumbnail source (%ux%u, %lu bytes)", pageInfo.width, pageInfo.height,
+            static_cast<unsigned long>(bitmapSize));
+    return false;
   }
   uint8_t* pageBuffer = static_cast<uint8_t*>(malloc(bitmapSize));
   if (!pageBuffer) {

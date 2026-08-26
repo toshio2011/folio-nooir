@@ -4,6 +4,7 @@
 #include <Preferences.h>
 #include <SPI.h>
 #include <Wire.h>
+#include <XteinkDetect.h>
 #include <esp_sleep.h>
 
 // Global HalGPIO instance
@@ -119,6 +120,11 @@ namespace {
 constexpr char HW_NAMESPACE[] = "cphw";
 constexpr char NVS_KEY_DEV_OVERRIDE[] = "dev_ovr";  // 0=auto, 1=x4, 2=x3
 constexpr char NVS_KEY_DEV_CACHED[] = "dev_det";    // 0=unknown, 1=x4, 2=x3
+// The panel controller is independent from the X3/X4 board fingerprint. Keep
+// its override/cache separate so a failed probe can never change the board
+// choice, and so old X4 users retain the SSD1677 fallback.
+constexpr char NVS_KEY_EPD_OVERRIDE[] = "epd_ovr";  // 0=auto, 1=primary, 2=UC8279
+constexpr char NVS_KEY_EPD_CACHED[] = "epd_det";    // 0=unknown, 1=primary, 2=UC8279
 
 enum class NvsDeviceValue : uint8_t { Unknown = 0, X4 = 1, X3 = 2 };
 
@@ -189,14 +195,63 @@ HalGPIO::DeviceType detectDeviceTypeWithFingerprint() {
   return HalGPIO::DeviceType::X4;
 }
 
+// Newer X3 production runs use a UC8279d controller with the same glass and
+// pinout as the original UC8253. Probe it before SPI.begin() claims the pins;
+// an inconclusive probe deliberately keeps the original UC8253 path.
+bool detectX3DisplayIsUc8279() {
+  const NvsDeviceValue overrideValue = readNvsDeviceValue(NVS_KEY_EPD_OVERRIDE, NvsDeviceValue::Unknown);
+  if (overrideValue != NvsDeviceValue::Unknown) {
+    LOG_INF("HW", "EPD controller override active: %s",
+            overrideValue == NvsDeviceValue::X3 ? "UC8279" : "UC8253");
+    return overrideValue == NvsDeviceValue::X3;
+  }
+
+  const NvsDeviceValue cachedValue = readNvsDeviceValue(NVS_KEY_EPD_CACHED, NvsDeviceValue::Unknown);
+  if (cachedValue != NvsDeviceValue::Unknown) {
+    LOG_INF("HW", "Using cached EPD controller: %s",
+            cachedValue == NvsDeviceValue::X3 ? "UC8279" : "UC8253");
+    return cachedValue == NvsDeviceValue::X3;
+  }
+
+  uint8_t ver[5] = {0};
+  uint8_t flg = 0;
+  const freeink::X3DisplayVerdict verdict = freeink::detectX3DisplayController(ver, &flg);
+  LOG_INF("HW", "EPD probe: ver=%02X %02X %02X %02X %02X flg=%02X verdict=%u", ver[0], ver[1], ver[2], ver[3],
+          ver[4], flg, static_cast<unsigned>(verdict));
+  if (verdict == freeink::X3DisplayVerdict::Uc8279Confirmed) {
+    writeNvsDeviceValue(NVS_KEY_EPD_CACHED, NvsDeviceValue::X3);
+    return true;
+  }
+  if (verdict == freeink::X3DisplayVerdict::Uc8253Assumed) {
+    writeNvsDeviceValue(NVS_KEY_EPD_CACHED, NvsDeviceValue::X4);
+  }
+  // Inconclusive: use the shipping controller but retry on the next boot.
+  return false;
+}
+
 }  // namespace
 
 void HalGPIO::begin() {
 #if FREEINK_MCU_C3
-  SPI.begin(EPD_SCLK, SPI_MISO, EPD_MOSI, EPD_CS);
-
   _deviceType = detectDeviceTypeWithFingerprint();
-  BoardConfig::selectDevice(deviceIsX3() ? BoardConfig::Board::XteinkX3 : BoardConfig::Board::XteinkX4);
+  // The display-controller probe bit-bangs the EPD pins, so it must happen
+  // before SPI.begin() attaches them to the SPI matrix.
+  const bool x3IsUc8279 = deviceIsX3() && detectX3DisplayIsUc8279();
+  BoardConfig::selectDevice(!deviceIsX3() ? BoardConfig::Board::XteinkX4
+                            : x3IsUc8279  ? BoardConfig::Board::XteinkX3Uc8279
+                                          : BoardConfig::Board::XteinkX3);
+
+  // Keep the original X4/SSD1677 path by default. The X3 compatibility work
+  // added a shared X4 controller probe, but older X4 units are known-good with
+  // SSD1677 and can become slower or less crisp if a marginal bus read
+  // promotes them to an unneeded UltraChip waveform. Newer X4 batches can
+  // opt in explicitly with -DFREEINK_ENABLE_X4_CONTROLLER_PROBE=1 after their
+  // panel has been validated.
+#if defined(FREEINK_ENABLE_X4_CONTROLLER_PROBE) && FREEINK_ENABLE_X4_CONTROLLER_PROBE
+  if (deviceIsX4()) freeink::applyXteinkDisplayController();
+#endif
+
+  SPI.begin(EPD_SCLK, SPI_MISO, EPD_MOSI, EPD_CS);
 
   if (deviceIsX4()) {
     pinMode(BAT_GPIO0, INPUT);
@@ -257,6 +312,7 @@ void HalGPIO::setSharedConfirmPowerShortPressEmitsPower(const bool enabled) {
 
 bool HalGPIO::isXteinkDevice() const {
   return BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX3 ||
+         BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX3Uc8279 ||
          BoardConfig::ACTIVE.board == BoardConfig::Board::XteinkX4;
 }
 

@@ -22,9 +22,21 @@ constexpr const char* DICT_TMP_FILE = "/.crosspoint/dict.tmp";
 constexpr uint32_t QIDX_MAGIC = 0x58444951;  // "QIDX" little-endian
 constexpr uint32_t QIDX_VERSION = 1;
 constexpr size_t QIDX_HEADER_BYTES = 5 * sizeof(uint32_t);
+constexpr uint32_t QIDX_RESUME_MAGIC = 0x31535251;  // "QRS1" little-endian
+constexpr uint32_t QIDX_RESUME_VERSION = 1;
+constexpr size_t QIDX_RESUME_WORDS = 8;
 
 struct QidxHeader {
   uint32_t sampleCount = 0;
+  uint32_t idxFileSize = 0;
+  bool valid = false;
+};
+
+struct QidxResumeState {
+  uint32_t scanPos = 0;
+  uint32_t sampleCount = 0;
+  uint32_t entryCount = 0;
+  uint32_t suffixLeft = 0;
   uint32_t idxFileSize = 0;
   bool valid = false;
 };
@@ -38,6 +50,39 @@ QidxHeader readQidxHeader(HalFile& qidx, uint32_t sampleInterval) {
   header.idxFileSize = raw[4];
   header.valid = true;
   return header;
+}
+
+QidxResumeState readResumeState(HalFile& state, uint32_t sampleInterval) {
+  QidxResumeState result;
+  uint32_t raw[QIDX_RESUME_WORDS];
+  if (!state.seekSet(0) || state.read(raw, sizeof(raw)) != static_cast<int>(sizeof(raw))) return result;
+  if (raw[0] != QIDX_RESUME_MAGIC || raw[1] != QIDX_RESUME_VERSION || raw[2] != sampleInterval || raw[5] == 0) {
+    return result;
+  }
+  result.scanPos = raw[4];
+  result.sampleCount = raw[5];
+  result.entryCount = raw[6];
+  result.suffixLeft = raw[7];
+  result.idxFileSize = raw[3];
+  result.valid = true;
+  return result;
+}
+
+bool writeResumeState(const std::string& path, uint32_t sampleInterval, const QidxResumeState& state) {
+  HalFile out;
+  if (!Storage.openFileForWrite("DICT", path, out)) return false;
+  const uint32_t raw[QIDX_RESUME_WORDS] = {QIDX_RESUME_MAGIC,
+                                           QIDX_RESUME_VERSION,
+                                           sampleInterval,
+                                           state.idxFileSize,
+                                           state.scanPos,
+                                           state.sampleCount,
+                                           state.entryCount,
+                                           state.suffixLeft};
+  const bool ok = out.write(raw, sizeof(raw)) == sizeof(raw);
+  out.flush();
+  out.close();
+  return ok;
 }
 
 bool readSampleOffset(HalFile& qidx, uint32_t sampleIndex, uint32_t* out) {
@@ -110,7 +155,27 @@ bool Dictionary::needsIndex() {
   return !header.valid || header.idxFileSize != idxSize;
 }
 
-bool Dictionary::buildIndex(void (*yieldFn)(void*), void* ctx) {
+bool Dictionary::hasIndexResume() {
+  if (!isOpen()) return false;
+
+  HalFile idx;
+  if (!Storage.openFileForRead("DICT", basePath + ".idx", idx)) return false;
+  const uint32_t idxSize = static_cast<uint32_t>(idx.fileSize());
+  const std::string statePath = basePath + ".qidx.state";
+  const std::string partPath = basePath + ".qidx.part";
+  HalFile stateFile;
+  HalFile partFile;
+  if (!Storage.openFileForRead("DICT", statePath, stateFile) ||
+      !Storage.openFileForRead("DICT", partPath, partFile)) {
+    return false;
+  }
+  const QidxResumeState state = readResumeState(stateFile, SAMPLE_INTERVAL);
+  const size_t expectedPartSize = QIDX_HEADER_BYTES + static_cast<size_t>(state.sampleCount) * sizeof(uint32_t);
+  return state.valid && state.idxFileSize == idxSize && state.scanPos <= idxSize && state.sampleCount > 0 &&
+         partFile.fileSize() >= expectedPartSize;
+}
+
+bool Dictionary::buildIndex(void (*yieldFn)(void*), void* ctx, const IndexProgressFn progressFn) {
   if (!isOpen()) return false;
 
   HalFile idx;
@@ -124,28 +189,69 @@ bool Dictionary::buildIndex(void (*yieldFn)(void*), void* ctx) {
     return false;
   }
 
-  // Stream each sample offset straight to the sidecar instead of accumulating
-  // them in RAM: a large .idx would otherwise cost tens of KB of vector heap,
-  // and vector growth aborts on OOM under -fno-exceptions. The header slot is
-  // zero-filled until the scan succeeds, so an interrupted build leaves a file
-  // readQidxHeader rejects (magic mismatch) and needsIndex() triggers a rebuild.
   const std::string qidxPath = basePath + ".qidx";
+  const std::string partPath = basePath + ".qidx.part";
+  const std::string statePath = basePath + ".qidx.state";
+  const bool resumable = progressFn != nullptr;
   HalFile out;
-  if (!Storage.openFileForWrite("DICT", qidxPath, out)) return false;
-  const auto writeU32 = [&out](uint32_t v) { return out.write(&v, sizeof(v)) == static_cast<int>(sizeof(v)); };
-  const uint32_t placeholder[5] = {};
-  bool ok = out.write(placeholder, sizeof(placeholder)) == sizeof(placeholder);
   uint32_t sampleCount = 0;
-  if (ok) {
-    ok = writeU32(0);  // entry 0 always starts at byte 0
-    sampleCount = 1;
-  }
-
-  const unsigned long startMs = millis();
   uint32_t entryCount = 0;
   uint32_t pos = 0;
-  uint32_t suffixLeft = 0;  // 0 while scanning a headword, else suffix bytes remaining
+  uint32_t suffixLeft = 0;
+  bool resumed = false;
+
+  if (resumable && Storage.exists(partPath.c_str()) && Storage.exists(statePath.c_str())) {
+    HalFile stateFile;
+    HalFile partFile = Storage.open(partPath.c_str(), O_RDWR);
+    if (Storage.openFileForRead("DICT", statePath, stateFile) && partFile) {
+      const QidxResumeState state = readResumeState(stateFile, SAMPLE_INTERVAL);
+      const size_t expectedPartSize = QIDX_HEADER_BYTES + static_cast<size_t>(state.sampleCount) * sizeof(uint32_t);
+      if (state.valid && state.idxFileSize == idxSize && state.scanPos <= idxSize && state.sampleCount > 0 &&
+          partFile.fileSize() >= expectedPartSize && idx.seekSet(state.scanPos) &&
+          partFile.seekSet(expectedPartSize)) {
+        out = std::move(partFile);
+        sampleCount = state.sampleCount;
+        entryCount = state.entryCount;
+        pos = state.scanPos;
+        suffixLeft = state.suffixLeft;
+        resumed = true;
+      }
+    }
+  }
+
+  if (!resumed) {
+    if (resumable) {
+      Storage.remove(partPath.c_str());
+      Storage.remove(statePath.c_str());
+      out = Storage.open(partPath.c_str(), O_WRITE | O_CREAT | O_TRUNC);
+    } else {
+      if (!Storage.openFileForWrite("DICT", qidxPath, out)) return false;
+    }
+    if (!out) return false;
+  }
+
+  const auto writeU32 = [&out](uint32_t v) { return out.write(&v, sizeof(v)) == static_cast<int>(sizeof(v)); };
+  bool ok = true;
+  if (!resumed) {
+    const uint32_t placeholder[5] = {};
+    ok = out.write(placeholder, sizeof(placeholder)) == sizeof(placeholder);
+    if (ok) {
+      ok = writeU32(0);  // entry 0 always starts at byte 0
+      sampleCount = 1;
+    }
+  }
+
+  const auto checkpoint = [&]() {
+    if (!resumable) return true;
+    const QidxResumeState state{pos, sampleCount, entryCount, suffixLeft, idxSize, true};
+    if (!writeResumeState(statePath, SAMPLE_INTERVAL, state)) return false;
+    return out.seekSet(QIDX_HEADER_BYTES + static_cast<size_t>(sampleCount) * sizeof(uint32_t));
+  };
+
+  const unsigned long startMs = millis();
+  // 0 while scanning a headword, else suffix bytes remaining
   uint32_t sinceYield = 0;
+  bool cancelled = false;
   while (ok && pos < idxSize) {
     const int n = idx.read(buf.get(), CHUNK_BYTES);
     if (n <= 0) {
@@ -170,18 +276,53 @@ bool Dictionary::buildIndex(void (*yieldFn)(void*), void* ctx) {
     if (yieldFn && sinceYield >= 64 * 1024) {
       sinceYield = 0;
       yieldFn(ctx);
+      if (!checkpoint()) {
+        ok = false;
+        break;
+      }
+      if (progressFn && !progressFn(ctx, pos, idxSize)) {
+        cancelled = true;
+        checkpoint();
+        break;
+      }
     }
   }
 
-  if (ok) {
-    // Backpatch the now-valid header over the placeholder.
-    const uint32_t header[5] = {QIDX_MAGIC, QIDX_VERSION, SAMPLE_INTERVAL, sampleCount, idxSize};
-    ok = out.seekSet(0) && out.write(header, sizeof(header)) == sizeof(header);
+  // A progress callback returning false pauses a resumable build.  Keep the
+  // partial sidecar and resume state; do not finalize it as a complete index.
+  if (ok && !cancelled) {
+    if (resumable) {
+      // Convert the resumable part into the normal qidx format before the
+      // atomic rename. The offsets already use the standard 20-byte header.
+      const uint32_t header[5] = {QIDX_MAGIC, QIDX_VERSION, SAMPLE_INTERVAL, sampleCount, idxSize};
+      ok = out.seekSet(0) && out.write(header, sizeof(header)) == sizeof(header);
+      out.flush();
+      out.close();
+      if (ok) {
+        Storage.remove(qidxPath.c_str());
+        ok = Storage.rename(partPath.c_str(), qidxPath.c_str());
+      }
+      if (ok) Storage.remove(statePath.c_str());
+    } else {
+      // Backpatch the now-valid header over the placeholder.
+      const uint32_t header[5] = {QIDX_MAGIC, QIDX_VERSION, SAMPLE_INTERVAL, sampleCount, idxSize};
+      ok = out.seekSet(0) && out.write(header, sizeof(header)) == sizeof(header);
+    }
   }
-  if (!ok) {
-    LOG_ERR("DICT", "Index build failed, removing %s", qidxPath.c_str());
+  if (cancelled || !ok) {
+    if (resumable && cancelled) {
+      LOG_INF("DICT", "Index build paused at %lu/%lu bytes", static_cast<unsigned long>(pos),
+              static_cast<unsigned long>(idxSize));
+    } else {
+      LOG_ERR("DICT", "Index build failed, removing %s", resumable ? partPath.c_str() : qidxPath.c_str());
+    }
     out.close();  // close before remove of the same path
-    Storage.remove(qidxPath.c_str());
+    if (resumable && !cancelled) {
+      Storage.remove(partPath.c_str());
+      Storage.remove(statePath.c_str());
+    } else if (!resumable) {
+      Storage.remove(qidxPath.c_str());
+    }
     return false;
   }
 

@@ -726,7 +726,7 @@ void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
   }
 }
 
-Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) const {
+Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message, const bool lightBackground) const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int marginX = metrics.popupMarginX;
   const int marginY = metrics.popupMarginY;
@@ -734,8 +734,23 @@ Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) cons
   const EpdFontFamily::Style popupFontFamily = metrics.popupTextBold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
   // Scale y position proportionally to screen height
   const int y = static_cast<int>(renderer.getScreenHeight() * metrics.popupTopOffsetRatio);
-  const int textWidth = renderer.getTextWidth(UI_12_FONT_ID, message, popupFontFamily);
-  const int textHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  std::vector<std::string> lines;
+  std::string line;
+  for (const char* cursor = message; cursor && *cursor; ++cursor) {
+    if (*cursor == '\n') {
+      lines.push_back(line);
+      line.clear();
+    } else {
+      line.push_back(*cursor);
+    }
+  }
+  lines.push_back(line);
+  if (lines.empty()) lines.emplace_back();
+  int textWidth = 0;
+  for (const auto& textLine : lines) {
+    textWidth = std::max(textWidth, renderer.getTextWidth(UI_12_FONT_ID, textLine.c_str(), popupFontFamily));
+  }
+  const int textHeight = renderer.getLineHeight(UI_12_FONT_ID) * static_cast<int>(lines.size());
   const int w = textWidth + marginX * 2;
   const int h = textHeight + marginY * 2;
   const int x = (renderer.getScreenWidth() - w) / 2;
@@ -743,16 +758,28 @@ Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) cons
   const bool useRoundedPopup = metrics.popupCornerRadius > 0;
   if (useRoundedPopup) {
     renderer.fillRoundedRect(x - frameThickness, y - frameThickness, w + frameThickness * 2, h + frameThickness * 2,
-                             metrics.popupCornerRadius + frameThickness, Color::White);
-    renderer.fillRoundedRect(x, y, w, h, metrics.popupCornerRadius, Color::Black);
+                             metrics.popupCornerRadius + frameThickness,
+                             lightBackground ? Color::Black : Color::White);
+    renderer.fillRoundedRect(x, y, w, h, metrics.popupCornerRadius,
+                             lightBackground ? Color::LightGray : Color::Black);
   } else {
     renderer.fillRect(x - frameThickness, y - frameThickness, w + frameThickness * 2, h + frameThickness * 2, true);
-    renderer.fillRect(x, y, w, h, false);
+    if (lightBackground) {
+      renderer.fillRectDither(x, y, w, h, Color::LightGray);
+    } else {
+      renderer.fillRect(x, y, w, h, false);
+    }
   }
 
-  const int textX = x + (w - textWidth) / 2;
-  const int textY = y + marginY + metrics.popupTextBaselineOffsetY;
-  renderer.drawText(UI_12_FONT_ID, textX, textY, message, metrics.popupTextInverted, popupFontFamily);
+  const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  for (size_t index = 0; index < lines.size(); ++index) {
+    const std::string& textLine = lines[index];
+    const int lineWidth = renderer.getTextWidth(UI_12_FONT_ID, textLine.c_str(), popupFontFamily);
+    const int textX = x + (w - lineWidth) / 2;
+    const int textY = y + marginY + metrics.popupTextBaselineOffsetY + static_cast<int>(index) * lineHeight;
+    renderer.drawText(UI_12_FONT_ID, textX, textY, textLine.c_str(),
+                      lightBackground ? true : metrics.popupTextInverted, popupFontFamily);
+  }
   renderer.displayBuffer();
   return Rect{x, y, w, h};
 }

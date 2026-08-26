@@ -24,6 +24,11 @@ void PageLine::render(GfxRenderer& renderer, const int fontId, const int xOffset
   block->render(renderer, fontId, xPos + xOffset, yPos + yOffset);
 }
 
+void PageLine::renderWithGuideDots(GfxRenderer& renderer, const int fontId, const int xOffset,
+                                   const int yOffset) const {
+  block->render(renderer, fontId, xPos + xOffset, yPos + yOffset, true);
+}
+
 bool PageLine::serialize(HalFile& file) {
   serialization::writePod(file, xPos);
   serialization::writePod(file, yPos);
@@ -76,7 +81,16 @@ std::unique_ptr<PageImage> PageImage::deserialize(HalFile& file) {
   serialization::readPod(file, yPos);
 
   auto ib = ImageBlock::deserialize(file);
-  return std::unique_ptr<PageImage>(new PageImage(std::move(ib), xPos, yPos));
+  if (!ib) {
+    LOG_ERR("PGE", "Deserialization failed: null ImageBlock");
+    return nullptr;
+  }
+  auto* pageImage = new (std::nothrow) PageImage(std::move(ib), xPos, yPos);
+  if (!pageImage) {
+    LOG_ERR("PGE", "Deserialization failed: could not allocate PageImage");
+    return nullptr;
+  }
+  return std::unique_ptr<PageImage>(pageImage);
 }
 
 void PageHorizontalRule::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset) {
@@ -120,13 +134,32 @@ std::unique_ptr<PageHorizontalRule> PageHorizontalRule::deserialize(HalFile& fil
   return std::unique_ptr<PageHorizontalRule>(rule);
 }
 
-void Page::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset) const {
-  renderFilteredPageElements(elements, renderer, fontId, xOffset, yOffset, [](const PageElement&) { return true; });
+void Page::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset,
+                  const bool guideDots) const {
+  for (const auto& element : elements) {
+    if (guideDots && element->getTag() == TAG_PageLine) {
+      static_cast<const PageLine&>(*element).renderWithGuideDots(renderer, fontId, xOffset, yOffset);
+    } else {
+      element->render(renderer, fontId, xOffset, yOffset);
+    }
+  }
 }
 
 void Page::renderImages(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset) const {
   renderFilteredPageElements(elements, renderer, fontId, xOffset, yOffset,
                              [](const PageElement& element) { return element.getTag() == TAG_PageImage; });
+}
+
+void Page::warmImageCaches(GfxRenderer& renderer, const int xOffset, const int yOffset) const {
+  for (const auto& element : elements) {
+    if (element->getTag() != TAG_PageImage) continue;
+    auto& image = static_cast<PageImage&>(*element);
+    if (image.getImageBlock().hasValidCache()) continue;
+    // This is intentionally a single decode pass.  ImageBlock's cache path
+    // makes subsequent BW/gray passes stream from the completed .pxc instead
+    // of allocating another decoder or re-reading the EPUB entry.
+    image.render(renderer, 0, xOffset, yOffset);
+  }
 }
 
 void Page::blankImages(GfxRenderer& renderer, const int xOffset, const int yOffset) const {
@@ -139,10 +172,12 @@ void Page::blankImages(GfxRenderer& renderer, const int xOffset, const int yOffs
 }
 
 void Page::renderWithImagePlaceholders(GfxRenderer& renderer, const int fontId, const int xOffset,
-                                       const int yOffset) const {
+                                       const int yOffset, const bool guideDots) const {
   for (const auto& element : elements) {
     if (element->getTag() == TAG_PageImage) {
       static_cast<const PageImage&>(*element).renderPlaceholder(renderer, xOffset, yOffset);
+    } else if (guideDots && element->getTag() == TAG_PageLine) {
+      static_cast<const PageLine&>(*element).renderWithGuideDots(renderer, fontId, xOffset, yOffset);
     } else {
       element->render(renderer, fontId, xOffset, yOffset);
     }
@@ -178,7 +213,11 @@ bool Page::serialize(HalFile& file) const {
 }
 
 std::unique_ptr<Page> Page::deserialize(HalFile& file) {
-  auto page = std::unique_ptr<Page>(new Page());
+  auto page = std::unique_ptr<Page>(new (std::nothrow) Page());
+  if (!page) {
+    LOG_ERR("PGE", "Deserialization failed: could not allocate Page");
+    return nullptr;
+  }
 
   uint16_t count;
   serialization::readPod(file, count);

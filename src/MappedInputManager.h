@@ -72,6 +72,11 @@ class MappedInputManager {
   // so portrait UI (home, settings) never swaps while the reader and its menus do.
   [[nodiscard]] bool isNavDirectionSwapped() const;
 
+  // Reader activities can opt into their own front-button mapping while the
+  // home/settings UI continues using the global mapping.
+  void setReaderMappingMode(bool enabled) { readerMappingMode = enabled; }
+  bool isReaderMappingMode() const { return readerMappingMode; }
+
  private:
   HalGPIO& gpio;
   // Logical-to-physical button mapping depends on what the user is actually looking at: when the
@@ -80,6 +85,7 @@ class MappedInputManager {
   // read it here instead of CrossPointSettings.orientation, which is just the persisted reader
   // preference and stays "rotated" even while portrait UI like home/settings is on screen.
   const GfxRenderer& renderer;
+  bool readerMappingMode = false;
 
   bool mapButton(Button button, bool (HalGPIO::*fn)(uint8_t) const) const;
   bool bleEdge(const bool* edges, Button button) const;

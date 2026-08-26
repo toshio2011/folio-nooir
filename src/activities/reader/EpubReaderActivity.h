@@ -6,6 +6,7 @@
 #include <optional>
 
 #include "BookmarkEntry.h"
+#include "ClippingEntry.h"
 #include "EndOfBookOptions.h"
 #include "EpubReaderMenuActivity.h"
 #include "ProgressMapper.h"
@@ -13,6 +14,10 @@
 
 class EpubReaderActivity final : public Activity {
   std::shared_ptr<Epub> epub;
+  // Optional position supplied by the home bookmark list.  It is consumed on
+  // entry after the normal progress cache is loaded, so ordinary reader opens
+  // remain unchanged.
+  std::optional<ProgressChangeResult> initialBookmark;
   std::unique_ptr<Section> section = nullptr;
   int currentSpineIndex = 0;
   int nextPageNumber = 0;
@@ -26,6 +31,7 @@ class EpubReaderActivity final : public Activity {
   unsigned long lastPageTurnTime = 0UL;
   unsigned long pageTurnDuration = 0UL;
   unsigned long readingSessionStartedMs = 0UL;
+  uint32_t sessionPagesTurned = 0;
   // Signals that the next render should reposition within the newly loaded section
   // based on a cross-book percentage jump.
   bool pendingPercentJump = false;
@@ -38,12 +44,17 @@ class EpubReaderActivity final : public Activity {
   uint8_t pageLoadRetryCount = 0;
   static constexpr uint8_t MAX_PAGE_LOAD_RETRIES = 3;
   bool skipNextButtonCheck = false;  // Skip button processing for one frame after subactivity exit
+  // Keep the button release that closes Reader Options from being interpreted
+  // as a Back/Home action by the restored reader.
+  bool readerOptionsReturnGuard = false;
   bool automaticPageTurnActive = false;
   bool showBookmarkMessage = false;
   // "No dictionary set" popup, shown when a lookup is triggered without a configured dictionary.
   bool showDictionaryMessage = false;
   unsigned long dictionaryMessageTime = 0UL;
   bool ignoreNextConfirmRelease = false;
+  bool darkShortcutFired = false;
+  bool longPowerShortcutFired = false;
   bool currentPageBookmarked = false;
   // Idle-time glyph prewarm: after a page settles, scan the LIKELY next page
   // (scan mode draws nothing) and load its missing glyphs from SD during idle,
@@ -54,6 +65,7 @@ class EpubReaderActivity final : public Activity {
   unsigned long lastRenderCompleteMs = 0;
   bool bookmarkRemoved = false;  // true when last toggle removed (controls popup text)
   std::vector<BookmarkEntry> cachedBookmarks;
+  std::vector<ClippingEntry> cachedClippings;
   // Tracks whether this book is currently removed from Recent Books by the
   // removeReadBooksFromRecents feature (set at End-of-Book, cleared if paged back in).
   bool recentsEntryRemoved = false;
@@ -91,6 +103,7 @@ class EpubReaderActivity final : public Activity {
 
   void renderContents(std::unique_ptr<Page> page, int orientedMarginTop, int orientedMarginRight,
                       int orientedMarginBottom, int orientedMarginLeft);
+  void renderSavedHighlights(const Page& page, int fontId, int marginLeft, int marginTop);
   void renderStatusBar() const;
   // Pages laid out per incremental-build pump: on the render path (catching up to the page
   // being shown) and per loop() tick (background build of a large chapter). Kept small so a
@@ -167,6 +180,8 @@ class EpubReaderActivity final : public Activity {
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action);
   // Opens the reader menu for the current position (short-press Confirm)
   void openReaderMenu();
+  void openReaderOptions();
+  void refreshAfterReaderSettings();
   void openDictionaryWordSelect();
   // Returns true if sync acted (launched, or surfaced a save error); false if it was a no-op
   // because no KOReader credentials are stored.
@@ -175,7 +190,9 @@ class EpubReaderActivity final : public Activity {
   void toggleAutoPageTurn(uint8_t selectedPageTurnOption);
   void pageTurn(bool isForwardTurn);
   void loadCachedBookmarks();
+  void loadCachedClippings();
   void addBookmark();
+  void openClipSelection();
   void updateBookmarkFlag();
 
   // Footnote navigation
@@ -185,6 +202,11 @@ class EpubReaderActivity final : public Activity {
  public:
   explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub)
       : Activity("EpubReader", renderer, mappedInput), epub(std::move(epub)) {}
+  EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub,
+                     std::optional<ProgressChangeResult> initialBookmark)
+      : Activity("EpubReader", renderer, mappedInput),
+        epub(std::move(epub)),
+        initialBookmark(std::move(initialBookmark)) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;

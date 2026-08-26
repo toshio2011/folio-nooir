@@ -47,6 +47,10 @@ struct ProgressChangeResult {
   std::string xpath;
   float percentage = 0.0f;
   bool hasSavedProgress = false;
+  // Set when a bookmark/reading-position picker is opened from outside the
+  // current reader.  The home shelf uses this to open the source book before
+  // applying the saved position.
+  std::string bookPath;
 };
 
 enum class NetworkMode;

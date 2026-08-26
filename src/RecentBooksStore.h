@@ -17,6 +17,7 @@ struct RecentBook {
   uint32_t dailyReadingSeconds = 0;
   uint32_t dailyReadingDateKey = 0;
   uint16_t readingSessions = 0;
+  uint32_t pagesTurned = 0;
 
   bool operator==(const RecentBook& other) const { return path == other.path; }
 };
@@ -42,11 +43,19 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
                const std::string& coverBmpPath, const std::string& synopsis = {});
 
   void updateBook(const std::string& path, const std::string& title, const std::string& author,
-                  const std::string& coverBmpPath);
+                  const std::string& coverBmpPath, const std::string& synopsis = {});
+  // Replace all presentation metadata, including an intentionally empty
+  // synopsis. Used by Refresh Book Cache after rereading the source file.
+  void refreshBookMetadata(const std::string& path, const std::string& title, const std::string& author,
+                           const std::string& coverBmpPath, const std::string& synopsis);
+  bool updateMetadata(const std::string& path, const std::string& title, const std::string& author,
+                      const std::string& synopsis);
+  bool resetReading(const std::string& path);
 
   // Persist one completed reader session. This is called only when leaving a
   // book, keeping SD writes away from the page-turn path.
-  void recordReading(const std::string& path, uint8_t progressPercent, uint32_t elapsedSeconds);
+  void recordReading(const std::string& path, uint8_t progressPercent, uint32_t elapsedSeconds,
+                     uint32_t pagesTurned = 0);
 
   // Remove the entry whose path matches (used when a book is removed from recents or finished/read).
   // Returns true if an entry was found and removed (no-op + false otherwise).
