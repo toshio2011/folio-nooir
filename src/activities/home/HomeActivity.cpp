@@ -129,15 +129,14 @@ void HomeActivity::showMenu() {
   const int clockWeatherIndex = settingsIndex + 1;
   const int todoListIndex = settingsIndex + 2;
   const int readingStatsIndex = settingsIndex + 3;
-  const int readingCalendarIndex = settingsIndex + 4;
-  const int bookmarksIndex = settingsIndex + 5;
-  const int clippingsIndex = settingsIndex + 6;
-  options.insert(options.end(), {tr(STR_CLOCK_WEATHER), tr(STR_TODO_LIST), tr(STR_LONG_PWR_READING_STATS),
-                                 tr(STR_READING_STATS), "Bookmarks (all books)", "Clippings (all books)"});
+  const int bookmarksIndex = settingsIndex + 4;
+  const int clippingsIndex = settingsIndex + 5;
+  options.insert(options.end(), {tr(STR_CLOCK_WEATHER), tr(STR_TODO_LIST), tr(STR_READING_STATS),
+                                 "Bookmarks (all books)", "Clippings (all books)"});
 
   menuPopup.show(StrId::STR_MENU, options, 0,
                  [this, fileTransferIndex, settingsIndex, clockWeatherIndex, todoListIndex, readingStatsIndex,
-                  readingCalendarIndex, bookmarksIndex, clippingsIndex](const int index) {
+                  bookmarksIndex, clippingsIndex](const int index) {
     menuPopup.dismiss();
     if (index == 0) {
       activityManager.goToFileBrowser();
@@ -155,8 +154,6 @@ void HomeActivity::showMenu() {
       startActivityForResult(std::make_unique<ToDoListActivity>(renderer, mappedInput), nullptr);
     } else if (index == readingStatsIndex) {
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), nullptr);
-    } else if (index == readingCalendarIndex) {
-      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, "", true), nullptr);
     } else if (index == bookmarksIndex) {
       startActivityForResult(
           std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, std::string{}, true),

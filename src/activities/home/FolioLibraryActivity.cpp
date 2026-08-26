@@ -847,7 +847,7 @@ void FolioLibraryActivity::cancelRetrieveAllBooks() {
 
 void FolioLibraryActivity::showMenu() {
   std::vector<std::string> options = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), tr(STR_CLOCK_WEATHER),
-                                      tr(STR_TODO_LIST), tr(STR_LONG_PWR_READING_STATS), tr(STR_READING_STATS),
+                                      tr(STR_TODO_LIST), tr(STR_READING_STATS),
                                       "Retrieve All Book Details", "Bookmarks (all books)", "Clippings (all books)",
                                       searchQuery.empty() ? std::string(tr(STR_SEARCH))
                                                           : std::string(tr(STR_CLEAR_BUTTON)) + " " + tr(STR_SEARCH),
@@ -867,10 +867,8 @@ void FolioLibraryActivity::showMenu() {
     } else if (index == 4) {
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), nullptr);
     } else if (index == 5) {
-      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, "", true), nullptr);
-    } else if (index == 6) {
       startRetrieveAllBooks();
-    } else if (index == 7) {
+    } else if (index == 6) {
       startActivityForResult(
           std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, std::string{}, true),
           [this](const ActivityResult& result) {
@@ -880,18 +878,18 @@ void FolioLibraryActivity::showMenu() {
               activityManager.goToReaderAtBookmark(bookmark->bookPath, *bookmark);
             }
           });
-    } else if (index == 8) {
+    } else if (index == 7) {
       startActivityForResult(std::make_unique<EpubReaderClippingListActivity>(
                                 renderer, mappedInput, std::string{}, "All books", true),
                             nullptr);
-    } else if (index == 9) {
+    } else if (index == 8) {
       if (searchQuery.empty()) {
         launchSearch(false);
       } else {
         clearSearch();
         requestUpdate(true);
       }
-    } else if (index == 10) {
+    } else if (index == 9) {
       launchSearch(true);
     }
   });

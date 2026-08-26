@@ -710,7 +710,7 @@ void RecentBooksActivity::prepareNextCarouselCover() {
 
 void RecentBooksActivity::showMenu() {
   std::vector<std::string> options = {tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE), tr(STR_CLOCK_WEATHER),
-                                      tr(STR_TODO_LIST), tr(STR_LONG_PWR_READING_STATS), tr(STR_READING_STATS),
+                                      tr(STR_TODO_LIST), tr(STR_READING_STATS),
                                       "Bookmarks (all books)", "Clippings (all books)"};
   const bool carouselTheme = usesCarouselLayout();
   const int prepareCarouselCoversIndex = static_cast<int>(options.size());
@@ -730,8 +730,6 @@ void RecentBooksActivity::showMenu() {
     } else if (index == 4) {
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput), nullptr);
     } else if (index == 5) {
-      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, "", true), nullptr);
-    } else if (index == 6) {
       startActivityForResult(
           std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, std::string{}, true),
           [this](const ActivityResult& result) {
@@ -741,7 +739,7 @@ void RecentBooksActivity::showMenu() {
               activityManager.goToReaderAtBookmark(bookmark->bookPath, *bookmark);
             }
           });
-    } else if (index == 7) {
+    } else if (index == 6) {
       startActivityForResult(std::make_unique<EpubReaderClippingListActivity>(
                                 renderer, mappedInput, std::string{}, "All books", true),
                             nullptr);
@@ -2012,7 +2010,12 @@ void RecentBooksActivity::render(RenderLock&&) {
 
     const RecentBook& selected = recentBooks[selectedRecentIndex()];
     constexpr int detailPadding = 12;
-    constexpr int detailCoverWidth = 126;
+    // Keep the Featured cover close to the Folio 3-Cover card width.  The
+    // same 10px gap and three-column calculation are used by the 3-Cover
+    // shelf below, so this scales with X3/X4 instead of using an X4 width.
+    constexpr int threeCoverGap = 10;
+    const int threeCoverCardWidth = (pageWidth - threeCoverGap * 4) / 3;
+    const int detailCoverWidth = std::max(1, threeCoverCardWidth);
     const int detailCoverHeight = detailHeight - 20;
     renderer.fillRect(detailPadding * 2 + detailCoverWidth, contentTop + 1,
                       pageWidth - detailPadding * 3 - detailCoverWidth, detailHeight - 2, false);
@@ -2021,7 +2024,11 @@ void RecentBooksActivity::render(RenderLock&&) {
     if (!featuredCoverCached) {
       renderer.fillRect(detailPadding, contentTop + 1, detailCoverWidth, detailHeight - 2, false);
     }
-    drawCover(selected, detailPadding, contentTop + 7, detailCoverWidth, detailCoverHeight, !featuredCoverCached, true);
+    // Use the same 220px source as the Folio shelf cards.  The standalone
+    // Carousel still owns the 360px preference; using it here would make the
+    // same cover look darker after the separate HQ thumbnail is downsampled.
+    drawCover(selected, detailPadding, contentTop + 7, detailCoverWidth, detailCoverHeight, !featuredCoverCached,
+              false);
     lastFeaturedPath = selected.path;
     lastFeaturedCoverPath = selected.coverBmpPath;
     const int detailX = detailPadding * 2 + detailCoverWidth;

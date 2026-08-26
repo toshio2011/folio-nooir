@@ -23,6 +23,11 @@ build
 /.pio-home
 /.logs
 /artifacts
+/.codex-*/
+/.codex-*.log
+/_epub-inspect*/
+/_wsl_carousel_recovery/
+/codex-work-monitor/
 *.local*
 *.cpfont
 lib/EpdFont/scripts/downloaded_fonts/
