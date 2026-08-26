@@ -48,6 +48,111 @@ recommended. See the complete [native simulator guide](docs/simulator.md) for
 WSL/Linux setup, build/run commands, controls, virtual SD-card use, and
 troubleshooting.
 
+## What's New in 1.6.0
+
+The 1.6.0 work adds the following changes on top of the previous release line.
+Older EPUB, CBZ, XTC/XTCH, TXT, dictionary, web, sleep, and CrossPoint features
+remain available as retained functionality; they are not repeated here as new
+1.6.0 features.
+
+### Carousel and Folio shelves
+
+- Added the independent **Carousel** theme as a selectable main theme. It has
+  its own persisted **Carousel layout** setting with **3-Cover Carousel** and
+  **5-Cover Carousel** choices; it does not reuse Folio Nooir's Recent or
+  Finished layout preferences.
+- Folio Nooir Recent and Finished now have independent layout settings with
+  **4 x 2 Grid (Default)**, **3 Covers**, **3-Cover Carousel**, and
+  **5-Cover Carousel** choices. The graphical Folio Library remains its own
+  unchanged presentation path.
+- Both Carousel variants share the same screen-sized `CoverStackGeometry`
+  implementation. They use circular previous/next navigation, far-to-near-to-
+  center opaque draw order, mirrored trapezoidal perspective side covers, and
+  no traditional page indicator.
+- Carousel navigation handles empty and small collections without rendering a
+  duplicate book in one frame: one book is center-only, two books show two
+  unique covers, and three or four books expose only the unique slots available.
+- The selected hero, synopsis, and compact four-field status area are laid out
+  from the active X3/X4 display bounds. Synopsis text can use up to five lines,
+  and completed books remain available to the Carousel Finished presentation.
+- Carousel center covers can use an existing valid, explicitly prepared
+  **360px** thumbnail. If it is unavailable or cannot be rendered, selection
+  falls back immediately to the existing **220px** thumbnail; side covers and
+  Folio shelf cards continue to use 220px sources. Carousel navigation never
+  generates an HQ cover synchronously.
+- Added the explicit **Prepare Carousel Covers** progress flow. Individual
+  cache refresh can refresh an existing 360px file without making ordinary
+  shelf navigation generate one, and invalid/missing HQ files remain safe
+  fallbacks rather than blocking the shelf.
+- Featured-cover rendering now follows the active Folio 3-Cover card geometry
+  at runtime, preserves the cover aspect ratio, and uses the shelf-compatible
+  220px source so the same cover has consistent grayscale treatment in
+  Featured, 3 Covers, and the 4 x 2 grid.
+- Carousel source reuse was tightened without increasing the six-handle cache
+  or caching decoded pixels: a frame protects only the source paths required
+  by that frame from LRU eviction, remembers unavailable HQ probes during the
+  activity session, and safely releases protection after rendering. Shared
+  perspective rendering also uses precomputed maps and a portrait fast path
+  where applicable.
+- Folio shelf snapshots and reusable 3-Cover/grid rendering paths reduce
+  unnecessary cover decoding and redraw work when returning to or navigating
+  within the shelf.
+
+### Reading Statistics
+
+- Added the unified on-device **Reading Statistics** activity with four tabs:
+  **Overview**, **Calendar**, **Books**, and **Achievements**.
+- Persistent daily reading records include reading time, sessions, and pages,
+  with current and longest streak calculations. Daily history is explicitly
+  bounded to **730 days** rather than presented as unlimited lifetime history.
+- The snapshot combines persistent book state and Recent-book data without
+  double-counting the same book, and tracks progress, status, title, author,
+  synopsis, start/finish/last-read dates, reading time, sessions, and pages.
+- **Overview** shows Today, a seven-day chart, current/longest streaks, books
+  started/finished, retained totals, and average-session information.
+- **Calendar** provides bounded month navigation, selected-day details, and
+  monochrome daily intensity, with safe empty-history and unavailable-clock
+  handling.
+- **Books** provides circular book navigation and a book-detail view using
+  only existing cached 220px covers. It does not generate HQ covers, parse
+  metadata, or scan the filesystem while displaying statistics.
+- **Achievements** derives twenty earned/locked goals for sessions, pages,
+  reading hours, finished books, streaks, and active days, with progress bars
+  and X3/X4-safe layout bounds.
+- Added Folio menu integration for the unified Statistics activity while
+  retaining per-book statistics, Reading Summary, bookmark, and clipping entry
+  points.
+
+### Statistics Sleep and cover behavior
+
+- Added **Reading Stats Sleep** with the current book, progress, Today,
+  current streak, and a seven-day context chart.
+- Added **Minimal Stats Sleep** with a centered, larger book-focused cover,
+  title, progress, Today, and current streak.
+- Statistics sleep cover selection prefers an existing valid cached 360px
+  cover and falls back to the cached 220px cover. It never generates or
+  prepares a cover while asleep and preserves aspect-ratio fitting.
+- Legacy full-screen **Cover Sleep**, **Cover + Overlay Sleep**, and
+  **Clipping + Cover Sleep** retain their separate full-screen crop/stretch/fit
+  behavior. They are not forced into the bounded Statistics cover layout.
+
+### Shared integration, compatibility, and translations
+
+- Added the Carousel, Folio layout, HQ preparation, Statistics, sleep, status,
+  and achievement translation keys through the normal translation source path,
+  including the shared `StrId` generation workflow.
+- The Carousel implementation, Folio shelf geometry, Statistics layout bounds,
+  cover/cache paths, and navigation behavior are shared between the native
+  `simulator_x4` and `simulator_x3` environments. The simulator uses the same
+  theme registration, settings persistence, source data, and perspective
+  renderer as hardware; X3 also retains simulated tilt input.
+- Existing hardware-safe handling was preserved for completed books, the
+  graphical Library, legacy sleep modes, cached-cover invalidation, and
+  settings migration when the new layout/statistics preferences are first
+  saved.
+- PDF and FB2 reader support are **not implemented**. The repository contains
+  feasibility documentation only; no PDF or FB2 reader is included in 1.6.0.
+
 ## v1.5.11 changes
 
 This release candidate builds on the released v1.5.10 baseline. The main
