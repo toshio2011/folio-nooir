@@ -26,6 +26,8 @@ history, decisions, and feature inventory.
 - The immediate 1.6.1 focus is EPUB reading quality, especially Arabic/RTL
   support, text shaping, fonts, and layout. No new 1.6.1 EPUB implementation
   has started; detailed EPUB audit and planning come next.
+- The detailed future CBZ/Manga plan is preserved in
+  `docs/CBZ_MANGA_PLAN.md` and is deferred until after the EPUB phase.
 - CBZ/Manga preparation and cache improvements remain a future planned phase,
   deferred until after the EPUB phase. Their detailed architecture and design
   must still be planned and audited separately before implementation.

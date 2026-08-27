@@ -24,7 +24,8 @@ text shaping, fonts, and layout. No new 1.6.1 EPUB implementation has started;
 detailed EPUB audit and planning come next. CBZ/Manga preparation and cache work
 remain a future planned phase, deferred until after the EPUB phase; its detailed
 architecture/design will still be planned and audited separately before
-implementation.
+implementation. The complete deferred plan is preserved in
+`docs/CBZ_MANGA_PLAN.md`.
 
 FreeInk is a real Nooir dependency through the `freeink-sdk` submodule. The
 1.5.10 baseline uses the Nooir-specific FreeInk commit
