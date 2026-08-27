@@ -10,10 +10,18 @@ Xteink X3/X4 devices. The primary goals are:
 - direct CBZ reading with safe image/cache handling;
 - conservative memory, SD-I/O, display, and power behavior on physical X3;
 - feature parity between the native X3/X4 simulators and shared reader logic;
+- a responsive independent Carousel theme and Folio shelf layouts with
+  prepared HQ-cover support;
+- on-device Reading Statistics and Statistics Sleep without adding work to
+  reader/page-turn paths;
 - no regressions in XTC/XTCH, TXT, sleep, web, dictionary, or existing reader
   workflows.
 
-The current development line is the **Folio Nooir 1.6.0 release candidate**.
+The current development version is **Folio Nooir 1.6.1**. The completed
+**1.6.0** work is the known-good baseline for this development cycle. The next
+primary focus is CBZ/Manga improvements; no new 1.6.1 CBZ/Manga implementation
+has started, and detailed CBZ architecture/design will be planned and audited
+separately before implementation.
 
 FreeInk is a real Nooir dependency through the `freeink-sdk` submodule. The
 1.5.10 baseline uses the Nooir-specific FreeInk commit
@@ -24,23 +32,21 @@ fast-path grayscale artifacts seen during Nooir validation.
 
 ## Current repository state
 
-Parent repository:
+Authoritative parent repository:
 
-- Branch: `feat/cbz-persistent-read-ahead`
-- Base commit: `114a0f7d5a891ee037cbe15d75308622d1cfcc31`
-- The branch contains uncommitted 1.6.0 source, translation, web, README,
-  and handoff changes; `.gitmodules` and the `freeink-sdk` pointer are staged
-  separately for review.
-- The default PlatformIO environment compiles successfully. Simulator runs,
-  physical flashing, release tagging, and GitHub Release publication remain
-  pending.
-- The latest parent commits include the 1.5.10 version bump, Recent/synopsis
-  correction, dark-mode/sleep ghosting work, KOReader HTTP-success handling,
-  CBZ/EPUB reader work, and README updates.
-
-The repository's GitHub default branch is currently `codex/folio-nooir`, not
-`main`. Its README was updated separately with the current feature inventory
-in remote commit `a6046870`; source changes remain on the development branch.
+- Branch: `codex/folio-nooir`
+- Current commit: `ccddded2`
+- The completed 1.6.0 source, translations, README inventory, and related
+  integration work are committed and pushed on this branch.
+- The 1.6.0 source was integrated by merge `0f1bd556`; `b12f2732` added the
+  dedicated 1.6.0 README summary and `ccddded2` is the latest README-only
+  remote update.
+- The former safety checkpoint `safety/1.6.0-carousel-layouts-hq` at
+  `9c8e9751` is an ancestor of this branch.
+- The normal/default PlatformIO environment has compiled successfully, and
+  Carousel/HQ cover plus Statistics/Sleep behavior has been physically
+  exercised on X4. Simulator validation remains a separate WSL-mirror task.
+- No release tag, GitHub Release, or firmware upload has been created.
 
 Nested `freeink-sdk`:
 
@@ -50,16 +56,12 @@ Nested `freeink-sdk`:
 - `upstream`: `https://github.com/Free-Ink/freeink-sdk.git` (official)
 - Branch `nooir-1.5.10-tjpgd` is pushed to the fork and remote verification
   resolves it to `958720659ea289ae325e83db20049d0ea844800d`.
-- The parent working tree now points `.gitmodules` at the fork and stages the
-  exact `9587206` submodule pointer. No parent commit or push has been made.
+- The parent tree points `.gitmodules` at the user fork and commits the exact
+  tested `9587206` submodule pointer. Do not update it to an untested SDK SHA.
 
-Current parent working-tree state is intentionally not fully clean:
-
-- `.gitmodules` and the `freeink-sdk` pointer are staged for review at the
-  verified fork URL and commit `9587206`.
-- Codex inspection/build scratch paths remain untracked and untouched, such as
-  `.codex-*`, `_epub-inspect*`, `codex-work-monitor/`, logs, probes, and caches.
-- These files must not be staged or deleted as part of normal release work.
+The authoritative source tree is kept separate from the simulator mirror.
+Scratch paths such as `.codex-*`, `_epub-inspect*`, `codex-work-monitor/`, logs,
+probes, caches, binaries, and build output must remain untracked and untouched.
 
 ## Completed functionality
 
@@ -110,6 +112,23 @@ Current parent working-tree state is intentionally not fully clean:
 - Existing shelf snapshot, Recent, Finished, statistics, bookmarks, and
   clipping behavior is preserved.
 
+### Retained readers, annotations, and device workflows
+
+- EPUB remains the primary reflowable reader, with bounded image handling,
+  typography/reflow caches, progress, bookmarks, clipping/highlighting, and
+  KOReader-compatible progress synchronization.
+- XTC/XTCH and TXT/Markdown retain their format-specific reader paths,
+  progress, cover, sleep, and resume behavior.
+- StarDict dictionary lookup remains available from reader settings and text
+  selection, with persistent lookup history and bounded index preparation.
+- Bookmark, clipping, highlight, Reading Summary, and per-book statistics
+  workflows remain available from the reader and book-action surfaces.
+- Wi-Fi setup, browser-based file transfer, Calibre Wireless, WebDAV, OPDS,
+  OTA update support, and the web To-Do and Clock & Weather flows remain part
+  of the supported device workflow.
+- Themes and settings retain independent layout, typography, orientation,
+  refresh, sleep, dictionary, network, and device-configuration persistence.
+
 ### Synchronization and compatibility
 
 - KOReader Sync accepts all successful HTTP 2xx responses, including bodyless
@@ -117,6 +136,59 @@ Current parent working-tree state is intentionally not fully clean:
 - X3/X4 native simulator support, X3 geometry/profile handling, simulated X3
   tilt controls, compatibility scripts, and documentation are already merged
   in the parent history.
+
+### Carousel, Folio, and cover caching
+
+- The independent Carousel theme has persisted 3-Cover and 5-Cover layouts,
+  circular navigation, safe 0/1/2/3/4-book handling, screen-derived geometry,
+  mirrored trapezoidal side covers, opaque far-to-near draw order, and the
+  existing graphical Library behavior.
+- Folio Nooir Recent and Finished each have independent `3 Covers`, `4x2
+  Grid`, `3-Cover Carousel`, and `5-Cover Carousel` choices. Folio Carousel
+  rendering is restricted to the shelf region and does not replace the
+  graphical Folio Library.
+- Carousel centers and Statistics Sleep can use a valid explicitly prepared
+  360px cover and immediately fall back to the existing 220px cover. Side
+  covers, Folio shelves, and Statistics Books remain on 220px sources.
+  Navigation and sleep never synchronously generate HQ covers.
+- `Prepare Carousel Covers` is an explicit progress flow. Individual cache
+  refresh can refresh an existing HQ file, while normal navigation and Library
+  retrieval retain their existing behavior.
+- Featured covers use the active Folio 3-Cover rendered geometry at runtime,
+  preserve aspect ratio, and use the shelf-compatible 220px rendering path so
+  Featured, 3 Covers, and the 4x2 grid remain visually consistent.
+- Carousel performance work retains a six-entry source-handle cache, frame-
+  local source protection against LRU eviction, unavailable-HQ probe caching,
+  and shared perspective-rendering precomputation/fast paths without caching
+  decoded pixel buffers or changing image quality.
+
+### Reading Statistics and Sleep
+
+- Reading Statistics is a unified activity with Overview, Calendar, Books, and
+  Achievements tabs. It persists daily reading time, sessions, and pages,
+  keeps up to 730 days of daily history, calculates current/longest streaks,
+  and derives twenty achievements without double-counting book totals.
+- Overview includes the seven-day chart, totals, averages, and book/streak
+  KPIs. Calendar supports bounded month navigation and daily intensity/details.
+  Books uses circular navigation and cached 220px covers only. Achievements
+  preserves the two-column X3/X4-safe layout where the display allows it.
+- Reading Stats Sleep and Minimal Stats Sleep use bounded cached-cover layouts
+  with valid 360px-to-220px selection, no generation/preparation during sleep,
+  and aspect-preserving rendering. Legacy Cover Sleep, Cover Overlay Sleep,
+  and Cover Clipping Sleep retain their separate full-screen crop/stretch/fit
+  behavior.
+
+### Settings, integration, and translation
+
+- Carousel layout, Folio Recent layout, and Folio Finished layout are separate
+  persisted settings with independent defaults, filtering, migration, and
+  translations.
+- The unified Statistics entry is integrated into Folio while per-book
+  statistics, Reading Summary, bookmarks, and clippings remain available.
+- New Carousel, Folio layout, HQ preparation, Statistics, Sleep, status, and
+  achievement labels use the normal translation-source/generation workflow.
+- PDF and FB2 reader support are not implemented; only feasibility notes are
+  present.
 
 ### Web and power reliability
 
@@ -150,14 +222,22 @@ Current parent working-tree state is intentionally not fully clean:
    `git pull` inside the submodule.
 7. **No automatic release actions.** Tags, GitHub Releases, firmware assets,
    flashing, and physical-device validation require an explicit request.
+8. **1.6.1 CBZ/Manga guardrail.** The existing CBZ reader is 1.6.0 baseline
+   functionality. The next cycle begins with a separate requirements,
+   architecture, and safety audit; do not implement speculative CBZ/Manga
+   changes during this checkpoint.
 
 ## Simulator workflow
 
-The native simulator checkout is separate from the Windows repository:
+The native simulator checkout is separate from the authoritative Windows
+repository:
 
 - WSL working copy: `~/side-wsl`
 - Supported environments: `simulator_x4` and `simulator_x3`
-- Do not assume parent changes are present there automatically.
+- Windows is the source of truth; synchronize Windows to WSL for simulator
+  validation only.
+- Do not make unique feature changes in WSL or assume parent changes are
+  present there automatically.
 - Before syncing future simulator work, inspect its branch, HEAD, tracked
   changes, untracked files, and simulator-specific configuration. Preserve any
   genuinely unique local simulator work; never reset it blindly.
@@ -167,8 +247,11 @@ The native simulator checkout is separate from the Windows repository:
 ## Key resources
 
 - Main repository: <https://github.com/toshio2011/folio-nooir>
-- Main development branch: `main`
-- GitHub default/documentation branch: `codex/folio-nooir`
+- Authoritative development branch: `codex/folio-nooir`
+- Current development checkpoint: `ccddded2`
+- Previous 1.6.0 safety checkpoint: `safety/1.6.0-carousel-layouts-hq` at
+  `9c8e9751`
+- GitHub source merge: `0f1bd556`; README 1.6.0 summary: `b12f2732`
 - Native simulator checkout: `~/side-wsl` (separate from this Windows copy)
 - Simulator guide: `docs/simulator.md`
 - File/cache format notes: `docs/file-formats.md`
@@ -194,19 +277,22 @@ machine before using them.
 
 ## Recommended next steps
 
-1. Review and commit the staged parent changes (`.gitmodules` and
-   `freeink-sdk`), then push that parent commit when ready.
-2. To consume later FreeInk updates, `fetch upstream`, merge or rebase, test,
+1. Define and audit CBZ/Manga improvements separately before implementation;
+   the existing CBZ reader remains the completed 1.6.0 baseline.
+2. Continue physical X3/X4 regression testing for completed 1.6.0 paths,
+   especially CBZ page turns/cache replay, EPUB images, clipping restoration,
+   Statistics/Sleep, Folio shelves, Featured, and Carousel.
+3. If simulator validation is needed, synchronize the authoritative Windows
+   source to WSL and smoke-test both `simulator_x4` and `simulator_x3`; do not
+   infer simulator readiness from the default firmware build alone.
+4. To consume later FreeInk updates, `fetch upstream`, merge or rebase, test,
    push the tested result to `origin`, and deliberately update Nooir's pinned
    submodule SHA. Never blindly pull inside `freeink-sdk`.
-3. From the exact resulting source, build and smoke-test `simulator_x4` and
-   `simulator_x3`. The default PlatformIO environment has already compiled
-   successfully; do not infer simulator or hardware readiness from that alone.
-4. Physically test X4 and X3, prioritizing CBZ image quality, Fit Width Next,
-   prefetch reuse/cancellation, cache replay, page errors, EPUB images, and
-   bold clipping restoration.
-5. Review the final staged diff and scratch exclusions, then create the 1.6.0
-   tag/GitHub Release and upload firmware only when explicitly authorized.
+5. Keep future changes scoped and classify them as CBZ-only, EPUB-only,
+   shared, simulator-only, or documentation-only before editing source.
+6. Review and publish release artifacts only when explicitly authorized; do
+   not create a tag, release, firmware asset, or upload as part of this cycle
+   checkpoint.
 
 ## Useful handoff checks
 

@@ -5,18 +5,27 @@ history, decisions, and feature inventory.
 
 ## Current position
 
-- Development line: Folio Nooir **1.6.0 release candidate**
-- Parent branch: `feat/cbz-persistent-read-ahead`
-- Parent base commit: `114a0f7d5a891ee037cbe15d75308622d1cfcc31`
+- Active development line: Folio Nooir **1.6.1**
+- Known-good baseline: completed Folio Nooir **1.6.0**
+- Authoritative branch: `codex/folio-nooir`
+- Current authoritative commit: `ccddded2`
 - FreeInk is a real Nooir dependency through the `freeink-sdk` submodule.
 - The 1.5.10 baseline uses the Nooir-specific FreeInk commit
   `958720659ea289ae325e83db20049d0ea844800d` (`9587206`).
-- The local README now inventories the current 1.6.0 release-candidate
-  features. The separate `codex/folio-nooir` documentation branch was updated
-  with the same README in remote commit `a6046870`.
-- The default PlatformIO environment now builds successfully after the shared
-  watchdog header fix. No simulator run, flashing, tag, or GitHub Release has
-  been performed for the current development source.
+- The completed 1.6.0 source, translations, and feature inventory are
+  integrated into `codex/folio-nooir` at merge `0f1bd556`; the branch also
+  contains the dedicated 1.6.0 README update at `b12f2732` and the latest
+  README-only remote update at `ccddded2`.
+- The previous safety checkpoint was `safety/1.6.0-carousel-layouts-hq` at
+  `9c8e9751`, which is an ancestor of the current development branch.
+- The normal/default firmware build has succeeded. Carousel/HQ cover behavior
+  and the Statistics/Sleep work have been physically exercised on X4. No
+  1.6.0 tag, GitHub Release, or firmware upload has been performed.
+- The existing CBZ reader and cache behavior listed below are 1.6.0 baseline
+  functionality. No new 1.6.1 CBZ/Manga implementation has started.
+- The next primary development focus is CBZ/Manga improvements. Detailed
+  CBZ architecture and design must be planned and audited separately before
+  implementation.
 
 ## Completed work
 
@@ -43,8 +52,34 @@ history, decisions, and feature inventory.
   network work, and temporary station-Wi-Fi loss no longer ends web mode.
 - Power-lock transitions avoid redundant active requests while retaining the
   existing sleep and deep-sleep paths.
-- Native X3/X4 simulator support and documentation are already in parent
-  history.
+- Native X3/X4 simulator support and documentation are available through the
+  shared source and `simulator_x3`/`simulator_x4` environments.
+- The independent Carousel theme supports persisted 3-Cover and 5-Cover
+  layouts, circular navigation, small-collection handling, screen-derived
+  trapezoidal cover geometry, opaque far-to-near rendering, and the graphical
+  Library path.
+- Folio Nooir Recent and Finished each support independent `3 Covers`,
+  `4x2 Grid`, `3-Cover Carousel`, and `5-Cover Carousel` layouts. Folio
+  Carousel rendering remains inside the shelf region; the graphical Folio
+  Library remains unchanged.
+- Carousel centers and Statistics Sleep screens prefer an explicitly prepared
+  valid `thumb_360.bmp` and immediately fall back to `thumb_220.bmp`. Side
+  covers, Folio shelf cards, and Statistics Books use the existing 220px
+  source. Navigation and sleep never synchronously generate HQ covers.
+- Carousel source reuse keeps a six-handle cache, protects only the current
+  frame's source paths from LRU eviction, caches unavailable-HQ probes during
+  the activity session, and uses shared perspective-rendering fast paths.
+- Reading Statistics provides Overview, Calendar, Books, and Achievements
+  tabs, persistent time/session/page data, bounded 730-day history, streaks,
+  averages, circular navigation, and twenty derived achievements. Reading
+  Stats Sleep and Minimal Stats Sleep use bounded cached-cover layouts, while
+  legacy Cover, Overlay, and Clipping sleep modes retain their full-screen
+  rendering behavior.
+- Settings persist the independent Carousel layout and Folio Recent/Finished
+  layouts separately, with migration/default handling and translations added
+  through the normal i18n source workflow.
+- PDF and FB2 readers are not implemented; the repository contains feasibility
+  documentation only.
 
 ## FreeInk dependency and publishing state
 
@@ -72,33 +107,38 @@ branch   nooir-1.5.10-tjpgd
 
 The fork was created under `toshio2011`, and branch `nooir-1.5.10-tjpgd` was
 pushed successfully. Remote verification resolves it to
-`958720659ea289ae325e83db20049d0ea844800d`. The parent working tree now
-points `.gitmodules` at the fork and stages the exact `9587206` submodule
-pointer; no parent commit or push has been made yet.
+`958720659ea289ae325e83db20049d0ea844800d`. The parent tree points
+`.gitmodules` at the fork and pins the exact tested `9587206` submodule
+commit. The pin is committed in the authoritative history.
 
 ## Immediate next steps
 
-1. Review the staged parent changes (`.gitmodules` and `freeink-sdk`) together
-   with the unstaged source, translation, README, and handoff changes. Stage
-   only the intended release files, then commit and push when ready.
-2. To sync FreeInk later, fetch `upstream`, merge or rebase deliberately,
+1. Plan and audit the next CBZ/Manga improvements separately, using the
+   existing 1.6.0 CBZ reader as the baseline. Do not implement speculative
+   1.6.1 CBZ/Manga behavior until that design/specification review is complete.
+2. Continue physical X3/X4 regression testing of the completed 1.6.0 paths,
+   including Statistics, Sleep, settings, Featured, Folio shelves, Carousel,
+   CBZ, EPUB images, and clipping restoration.
+3. If simulator validation is needed, synchronize Windows source to the
+   separate WSL mirror and run both native simulator environments there. Do
+   not make unique feature changes in WSL.
+4. To sync FreeInk later, fetch `upstream`, merge or rebase deliberately,
    test Nooir, push the tested branch to `origin`, and only then update the
-   parent pointer to the new exact commit. Avoid a blind `git pull` inside
+   parent pointer to a new exact commit. Avoid a blind `git pull` inside
    `freeink-sdk`.
-3. Inspect `~/side-wsl` before syncing simulator changes.
-4. Build and smoke-test `simulator_x4` and `simulator_x3` from the exact
-   source; the default environment compile is already verified.
-5. Physically test CBZ page turns/prefetch/cache replay, EPUB images, and bold
-   clipping restoration on X4 and X3.
-6. After the 1.6.0 enhancement is implemented and validated, create the
-   1.6.0 tag/release and upload firmware only when explicitly authorized.
+5. Review any future 1.6.1 source change with the X3 safety, cache, storage,
+   and format-isolation constraints below before implementation.
+6. Create release artifacts or upload firmware only when explicitly
+   authorized; this checkpoint does not create a tag or release.
 
 ## Resource map
 
 - Repository: <https://github.com/toshio2011/folio-nooir>
-- Main branch: `main`
-- Default README branch: `codex/folio-nooir`
-- WSL simulator copy: `~/side-wsl`
+- Authoritative development branch: `codex/folio-nooir`
+- Current development checkpoint: `ccddded2`
+- Previous 1.6.0 safety checkpoint: `safety/1.6.0-carousel-layouts-hq` at
+  `9c8e9751`
+- WSL simulator mirror: `~/side-wsl`
 - Simulator instructions: `docs/simulator.md`
 - Cache/format reference: `docs/file-formats.md`
 - Nested SDK: `freeink-sdk/`
@@ -117,13 +157,16 @@ not stage or copy them into the repository.
 
 ## Working-tree rules
 
-- Preserve the staged `freeink-sdk` pin at the verified fork commit until the
-  parent change is reviewed and committed.
+- Preserve the committed `freeink-sdk` pin at the verified fork commit.
 - Keep `origin` pointed at the user fork and `upstream` pointed at official
   FreeInk. Never push Nooir work to `Free-Ink/freeink-sdk`.
 - Keep the parent submodule at one exact tested SDK commit; do not use
   `git pull` blindly inside the submodule.
 - Leave `.codex-*`, `_epub-inspect*`, `codex-work-monitor/`, logs, probes,
   caches, binaries, and build output untouched and unstaged.
+- Treat the existing 1.6.0 CBZ reader as baseline functionality. Do not add
+  speculative 1.6.1 CBZ/Manga implementation before the separate planning and
+  architecture audit.
 - Use explicit Git staging; never use `git add -A`, reset, checkout, or
-  force-push for this handoff.
+  force-push for this handoff. Keep documentation updates separate from
+  source changes when preparing the next checkpoint.

@@ -14,8 +14,8 @@
 
 # Folio Nooir
 
-Current development line: **v1.6.0 release candidate**.
-Current stable release: **v1.5.10**. Release candidate: **v1.6.0**.
+Current development line: **v1.6.1**.
+Current stable release: **v1.5.10**. Completed development baseline: **v1.6.0**.
 
 ## Hardware warning
 
