@@ -35,7 +35,7 @@ fast-path grayscale artifacts seen during Nooir validation.
 Authoritative parent repository:
 
 - Branch: `codex/folio-nooir`
-- Current commit: `ccddded2`
+- Current commit: `d1865354`
 - The completed 1.6.0 source, translations, README inventory, and related
   integration work are committed and pushed on this branch.
 - The 1.6.0 source was integrated by merge `0f1bd556`; `b12f2732` added the
@@ -248,7 +248,7 @@ repository:
 
 - Main repository: <https://github.com/toshio2011/folio-nooir>
 - Authoritative development branch: `codex/folio-nooir`
-- Current development checkpoint: `ccddded2`
+- Current development checkpoint: `d1865354`
 - Previous 1.6.0 safety checkpoint: `safety/1.6.0-carousel-layouts-hq` at
   `9c8e9751`
 - GitHub source merge: `0f1bd556`; README 1.6.0 summary: `b12f2732`

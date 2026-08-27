@@ -8,7 +8,7 @@ history, decisions, and feature inventory.
 - Active development line: Folio Nooir **1.6.1**
 - Known-good baseline: completed Folio Nooir **1.6.0**
 - Authoritative branch: `codex/folio-nooir`
-- Current authoritative commit: `ccddded2`
+- Current authoritative commit: `d1865354`
 - FreeInk is a real Nooir dependency through the `freeink-sdk` submodule.
 - The 1.5.10 baseline uses the Nooir-specific FreeInk commit
   `958720659ea289ae325e83db20049d0ea844800d` (`9587206`).
@@ -135,7 +135,7 @@ commit. The pin is committed in the authoritative history.
 
 - Repository: <https://github.com/toshio2011/folio-nooir>
 - Authoritative development branch: `codex/folio-nooir`
-- Current development checkpoint: `ccddded2`
+- Current development checkpoint: `d1865354`
 - Previous 1.6.0 safety checkpoint: `safety/1.6.0-carousel-layouts-hq` at
   `9c8e9751`
 - WSL simulator mirror: `~/side-wsl`
