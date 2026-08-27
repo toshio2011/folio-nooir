@@ -221,6 +221,7 @@ std::unique_ptr<Page> Page::deserialize(HalFile& file) {
 
   uint16_t count;
   serialization::readPod(file, count);
+  page->elements.reserve(std::min<uint16_t>(count, Page::ELEMENT_RESERVE_LIMIT));
 
   for (uint16_t i = 0; i < count; i++) {
     uint8_t tag;

@@ -6,6 +6,9 @@
 #include <Logging.h>
 #include <Utf8.h>
 #include <XmlParserUtils.h>
+#ifndef SIMULATOR
+#include <TaskWatchdog.h>
+#endif
 #include <expat.h>
 
 #include <algorithm>
@@ -22,6 +25,9 @@
 // Minimum file size (in bytes) to show indexing popup - smaller chapters don't benefit from it
 constexpr size_t MIN_SIZE_FOR_POPUP = 10 * 1024;  // 10KB
 constexpr size_t PARSE_BUFFER_SIZE = 1024;
+constexpr size_t PARSER_YIELD_INTERVAL = 8 * 1024;
+constexpr size_t MAX_REFERENCED_ANCHORS = 256;
+constexpr size_t MAX_UNRESOLVED_INLINE_ANCHORS = 128;
 
 // This number comes from PR #73
 // If we have > 750 words buffered up, perform the layout and consume out all but the last line
@@ -107,6 +113,45 @@ bool isInternalEpubLink(const char* href) {
   if (strncmp(href, "tel:", 4) == 0) return false;
   if (strncmp(href, "javascript:", 11) == 0) return false;
   return true;
+}
+
+void ChapterHtmlSlimParser::rememberReferencedAnchor(const char* href) {
+  if (!href || href[0] != '#') return;
+  const char* anchor = href + 1;
+  if (*anchor == '\0') return;
+  if (referencedAnchorIds.size() < MAX_REFERENCED_ANCHORS &&
+      std::find(referencedAnchorIds.begin(), referencedAnchorIds.end(), anchor) == referencedAnchorIds.end()) {
+    referencedAnchorIds.emplace_back(anchor);
+  }
+
+  const auto unresolved = std::find_if(unresolvedInlineAnchors.begin(), unresolvedInlineAnchors.end(),
+                                       [anchor](const auto& candidate) { return candidate.first == anchor; });
+  if (unresolved != unresolvedInlineAnchors.end()) {
+    if (anchorData.size() < MAX_ANCHORS_PER_CHAPTER) {
+      anchorData.push_back(std::move(*unresolved));
+    }
+    unresolvedInlineAnchors.erase(unresolved);
+  }
+}
+
+bool ChapterHtmlSlimParser::isReferencedAnchor(const char* id) const {
+  if (!id || *id == '\0') return false;
+  return std::find(referencedAnchorIds.begin(), referencedAnchorIds.end(), id) != referencedAnchorIds.end();
+}
+
+void ChapterHtmlSlimParser::rememberUnresolvedInlineAnchor(const char* id) {
+  if (!id || *id == '\0' || unresolvedInlineAnchors.size() >= MAX_UNRESOLVED_INLINE_ANCHORS) return;
+  if (std::find_if(unresolvedInlineAnchors.begin(), unresolvedInlineAnchors.end(),
+                  [id](const auto& candidate) { return candidate.first == id; }) == unresolvedInlineAnchors.end()) {
+    unresolvedInlineAnchors.emplace_back(id, static_cast<uint16_t>(completedPageCount));
+  }
+}
+
+static void yieldParserWork() {
+  yield();
+#ifndef SIMULATOR
+  resetTaskWatchdogIfSubscribed();
+#endif
 }
 
 bool isHeaderOrBlock(const char* name) {
@@ -406,6 +451,7 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
 void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char* name, const XML_Char** atts) {
   auto* self = static_cast<ChapterHtmlSlimParser*>(userData);
   if (self->allocationFailed_) return;
+  if (self->depth == 0) self->documentRootSeen_ = true;
 
   // Middle of skip
   if (self->skipUntilDepth < self->depth) {
@@ -444,7 +490,9 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
         const char* idValue = atts[i + 1];
         const bool isTocAnchor =
             std::find(self->tocAnchors.begin(), self->tocAnchors.end(), idValue) != self->tocAnchors.end();
-        if (isTocAnchor || (!isNonNavigableInlineElement(name) && self->anchorData.size() < MAX_ANCHORS_PER_CHAPTER)) {
+        const bool isReferencedAnchor = self->isReferencedAnchor(idValue);
+        if (isTocAnchor || isReferencedAnchor ||
+            (!isNonNavigableInlineElement(name) && self->anchorData.size() < MAX_ANCHORS_PER_CHAPTER)) {
           // Flush a displaced anchor before overwriting. Consecutive non-block elements
           // (e.g. <aside id="fn1">text</aside><aside id="fn2">) with no intervening block
           // never trigger startNewTextBlock, so fn1 gets silently overwritten. That leaves
@@ -454,6 +502,11 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
             self->flushPendingAnchor();
           }
           self->pendingAnchorId = idValue;
+        } else if (isNonNavigableInlineElement(name)) {
+          // Keep only a small look-behind for inline IDs. This allows a
+          // same-file link that appears later in the chapter to promote its
+          // target, while decorative span IDs are discarded at chapter end.
+          self->rememberUnresolvedInlineAnchor(idValue);
         }
       } else if (strcmp(atts[i], "dir") == 0) {
         dirAttr = atts[i + 1];
@@ -901,18 +954,6 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     return;
   }
 
-  // Skip blocks with role="doc-pagebreak" and epub:type="pagebreak"
-  if (atts != nullptr) {
-    for (int i = 0; atts[i]; i += 2) {
-      if (strcmp(atts[i], "role") == 0 && strcmp(atts[i + 1], "doc-pagebreak") == 0 ||
-          strcmp(atts[i], "epub:type") == 0 && strcmp(atts[i + 1], "pagebreak") == 0) {
-        self->skipUntilDepth = self->depth;
-        self->depth += 1;
-        return;
-      }
-    }
-  }
-
   // Detect internal <a href="..."> links (footnotes, cross-references)
   // Note: <aside epub:type="footnote"> elements are rendered as normal content
   // without special handling. Links pointing to them are collected as footnotes.
@@ -930,6 +971,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     }
 
     if (isInternalLink) {
+      self->rememberReferencedAnchor(href);
       // Flush buffer before style change
       if (self->partWordBufferIndex > 0) {
         self->flushPartWordBuffer();
@@ -1397,6 +1439,7 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
   }
 
   self->depth -= 1;
+  if (self->depth == 0 && self->documentRootSeen_) self->documentRootClosed_ = true;
 
   if (strcmp(name, "ul") == 0 || strcmp(name, "ol") == 0) {
     if (self->listDepth > 0) self->listDepth--;
@@ -1484,6 +1527,11 @@ ChapterHtmlSlimParser::~ChapterHtmlSlimParser() { abortParse(); }
 
 bool ChapterHtmlSlimParser::beginParse() {
   allocationFailed_ = false;
+  referencedAnchorIds.clear();
+  unresolvedInlineAnchors.clear();
+  documentRootSeen_ = false;
+  documentRootClosed_ = false;
+  parserBytesAtLastYield_ = 0;
   // Initialize block style stack with a root entry representing "no ancestor block elements".
   // The user's paragraph alignment is set as the default so child elements without explicit
   // text-align inherit it correctly through getCombinedBlockStyle.
@@ -1548,6 +1596,14 @@ ChapterHtmlSlimParser::ParseStatus ChapterHtmlSlimParser::parseStep() {
   const int done = parseFile_.available() == 0;
 
   if (XML_ParseBuffer(xmlParser_, static_cast<int>(len), done) == XML_STATUS_ERROR) {
+    const enum XML_Error error = XML_GetErrorCode(xmlParser_);
+    if (documentRootClosed_ && error == XML_ERROR_JUNK_AFTER_DOC_ELEMENT) {
+      // Some reading-system exporters append a non-XML trailer after the
+      // closing XHTML root. Everything useful has already been delivered by
+      // Expat, so accept the completed document and discard the trailer.
+      LOG_DBG("EHP", "Ignoring trailing content after closed XHTML root");
+      return ParseStatus::Done;
+    }
     LOG_ERR("EHP", "Parse error at line %lu:\n%s", XML_GetCurrentLineNumber(xmlParser_),
             XML_ErrorString(XML_GetErrorCode(xmlParser_)));
     return ParseStatus::Error;
@@ -1558,6 +1614,12 @@ ChapterHtmlSlimParser::ParseStatus ChapterHtmlSlimParser::parseStep() {
     // buffer. Stop before the next XML chunk can dereference it or commit a
     // misleading partial section.
     return ParseStatus::Error;
+  }
+
+  const size_t consumed = parseFile_.position();
+  if (consumed - parserBytesAtLastYield_ >= PARSER_YIELD_INTERVAL) {
+    yieldParserWork();
+    parserBytesAtLastYield_ = consumed;
   }
 
   return done ? ParseStatus::Done : ParseStatus::More;
@@ -1572,6 +1634,8 @@ void ChapterHtmlSlimParser::abortParse() {
   if (parseFile_.isOpen()) {
     parseFile_.close();
   }
+  referencedAnchorIds.clear();
+  unresolvedInlineAnchors.clear();
 }
 
 bool ChapterHtmlSlimParser::finishParse() {
@@ -1581,6 +1645,8 @@ bool ChapterHtmlSlimParser::finishParse() {
     xmlParser_ = nullptr;
   }
   parseFile_.close();
+  referencedAnchorIds.clear();
+  unresolvedInlineAnchors.clear();
 
   // Process last page if there is still text
   if (currentTextBlock) {

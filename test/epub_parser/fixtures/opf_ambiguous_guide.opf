@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opf:package xmlns:opf="http://www.idpf.org/2007/opf" version="2.0">
+  <opf:guide>
+    <opf:reference type="text" title="Cover text" href="cover.xhtml" />
+    <opf:reference type="text" title="Chapter text" href="chapter.xhtml" />
+    <opf:reference type="start" title="Opening" href="chapter.xhtml#opening" />
+  </opf:guide>
+</opf:package>

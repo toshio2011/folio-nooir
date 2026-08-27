@@ -2,6 +2,7 @@
 
 #include <EpdFontFamily.h>
 
+#include <deque>
 #include <functional>
 #include <memory>
 #include <string>
@@ -13,7 +14,11 @@
 class GfxRenderer;
 
 class ParsedText {
-  std::vector<std::string> words;
+  // CJK and CSS-heavy paragraphs can produce thousands of tokens. A deque
+  // avoids moving one large contiguous std::string array when the fragmented
+  // X3 heap cannot satisfy the next vector growth request. The compact
+  // parallel style/flag arrays remain vectors and are still bulk-reserved.
+  std::deque<std::string> words;
   std::vector<EpdFontFamily::Style> wordStyles;
   std::vector<bool> wordContinues;      // true = word attaches to previous with no break
   std::vector<bool> wordNoSpaceBefore;  // true = may break before token, but no synthetic space when joined

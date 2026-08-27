@@ -78,6 +78,7 @@ class Page {
   std::vector<std::shared_ptr<PageElement>> elements;
   std::vector<FootnoteEntry> footnotes;
   static constexpr uint16_t MAX_FOOTNOTES_PER_PAGE = 16;
+  static constexpr uint16_t ELEMENT_RESERVE_LIMIT = 64;
 
   void addFootnote(const char* number, const char* href) {
     if (footnotes.size() >= MAX_FOOTNOTES_PER_PAGE) return;  // Cap per-page footnotes

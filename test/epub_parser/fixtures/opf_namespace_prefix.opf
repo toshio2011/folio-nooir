@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opf2:package xmlns:opf2="http://www.idpf.org/2007/opf" xmlns:dcx="http://purl.org/dc/elements/1.1/" version="2.0">
+  <opf2:metadata>
+    <dcx:title>Prefixed title</dcx:title>
+    <dcx:creator>Prefixed author</dcx:creator>
+    <dcx:language>en</dcx:language>
+  </opf2:metadata>
+  <opf2:manifest />
+  <opf2:spine />
+</opf2:package>

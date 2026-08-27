@@ -96,6 +96,8 @@ class ChapterHtmlSlimParser {
   std::vector<std::pair<std::string, uint16_t>> anchorData;
   std::string pendingAnchorId;          // deferred until after previous text block is flushed
   std::vector<std::string> tocAnchors;  // the list of anchors that are TOC chapter boundaries
+  std::vector<std::string> referencedAnchorIds;  // bounded same-file fragment references seen so far
+  std::vector<std::pair<std::string, uint16_t>> unresolvedInlineAnchors;
   uint16_t xpathParagraphIndex = 0;
   uint16_t xpathListItemIndex = 0;
 
@@ -116,7 +118,13 @@ class ChapterHtmlSlimParser {
   XML_Parser xmlParser_ = nullptr;
   HalFile parseFile_;
   uint32_t parseStartTime_ = 0;
+  size_t parserBytesAtLastYield_ = 0;
+  bool documentRootSeen_ = false;
+  bool documentRootClosed_ = false;
 
+  void rememberReferencedAnchor(const char* href);
+  void rememberUnresolvedInlineAnchor(const char* id);
+  bool isReferencedAnchor(const char* id) const;
   void updateEffectiveInlineStyle();
   void failAllocation(const char* what);
   void startNewTextBlock(const BlockStyle& blockStyle);

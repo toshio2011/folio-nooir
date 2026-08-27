@@ -34,6 +34,11 @@ bool isNaturalDirectionClass(const uchar cls) {
   }
 }
 
+// Both public bidi paths are serialized by bidiMutex and never call each
+// other, so one line buffer is sufficient. Keeping the buffer shared avoids
+// retaining two copies of the same bounded X3 scratch allocation.
+bidi_char sharedBidiLine[BIDI_MAX_LINE];
+
 }  // namespace
 
 namespace BidiUtils {
@@ -89,7 +94,7 @@ bool applyBidiVisual(const char* utf8, std::string& out, int paragraphLevel) {
   if (!utf8 || !*utf8) return false;
   const std::lock_guard<std::mutex> lock(bidiMutex);
 
-  static bidi_char line[BIDI_MAX_LINE];
+  bidi_char* const line = sharedBidiLine;
   static bidi_char shaped[BIDI_MAX_LINE];
   int count = 0;
   int lastBase = -1;           // last non-formatter character (mintty's ibase)
@@ -176,7 +181,7 @@ bool computeVisualWordOrder(const std::vector<std::string>& words, bool paragrap
   if (nWords <= 1 || nWords > BIDI_MAX_LINE) return false;
   const std::lock_guard<std::mutex> lock(bidiMutex);
 
-  static bidi_char line[BIDI_MAX_LINE];
+  bidi_char* const line = sharedBidiLine;
   int count = 0;
   bool truncated = false;
 

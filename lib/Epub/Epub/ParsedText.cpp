@@ -291,17 +291,13 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
   const auto ensureTokenCapacity = [&](const size_t additionalTokens) {
     if (additionalTokens == 0) return;
     const size_t requiredSize = words.size() + additionalTokens;
-    if (words.capacity() >= requiredSize) return;
+    if (wordStyles.capacity() >= requiredSize) return;
 
-    size_t newCapacity = words.capacity();
-    if (newCapacity < 16) {
-      newCapacity = 16;
-    }
+    size_t newCapacity = wordStyles.capacity() < 16 ? 16 : wordStyles.capacity();
     while (newCapacity < requiredSize) {
       newCapacity *= 2;
     }
 
-    words.reserve(newCapacity);
     wordStyles.reserve(newCapacity);
     wordContinues.reserve(newCapacity);
     wordNoSpaceBefore.reserve(newCapacity);

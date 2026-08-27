@@ -1,0 +1,4 @@
+add_executable(gfx_line_clipping_test GfxLineClippingTest.cpp)
+target_link_libraries(gfx_line_clipping_test PRIVATE GTest::gtest_main crosspoint_test_common)
+
+gtest_discover_tests(gfx_line_clipping_test)
