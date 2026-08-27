@@ -22,10 +22,13 @@ history, decisions, and feature inventory.
   and the Statistics/Sleep work have been physically exercised on X4. No
   1.6.0 tag, GitHub Release, or firmware upload has been performed.
 - The existing CBZ reader and cache behavior listed below are 1.6.0 baseline
-  functionality. No new 1.6.1 CBZ/Manga implementation has started.
-- The next primary development focus is CBZ/Manga improvements. Detailed
-  CBZ architecture and design must be planned and audited separately before
-  implementation.
+  functionality.
+- The immediate 1.6.1 focus is EPUB reading quality, especially Arabic/RTL
+  support, text shaping, fonts, and layout. No new 1.6.1 EPUB implementation
+  has started; detailed EPUB audit and planning come next.
+- CBZ/Manga preparation and cache improvements remain a future planned phase,
+  deferred until after the EPUB phase. Their detailed architecture and design
+  must still be planned and audited separately before implementation.
 
 ## Completed work
 
@@ -113,9 +116,8 @@ commit. The pin is committed in the authoritative history.
 
 ## Immediate next steps
 
-1. Plan and audit the next CBZ/Manga improvements separately, using the
-   existing 1.6.0 CBZ reader as the baseline. Do not implement speculative
-   1.6.1 CBZ/Manga behavior until that design/specification review is complete.
+1. Audit and plan EPUB reading-quality improvements separately, prioritizing
+   Arabic/RTL support, shaping, fonts, and layout. Do not implement EPUB yet.
 2. Continue physical X3/X4 regression testing of the completed 1.6.0 paths,
    including Statistics, Sleep, settings, Featured, Folio shelves, Carousel,
    CBZ, EPUB images, and clipping restoration.
@@ -126,9 +128,12 @@ commit. The pin is committed in the authoritative history.
    test Nooir, push the tested branch to `origin`, and only then update the
    parent pointer to a new exact commit. Avoid a blind `git pull` inside
    `freeink-sdk`.
-5. Review any future 1.6.1 source change with the X3 safety, cache, storage,
+5. After the EPUB phase, return to the preserved CBZ/Manga preparation and
+   cache plan and complete its separate architecture/safety audit before
+   implementation.
+6. Review any future 1.6.1 source change with the X3 safety, cache, storage,
    and format-isolation constraints below before implementation.
-6. Create release artifacts or upload firmware only when explicitly
+7. Create release artifacts or upload firmware only when explicitly
    authorized; this checkpoint does not create a tag or release.
 
 ## Resource map
@@ -164,9 +169,9 @@ not stage or copy them into the repository.
   `git pull` blindly inside the submodule.
 - Leave `.codex-*`, `_epub-inspect*`, `codex-work-monitor/`, logs, probes,
   caches, binaries, and build output untouched and unstaged.
-- Treat the existing 1.6.0 CBZ reader as baseline functionality. Do not add
-  speculative 1.6.1 CBZ/Manga implementation before the separate planning and
-  architecture audit.
+- Treat the existing 1.6.0 CBZ reader as baseline functionality. CBZ/Manga
+  preparation and cache work is deferred until after the EPUB phase and its
+  separate planning and architecture audit.
 - Use explicit Git staging; never use `git add -A`, reset, checkout, or
   force-push for this handoff. Keep documentation updates separate from
   source changes when preparing the next checkpoint.

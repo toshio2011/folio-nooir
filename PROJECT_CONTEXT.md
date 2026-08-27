@@ -18,10 +18,13 @@ Xteink X3/X4 devices. The primary goals are:
   workflows.
 
 The current development version is **Folio Nooir 1.6.1**. The completed
-**1.6.0** work is the known-good baseline for this development cycle. The next
-primary focus is CBZ/Manga improvements; no new 1.6.1 CBZ/Manga implementation
-has started, and detailed CBZ architecture/design will be planned and audited
-separately before implementation.
+**1.6.0** work is the known-good baseline for this development cycle. The
+immediate 1.6.1 focus is EPUB reading quality, especially Arabic/RTL support,
+text shaping, fonts, and layout. No new 1.6.1 EPUB implementation has started;
+detailed EPUB audit and planning come next. CBZ/Manga preparation and cache work
+remain a future planned phase, deferred until after the EPUB phase; its detailed
+architecture/design will still be planned and audited separately before
+implementation.
 
 FreeInk is a real Nooir dependency through the `freeink-sdk` submodule. The
 1.5.10 baseline uses the Nooir-specific FreeInk commit
@@ -222,10 +225,12 @@ probes, caches, binaries, and build output must remain untracked and untouched.
    `git pull` inside the submodule.
 7. **No automatic release actions.** Tags, GitHub Releases, firmware assets,
    flashing, and physical-device validation require an explicit request.
-8. **1.6.1 CBZ/Manga guardrail.** The existing CBZ reader is 1.6.0 baseline
-   functionality. The next cycle begins with a separate requirements,
-   architecture, and safety audit; do not implement speculative CBZ/Manga
-   changes during this checkpoint.
+8. **1.6.1 focus and CBZ/Manga sequencing.** The existing CBZ reader is 1.6.0
+   baseline functionality. The immediate phase is a separate EPUB quality
+   audit/planning pass covering Arabic/RTL, shaping, fonts, and layout; no new
+   EPUB implementation has started. CBZ/Manga preparation and cache work remain
+   planned for after the EPUB phase, followed by their separate requirements,
+   architecture, and safety audit.
 
 ## Simulator workflow
 
@@ -277,8 +282,8 @@ machine before using them.
 
 ## Recommended next steps
 
-1. Define and audit CBZ/Manga improvements separately before implementation;
-   the existing CBZ reader remains the completed 1.6.0 baseline.
+1. Define and audit EPUB reading-quality improvements separately before
+   implementation, prioritizing Arabic/RTL support, shaping, fonts, and layout.
 2. Continue physical X3/X4 regression testing for completed 1.6.0 paths,
    especially CBZ page turns/cache replay, EPUB images, clipping restoration,
    Statistics/Sleep, Folio shelves, Featured, and Carousel.
@@ -288,9 +293,12 @@ machine before using them.
 4. To consume later FreeInk updates, `fetch upstream`, merge or rebase, test,
    push the tested result to `origin`, and deliberately update Nooir's pinned
    submodule SHA. Never blindly pull inside `freeink-sdk`.
-5. Keep future changes scoped and classify them as CBZ-only, EPUB-only,
+5. After the EPUB phase, return to the preserved CBZ/Manga preparation and
+   cache plan and complete its separate architecture/safety audit before
+   implementation.
+6. Keep future changes scoped and classify them as CBZ-only, EPUB-only,
    shared, simulator-only, or documentation-only before editing source.
-6. Review and publish release artifacts only when explicitly authorized; do
+7. Review and publish release artifacts only when explicitly authorized; do
    not create a tag, release, firmware asset, or upload as part of this cycle
    checkpoint.
 
