@@ -28,6 +28,34 @@ for size in ${NOTOSANS_FONT_SIZES[@]}; do
   done
 done
 
+# Arabic reader fallback.  This is a glyph-level companion to the normal
+# Noto Serif/Sans reader fonts, not a second whole-text reader font.  Keep the
+# Arabic face first for coverage and the matching Noto Sans face last so the
+# generated line metrics remain compatible with the primary reader fonts.
+ARABIC_READER_FONT_STYLES=("Regular" "Bold")
+ARABIC_READER_INTERVALS=(
+  --additional-intervals 0x0600,0x06FF  # Arabic
+  --additional-intervals 0x0750,0x077F  # Arabic Supplement
+  --additional-intervals 0x0870,0x08FF  # Arabic Extended
+  --additional-intervals 0x10EC0,0x10EFF  # Arabic Extended-C
+  --additional-intervals 0x1EE00,0x1EEFF  # Arabic Mathematical Alphabetic Symbols
+  --additional-intervals 0xFB50,0xFDFF  # Arabic Presentation Forms-A
+  --additional-intervals 0xFE70,0xFEFF  # Arabic Presentation Forms-B
+  --additional-intervals 0xFFFD,0xFFFD  # replacement glyph
+)
+
+for size in ${NOTOSANS_FONT_SIZES[@]}; do
+  for style in ${ARABIC_READER_FONT_STYLES[@]}; do
+    font_name="arabic_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
+    arabic_path="../builtinFonts/source/NotoSansArabic/NotoSansArabic-${style}.ttf"
+    metrics_path="../builtinFonts/source/NotoSans/NotoSans-${style}.ttf"
+    output_path="../builtinFonts/${font_name}.h"
+    python fontconvert.py $font_name $size $arabic_path $metrics_path --only-additional-intervals \
+      --2bit --compress --pnum "${ARABIC_READER_INTERVALS[@]}" > $output_path
+    echo "Generated $output_path"
+  done
+done
+
 UI_FONT_SIZES=(10 12)
 UI_FONT_STYLES=("Regular" "Bold")
 

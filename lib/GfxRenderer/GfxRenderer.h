@@ -92,11 +92,20 @@ class GfxRenderer {
   // app-level SD font setup when an SD family is loaded. See resolveTextFontId().
   std::map<int, int> fallbackFontMap_;
 
+  // Arabic reader fallback map. Unlike the CJK UI fallback above, this is
+  // resolved per codepoint so Latin and Arabic can share one text run.
+  std::map<int, int> arabicFallbackFontMap_;
+  std::map<uint8_t, int> arabicFallbackByPointSize_;
+  std::map<int, uint8_t> fontPointSizes_;
+
   // If `text` contains a CJK codepoint that `fontId` cannot render and `fontId`
   // has a registered fallback, returns the fallback id; otherwise returns
   // fontId unchanged. The whole string is routed as a unit so each draw/measure
   // call stays single-font (consistent bit depth, metrics, wrapping).
   int resolveTextFontId(int fontId, const char* text, EpdFontFamily::Style style) const;
+  int resolveArabicFallbackFontId(int fontId, uint32_t cp, EpdFontFamily::Style style) const;
+  bool hasArabicFallbackCandidate(int fontId, const char* text, EpdFontFamily::Style style) const;
+  int getRenderedTextAdvanceX(int fontId, const char* renderedText, EpdFontFamily::Style style) const;
   int scaleUiFontId(int fontId) const;
 
   void renderChar(const EpdFontFamily& fontFamily, uint32_t cp, int* x, int* y, bool pixelState,
@@ -132,6 +141,8 @@ class GfxRenderer {
   void removeFont(int fontId) {
     fontMap.erase(fontId);
     sdCardFonts_.erase(fontId);
+    fontPointSizes_.erase(fontId);
+    arabicFallbackFontMap_.erase(fontId);
   }
   void setFontCacheManager(FontCacheManager* m) { fontCacheManager_ = m; }
   FontCacheManager* getFontCacheManager() const { return fontCacheManager_; }
@@ -146,6 +157,16 @@ class GfxRenderer {
   // setFallbackFont maps a primary UI font id to an SD font id of the same size.
   void setFallbackFont(int primaryFontId, int fallbackFontId) { fallbackFontMap_[primaryFontId] = fallbackFontId; }
   void clearFallbackFonts() { fallbackFontMap_.clear(); }
+  // Register a glyph-level Arabic fallback for one primary reader font.
+  void setArabicFallbackFont(int primaryFontId, int fallbackFontId) {
+    arabicFallbackFontMap_[primaryFontId] = fallbackFontId;
+  }
+  // Register the fallback used by a reader font at a given physical point size.
+  // SD-card reader fonts use this because their IDs are content-derived.
+  void setArabicFallbackForPointSize(uint8_t pointSize, int fallbackFontId) {
+    arabicFallbackByPointSize_[pointSize] = fallbackFontId;
+  }
+  void registerFontPointSize(int fontId, uint8_t pointSize) { fontPointSizes_[fontId] = pointSize; }
   // Ensure SD card font glyph data is loaded for the given text. Called from layout code
   // (which holds a const GfxRenderer&) before measuring word widths. Safe to call on non-SD fonts (no-op).
   // styleMask: bitmask of styles to prepare (bit 0=regular, 1=bold, 2=italic, 3=bold-italic).
@@ -273,6 +294,11 @@ class GfxRenderer {
   int getFontAscenderSize(int fontId) const;
   int getLineHeight(int fontId) const;
   int getLineHeight(int fontId, float compression) const;
+  // Resolve a requested EPUB point size to the nearest registered reader font
+  // in the same family. Returns the original font when no alternate size is
+  // available (for example, a single-size SD-card family).
+  int resolveFontIdForPointSize(int fontId, uint8_t pointSize) const;
+  uint8_t getFontPointSize(int fontId) const;
   std::string truncatedText(int fontId, const char* text, int maxWidth,
                             EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
   /// Word-wrap \p text into at most \p maxLines lines, each no wider than

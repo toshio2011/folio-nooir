@@ -56,6 +56,9 @@ EpdFont notoserif14ItalicFont(&notoserif_14_italic);
 EpdFont notoserif14BoldItalicFont(&notoserif_14_bolditalic);
 EpdFontFamily notoserif14FontFamily(&notoserif14RegularFont, &notoserif14BoldFont, &notoserif14ItalicFont,
                                     &notoserif14BoldItalicFont);
+EpdFont arabic14RegularFont(&arabic_14_regular);
+EpdFont arabic14BoldFont(&arabic_14_bold);
+EpdFontFamily arabic14FontFamily(&arabic14RegularFont, &arabic14BoldFont);
 #ifndef OMIT_FONTS
 EpdFont notoserif12RegularFont(&notoserif_12_regular);
 EpdFont notoserif12BoldFont(&notoserif_12_bold);
@@ -100,6 +103,16 @@ EpdFont notosans18ItalicFont(&notosans_18_italic);
 EpdFont notosans18BoldItalicFont(&notosans_18_bolditalic);
 EpdFontFamily notosans18FontFamily(&notosans18RegularFont, &notosans18BoldFont, &notosans18ItalicFont,
                                    &notosans18BoldItalicFont);
+
+EpdFont arabic12RegularFont(&arabic_12_regular);
+EpdFont arabic12BoldFont(&arabic_12_bold);
+EpdFontFamily arabic12FontFamily(&arabic12RegularFont, &arabic12BoldFont);
+EpdFont arabic16RegularFont(&arabic_16_regular);
+EpdFont arabic16BoldFont(&arabic_16_bold);
+EpdFontFamily arabic16FontFamily(&arabic16RegularFont, &arabic16BoldFont);
+EpdFont arabic18RegularFont(&arabic_18_regular);
+EpdFont arabic18BoldFont(&arabic_18_bold);
+EpdFontFamily arabic18FontFamily(&arabic18RegularFont, &arabic18BoldFont);
 
 #endif  // OMIT_FONTS
 
@@ -247,6 +260,7 @@ void setupDisplayAndFonts(bool seamless = false) {
   fontCacheManager.setFontDecompressor(&fontDecompressor);
   renderer.setFontCacheManager(&fontCacheManager);
   renderer.insertFont(NOTOSERIF_14_FONT_ID, notoserif14FontFamily);
+  renderer.insertFont(ARABIC_14_FONT_ID, arabic14FontFamily);
 #ifndef OMIT_FONTS
   renderer.insertFont(NOTOSERIF_12_FONT_ID, notoserif12FontFamily);
   renderer.insertFont(NOTOSERIF_16_FONT_ID, notoserif16FontFamily);
@@ -256,10 +270,31 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(NOTOSANS_14_FONT_ID, notosans14FontFamily);
   renderer.insertFont(NOTOSANS_16_FONT_ID, notosans16FontFamily);
   renderer.insertFont(NOTOSANS_18_FONT_ID, notosans18FontFamily);
+  renderer.insertFont(ARABIC_12_FONT_ID, arabic12FontFamily);
+  renderer.insertFont(ARABIC_16_FONT_ID, arabic16FontFamily);
+  renderer.insertFont(ARABIC_18_FONT_ID, arabic18FontFamily);
 #endif  // OMIT_FONTS
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
   renderer.insertFont(SMALL_FONT_ID, smallFontFamily);
+
+  // Arabic is selected per glyph.  Keep the primary reader font's metrics and
+  // route only Arabic codepoints that it cannot render to the matching-size
+  // compressed fallback family. SD reader fonts use the point-size map below.
+  renderer.setArabicFallbackFont(NOTOSERIF_14_FONT_ID, ARABIC_14_FONT_ID);
+  renderer.setArabicFallbackForPointSize(14, ARABIC_14_FONT_ID);
+#ifndef OMIT_FONTS
+  renderer.setArabicFallbackFont(NOTOSERIF_12_FONT_ID, ARABIC_12_FONT_ID);
+  renderer.setArabicFallbackFont(NOTOSERIF_16_FONT_ID, ARABIC_16_FONT_ID);
+  renderer.setArabicFallbackFont(NOTOSERIF_18_FONT_ID, ARABIC_18_FONT_ID);
+  renderer.setArabicFallbackFont(NOTOSANS_12_FONT_ID, ARABIC_12_FONT_ID);
+  renderer.setArabicFallbackFont(NOTOSANS_14_FONT_ID, ARABIC_14_FONT_ID);
+  renderer.setArabicFallbackFont(NOTOSANS_16_FONT_ID, ARABIC_16_FONT_ID);
+  renderer.setArabicFallbackFont(NOTOSANS_18_FONT_ID, ARABIC_18_FONT_ID);
+  renderer.setArabicFallbackForPointSize(12, ARABIC_12_FONT_ID);
+  renderer.setArabicFallbackForPointSize(16, ARABIC_16_FONT_ID);
+  renderer.setArabicFallbackForPointSize(18, ARABIC_18_FONT_ID);
+#endif
 
   // Discover and load SD card fonts
   sdFontSystem.begin(renderer);

@@ -10,6 +10,7 @@
 
 #include "Epub/parsers/ContainerParser.h"
 #include "Epub/parsers/ContentOpfParser.h"
+#include "Epub/parsers/TocNavAmpersandSanitizer.h"
 #include "Epub/parsers/TocNavParser.h"
 #include "Epub/parsers/TocNcxParser.h"
 
@@ -20,6 +21,29 @@ namespace {
 constexpr size_t MAX_CONTAINER_XML_BYTES = 64u * 1024u;
 constexpr size_t MAX_CONTENT_OPF_BYTES = 512u * 1024u;
 constexpr size_t MAX_GUIDE_COVER_PAGE_BYTES = 256u * 1024u;
+
+bool writeRecoveredNavChunk(void* context, const uint8_t* data, const size_t size) {
+  auto* parser = static_cast<TocNavParser*>(context);
+  return parser->writeStreaming(data, size) == size;
+}
+
+class TocNavRecoveryPrint final : public Print {
+  TocNavParser& parser;
+  TocNavAmpersandSanitizer sanitizer;
+
+ public:
+  explicit TocNavRecoveryPrint(TocNavParser& parser)
+      : parser(parser), sanitizer(writeRecoveredNavChunk, &parser) {}
+
+  size_t write(const uint8_t byte) override { return write(&byte, 1); }
+
+  size_t write(const uint8_t* data, const size_t size) override {
+    return sanitizer.write(data, size) ? size : 0;
+  }
+
+  bool finish() { return sanitizer.finish() && parser.finish(); }
+  bool changed() const { return sanitizer.changed(); }
+};
 }  // namespace
 
 bool Epub::findContentOpfFile(std::string* contentOpfFile) const {
@@ -229,10 +253,35 @@ bool Epub::parseTocNavFile() const {
 
   // Stream the decompressed nav document straight into the parser instead of round-tripping
   // through a temp file on the SD card (decompress -> write -> reopen -> reread -> delete).
-  if (!readItemContentsToStream(tocNavItem, navParser, 1024)) {
+  if (readItemContentsToStream(tocNavItem, navParser, 1024)) {
+    LOG_DBG("EBP", "Parsed TOC nav items");
+    return true;
+  }
+
+  // Strict XML remains the normal path. Retry only for Expat's invalid-token
+  // error; the bounded filter below changes only a truly bare ampersand.
+  if (!navParser.shouldRetryWithAmpersandRecovery() || !bookMetadataCache ||
+      !bookMetadataCache->restartTocPass()) {
     LOG_ERR("EBP", "Could not read toc nav file");
     return false;
   }
+
+  TocNavParser recoveredParser(navContentBasePath, 0, bookMetadataCache.get());
+  if (!recoveredParser.setup()) {
+    bookMetadataCache->restartTocPass();
+    LOG_ERR("EBP", "Could not setup recovered toc nav parser");
+    return false;
+  }
+
+  TocNavRecoveryPrint recoveryPrint(recoveredParser);
+  if (!readItemContentsToStream(tocNavItem, recoveryPrint, 1024) || !recoveryPrint.finish() ||
+      !recoveryPrint.changed()) {
+    bookMetadataCache->restartTocPass();
+    LOG_ERR("EBP", "Could not recover malformed toc nav file");
+    return false;
+  }
+
+  LOG_DBG("NAV", "Recovered TOC by escaping bare ampersands");
 
   LOG_DBG("EBP", "Parsed TOC nav items");
   return true;

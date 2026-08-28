@@ -36,6 +36,7 @@ class Section {
   struct BuildContext {
     std::unique_ptr<ChapterHtmlSlimParser> parser;
     std::vector<PageLutEntry> lut;
+    ReaderRenderSpec spec;
     std::string parsePath;
     std::string contentBase;
     std::string imageBasePath;
@@ -75,6 +76,10 @@ class Section {
   // Read a page already laid out by the in-progress build (page < build LUT size), from
   // the partially-written tmp .bin without disturbing the build's write cursor.
   std::unique_ptr<Page> loadPageDuringBuild(int page);
+  // Discard only the failed in-progress build so a strict parse can be retried
+  // from byte zero without duplicating pages/LUT entries. Any pre-existing
+  // finalized or partial section remains readable.
+  void resetBuildForRetry();
 
  public:
   uint16_t pageCount = 0;
@@ -93,7 +98,8 @@ class Section {
   // builds. createSectionFile() above is the one-shot wrapper over these.
   //   if (!startBuild(...)) fail;
   //   each tick: buildSomeMore(N); render up to pageCount; when isBuildComplete() stop.
-  bool startBuild(const ReaderRenderSpec& spec, const std::function<void()>& popupFn = nullptr);
+  bool startBuild(const ReaderRenderSpec& spec, const std::function<void()>& popupFn = nullptr,
+                  bool recoverBareAmpersands = false);
   // Lay out up to maxPages more pages (maxPages <= 0 = build to completion). Returns
   // false on error (the build is abandoned). Sets isBuildComplete() when finished.
   bool buildSomeMore(int maxPages);

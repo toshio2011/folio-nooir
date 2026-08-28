@@ -267,6 +267,14 @@ CssLength CssParser::interpretLength(std::string_view val) {
   return result;
 }
 
+CssLength CssParser::interpretLineHeight(std::string_view val) {
+  val = stripTrailingImportant(trimCssWhitespace(val));
+  CssLength result;
+  if (val.empty() || iequalsAscii(val, "normal")) return result;
+  if (!tryInterpretLength(val, result) || result.value <= 0.0f) return CssLength{};
+  return result;
+}
+
 bool CssParser::tryInterpretLength(std::string_view val, CssLength& out) {
   val = trimCssWhitespace(val);
   if (val.empty()) {
@@ -290,8 +298,12 @@ bool CssParser::tryInterpretLength(std::string_view val, CssLength& out) {
   }
 
   const std::string_view unitPart = val.substr(unitStart);
-  auto unit = CssUnit::Pixels;
-  if (iequalsAscii(unitPart, "em")) {
+  auto unit = CssUnit::Unitless;
+  if (unitPart.empty()) {
+    unit = CssUnit::Unitless;
+  } else if (iequalsAscii(unitPart, "px")) {
+    unit = CssUnit::Pixels;
+  } else if (iequalsAscii(unitPart, "em")) {
     unit = CssUnit::Em;
   } else if (iequalsAscii(unitPart, "rem")) {
     unit = CssUnit::Rem;
@@ -299,6 +311,9 @@ bool CssParser::tryInterpretLength(std::string_view val, CssLength& out) {
     unit = CssUnit::Points;
   } else if (unitPart == "%") {
     unit = CssUnit::Percent;
+  } else {
+    out = CssLength{};
+    return false;
   }
 
   out = CssLength{numericValue, unit};
@@ -387,6 +402,19 @@ void CssParser::parseDeclarationIntoStyle(std::string_view decl, CssStyle& style
     if (tryInterpretLength(value, len)) {
       style.imageWidth = len;
       style.defined.imageWidth = 1;
+    }
+  } else if (iequalsAscii(name, "font-size")) {
+    CssLength len;
+    const std::string_view stripped = stripTrailingImportant(value);
+    if (tryInterpretLength(stripped, len) && len.value > 0.0f && len.unit != CssUnit::Unitless) {
+      style.fontSize = len;
+      style.defined.fontSize = 1;
+    }
+  } else if (iequalsAscii(name, "line-height")) {
+    CssLength len = interpretLineHeight(value);
+    if (len.value > 0.0f) {
+      style.lineHeight = len;
+      style.defined.lineHeight = 1;
     }
   } else if (iequalsAscii(name, "display")) {
     const std::string_view displayValue = stripTrailingImportant(value);
@@ -760,6 +788,8 @@ bool CssParser::saveToCache() const {
     writeLength(style.paddingRight);
     writeLength(style.imageHeight);
     writeLength(style.imageWidth);
+    writeLength(style.fontSize);
+    writeLength(style.lineHeight);
     file.write(static_cast<uint8_t>(style.display));
     file.write(static_cast<uint8_t>(style.verticalAlign));
 
@@ -783,6 +813,8 @@ bool CssParser::saveToCache() const {
     if (style.defined.display) definedBits |= 1 << 15;
     if (style.defined.direction) definedBits |= 1 << 16;
     if (style.defined.verticalAlign) definedBits |= 1 << 17;
+    if (style.defined.fontSize) definedBits |= 1 << 18;
+    if (style.defined.lineHeight) definedBits |= 1 << 19;
     file.write(reinterpret_cast<const uint8_t*>(&definedBits), sizeof(definedBits));
   }
 
@@ -833,7 +865,7 @@ bool CssParser::loadFromCache() {
     return static_cast<size_t>(file.available()) >= neededBytes;
   };
 
-  constexpr size_t CSS_LENGTH_FIELD_COUNT = 11;
+  constexpr size_t CSS_LENGTH_FIELD_COUNT = 13;
   constexpr size_t CSS_LENGTH_BYTES = sizeof(float) + sizeof(uint8_t);
   constexpr size_t CSS_FIXED_STYLE_BYTES =
       5 * sizeof(uint8_t) + (CSS_LENGTH_FIELD_COUNT * CSS_LENGTH_BYTES) + sizeof(uint8_t) + sizeof(uint32_t);
@@ -920,7 +952,8 @@ bool CssParser::loadFromCache() {
     if (!readLength(style.textIndent) || !readLength(style.marginTop) || !readLength(style.marginBottom) ||
         !readLength(style.marginLeft) || !readLength(style.marginRight) || !readLength(style.paddingTop) ||
         !readLength(style.paddingBottom) || !readLength(style.paddingLeft) || !readLength(style.paddingRight) ||
-        !readLength(style.imageHeight) || !readLength(style.imageWidth)) {
+        !readLength(style.imageHeight) || !readLength(style.imageWidth) || !readLength(style.fontSize) ||
+        !readLength(style.lineHeight)) {
       rulesBySelector_.clear();
       return false;
     }
@@ -965,6 +998,8 @@ bool CssParser::loadFromCache() {
     style.defined.display = (definedBits & 1 << 15) != 0;
     style.defined.direction = (definedBits & 1 << 16) != 0;
     style.defined.verticalAlign = (definedBits & 1 << 17) != 0;
+    style.defined.fontSize = (definedBits & 1 << 18) != 0;
+    style.defined.lineHeight = (definedBits & 1 << 19) != 0;
 
     rulesBySelector_[selector] = style;
   }

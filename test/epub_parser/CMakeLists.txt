@@ -1,6 +1,7 @@
 add_executable(EpubParserRegressionTest
   EpubParserRegressionTest.cpp
   ${REPO_ROOT}/lib/Epub/Epub/htmlEntities.cpp
+  ${REPO_ROOT}/lib/Epub/Epub/parsers/TocNavAmpersandSanitizer.cpp
   ${REPO_ROOT}/lib/expat/xmlparse.c
   ${REPO_ROOT}/lib/expat/xmlrole.c
   ${REPO_ROOT}/lib/expat/xmltok.c
@@ -8,6 +9,7 @@ add_executable(EpubParserRegressionTest
 
 target_include_directories(EpubParserRegressionTest PRIVATE
   ${REPO_ROOT}/lib/Epub/Epub
+  ${REPO_ROOT}/lib/Epub/Epub/parsers
   ${REPO_ROOT}/lib/XmlParserUtils
   ${REPO_ROOT}/lib/expat
 )

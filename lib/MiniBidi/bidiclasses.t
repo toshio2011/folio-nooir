@@ -82,7 +82,8 @@
 {0x05C0, 0x05C0, R},    /* paseq */
 {0x05C1, 0x05C2, NSM},
 {0x05C3, 0x05C3, R},    /* sof pasuq */
-{0x05C4, 0x05C4, NSM},
+{0x05C4, 0x05C5, NSM},
+{0x05C7, 0x05C7, NSM},
 
 /* ── Hebrew letters ─────────────────────────────────────────────────── */
 {0x05D0, 0x05EA, R},    /* alef … tav */
@@ -117,6 +118,17 @@
 {0x06EE, 0x06EF, AL},   /* dal/reh with inverted V */
 {0x06F0, 0x06F9, EN},   /* extended Arabic-Indic digits ۰-۹ (Farsi/Urdu) — EN per UCD */
 {0x06FA, 0x06FF, AL},
+{0x0750, 0x077F, AL},   /* Arabic Supplement */
+{0x0870, 0x088F, AL},   /* Arabic Extended-B */
+{0x0890, 0x0891, AN},
+{0x0892, 0x0896, AL},
+{0x0897, 0x089F, NSM},
+{0x08A0, 0x08C9, AL},   /* Arabic Extended-A */
+{0x08CA, 0x08E1, NSM},
+{0x08E2, 0x08E2, AN},
+{0x08E3, 0x08FF, NSM},
+{0x10EC0, 0x10EF9, AL}, /* Arabic Extended-C */
+{0x10EFA, 0x10EFF, NSM},
 
 /* ── Latin Extended Additional (L) ─────────────────────────────────── */
 /* Covers accented chars for Vietnamese, Welsh, Romanian, etc.

@@ -3,7 +3,9 @@
 #include <FontDecompressor.h>
 #include <Logging.h>
 #include <SdCardFont.h>
+#include <Utf8.h>
 
+#include <algorithm>
 #include <cstring>
 
 FontCacheManager::FontCacheManager(const std::map<int, EpdFontFamily>& fontMap,
@@ -61,9 +63,28 @@ void FontCacheManager::resetStats() {
 
 bool FontCacheManager::isScanning() const { return scanMode_ == ScanMode::Scanning; }
 
-void FontCacheManager::recordText(const char* text, int fontId, EpdFontFamily::Style style) {
-  scanText_ += text;
-  if (scanFontId_ < 0) scanFontId_ = fontId;
+FontCacheManager::ScanEntry* FontCacheManager::findOrCreateScanEntry(const int fontId) {
+  for (uint8_t i = 0; i < scanEntryCount_; ++i) {
+    if (scanEntries_[i].fontId == fontId) return &scanEntries_[i];
+  }
+  if (scanEntryCount_ >= MAX_SCAN_FONTS) {
+    LOG_DBG("FCM", "Prewarm scan font cap reached; skipping font %d", fontId);
+    return nullptr;
+  }
+  auto& entry = scanEntries_[scanEntryCount_++];
+  entry.fontId = fontId;
+  entry.text.clear();
+  entry.text.reserve(2048);
+  memset(entry.styleCounts, 0, sizeof(entry.styleCounts));
+  return &entry;
+}
+
+void FontCacheManager::recordText(const char* text, const int fontId, const EpdFontFamily::Style style) {
+  if (!text) return;
+  auto* entry = findOrCreateScanEntry(fontId);
+  if (!entry) return;
+  const size_t remaining = entry->text.size() < MAX_SCAN_TEXT_BYTES ? MAX_SCAN_TEXT_BYTES - entry->text.size() : 0;
+  if (remaining > 0) entry->text.append(text, std::min(strlen(text), remaining));
   const uint8_t baseStyle = static_cast<uint8_t>(style) & 0x03;
   const unsigned char* p = reinterpret_cast<const unsigned char*>(text);
   uint32_t cpCount = 0;
@@ -71,7 +92,15 @@ void FontCacheManager::recordText(const char* text, int fontId, EpdFontFamily::S
     if ((*p & 0xC0) != 0x80) cpCount++;
     p++;
   }
-  scanStyleCounts_[baseStyle] += cpCount;
+  entry->styleCounts[baseStyle] += cpCount;
+}
+
+void FontCacheManager::recordCodepoint(const uint32_t cp, const int fontId, const EpdFontFamily::Style style) {
+  auto* entry = findOrCreateScanEntry(fontId);
+  if (!entry || entry->text.size() >= MAX_SCAN_TEXT_BYTES) return;
+  utf8AppendCodepoint(cp, entry->text);
+  const uint8_t baseStyle = static_cast<uint8_t>(style) & 0x03;
+  entry->styleCounts[baseStyle]++;
 }
 
 // --- PrewarmScope implementation ---
@@ -80,33 +109,34 @@ FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager) : manage
   manager_->scanMode_ = ScanMode::Scanning;
   manager_->clearCache();
   manager_->resetStats();
-  manager_->scanText_.clear();
-  manager_->scanText_.reserve(2048);  // Pre-allocate to avoid heap fragmentation from repeated concat
-  memset(manager_->scanStyleCounts_, 0, sizeof(manager_->scanStyleCounts_));
-  manager_->scanFontId_ = -1;
+  manager_->scanEntryCount_ = 0;
+  for (auto& entry : manager_->scanEntries_) {
+    entry.text.clear();
+    memset(entry.styleCounts, 0, sizeof(entry.styleCounts));
+    entry.fontId = -1;
+  }
 }
 
 void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
   manager_->scanMode_ = ScanMode::None;
-  if (manager_->scanText_.empty()) return;
-
-  // Build style bitmask from all styles that appeared during the scan
-  uint8_t styleMask = 0;
-  for (uint8_t i = 0; i < 4; i++) {
-    if (manager_->scanStyleCounts_[i] > 0) styleMask |= (1 << i);
+  for (uint8_t entryIndex = 0; entryIndex < manager_->scanEntryCount_; ++entryIndex) {
+    auto& entry = manager_->scanEntries_[entryIndex];
+    if (entry.text.empty()) continue;
+    uint8_t styleMask = 0;
+    for (uint8_t i = 0; i < 4; i++) {
+      if (entry.styleCounts[i] > 0) styleMask |= (1 << i);
+    }
+    if (styleMask == 0) styleMask = 1;
+    manager_->prewarmCache(entry.fontId, entry.text.c_str(), styleMask);
+    entry.text.clear();
+    entry.text.shrink_to_fit();
   }
-  if (styleMask == 0) styleMask = 1;  // default to regular
-
-  manager_->prewarmCache(manager_->scanFontId_, manager_->scanText_.c_str(), styleMask);
-
-  // Free scan string memory
-  manager_->scanText_.clear();
-  manager_->scanText_.shrink_to_fit();
+  manager_->scanEntryCount_ = 0;
 }
 
 FontCacheManager::PrewarmScope::~PrewarmScope() {
   if (active_) {
-    endScanAndPrewarm();  // no-op if already called (scanText_ is empty)
+    endScanAndPrewarm();  // no-op if already called (scan entries are empty)
     manager_->clearCache();
   }
 }

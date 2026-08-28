@@ -50,6 +50,7 @@ int SdCardFontManager::loadFile(const SdCardFontFileInfo& file, const char* fami
     return 0;
   }
   renderer.registerSdCardFont(fontId, font);
+  renderer.registerFontPointSize(fontId, file.pointSize);
   loaded_.push_back({font, fontId, file.pointSize});
 
   LOG_DBG("SDMGR", "Loaded %s size=%u id=%d styles=%u", file.path.c_str(), file.pointSize, fontId, font->styleCount());

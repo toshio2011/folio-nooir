@@ -25,7 +25,16 @@ namespace {
 // v35: image dimensions are fitted after vertical margins are resolved, so cached
 // page geometry from v34 may place an image below the content viewport.
 // v36: FootnoteEntry href storage increased from 96 to 256 bytes.
-constexpr uint8_t SECTION_FILE_VERSION = 36;
+// v37: Explicitly records the text-layout contracts that affect serialized
+//      word positions, including the glyph-level Arabic fallback contract.
+// v38: preserve XHTML block-flow boundaries when inline content follows a
+//      closed block element, changing section pagination and page geometry.
+// v39: serialize the bounded publisher font-size and line-height metrics on
+//      each cached text line, changing pagination geometry.
+constexpr uint8_t SECTION_FILE_VERSION = 39;
+constexpr uint8_t SECTION_TEXT_BIDI_SHAPING_CONTRACT_VERSION = 1;
+constexpr uint8_t SECTION_TEXT_MARK_CONTRACT_VERSION = 1;
+constexpr uint8_t SECTION_TEXT_FALLBACK_CONTRACT_VERSION = 1;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects
@@ -44,6 +53,7 @@ constexpr uint8_t SECTION_FILE_INCOMPLETE_VERSION = 0;
 // Derived so the pairing can't be forgotten: 0xFE for v28, 0xFD for v29, ...
 constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xFE - (SECTION_FILE_VERSION - 28);
 constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(uint8_t) +
+                                 sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint8_t) +
                                  sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) +
                                  sizeof(uint8_t) + sizeof(bool) + sizeof(bool) + sizeof(uint32_t) + sizeof(uint32_t) +
                                  sizeof(uint32_t) + sizeof(uint32_t);
@@ -89,7 +99,10 @@ void Section::writeSectionFileHeader(const ReaderRenderSpec& spec) {
     LOG_DBG("SCT", "File not open for writing header");
     return;
   }
-  static_assert(HEADER_SIZE == sizeof(SECTION_FILE_VERSION) + sizeof(spec.fontId) + sizeof(spec.lineCompression) +
+  static_assert(HEADER_SIZE == sizeof(SECTION_FILE_VERSION) + sizeof(SECTION_TEXT_BIDI_SHAPING_CONTRACT_VERSION) +
+                                   sizeof(SECTION_TEXT_MARK_CONTRACT_VERSION) +
+                                   sizeof(SECTION_TEXT_FALLBACK_CONTRACT_VERSION) + sizeof(spec.fontId) +
+                                   sizeof(spec.lineCompression) +
                                    sizeof(spec.extraParagraphSpacing) + sizeof(spec.paragraphAlignment) +
                                    sizeof(spec.viewportWidth) + sizeof(spec.viewportHeight) + sizeof(pageCount) +
                                  sizeof(spec.hyphenationEnabled) + sizeof(spec.embeddedStyle) +
@@ -100,6 +113,9 @@ void Section::writeSectionFileHeader(const ReaderRenderSpec& spec) {
   // Written as the incomplete sentinel; finalizeBuild() patches it to
   // SECTION_FILE_VERSION as the last step, committing the file.
   serialization::writePod(file, SECTION_FILE_INCOMPLETE_VERSION);
+  serialization::writePod(file, SECTION_TEXT_BIDI_SHAPING_CONTRACT_VERSION);
+  serialization::writePod(file, SECTION_TEXT_MARK_CONTRACT_VERSION);
+  serialization::writePod(file, SECTION_TEXT_FALLBACK_CONTRACT_VERSION);
   serialization::writePod(file, spec.fontId);
   serialization::writePod(file, spec.lineCompression);
   serialization::writePod(file, spec.extraParagraphSpacing);
@@ -136,6 +152,21 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
       return false;
     }
     filePartial = (version == SECTION_FILE_PARTIAL_VERSION);
+
+    uint8_t fileBidiShapingContractVersion;
+    uint8_t fileMarkContractVersion;
+    uint8_t fileFallbackContractVersion;
+    serialization::readPod(file, fileBidiShapingContractVersion);
+    serialization::readPod(file, fileMarkContractVersion);
+    serialization::readPod(file, fileFallbackContractVersion);
+    if (fileBidiShapingContractVersion != SECTION_TEXT_BIDI_SHAPING_CONTRACT_VERSION ||
+        fileMarkContractVersion != SECTION_TEXT_MARK_CONTRACT_VERSION ||
+        fileFallbackContractVersion != SECTION_TEXT_FALLBACK_CONTRACT_VERSION) {
+      file.close();
+      LOG_ERR("SCT", "Deserialization failed: Text-layout contract does not match");
+      clearCache();
+      return false;
+    }
 
     int fileFontId;
     uint16_t fileViewportWidth, fileViewportHeight;
@@ -234,7 +265,8 @@ bool Section::createSectionFile(const ReaderRenderSpec& spec, const std::functio
   return buildComplete_;
 }
 
-bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void()>& popupFn) {
+bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void()>& popupFn,
+                         const bool recoverBareAmpersands) {
   if (build_) {
     LOG_ERR("SCT", "startBuild called while a build is already active");
     return false;
@@ -345,6 +377,7 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
   // htmlCached == "htmlPath is the live cache" (reused, or just promoted). finalizeBuild/abandonBuild
   // then leave the cached HTML alone; only an un-promoted temp (rename failed) is theirs to clean up.
   ctx->reusedHtml = htmlCached;
+  ctx->spec = spec;
   ctx->htmlPath = htmlPath;
   ctx->tmpHtmlPath = tmpHtmlPath;
   ctx->parsePath = htmlCached ? htmlPath : tmpHtmlPath;
@@ -387,7 +420,7 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
         ctxPtr->lut.push_back({this->onPageComplete(std::move(page)), paragraphIndex, listItemIndex});
       },
       spec.embeddedStyle, ctxPtr->contentBase, ctxPtr->imageBasePath, spec.imageRendering, std::move(tocAnchors),
-      popupFn, ctxPtr->cssParser);
+      popupFn, ctxPtr->cssParser, recoverBareAmpersands);
   if (!ctx->parser) {
     LOG_ERR("SCT", "OOM: ChapterHtmlSlimParser");
     if (ctx->cssParser) ctx->cssParser->clear();
@@ -417,10 +450,20 @@ bool Section::buildSomeMore(const int maxPages) {
   // Pace on pages laid out by THIS build, not pageCount: during a rebuild over a partial,
   // pageCount stays pinned at the partial's watermark until the build passes it, which
   // would otherwise turn one "small" chunk into a blocking rebuild of the whole watermark.
-  const int startCount = builtPageCount_;
+  int startCount = builtPageCount_;
   for (;;) {
     const auto status = build_->parser->parseStep();
     if (status == ChapterHtmlSlimParser::ParseStatus::Error) {
+      if (build_->parser->shouldRetryWithAmpersandRecovery()) {
+        const ReaderRenderSpec retrySpec = build_->spec;
+        LOG_DBG("SCT", "Retrying section after invalid token with bare-ampersand recovery");
+        resetBuildForRetry();
+        if (!startBuild(retrySpec, nullptr, true)) {
+          return false;
+        }
+        startCount = 0;
+        continue;
+      }
       LOG_ERR("SCT", "Parse error during incremental build");
       abandonBuild();
       return false;
@@ -434,6 +477,27 @@ bool Section::buildSomeMore(const int maxPages) {
       return true;
     }
   }
+}
+
+void Section::resetBuildForRetry() {
+  if (!build_) return;
+
+  if (build_->parser) build_->parser->abortParse();
+  if (build_->cssParser) build_->cssParser->clear();
+  if (file) {
+    file.close();
+    Storage.remove(binTmpPath().c_str());
+  }
+  if (!build_->reusedHtml && Storage.exists(build_->tmpHtmlPath.c_str())) {
+    Storage.remove(build_->tmpHtmlPath.c_str());
+  }
+
+  // Keep filePath and its partial metadata intact. startBuild() will recreate
+  // only the temporary layout file, while the retry owns a fresh parser and LUT.
+  build_.reset();
+  buildComplete_ = false;
+  pageCount = partial_ ? partialPageCount_ : 0;
+  builtPageCount_ = 0;
 }
 
 bool Section::hasHtmlCache() const {

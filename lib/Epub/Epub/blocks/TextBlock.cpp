@@ -116,7 +116,8 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
   }
 
   const bool scanning = renderer.isFontCacheScanning();
-  const int ascender = renderer.getFontAscenderSize(fontId);
+  const int blockFontId = renderer.resolveFontIdForPointSize(fontId, blockStyle.fontPointSize);
+  const int ascender = renderer.getFontAscenderSize(blockFontId);
 
   struct DecorationLineTracker {
     EpdFontFamily::Style style;
@@ -177,7 +178,7 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
       // remains in the cached layout so wrapping stays deterministic, while no
       // unsupported glyph or font allocation is needed to display it.
       if (!scanning) {
-        const int width = std::max(2, renderer.getTextWidth(fontId, word, baseStyle));
+        const int width = std::max(2, renderer.getTextWidth(blockFontId, word, baseStyle));
         const int height = std::max(2, ascender - 2);
         renderer.fillRect(wordX, wordY + 1, width, height, true);
       }
@@ -198,11 +199,11 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
           std::min<size_t>({static_cast<size_t>(boundary), static_cast<size_t>(wordTextLen(i)), sizeof(boldBuf) - 1});
       memcpy(boldBuf, word, boldLen);
       boldBuf[boldLen] = '\0';
-      renderer.drawText(fontId, wordX, wordY, boldBuf, true, boldStyle, baseDir);
+      renderer.drawText(blockFontId, wordX, wordY, boldBuf, true, boldStyle, baseDir);
       const int suffixX = wordX + focusSuffixXArr[i];
-      renderer.drawText(fontId, suffixX, wordY, word + boldLen, true, currentStyle, baseDir);
+      renderer.drawText(blockFontId, suffixX, wordY, word + boldLen, true, currentStyle, baseDir);
     } else {
-      renderer.drawText(fontId, wordX, wordY, word, true, currentStyle, baseDir);
+      renderer.drawText(blockFontId, wordX, wordY, word, true, currentStyle, baseDir);
     }
 
     if (scanning) {
@@ -211,7 +212,7 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
 
     if (guideDots && i + 1 < numWords) {
       const char* nextWord = wordText(static_cast<uint16_t>(i + 1));
-      const int currentWidth = renderer.getTextAdvanceX(fontId, word, baseStyle);
+      const int currentWidth = renderer.getTextAdvanceX(blockFontId, word, baseStyle);
       const int nextX = xposArr[i + 1] + x;
       const int gap = nextX - (wordX + currentWidth);
       // A one-pixel dot is enough on e-ink and costs no layout/cache space.
@@ -225,7 +226,7 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
 
     if (EpdFontFamily::hasTextDecoration(currentStyle)) {
       int lineStartX = wordX;
-      int lineWidth = renderer.getTextWidth(fontId, word, currentStyle, baseDir);
+      int lineWidth = renderer.getTextWidth(blockFontId, word, currentStyle, baseDir);
 
       if ((currentStyle & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0) {
         lineWidth = (lineWidth + 1) / 2;
@@ -235,8 +236,8 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
       if (wordTextLen(i) >= 3 && static_cast<uint8_t>(word[0]) == 0xE2 && static_cast<uint8_t>(word[1]) == 0x80 &&
           static_cast<uint8_t>(word[2]) == 0x83) {
         const char* visibleText = word + 3;
-        lineStartX += renderer.getTextAdvanceX(fontId, "\xe2\x80\x83", currentStyle);
-        lineWidth = renderer.getTextWidth(fontId, visibleText, currentStyle, baseDir);
+        lineStartX += renderer.getTextAdvanceX(blockFontId, "\xe2\x80\x83", currentStyle);
+        lineWidth = renderer.getTextWidth(blockFontId, visibleText, currentStyle, baseDir);
         if ((currentStyle & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0) {
           lineWidth = (lineWidth + 1) / 2;
         }
@@ -300,6 +301,8 @@ bool TextBlock::serialize(HalFile& file) const {
   serialization::writePod(file, blockStyle.textIndentDefined);
   serialization::writePod(file, blockStyle.isRtl);
   serialization::writePod(file, blockStyle.directionDefined);
+  serialization::writePod(file, blockStyle.fontPointSize);
+  serialization::writePod(file, blockStyle.lineHeightPx);
 
   return true;
 }
@@ -378,6 +381,8 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
   serialization::readPod(file, blockStyle.textIndentDefined);
   serialization::readPod(file, blockStyle.isRtl);
   serialization::readPod(file, blockStyle.directionDefined);
+  serialization::readPod(file, blockStyle.fontPointSize);
+  serialization::readPod(file, blockStyle.lineHeightPx);
 
   return block;
 }

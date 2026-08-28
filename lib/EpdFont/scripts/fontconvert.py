@@ -20,6 +20,7 @@ parser.add_argument("size", type=int, help="font size to use.")
 parser.add_argument("fontstack", action="store", nargs='+', help="list of font files, ordered by descending priority.")
 parser.add_argument("--2bit", dest="is2Bit", action="store_true", help="generate 2-bit greyscale bitmap instead of 1-bit black and white.")
 parser.add_argument("--additional-intervals", dest="additional_intervals", action="append", help="Additional code point intervals to export as min,max. This argument can be repeated.")
+parser.add_argument("--only-additional-intervals", dest="only_additional_intervals", action="store_true", help="Export only intervals supplied with --additional-intervals.")
 parser.add_argument("--compress", dest="compress", action="store_true", help="Compress glyph bitmaps using DEFLATE with group-based compression.")
 parser.add_argument("--force-autohint", dest="force_autohint", action="store_true", help="Force FreeType auto-hinter instead of native font hinting. Improves stem width consistency for fonts with weak or no native TrueType hints.")
 parser.add_argument("--pnum", dest="pnum", action="store_true", help="Use proportional numerals (pnum OpenType feature) instead of default tabular figures. Reduces visual gaps between digits in running prose.")
@@ -244,7 +245,13 @@ def load_glyph(code_point):
         face_index += 1
     return None
 
-unmerged_intervals = sorted(intervals + add_ints)
+# EpdGlyph stores bitmap dimensions in uint8_t. Set the requested size before
+# validating intervals so oversized ornamental glyphs are excluded from the
+# interval table rather than silently truncating their dimensions.
+for face in font_stack:
+    face.set_char_size(size << 6, size << 6, 150, 150)
+
+unmerged_intervals = sorted(([] if args.only_additional_intervals else intervals) + add_ints)
 intervals = []
 unvalidated_intervals = []
 for i_start, i_end in unmerged_intervals:
@@ -257,15 +264,14 @@ for i_start, i_end in unvalidated_intervals:
     start = i_start
     for code_point in range(i_start, i_end + 1):
         face = load_glyph(code_point)
-        if face is None:
+        if face is None or face.glyph.bitmap.width > 0xFF or face.glyph.bitmap.rows > 0xFF:
+            if face is not None:
+                print(f"Skipping U+{code_point:04X}: bitmap {face.glyph.bitmap.width}x{face.glyph.bitmap.rows} exceeds EpdGlyph uint8 dimensions", file=sys.stderr)
             if start < code_point:
                 intervals.append((start, code_point - 1))
             start = code_point + 1
     if start != i_end + 1:
         intervals.append((start, i_end))
-
-for face in font_stack:
-    face.set_char_size(size << 6, size << 6, 150, 150)
 
 total_size = 0
 all_glyphs = []
@@ -374,8 +380,10 @@ for i_start, i_end in intervals:
         total_size += len(packed)
         all_glyphs.append((glyph, packed))
 
-# pipe seems to be a good heuristic for the "real" descender
-face = load_glyph(ord('|'))
+# The last font in the stack defines the shared line metrics.  Fallback faces
+# can be placed first for coverage while retaining the primary reader font's
+# advanceY/ascender/descender.
+metrics_face = font_stack[-1]
 
 glyph_data = []
 glyph_props = []
@@ -991,9 +999,9 @@ print(f"    {font_name}Bitmaps,")
 print(f"    {font_name}Glyphs,")
 print(f"    {font_name}Intervals,")
 print(f"    {len(intervals)},")
-print(f"    {norm_ceil(face.size.height)},")
-print(f"    {norm_ceil(face.size.ascender)},")
-print(f"    {norm_floor(face.size.descender)},")
+print(f"    {norm_ceil(metrics_face.size.height)},")
+print(f"    {norm_ceil(metrics_face.size.ascender)},")
+print(f"    {norm_floor(metrics_face.size.descender)},")
 print(f"    {'true' if is2Bit else 'false'},")
 if compress:
     print(f"    {font_name}Groups,")

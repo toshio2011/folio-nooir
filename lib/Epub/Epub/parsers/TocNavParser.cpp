@@ -7,6 +7,7 @@
 #include "Epub/BookMetadataCache.h"
 
 bool TocNavParser::setup() {
+  parseError = XML_ERROR_NONE;
   parser = XML_ParserCreate(nullptr);
   if (!parser) {
     LOG_DBG("NAV", "Couldn't allocate memory for parser");
@@ -24,6 +25,14 @@ TocNavParser::~TocNavParser() { destroyXmlParser(parser); }
 size_t TocNavParser::write(const uint8_t data) { return write(&data, 1); }
 
 size_t TocNavParser::write(const uint8_t* buffer, const size_t size) {
+  return writeInternal(buffer, size, true);
+}
+
+size_t TocNavParser::writeStreaming(const uint8_t* buffer, const size_t size) {
+  return writeInternal(buffer, size, false);
+}
+
+size_t TocNavParser::writeInternal(const uint8_t* buffer, const size_t size, const bool trackRemainingSize) {
   if (!parser) return 0;
 
   const uint8_t* currentBufferPos = buffer;
@@ -40,7 +49,9 @@ size_t TocNavParser::write(const uint8_t* buffer, const size_t size) {
     const auto toRead = remainingInBuffer < 1024 ? remainingInBuffer : 1024;
     memcpy(buf, currentBufferPos, toRead);
 
-    if (XML_ParseBuffer(parser, static_cast<int>(toRead), remainingSize == toRead) == XML_STATUS_ERROR) {
+    const bool done = trackRemainingSize && remainingSize == toRead;
+    if (XML_ParseBuffer(parser, static_cast<int>(toRead), done) == XML_STATUS_ERROR) {
+      parseError = XML_GetErrorCode(parser);
       LOG_DBG("NAV", "Parse error at line %lu: %s", XML_GetCurrentLineNumber(parser),
               XML_ErrorString(XML_GetErrorCode(parser)));
       destroyXmlParser(parser);
@@ -49,9 +60,21 @@ size_t TocNavParser::write(const uint8_t* buffer, const size_t size) {
 
     currentBufferPos += toRead;
     remainingInBuffer -= toRead;
-    remainingSize -= toRead;
+    if (trackRemainingSize) remainingSize -= toRead;
   }
   return size;
+}
+
+bool TocNavParser::finish() {
+  if (!parser) return false;
+  if (XML_ParseBuffer(parser, 0, XML_TRUE) == XML_STATUS_ERROR) {
+    parseError = XML_GetErrorCode(parser);
+    LOG_DBG("NAV", "Parse error at line %lu: %s", XML_GetCurrentLineNumber(parser),
+            XML_ErrorString(XML_GetErrorCode(parser)));
+    destroyXmlParser(parser);
+    return false;
+  }
+  return true;
 }
 
 void XMLCALL TocNavParser::startElement(void* userData, const XML_Char* name, const XML_Char** atts) {

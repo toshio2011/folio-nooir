@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -11,6 +12,7 @@
 #include <expat.h>
 
 #include "FootnoteEntry.h"
+#include "TocNavAmpersandSanitizer.h"
 #include "XmlParserUtils.h"
 #include "htmlEntities.h"
 
@@ -94,6 +96,32 @@ enum XML_Error parseXml(const std::string& input, XmlProbe& probe) {
   }
   XML_ParserFree(parser);
   return error;
+}
+
+struct SanitizedOutput {
+  std::string value;
+};
+
+bool collectSanitizedOutput(void* context, const uint8_t* data, const size_t size) {
+  auto& output = *static_cast<SanitizedOutput*>(context);
+  output.value.append(reinterpret_cast<const char*>(data), size);
+  return true;
+}
+
+std::string sanitizeInChunks(const std::string& input, const size_t chunkSize, bool* ok, bool* changed) {
+  SanitizedOutput output;
+  TocNavAmpersandSanitizer sanitizer(collectSanitizedOutput, &output);
+  *ok = true;
+  for (size_t offset = 0; offset < input.size(); offset += chunkSize) {
+    const size_t length = std::min(chunkSize, input.size() - offset);
+    if (!sanitizer.write(reinterpret_cast<const uint8_t*>(input.data() + offset), length)) {
+      *ok = false;
+      break;
+    }
+  }
+  if (*ok) *ok = sanitizer.finish();
+  *changed = sanitizer.changed();
+  return output.value;
 }
 
 }  // namespace
@@ -192,4 +220,109 @@ TEST(EpubParserRegression, DenseFixtureExercisesManyIncrementalParserChunks) {
   XmlProbe probe;
   ASSERT_EQ(parseXml(xhtml, probe), XML_ERROR_NONE);
   EXPECT_GT(probe.text.size(), 10000u);
+}
+
+TEST(EpubParserRegression, BareAmpersandInChapterTextIsRecovered) {
+  const std::string nav =
+      R"(<html><body><nav epub:type="toc"><ol><li><a href="a.xhtml">Terpecah & Terbelah</a></li></ol></nav></body></html>)";
+  XmlProbe strictProbe;
+  EXPECT_EQ(parseXml(nav, strictProbe), XML_ERROR_INVALID_TOKEN);
+
+  bool ok = false;
+  bool changed = false;
+  const std::string sanitized = sanitizeInChunks(nav, 7, &ok, &changed);
+  EXPECT_TRUE(ok);
+  EXPECT_TRUE(changed);
+  EXPECT_NE(sanitized.find("Terpecah &amp; Terbelah"), std::string::npos);
+
+  XmlProbe recoveredProbe;
+  EXPECT_EQ(parseXml(sanitized, recoveredProbe), XML_ERROR_NONE);
+}
+
+TEST(EpubParserRegression, MultipleBareAmpersandsInChapterTextAreRecovered) {
+  const std::string nav = R"(<root>A & B & C & D</root>)";
+  bool ok = false;
+  bool changed = false;
+  const std::string sanitized = sanitizeInChunks(nav, 1, &ok, &changed);
+
+  EXPECT_TRUE(ok);
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(std::count(sanitized.begin(), sanitized.end(), '&'), 3);
+  EXPECT_EQ(sanitized, "<root>A &amp; B &amp; C &amp; D</root>");
+
+  XmlProbe probe;
+  EXPECT_EQ(parseXml(sanitized, probe), XML_ERROR_NONE);
+}
+
+TEST(EpubParserRegression, ValidChapterEntitiesRemainUnchanged) {
+  const std::string input = R"(<root>&amp; &lt; &gt; &quot; &apos;</root>)";
+  bool ok = false;
+  bool changed = false;
+  const std::string sanitized = sanitizeInChunks(input, 2, &ok, &changed);
+
+  EXPECT_TRUE(ok);
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(sanitized, input);
+
+  XmlProbe probe;
+  EXPECT_EQ(parseXml(sanitized, probe), XML_ERROR_NONE);
+}
+
+TEST(EpubParserRegression, NumericAndHexChapterEntitiesRemainUnchanged) {
+  const std::string input = R"(<root>&#123; &#x1F600;</root>)";
+  bool ok = false;
+  bool changed = false;
+  const std::string sanitized = sanitizeInChunks(input, 1, &ok, &changed);
+
+  EXPECT_TRUE(ok);
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(sanitized, input);
+
+  XmlProbe probe;
+  EXPECT_EQ(parseXml(sanitized, probe), XML_ERROR_NONE);
+}
+
+TEST(EpubParserRegression, MixedChapterEntitiesAndBareAmpersandsOnlyEscapeBareOnes) {
+  const std::string input = R"(<root>A &amp; B & C &#123; D &lt; E & F</root>)";
+  bool ok = false;
+  bool changed = false;
+  const std::string sanitized = sanitizeInChunks(input, 3, &ok, &changed);
+
+  EXPECT_TRUE(ok);
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(sanitized, R"(<root>A &amp; B &amp; C &#123; D &lt; E &amp; F</root>)");
+
+  XmlProbe probe;
+  EXPECT_EQ(parseXml(sanitized, probe), XML_ERROR_NONE);
+}
+
+TEST(EpubParserRegression, UnrelatedMalformedChapterXmlStillFailsAfterRecovery) {
+  const std::string input = R"(<root><item>A &amp; B</item>)";
+  bool ok = false;
+  bool changed = false;
+  const std::string sanitized = sanitizeInChunks(input, 5, &ok, &changed);
+
+  EXPECT_TRUE(ok);
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(sanitized, input);
+
+  XmlProbe probe;
+  EXPECT_NE(parseXml(sanitized, probe), XML_ERROR_NONE);
+}
+
+TEST(EpubParserRegression, ChapterRecoveryHandlesAmpersandsAndEntitiesSplitAcrossBuffers) {
+  const std::string xhtml =
+      R"(<html><body><p>Valid &amp; text, bare & text, numeric &#123;, hex &#x1F;.</p></body></html>)";
+  bool ok = false;
+  bool changed = false;
+  const std::string sanitized = sanitizeInChunks(xhtml, 1, &ok, &changed);
+
+  ASSERT_TRUE(ok);
+  ASSERT_TRUE(changed);
+  EXPECT_NE(sanitized.find("Valid &amp; text, bare &amp; text, numeric &#123;, hex &#x1F;."),
+            std::string::npos);
+
+  XmlProbe probe;
+  EXPECT_EQ(parseXml(sanitized, probe), XML_ERROR_NONE);
+  EXPECT_NE(probe.text.find("Valid & text, bare & text"), std::string::npos);
 }

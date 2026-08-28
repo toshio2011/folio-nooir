@@ -80,6 +80,11 @@ ruby -rdigest -e 'puts [
 ].map{|f| Digest::SHA256.hexdigest(File.read(f)).to_i(16) }.sum % (2 ** 32) - (2 ** 31)'
 ))"
 
+for size in 12 14 16 18; do
+  arabic_id=$(ruby -rdigest -e "puts ['./arabic_${size}_regular.h', './arabic_${size}_bold.h'].map{|f| Digest::SHA256.hexdigest(File.read(f)).to_i(16) }.sum % (2 ** 32) - (2 ** 31)")
+  echo "#define ARABIC_${size}_FONT_ID (${arabic_id})"
+done
+
 echo "#define UI_10_FONT_ID ($(
 ruby -rdigest -e 'puts [
   "./ubuntu_10_regular.h",

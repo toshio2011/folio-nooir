@@ -22,6 +22,7 @@ class TocNavParser final : public Print {
   const std::string& baseContentPath;
   size_t remainingSize;
   XML_Parser parser = nullptr;
+  enum XML_Error parseError = XML_ERROR_NONE;
   ParserState state = START;
   BookMetadataCache* cache;
 
@@ -35,6 +36,8 @@ class TocNavParser final : public Print {
   static void characterData(void* userData, const XML_Char* s, int len);
   static void endElement(void* userData, const XML_Char* name);
 
+  size_t writeInternal(const uint8_t* buffer, size_t size, bool trackRemainingSize);
+
  public:
   explicit TocNavParser(const std::string& baseContentPath, const size_t xmlSize, BookMetadataCache* cache)
       : baseContentPath(baseContentPath), remainingSize(xmlSize), cache(cache) {}
@@ -44,4 +47,10 @@ class TocNavParser final : public Print {
 
   size_t write(uint8_t) override;
   size_t write(const uint8_t* buffer, size_t size) override;
+
+  // Used only by the bounded malformed-ampersand retry path. It keeps the
+  // parser open until finish() receives the explicit end-of-document marker.
+  size_t writeStreaming(const uint8_t* buffer, size_t size);
+  bool finish();
+  bool shouldRetryWithAmpersandRecovery() const { return parseError == XML_ERROR_INVALID_TOKEN; }
 };

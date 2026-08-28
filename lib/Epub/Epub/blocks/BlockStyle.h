@@ -35,6 +35,12 @@ struct BlockStyle {
   bool isRtl = false;              // true if resolved direction is RTL
   bool directionDefined = false;   // true if direction was explicitly set in CSS/HTML
 
+  // Resolved publisher typography for this block. Zero means use the reader's
+  // selected font/line metrics. Non-zero values are snapped to registered
+  // reader fonts and stored compactly with each cached line.
+  uint8_t fontPointSize = 0;
+  uint16_t lineHeightPx = 0;
+
   // Set when this block was created by a <br> element. Used by startNewTextBlock to inject
   // a full line-height gap when the <br> block stays empty (section-break use case).
   // NOT propagated through getCombinedBlockStyle so it can't leak into sibling blocks.
@@ -102,6 +108,9 @@ struct BlockStyle {
       result.isRtl = isRtl;
       result.directionDefined = true;
     }
+
+    if (result.fontPointSize == 0 && fontPointSize != 0) result.fontPointSize = fontPointSize;
+    if (result.lineHeightPx == 0 && lineHeightPx != 0) result.lineHeightPx = lineHeightPx;
 
     // fromBrElement is consumed by startNewTextBlock when an empty <br> block
     // is merged with the following paragraph; never propagate it further.

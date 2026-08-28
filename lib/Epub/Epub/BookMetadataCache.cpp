@@ -139,6 +139,12 @@ bool BookMetadataCache::beginTocPass() {
   return true;
 }
 
+bool BookMetadataCache::restartTocPass() {
+  if (!endTocPass()) return false;
+  tocCount = 0;
+  return beginTocPass();
+}
+
 bool BookMetadataCache::endTocPass() {
   const bool flushed = !passOut || passOut->flush();
   passOut.reset();

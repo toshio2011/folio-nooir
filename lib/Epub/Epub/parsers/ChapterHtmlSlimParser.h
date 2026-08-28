@@ -3,7 +3,9 @@
 #include <HalStorage.h>
 #include <expat.h>
 
+#include <array>
 #include <climits>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -15,6 +17,7 @@
 #include "Epub/blocks/TextBlock.h"
 #include "Epub/css/CssParser.h"
 #include "Epub/css/CssStyle.h"
+#include "Epub/parsers/TocNavAmpersandSanitizer.h"
 
 class Page;
 class GfxRenderer;
@@ -72,6 +75,21 @@ class ChapterHtmlSlimParser {
   };
   std::vector<StyleStackEntry> inlineStyleStack;
   std::vector<BlockStyle> blockStyleStack;  // accumulated block styles from open ancestor elements
+  bool blockBoundaryPending = false;       // a closed block must end before the next content
+
+  // Typography is resolved while the incremental parser visits elements.  The
+  // stack is deliberately capped: deeply nested decorative markup must not be
+  // able to grow a second unbounded style structure on the X3.
+  struct TypographyState {
+    int depth = 0;
+    float fontSizePt = 14.0f;
+    uint8_t fontPointSize = 0;
+    float lineHeightMultiplier = 0.0f;
+    uint16_t lineHeightPx = 0;
+  };
+  static constexpr size_t MAX_TYPOGRAPHY_DEPTH = 32;
+  std::vector<TypographyState> typographyStack;
+
   CssStyle currentCssStyle;
   bool effectiveBold = false;
   bool effectiveItalic = false;
@@ -121,6 +139,13 @@ class ChapterHtmlSlimParser {
   size_t parserBytesAtLastYield_ = 0;
   bool documentRootSeen_ = false;
   bool documentRootClosed_ = false;
+  static constexpr size_t PARSE_BUFFER_SIZE = 1024;
+  std::unique_ptr<TocNavAmpersandSanitizer> ampersandSanitizer_;
+  std::unique_ptr<std::array<uint8_t, PARSE_BUFFER_SIZE>> recoveryInputBuffer_;
+  bool recoverBareAmpersands_ = false;
+  XML_Error parseError_ = XML_ERROR_NONE;
+
+  static bool writeSanitizedChunk(void* userData, const uint8_t* data, size_t size);
 
   void rememberReferencedAnchor(const char* href);
   void rememberUnresolvedInlineAnchor(const char* id);
@@ -128,9 +153,16 @@ class ChapterHtmlSlimParser {
   void updateEffectiveInlineStyle();
   void failAllocation(const char* what);
   void startNewTextBlock(const BlockStyle& blockStyle);
+  void consumePendingBlockBoundary();
   void flushPendingAnchor();
   void flushPartWordBuffer();
   void makePages();
+  TypographyState makeTypographyState(const CssStyle& cssStyle) const;
+  void pushTypographyState(int elementDepth, const CssStyle& cssStyle);
+  void popTypographyState(int elementDepth);
+  const TypographyState& currentTypographyState() const;
+  void applyTypographyToBlockStyle(BlockStyle& blockStyle, const TypographyState& typography) const;
+  int lineHeightForBlock(const BlockStyle& blockStyle) const;
   static EpdFontFamily::Style fontStyleForTextDecoration(CssTextDecoration decoration);
   static void applyDirectionToEntry(StyleStackEntry& entry, const CssStyle& css);
   static void applyTextDecorationToEntry(StyleStackEntry& entry, const CssStyle& css);
@@ -152,7 +184,8 @@ class ChapterHtmlSlimParser {
                                  const bool embeddedStyle, const std::string& contentBase,
                                  const std::string& imageBasePath, const uint8_t imageRendering = 0,
                                  std::vector<std::string> tocAnchors = {},
-                                 const std::function<void()>& popupFn = nullptr, const CssParser* cssParser = nullptr)
+                                 const std::function<void()>& popupFn = nullptr, const CssParser* cssParser = nullptr,
+                                 const bool recoverBareAmpersands = false)
 
       : epub(epub),
         filepath(filepath),
@@ -173,7 +206,8 @@ class ChapterHtmlSlimParser {
         imageRendering(imageRendering),
         contentBase(contentBase),
         imageBasePath(imageBasePath),
-        tocAnchors(std::move(tocAnchors)) {}
+        tocAnchors(std::move(tocAnchors)),
+        recoverBareAmpersands_(recoverBareAmpersands) {}
 
   ~ChapterHtmlSlimParser();
 
@@ -190,6 +224,9 @@ class ChapterHtmlSlimParser {
   ParseStatus parseStep();
   bool finishParse();  // flush the trailing page and tear down; returns true
   void abortParse();   // tear down without flushing (error / abandon)
+  bool shouldRetryWithAmpersandRecovery() const {
+    return !recoverBareAmpersands_ && parseError_ == XML_ERROR_INVALID_TOKEN;
+  }
 
   void addLineToPage(std::shared_ptr<TextBlock> line);
   const std::vector<std::pair<std::string, uint16_t>>& getAnchors() const { return anchorData; }
