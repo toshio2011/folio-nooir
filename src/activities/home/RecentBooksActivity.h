@@ -100,6 +100,7 @@ class RecentBooksActivity final : public Activity {
   size_t carouselHqQueueIndex = 0;
   bool carouselHqPreparationActive = false;
   volatile bool carouselHqPopupRendered = false;
+  bool carouselHqCompletionPopupPending = false;
   // Refresh Book Cache regenerates 360px only when that exact file existed
   // before the refresh; ordinary refreshes must not create HQ files.
   std::string refreshCarouselHqPath;
@@ -141,8 +142,11 @@ class RecentBooksActivity final : public Activity {
   // Data loading
   void loadRecentBooks();
   void invalidateCarouselHqProbes();
+  void invalidateCarouselHqProbesLocked();
   void invalidateCarouselSourceCache();
+  void invalidateCarouselSourceCacheLocked();
   void invalidateCarouselSource(const std::string& path);
+  void invalidateCarouselSourceLocked(const std::string& path);
   CarouselSourceCacheEntry* getCarouselSource(const std::string& path, CarouselSourceTiming& timing,
                                               CarouselSourceFrame* frame = nullptr);
   void prepareCarouselSourceFrame(const std::array<CoverStackSlot, CAROUSEL_FRAME_SLOT_COUNT>& stackSlots,

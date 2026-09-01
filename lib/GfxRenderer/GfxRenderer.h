@@ -104,6 +104,8 @@ class GfxRenderer {
   // call stays single-font (consistent bit depth, metrics, wrapping).
   int resolveTextFontId(int fontId, const char* text, EpdFontFamily::Style style) const;
   int resolveArabicFallbackFontId(int fontId, uint32_t cp, EpdFontFamily::Style style) const;
+  int resolveArabicGlyphFontId(int primaryFontId, int currentFontId, uint32_t cp,
+                               EpdFontFamily::Style style) const;
   bool hasArabicFallbackCandidate(int fontId, const char* text, EpdFontFamily::Style style) const;
   int getRenderedTextAdvanceX(int fontId, const char* renderedText, EpdFontFamily::Style style) const;
   int scaleUiFontId(int fontId) const;
@@ -166,6 +168,10 @@ class GfxRenderer {
   void setArabicFallbackForPointSize(uint8_t pointSize, int fallbackFontId) {
     arabicFallbackByPointSize_[pointSize] = fallbackFontId;
   }
+  // Bind a dynamically loaded reader font to the closest configured built-in
+  // Arabic family. The direct binding avoids relying on a later point-size
+  // lookup while an SD font is being used as the primary font.
+  void bindArabicFallbackForPointSize(int primaryFontId, uint8_t pointSize);
   void registerFontPointSize(int fontId, uint8_t pointSize) { fontPointSizes_[fontId] = pointSize; }
   // Ensure SD card font glyph data is loaded for the given text. Called from layout code
   // (which holds a const GfxRenderer&) before measuring word widths. Safe to call on non-SD fonts (no-op).
@@ -294,6 +300,12 @@ class GfxRenderer {
   int getFontAscenderSize(int fontId) const;
   int getLineHeight(int fontId) const;
   int getLineHeight(int fontId, float compression) const;
+  // Measure the actual selected Arabic-fallback bitmap envelope relative to
+  // drawText's line origin. This follows the same bidi, fallback, shaping,
+  // and combining-mark placement path as drawText, but does not decode
+  // bitmaps. Returns false when no fallback glyph is present.
+  bool getTextFallbackVerticalBounds(int fontId, const char* text, EpdFontFamily::Style style, int* minY, int* maxY,
+                                     BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO) const;
   // Resolve a requested EPUB point size to the nearest registered reader font
   // in the same family. Returns the original font when no alternate size is
   // available (for example, a single-size SD-card family).

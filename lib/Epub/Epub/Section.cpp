@@ -31,10 +31,18 @@ namespace {
 //      closed block element, changing section pagination and page geometry.
 // v39: serialize the bounded publisher font-size and line-height metrics on
 //      each cached text line, changing pagination geometry.
-constexpr uint8_t SECTION_FILE_VERSION = 39;
-constexpr uint8_t SECTION_TEXT_BIDI_SHAPING_CONTRACT_VERSION = 1;
+// v40: always serialize a non-empty trailing page at XHTML EOF, including when
+//      a hidden/page-map element reset the active text block first.
+// v41: store per-line fallback-glyph top compensation and effective line height.
+constexpr uint8_t SECTION_FILE_VERSION = 41;
+// v2: bidi output now removes non-rendering Unicode format controls after
+// ordering/shaping, changing measured/rendered text where those controls
+// were previously replaced by a visible fallback glyph.
+constexpr uint8_t SECTION_TEXT_BIDI_SHAPING_CONTRACT_VERSION = 2;
 constexpr uint8_t SECTION_TEXT_MARK_CONTRACT_VERSION = 1;
-constexpr uint8_t SECTION_TEXT_FALLBACK_CONTRACT_VERSION = 1;
+// v2 routes post-shaped Arabic codepoints through the matching fallback before
+// measuring/rendering, so cached page geometry from v1 is no longer equivalent.
+constexpr uint8_t SECTION_TEXT_FALLBACK_CONTRACT_VERSION = 2;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects

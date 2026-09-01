@@ -478,10 +478,16 @@ void EpubReaderActivity::onEnter() {
 }
 
 void EpubReaderActivity::requestPageRender(const bool immediate) {
-  // Once the loading phase has been presented, keep the next event-loop turn
-  // reserved for the actual synchronous render instead of refreshing the
-  // loading line a second time.
-  if (!loadingUiRenderArmed) loadingUiPending = true;
+  // A page already laid out in the active section can proceed directly to the
+  // normal render. Cold opens, chapter transitions, and targets beyond a
+  // partial-build watermark retain the preliminary loading phase.
+  const bool targetPageReady = section && section->pageCount > 0 && section->currentPage >= 0 &&
+                               section->currentPage < static_cast<int>(section->pageCount);
+  if (targetPageReady) {
+    loadingUiPending = false;
+  } else if (!loadingUiRenderArmed) {
+    loadingUiPending = true;
+  }
   requestUpdate(immediate);
 }
 

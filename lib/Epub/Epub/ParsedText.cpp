@@ -27,6 +27,7 @@ constexpr size_t RTL_PARAGRAPH_PROBE_WORDS = 3;
 // before giving up. 64 is a hedge for pathological cases like long numeric tokens.
 constexpr int RTL_PER_WORD_PROBE_DEPTH = 64;
 constexpr size_t MIN_JUSTIFY_GAPS = 1;
+constexpr int MAX_LAYOUT_LINE_HEIGHT_PX = 256;
 
 // Returns the first rendered codepoint of a word (skipping leading soft hyphens).
 uint32_t firstCodepoint(const std::string& word) {
@@ -457,12 +458,14 @@ int ParsedText::resolveFirstLineIndent(const bool isFirstLine, const GfxRenderer
 // Consumes data to minimize memory usage
 void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fontId, const uint16_t viewportWidth,
                                        const std::function<void(std::shared_ptr<TextBlock>)>& processLine,
-                                       const bool includeLastLine) {
+                                       const int nominalLineHeight, const bool includeLastLine) {
   if (words.empty()) {
     return;
   }
 
   const int layoutFontId = renderer.resolveFontIdForPointSize(fontId, blockStyle.fontPointSize);
+  const int resolvedNominalLineHeight =
+      nominalLineHeight > 0 ? nominalLineHeight : std::max(1, renderer.getLineHeight(layoutFontId));
 
   // Per-paragraph RTL auto-detection: only when CSS/HTML didn't explicitly set direction.
   // Explicit dir="ltr" must be respected and not overridden by content heuristic.
@@ -513,7 +516,7 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
 
   for (size_t i = 0; i < lineCount; ++i) {
     extractLine(i, pageWidth, wordWidths, wordContinues, wordNoSpaceBefore, lineBreakIndices, processLine, renderer,
-                layoutFontId);
+                layoutFontId, resolvedNominalLineHeight);
   }
 
   // Remove consumed words so size() reflects only remaining words
@@ -820,7 +823,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
                              const std::vector<bool>& continuesVec, const std::vector<bool>& noSpaceBeforeVec,
                              const std::vector<size_t>& lineBreakIndices,
                              const std::function<void(std::shared_ptr<TextBlock>)>& processLine,
-                             const GfxRenderer& renderer, const int fontId) {
+                             const GfxRenderer& renderer, const int fontId, const int nominalLineHeight) {
   const size_t lineBreak = lineBreakIndices[breakIndex];
   const size_t lastBreakAt = breakIndex > 0 ? lineBreakIndices[breakIndex - 1] : 0;
   const size_t lineWordCount = lineBreak - lastBreakAt;
@@ -1111,6 +1114,46 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     }
   }
 
+  // The primary font supplies the nominal line box, but a fallback glyph or a
+  // raised combining mark can extend beyond it. Measure the exact per-word
+  // render path and expand only this line when its bitmap envelope requires it.
+  // The top compensation moves the baseline down; the effective line height
+  // reserves the same amount above and any additional amount below.
+  BlockStyle lineStyle = blockStyle;
+  int maxTopOverhang = 0;
+  int maxBottomOverhang = 0;
+  const int blockAscender = renderer.getFontAscenderSize(fontId);
+  for (size_t i = 0; i < lineWords.size(); ++i) {
+    int wordMinY = 0;
+    int wordMaxY = 0;
+    const auto wordBaseDir = static_cast<BidiUtils::BidiBaseDir>(
+        BidiUtils::detectParagraphLevel(lineWords[i].c_str(), blockStyle.isRtl ? 1 : 0));
+    if (!renderer.getTextFallbackVerticalBounds(fontId, lineWords[i].c_str(), lineWordStyles[i], &wordMinY, &wordMaxY,
+                                                wordBaseDir)) {
+      continue;
+    }
+
+    if ((lineWordStyles[i] & EpdFontFamily::SUP) != 0) {
+      const int shift = blockAscender * 2 / 5;
+      wordMinY -= shift;
+      wordMaxY -= shift;
+    } else if ((lineWordStyles[i] & EpdFontFamily::SUB) != 0) {
+      const int shift = blockAscender / 4;
+      wordMinY += shift;
+      wordMaxY += shift;
+    }
+
+    maxTopOverhang = std::max(maxTopOverhang, -wordMinY);
+    maxBottomOverhang = std::max(maxBottomOverhang, wordMaxY - nominalLineHeight);
+  }
+
+  if (maxTopOverhang > 0 || maxBottomOverhang > 0) {
+    const int boundedTop = std::clamp(maxTopOverhang, 0, 255);
+    lineStyle.lineTopOverhangPx = static_cast<uint8_t>(boundedTop);
+    lineStyle.lineHeightPx = static_cast<uint16_t>(std::clamp<int>(
+        nominalLineHeight + boundedTop + std::max(0, maxBottomOverhang), 1, MAX_LAYOUT_LINE_HEIGHT_PX));
+  }
+
   const auto isFocusSuffixAt = [&](const size_t idx) {
     return willReorder ? reorderedFocusSuffixScratch[idx] : wordIsFocusSuffix[lastBreakAt + idx];
   };
@@ -1129,7 +1172,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
   if (!lineHasFocusSplit) {
     // TextBlock flattens the vectors into its arena; they stay owned here and die at return.
     auto block = std::shared_ptr<TextBlock>(new (std::nothrow) TextBlock(
-        lineWords, lineXPos, lineWordStyles, std::vector<uint8_t>{}, std::vector<uint16_t>{}, blockStyle));
+        lineWords, lineXPos, lineWordStyles, std::vector<uint8_t>{}, std::vector<uint16_t>{}, lineStyle));
     if (!block) {
       LOG_ERR("PTX", "Dropping line: TextBlock allocation failed");
       return;
@@ -1184,7 +1227,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
   }
 
   auto block = std::shared_ptr<TextBlock>(
-      new (std::nothrow) TextBlock(outWords, outXPos, outStyles, outBoundaries, outSuffixX, blockStyle));
+      new (std::nothrow) TextBlock(outWords, outXPos, outStyles, outBoundaries, outSuffixX, lineStyle));
   if (!block) {
     LOG_ERR("PTX", "Dropping line: TextBlock allocation failed");
     return;

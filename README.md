@@ -14,8 +14,8 @@
 
 # Folio Nooir
 
-Current development line: **v1.6.1**.
-Current stable release: **v1.5.10**. Completed development baseline: **v1.6.0**.
+Current release: **v1.6.1**.
+Completed development baseline: **v1.6.0**.
 
 ## Hardware warning
 
@@ -48,6 +48,27 @@ profile also includes simulated tilt testing. Real-device testing is still
 recommended. See the complete [native simulator guide](docs/simulator.md) for
 WSL/Linux setup, build/run commands, controls, virtual SD-card use, and
 troubleshooting.
+
+## What's New in 1.6.1
+
+Folio Nooir 1.6.1 focuses on more compatible and dependable EPUB reading while
+preserving the existing X3/X4 reader experience.
+
+- Improved Arabic and Quran EPUB rendering with fallback fonts, contextual
+  joining, RTL/bidi ordering, and better handling of harakat and combining
+  marks.
+- Improved generic EPUB block flow so publisher-defined separated content,
+  including mixed Arabic/Latin books, keeps its intended paragraph structure.
+- Improved tolerance for common malformed EPUB XML, including bounded recovery
+  for bare ampersands in navigation and chapter content.
+- Added bounded EPUB CSS typography support for inherited `font-size` and
+  `line-height`, with values resolved against the user's selected reader size.
+- Improved EPUB pagination resilience, final-page handling, and cache rebuild
+  safety, plus a faster warm page-turn path on supported devices.
+
+The 1.6.1 EPUB improvements remain incremental and bounded for X3/X4 memory;
+unsupported CSS values and unusual publisher layouts may still require further
+work.
 
 ## What's New in 1.6.0
 
@@ -731,7 +752,7 @@ Each compatible GitHub release must contain an asset named exactly:
 firmware.bin
 ```
 
-Use a numeric release tag such as `1.5.10`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
+Use a numeric release tag such as `1.6.1`. Devices running an older build that still points to CrossPoint must be manually flashed once with a build containing the Folio Nooir OTA endpoint.
 
 ## Custom sleep images
 

@@ -75,10 +75,12 @@ bool SdCardFontManager::loadFamily(const SdCardFontFamilyInfo& family, GfxRender
     return false;
   }
 
-  if (loadFile(*selected, family.name.c_str(), renderer) == 0) {
+  const int fontId = loadFile(*selected, family.name.c_str(), renderer);
+  if (fontId == 0) {
     return false;
   }
 
+  renderer.bindArabicFallbackForPointSize(fontId, selected->pointSize);
   loadedFamilyName_ = family.name;
   loadedPointSize_ = selected->pointSize;
   return true;

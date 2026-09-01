@@ -40,6 +40,10 @@ struct BlockStyle {
   // reader fonts and stored compactly with each cached line.
   uint8_t fontPointSize = 0;
   uint16_t lineHeightPx = 0;
+  // Per-line top compensation for glyphs whose actual bitmap begins above the
+  // primary font's nominal line box. Set only on extracted TextBlock lines;
+  // never inherited by a subsequent block.
+  uint8_t lineTopOverhangPx = 0;
 
   // Set when this block was created by a <br> element. Used by startNewTextBlock to inject
   // a full line-height gap when the <br> block stays empty (section-break use case).
@@ -111,6 +115,7 @@ struct BlockStyle {
 
     if (result.fontPointSize == 0 && fontPointSize != 0) result.fontPointSize = fontPointSize;
     if (result.lineHeightPx == 0 && lineHeightPx != 0) result.lineHeightPx = lineHeightPx;
+    result.lineTopOverhangPx = 0;
 
     // fromBrElement is consumed by startNewTextBlock when an empty <br> block
     // is merged with the following paragraph; never propagate it further.

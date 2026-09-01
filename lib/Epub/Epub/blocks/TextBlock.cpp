@@ -118,6 +118,7 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
   const bool scanning = renderer.isFontCacheScanning();
   const int blockFontId = renderer.resolveFontIdForPointSize(fontId, blockStyle.fontPointSize);
   const int ascender = renderer.getFontAscenderSize(blockFontId);
+  const int renderY = y + blockStyle.lineTopOverhangPx;
 
   struct DecorationLineTracker {
     EpdFontFamily::Style style;
@@ -163,7 +164,7 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
     // drawText, so these offsets are chosen relative to the full-size ascender:
     //   SUP: raise by 40% of ascender — sits clearly above the cap-height
     //   SUB: lower by 25% of ascender — descends below baseline without clashing with ascenders below
-    int wordY = y;
+    int wordY = renderY;
     if ((currentStyle & EpdFontFamily::SUP) != 0) {
       wordY -= ascender * 2 / 5;
     } else if ((currentStyle & EpdFontFamily::SUB) != 0) {
@@ -303,6 +304,7 @@ bool TextBlock::serialize(HalFile& file) const {
   serialization::writePod(file, blockStyle.directionDefined);
   serialization::writePod(file, blockStyle.fontPointSize);
   serialization::writePod(file, blockStyle.lineHeightPx);
+  serialization::writePod(file, blockStyle.lineTopOverhangPx);
 
   return true;
 }
@@ -383,6 +385,7 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
   serialization::readPod(file, blockStyle.directionDefined);
   serialization::readPod(file, blockStyle.fontPointSize);
   serialization::readPod(file, blockStyle.lineHeightPx);
+  serialization::readPod(file, blockStyle.lineTopOverhangPx);
 
   return block;
 }

@@ -74,11 +74,21 @@ void RecentBooksActivity::loadRecentBooks() {
 }
 
 void RecentBooksActivity::invalidateCarouselHqProbes() {
+  RenderLock lock;
+  invalidateCarouselHqProbesLocked();
+}
+
+void RecentBooksActivity::invalidateCarouselHqProbesLocked() {
   for (auto& probe : carouselHqProbes) probe = {};
-  invalidateCarouselSourceCache();
+  invalidateCarouselSourceCacheLocked();
 }
 
 void RecentBooksActivity::invalidateCarouselSourceCache() {
+  RenderLock lock;
+  invalidateCarouselSourceCacheLocked();
+}
+
+void RecentBooksActivity::invalidateCarouselSourceCacheLocked() {
   for (auto& entry : carouselSourceCache) {
     entry.bitmap.reset();
     entry.file = HalFile{};
@@ -90,6 +100,11 @@ void RecentBooksActivity::invalidateCarouselSourceCache() {
 }
 
 void RecentBooksActivity::invalidateCarouselSource(const std::string& path) {
+  RenderLock lock;
+  invalidateCarouselSourceLocked(path);
+}
+
+void RecentBooksActivity::invalidateCarouselSourceLocked(const std::string& path) {
   for (auto& entry : carouselSourceCache) {
     if (!entry.valid || entry.path != path) continue;
     entry.bitmap.reset();
@@ -110,7 +125,7 @@ RecentBooksActivity::CarouselSourceCacheEntry* RecentBooksActivity::getCarouselS
   for (auto& entry : carouselSourceCache) {
     if (!entry.valid || entry.path != path) continue;
     if (!entry.bitmap || !entry.file.isOpen()) {
-      invalidateCarouselSource(path);
+      invalidateCarouselSourceLocked(path);
       break;
     }
     entry.lastUsed = carouselSourceCacheClock;
@@ -655,6 +670,7 @@ void RecentBooksActivity::startCarouselHqPreparation() {
   carouselHqQueueIndex = 0;
   carouselHqPreparationActive = false;
   carouselHqPopupRendered = false;
+  carouselHqCompletionPopupPending = false;
 
   std::vector<std::string> seenPaths;
   seenPaths.reserve(recentBooks.size());
@@ -674,6 +690,12 @@ void RecentBooksActivity::startCarouselHqPreparation() {
 
   if (carouselHqQueue.empty()) {
     LOG_DBG("SHELF", "Carousel HQ preparation found no missing covers");
+    // This menu action is confirmed on press, while normal book opening is
+    // handled on the matching release. Consume that release and show a
+    // completion message instead of opening the selected book.
+    swallowBookConfirmRelease = true;
+    longPressActionShown = true;
+    carouselHqCompletionPopupPending = true;
     requestUpdate(true);
     return;
   }
@@ -868,6 +890,7 @@ void RecentBooksActivity::onEnter() {
   carouselHqQueueIndex = 0;
   carouselHqPreparationActive = false;
   carouselHqPopupRendered = false;
+  carouselHqCompletionPopupPending = false;
   refreshCarouselHqPath.clear();
   // A pending write belongs to the previous shelf frame. Never carry it into
   // a new activity instance, where it could write unrelated framebuffer data
@@ -907,7 +930,10 @@ void RecentBooksActivity::onEnter() {
 void RecentBooksActivity::onExit() {
   Activity::onExit();
   recentBooks.clear();
-  invalidateCarouselHqProbes();
+  // ActivityManager calls onExit() while holding RenderLock. Keep cache
+  // destruction on the already-locked path so teardown cannot deadlock while
+  // still guaranteeing no render is using a cached source.
+  invalidateCarouselHqProbesLocked();
 }
 
 void RecentBooksActivity::loop() {
@@ -1495,7 +1521,7 @@ void RecentBooksActivity::renderCarousel(const bool threeCover) {
         if (sourceTiming.reused) {
           const bool rewound = source->bitmap->rewindToData() == BmpReaderError::Ok;
           if (!rewound) {
-            invalidateCarouselSource(path);
+            invalidateCarouselSourceLocked(path);
             return CarouselBitmapDrawResult::Failed;
           }
         }
@@ -1504,7 +1530,7 @@ void RecentBooksActivity::renderCarousel(const bool threeCover) {
                                            stackSlot.rightHeight)
                 ? CarouselBitmapDrawResult::Drawn
                 : CarouselBitmapDrawResult::Failed;
-        if (result == CarouselBitmapDrawResult::Failed) invalidateCarouselSource(path);
+        if (result == CarouselBitmapDrawResult::Failed) invalidateCarouselSourceLocked(path);
         return result;
       };
 
@@ -1641,6 +1667,13 @@ void RecentBooksActivity::renderCarousel(const bool threeCover) {
     overlayFrameShown = true;
     return;
   }
+  if (carouselHqCompletionPopupPending) {
+    GUI.drawPopup(renderer, "All carousel covers are ready");
+    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    carouselHqCompletionPopupPending = false;
+    overlayFrameShown = true;
+    return;
+  }
   if (retrievingBookCache && retrievingBookCacheIndex == selectorIndex) {
     std::string bookName = "book";
     if (visibleBookCount > 0 && retrievingBookCacheIndex < visibleBookCount) {
@@ -1725,7 +1758,7 @@ void RecentBooksActivity::renderFolioCarouselShelf(const int shelfTop, const int
       if (sourceTiming.reused) {
         const bool rewound = source->bitmap->rewindToData() == BmpReaderError::Ok;
         if (!rewound) {
-          invalidateCarouselSource(path);
+          invalidateCarouselSourceLocked(path);
           return CarouselBitmapDrawResult::Failed;
         }
       }
@@ -1734,7 +1767,7 @@ void RecentBooksActivity::renderFolioCarouselShelf(const int shelfTop, const int
                                          stackSlot.rightHeight)
               ? CarouselBitmapDrawResult::Drawn
               : CarouselBitmapDrawResult::Failed;
-      if (result == CarouselBitmapDrawResult::Failed) invalidateCarouselSource(path);
+      if (result == CarouselBitmapDrawResult::Failed) invalidateCarouselSourceLocked(path);
       return result;
     };
 
@@ -2155,6 +2188,13 @@ void RecentBooksActivity::render(RenderLock&&) {
     return;
   }
   if (bookActionsPopup.processRender(renderer, mappedInput)) {
+    overlayFrameShown = true;
+    return;
+  }
+  if (carouselHqCompletionPopupPending) {
+    GUI.drawPopup(renderer, "All carousel covers are ready");
+    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    carouselHqCompletionPopupPending = false;
     overlayFrameShown = true;
     return;
   }

@@ -125,8 +125,8 @@ class EpubReaderActivity final : public Activity {
   // Set when the lazy extension start failed, so loop() doesn't retry (and log) every
   // tick; the blocking extension in render() remains the fallback past the watermark.
   bool partialRebuildStartFailed = false;
-  // Page requests use a short event-loop phase to show the loading line on
-  // the already-presented page before synchronous parsing/rendering starts.
+  // Cold/uncached page requests use a short event-loop phase to show the
+  // loading line on the already-presented page before synchronous work starts.
   bool loadingUiPending = false;
   bool loadingUiRenderArmed = false;
 

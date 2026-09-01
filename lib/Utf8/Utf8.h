@@ -104,6 +104,21 @@ inline bool utf8IsTextMark(const uint32_t cp) {
   return utf8IsCombiningMark(cp) || utf8IsTransparentMark(cp);
 }
 
+// Unicode format controls affect bidi resolution or word joining but have no
+// visible glyph of their own. They must be retained through bidi/shaping and
+// removed before font lookup; otherwise a font without a zero-width glyph can
+// render its replacement diamond. Keep this list limited to format controls
+// used in ordinary EPUB text and Arabic/RTL content.
+inline bool utf8IsNonRenderingFormat(const uint32_t cp) {
+  return (cp >= 0x0009 && cp <= 0x000D)    // tab, line/paragraph controls
+         || cp == 0x061C                  // ARABIC LETTER MARK
+         || (cp >= 0x200B && cp <= 0x200F) // zero-width/bidi marks
+         || (cp >= 0x202A && cp <= 0x202E) // bidi embeddings/overrides
+         || (cp >= 0x2060 && cp <= 0x2064) // invisible formatting controls
+         || (cp >= 0x2066 && cp <= 0x206F) // bidi isolates/deprecated controls
+         || cp == 0xFEFF;                  // zero-width no-break/BOM
+}
+
 enum class Utf8Script : uint8_t {
   Common,
   Latin,

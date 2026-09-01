@@ -22,9 +22,14 @@ parser.add_argument("--2bit", dest="is2Bit", action="store_true", help="generate
 parser.add_argument("--additional-intervals", dest="additional_intervals", action="append", help="Additional code point intervals to export as min,max. This argument can be repeated.")
 parser.add_argument("--only-additional-intervals", dest="only_additional_intervals", action="store_true", help="Export only intervals supplied with --additional-intervals.")
 parser.add_argument("--compress", dest="compress", action="store_true", help="Compress glyph bitmaps using DEFLATE with group-based compression.")
+parser.add_argument("--group-max-uncompressed-bytes", dest="group_max_uncompressed_bytes", type=int, default=65536,
+                    help="Maximum byte-aligned decompressed size of each compressed group (default: 65536).")
 parser.add_argument("--force-autohint", dest="force_autohint", action="store_true", help="Force FreeType auto-hinter instead of native font hinting. Improves stem width consistency for fonts with weak or no native TrueType hints.")
 parser.add_argument("--pnum", dest="pnum", action="store_true", help="Use proportional numerals (pnum OpenType feature) instead of default tabular figures. Reduces visual gaps between digits in running prose.")
 args = parser.parse_args()
+
+if args.group_max_uncompressed_bytes <= 0:
+    parser.error("--group-max-uncompressed-bytes must be positive")
 
 import freetype
 from fontTools.ttLib import TTFont
@@ -833,10 +838,10 @@ if compress:
         (0xFFFD, 0xFFFD),   # Replacement Character
     ]
 
-    # 64 KB cap: large enough to hold any single built-in script group with
-    # headroom, small enough to be a comfortable transient malloc on the
-    # ESP32-C3.
-    GROUP_MAX_UNCOMPRESSED_BYTES = 65536
+    # The default preserves the historical 64 KiB grouping. Font families
+    # with tighter fragmented-heap constraints can request a smaller cap
+    # without changing glyph coverage, metrics, or ordering.
+    GROUP_MAX_UNCOMPRESSED_BYTES = args.group_max_uncompressed_bytes
 
     def get_script_group(code_point):
         for i, (start, end) in enumerate(SCRIPT_GROUP_RANGES):

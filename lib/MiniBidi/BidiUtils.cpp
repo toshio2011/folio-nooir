@@ -196,7 +196,7 @@ bool applyBidiVisualChunk(const char* utf8, std::string& out, int paragraphLevel
   out.reserve(std::strlen(utf8));
   // Lam-Alef collapse sentinel and zero-width joining formatters have done
   // their job during shaping and have no glyphs to render.
-  const auto filtered = [](const uint32_t cp) { return cp == LIGATURE_PLACEHOLDER || cp == 0x200C || cp == 0x200D; };
+  const auto filtered = [](const uint32_t cp) { return cp == LIGATURE_PLACEHOLDER || utf8IsNonRenderingFormat(cp); };
   for (int i = 0; i < count; i++) {
     const uint32_t cp = shaped[i].wc;
     if (filtered(cp)) continue;

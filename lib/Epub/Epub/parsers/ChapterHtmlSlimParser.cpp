@@ -1559,7 +1559,8 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
                                         : self->viewportWidth;
     self->currentTextBlock->layoutAndExtractLines(
         self->renderer, self->fontId, effectiveWidth,
-        [self](const std::shared_ptr<TextBlock>& textBlock) { self->addLineToPage(textBlock); }, false);
+        [self](const std::shared_ptr<TextBlock>& textBlock) { self->addLineToPage(textBlock); },
+        self->lineHeightForBlock(self->currentTextBlock->getBlockStyle()), false);
   }
 }
 
@@ -1929,18 +1930,27 @@ bool ChapterHtmlSlimParser::finishParse() {
   unresolvedInlineAnchors.clear();
   typographyStack.clear();
 
-  // Process last page if there is still text
+  // Flush any text that is still buffered. A preceding block-boundary event can
+  // already have reset currentTextBlock while leaving a non-empty currentPage
+  // waiting for EOF, so page finalization must not depend on the text block
+  // pointer still being present.
   if (currentTextBlock) {
     makePages();
-    if (!pendingAnchorId.empty()) {
-      anchorData.push_back({std::move(pendingAnchorId), static_cast<uint16_t>(completedPageCount)});
-      pendingAnchorId.clear();
-    }
-    completePageFn(std::move(currentPage), xpathParagraphIndex, xpathListItemIndex);
-    completedPageCount++;
-    currentPage.reset();
     currentTextBlock.reset();
   }
+
+  if (!pendingAnchorId.empty()) {
+    anchorData.push_back({std::move(pendingAnchorId), static_cast<uint16_t>(completedPageCount)});
+    pendingAnchorId.clear();
+  }
+
+  // Do not drop a partially filled final page when the last parser event was a
+  // skipped/hidden element. Never emit an empty trailing page.
+  if (currentPage && !currentPage->elements.empty()) {
+    completePageFn(std::move(currentPage), xpathParagraphIndex, xpathListItemIndex);
+    completedPageCount++;
+  }
+  currentPage.reset();
 
   return true;
 }
@@ -2037,7 +2047,7 @@ void ChapterHtmlSlimParser::makePages() {
 
   currentTextBlock->layoutAndExtractLines(
       renderer, fontId, effectiveWidth,
-      [this](const std::shared_ptr<TextBlock>& textBlock) { addLineToPage(textBlock); });
+      [this](const std::shared_ptr<TextBlock>& textBlock) { addLineToPage(textBlock); }, lineHeight);
 
   // Fallback: transfer any remaining pending footnotes to current page.
   // Normally addLineToPage handles this via word-index tracking, but this catches

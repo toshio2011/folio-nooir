@@ -51,7 +51,7 @@ for size in ${NOTOSANS_FONT_SIZES[@]}; do
     metrics_path="../builtinFonts/source/NotoSans/NotoSans-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
     python fontconvert.py $font_name $size $arabic_path $metrics_path --only-additional-intervals \
-      --2bit --compress --pnum "${ARABIC_READER_INTERVALS[@]}" > $output_path
+      --2bit --compress --pnum --group-max-uncompressed-bytes 32768 "${ARABIC_READER_INTERVALS[@]}" > $output_path
     echo "Generated $output_path"
   done
 done

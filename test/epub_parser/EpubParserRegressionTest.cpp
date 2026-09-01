@@ -326,3 +326,20 @@ TEST(EpubParserRegression, ChapterRecoveryHandlesAmpersandsAndEntitiesSplitAcros
   EXPECT_EQ(parseXml(sanitized, probe), XML_ERROR_NONE);
   EXPECT_NE(probe.text.find("Valid & text, bare & text"), std::string::npos);
 }
+
+TEST(EpubParserRegression, EofAfterHiddenPageMapElementPreservesAllVisibleText) {
+  const std::string xhtml = readFixture("chapter_eof_hidden_page_map.xhtml");
+  ASSERT_FALSE(xhtml.empty());
+
+  XmlProbe probe;
+  ASSERT_EQ(parseXml(xhtml, probe), XML_ERROR_NONE);
+
+  constexpr std::string_view visible[] = {
+      "VISIBLE_PAGE_PREFIX",
+      "VISIBLE_FINAL_PARAGRAPH",
+      "VISIBLE_TAIL_MARKER",
+  };
+  for (const auto text : visible) {
+    ASSERT_EQ(probe.text.find(text), probe.text.rfind(text)) << text;
+  }
+}

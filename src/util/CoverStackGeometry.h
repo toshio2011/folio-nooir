@@ -67,6 +67,11 @@ inline std::array<CoverStackSlot, 5> layout(const int screenWidth, const size_t 
     return CoverStackSlot{valid, itemIndex, depth, CoverStackRect{x, y, width, height}, leftHeight, rightHeight};
   };
 
+  if (itemCount == 1) {
+    slots[4] = makeSlot(centerX, centerY, centerWidth, heroHeight, heroHeight, heroHeight, 0, selected, true);
+    return slots;
+  }
+
   // The inner edge of every side cover is taller. The common y baseline
   // matches CrossInk's recessed fan treatment; smaller far cards therefore
   // sit visually behind the near cards without a second renderer.
@@ -130,6 +135,11 @@ inline std::array<CoverStackSlot, 5> layoutThree(const int screenWidth, const si
                             const int rightHeight, const uint8_t depth, const size_t itemIndex, const bool valid) {
     return CoverStackSlot{valid, itemIndex, depth, CoverStackRect{x, y, width, height}, leftHeight, rightHeight};
   };
+
+  if (itemCount == 1) {
+    slots[4] = makeSlot(centerX, centerY, centerWidth, heroHeight, heroHeight, heroHeight, 0, selected, true);
+    return slots;
+  }
 
   if (itemCount == 2) {
     // Do not render the same second book on both sides of the center.

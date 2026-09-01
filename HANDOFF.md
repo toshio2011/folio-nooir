@@ -8,7 +8,7 @@ history, decisions, and feature inventory.
 - Active development line: Folio Nooir **1.6.1**
 - Known-good baseline: completed Folio Nooir **1.6.0**
 - Authoritative branch: `codex/folio-nooir`
-- Current authoritative commit: `d1865354`
+- 1.6.1 source checkpoint before release preparation: `c13eda8c490b53c0d787d641e144b4e1d332478b`
 - FreeInk is a real Nooir dependency through the `freeink-sdk` submodule.
 - The 1.5.10 baseline uses the Nooir-specific FreeInk commit
   `958720659ea289ae325e83db20049d0ea844800d` (`9587206`).
@@ -19,18 +19,39 @@ history, decisions, and feature inventory.
 - The previous safety checkpoint was `safety/1.6.0-carousel-layouts-hq` at
   `9c8e9751`, which is an ancestor of the current development branch.
 - The normal/default firmware build has succeeded. Carousel/HQ cover behavior
-  and the Statistics/Sleep work have been physically exercised on X4. No
-  1.6.0 tag, GitHub Release, or firmware upload has been performed.
+  and the Statistics/Sleep work have been physically exercised on X4. The
+  1.6.1 release state is now being prepared from this branch; release assets
+  and hardware uploads remain separate release operations.
 - The existing CBZ reader and cache behavior listed below are 1.6.0 baseline
   functionality.
-- The immediate 1.6.1 focus is EPUB reading quality, especially Arabic/RTL
-  support, text shaping, fonts, and layout. No new 1.6.1 EPUB implementation
-  has started; detailed EPUB audit and planning come next.
+- The immediate 1.6.1 focus was EPUB reading quality, especially Arabic/RTL
+  support, text shaping, fonts, and layout. The Arabic/EPUB foundation,
+  typography work, EOF finalization, glyph-bound compensation, and warm-turn
+  path are included in the release candidate being frozen below.
 - The detailed future CBZ/Manga plan is preserved in
   `docs/CBZ_MANGA_PLAN.md` and is deferred until after the EPUB phase.
 - CBZ/Manga preparation and cache improvements remain a future planned phase,
   deferred until after the EPUB phase. Their detailed architecture and design
   must still be planned and audited separately before implementation.
+
+## 1.6.1 release candidate state
+
+- The release candidate retains the completed 1.6.0 baseline and the planned
+  CBZ/Manga work remains future work in `docs/CBZ_MANGA_PLAN.md`.
+- The 1.6.1 EPUB work includes Arabic fallback, shaping/RTL integration,
+  Quranic-mark bounds compensation, malformed-XML recovery, generic block
+  flow, bounded CSS typography, EOF/page finalization, and the warm page-turn
+  fast path. Section cache version is `41`, with shaping/fallback contract
+  discriminators retained.
+- Temporary physical missing-glyph and EPUB memory-pressure diagnostics were
+  used during investigation and have been removed from the release source.
+  The functional fallback, font grouping, and rendering fixes remain.
+- Physical X4 validation covered the EPUB fixes and Arabic/Quran reading paths.
+  Physical X3 validation is not claimed here; the shared X3/X4 code paths and
+  simulator validation remain useful but do not replace that hardware check.
+- No firmware image is being regenerated as part of this documentation and
+  release-preparation pass. Existing ignored build outputs must not be treated
+  as release assets unless their source/configuration is positively verified.
 
 ## Completed work
 
@@ -118,31 +139,29 @@ commit. The pin is committed in the authoritative history.
 
 ## Immediate next steps
 
-1. Audit and plan EPUB reading-quality improvements separately, prioritizing
-   Arabic/RTL support, shaping, fonts, and layout. Do not implement EPUB yet.
-2. Continue physical X3/X4 regression testing of the completed 1.6.0 paths,
+1. Continue physical X3/X4 regression testing of the completed 1.6.0 paths,
    including Statistics, Sleep, settings, Featured, Folio shelves, Carousel,
    CBZ, EPUB images, and clipping restoration.
-3. If simulator validation is needed, synchronize Windows source to the
+2. If simulator validation is needed, synchronize Windows source to the
    separate WSL mirror and run both native simulator environments there. Do
    not make unique feature changes in WSL.
-4. To sync FreeInk later, fetch `upstream`, merge or rebase deliberately,
+3. To sync FreeInk later, fetch `upstream`, merge or rebase deliberately,
    test Nooir, push the tested branch to `origin`, and only then update the
    parent pointer to a new exact commit. Avoid a blind `git pull` inside
    `freeink-sdk`.
-5. After the EPUB phase, return to the preserved CBZ/Manga preparation and
+4. After the EPUB phase, return to the preserved CBZ/Manga preparation and
    cache plan and complete its separate architecture/safety audit before
    implementation.
-6. Review any future 1.6.1 source change with the X3 safety, cache, storage,
+5. Review any future post-1.6.1 source change with the X3 safety, cache, storage,
    and format-isolation constraints below before implementation.
-7. Create release artifacts or upload firmware only when explicitly
-   authorized; this checkpoint does not create a tag or release.
+6. Create or upload release artifacts only from a positively identified,
+   appropriately built image; never use an arbitrary ignored `firmware.bin`.
 
 ## Resource map
 
 - Repository: <https://github.com/toshio2011/folio-nooir>
 - Authoritative development branch: `codex/folio-nooir`
-- Current development checkpoint: `d1865354`
+- 1.6.1 source checkpoint before release preparation: `c13eda8c490b53c0d787d641e144b4e1d332478b`
 - Previous 1.6.0 safety checkpoint: `safety/1.6.0-carousel-layouts-hq` at
   `9c8e9751`
 - WSL simulator mirror: `~/side-wsl`
@@ -171,6 +190,8 @@ not stage or copy them into the repository.
   `git pull` blindly inside the submodule.
 - Leave `.codex-*`, `_epub-inspect*`, `codex-work-monitor/`, logs, probes,
   caches, binaries, and build output untouched and unstaged.
+- Preserve the reviewed 1.6.1 Arabic/EPUB fixes and keep future diagnostics,
+  probes, logs, caches, and arbitrary build outputs out of release commits.
 - Treat the existing 1.6.0 CBZ reader as baseline functionality. CBZ/Manga
   preparation and cache work is deferred until after the EPUB phase and its
   separate planning and architecture audit.

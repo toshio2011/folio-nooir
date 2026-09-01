@@ -191,6 +191,24 @@ TEST(ArabicFoundation, RtlPreflightCoversExtendedArabicWithoutTreatingLatinAsRtl
   EXPECT_TRUE(utf8ContainsRtlScript(encode({0x10EC0}).c_str()));
 }
 
+TEST(ArabicFoundation, BidiFormatControlsAreNotEmittedAsGlyphs) {
+  const std::string logical = encode({0x200F, 0x0628, 0x200E, 0x064E, 0x202B, 0x0627, 0x202C, 0x2067, 0x0644,
+                                      0x2069, 0xFEFF, 0x061C});
+  std::string visual;
+  ASSERT_TRUE(BidiUtils::applyBidiVisual(logical.c_str(), visual));
+  const auto codepoints = decode(visual);
+  EXPECT_FALSE(codepoints.empty());
+  for (const uint32_t cp : codepoints) {
+    EXPECT_FALSE(utf8IsNonRenderingFormat(cp));
+  }
+  EXPECT_TRUE(utf8IsNonRenderingFormat(0x200C));
+  EXPECT_TRUE(utf8IsNonRenderingFormat(0x200D));
+  EXPECT_TRUE(utf8IsNonRenderingFormat(0x2066));
+  EXPECT_TRUE(utf8IsNonRenderingFormat(0x206F));
+  EXPECT_FALSE(utf8IsNonRenderingFormat(0x064E));
+  EXPECT_FALSE(utf8IsNonRenderingFormat('A'));
+}
+
 TEST(ArabicFoundation, LongMixedLineUsesBoundedBidiSegmentation) {
   std::string logical;
   for (int i = 0; i < 180; ++i) {

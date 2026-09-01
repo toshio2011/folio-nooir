@@ -1,0 +1,5 @@
+add_executable(carousel_geometry_test CarouselGeometryTest.cpp)
+target_link_libraries(carousel_geometry_test PRIVATE GTest::gtest_main crosspoint_test_common)
+
+include(GoogleTest)
+gtest_discover_tests(carousel_geometry_test)

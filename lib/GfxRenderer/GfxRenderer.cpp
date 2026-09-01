@@ -182,6 +182,26 @@ void GfxRenderer::insertFont(const int fontId, EpdFontFamily font) {
   }
 }
 
+void GfxRenderer::bindArabicFallbackForPointSize(const int primaryFontId, const uint8_t pointSize) {
+  if (primaryFontId == 0 || pointSize == 0 || arabicFallbackByPointSize_.empty()) return;
+
+  int fallbackFontId = 0;
+  uint8_t bestDistance = UINT8_MAX;
+  for (const auto& entry : arabicFallbackByPointSize_) {
+    if (fontMap.find(entry.second) == fontMap.end()) continue;
+    const uint8_t distance = entry.first > pointSize ? static_cast<uint8_t>(entry.first - pointSize)
+                                                     : static_cast<uint8_t>(pointSize - entry.first);
+    if (fallbackFontId == 0 || distance < bestDistance ||
+        (distance == bestDistance && entry.first < pointSize)) {
+      fallbackFontId = entry.second;
+      bestDistance = distance;
+    }
+  }
+
+  if (fallbackFontId == 0) return;
+  arabicFallbackFontMap_[primaryFontId] = fallbackFontId;
+}
+
 int GfxRenderer::resolveTextFontId(const int fontId, const char* text, const EpdFontFamily::Style style) const {
   const int scaledFontId = scaleUiFontId(fontId);
   if (fallbackFontMap_.empty() || text == nullptr || *text == '\0') {
@@ -237,15 +257,46 @@ int GfxRenderer::resolveArabicFallbackFontId(const int fontId, const uint32_t cp
   return fallbackFontId;
 }
 
+int GfxRenderer::resolveArabicGlyphFontId(const int primaryFontId, const int currentFontId, const uint32_t cp,
+                                          const EpdFontFamily::Style style) const {
+  // The initial decision is made on the source codepoint.  Arabic shaping can
+  // then turn a covered base letter into a Presentation Form that the primary
+  // font does not carry.  Keep an already-covered current font, otherwise try
+  // the matching Arabic fallback using the post-shaped codepoint.  If neither
+  // font covers it, retain the current font so a genuine coverage miss remains
+  // diagnosable instead of silently changing unrelated text.
+  const auto currentIt = fontMap.find(currentFontId);
+  if (currentIt != fontMap.end() && currentIt->second.hasCodepoint(cp, style)) return currentFontId;
+
+  const int fallbackFontId = resolveArabicFallbackFontId(primaryFontId, cp, style);
+  if (fallbackFontId != primaryFontId) return fallbackFontId;
+
+  const auto primaryIt = fontMap.find(primaryFontId);
+  if (primaryIt != fontMap.end() && primaryIt->second.hasCodepoint(cp, style)) return primaryFontId;
+  return currentFontId;
+}
+
 bool GfxRenderer::hasArabicFallbackCandidate(const int fontId, const char* text,
                                              const EpdFontFamily::Style style) const {
   if (text == nullptr || *text == '\0' || (arabicFallbackFontMap_.empty() && arabicFallbackByPointSize_.empty())) {
     return false;
   }
+  // Keep Latin-only EPUB text out of the per-codepoint fallback map lookup.
+  // This restores the cheap path used before glyph-level Arabic fallback was
+  // added while preserving the full scan for strings that can contain RTL.
+  if (!utf8ContainsRtlScript(text)) return false;
   const char* cursor = text;
   uint32_t cp;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&cursor)))) {
-    if (resolveArabicFallbackFontId(fontId, cp, style) != fontId) return true;
+    const int currentFontId = resolveArabicFallbackFontId(fontId, cp, style);
+    const auto currentIt = fontMap.find(currentFontId);
+    if (currentIt == fontMap.end()) continue;
+    if (utf8IsTextMark(cp)) {
+      if (currentFontId != fontId) return true;
+      continue;
+    }
+    const uint32_t shapedCp = currentIt->second.applyLigatures(cp, cursor, style);
+    if (resolveArabicGlyphFontId(fontId, currentFontId, shapedCp, style) != fontId) return true;
   }
   return false;
 }
@@ -262,17 +313,26 @@ int GfxRenderer::getRenderedTextAdvanceX(const int fontId, const char* renderedT
   const char* cursor = renderedText;
   uint32_t cp;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&cursor)))) {
-    const int currentFontId = resolveArabicFallbackFontId(fontId, cp, style);
-    const auto fontIt = fontMap.find(currentFontId);
+    if (utf8IsNonRenderingFormat(cp)) continue;
+    int currentFontId = resolveArabicFallbackFontId(fontId, cp, style);
+    auto fontIt = fontMap.find(currentFontId);
     if (fontIt == fontMap.end()) continue;
-    const auto& font = fontIt->second;
+    const EpdFontFamily* font = &fontIt->second;
 
-    if (utf8IsTextMark(cp)) continue;
-    cp = font.applyLigatures(cp, cursor, style);
-
+    if (utf8IsTextMark(cp)) {
+      continue;
+    }
+    cp = font->applyLigatures(cp, cursor, style);
+    const int shapedFontId = resolveArabicGlyphFontId(fontId, currentFontId, cp, style);
+    if (shapedFontId != currentFontId) {
+      currentFontId = shapedFontId;
+      fontIt = fontMap.find(currentFontId);
+      if (fontIt == fontMap.end()) continue;
+      font = &fontIt->second;
+    }
     if (prevCp != 0) {
       int32_t advance = prevAdvanceFP;
-      if (prevFontId == currentFontId) advance += font.getKerning(prevCp, cp, style);
+      if (prevFontId == currentFontId) advance += font->getKerning(prevCp, cp, style);
       widthFP += advance;
     }
 
@@ -282,7 +342,7 @@ int GfxRenderer::getRenderedTextAdvanceX(const int fontId, const char* renderedT
       advanceFP = sdIt->second->getAdvance(cp, resolveSdCardStyle(*sdIt->second, style));
     }
     if (advanceFP == 0) {
-      const EpdGlyph* glyph = font.getGlyph(cp, style);
+      const EpdGlyph* glyph = font->getGlyph(cp, style);
       advanceFP = glyph ? glyph->advanceX : 0;
     }
     prevAdvanceFP = isSupSub ? (advanceFP + 1) / 2 : advanceFP;
@@ -725,7 +785,7 @@ bool GfxRenderer::isPixelBlack(const int x, const int y) const {
 }
 
 int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style,
-                              const BidiUtils::BidiBaseDir baseDir) const {
+                               const BidiUtils::BidiBaseDir baseDir) const {
   if (text == nullptr || *text == '\0') {
     return 0;
   }
@@ -741,7 +801,6 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
 
   std::string visual;
   const char* renderedText = resolveVisualText(text, visual, baseDir);
-
   if (hasArabicFallbackCandidate(resolvedFontId, renderedText, style)) {
     return getRenderedTextAdvanceX(resolvedFontId, renderedText, style);
   }
@@ -749,6 +808,88 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
   int w = 0, h = 0;
   fontIt->second.getTextDimensions(renderedText, &w, &h, style);
   return w;
+}
+
+bool GfxRenderer::getTextFallbackVerticalBounds(const int fontId, const char* text,
+                                                const EpdFontFamily::Style style, int* minY, int* maxY,
+                                                const BidiUtils::BidiBaseDir baseDir) const {
+  if (minY == nullptr || maxY == nullptr) return false;
+  *minY = 0;
+  *maxY = 0;
+  if (text == nullptr || *text == '\0') return false;
+
+  const int resolvedFontId = resolveTextFontId(fontId, text, style);
+  const auto fontIt = fontMap.find(resolvedFontId);
+  if (fontIt == fontMap.end()) return false;
+
+  std::string visual;
+  const char* renderedText = resolveVisualText(text, visual, baseDir);
+  const int baselineY = getFontAscenderSize(resolvedFontId);
+  bool haveBounds = false;
+
+  const auto includeGlyph = [&](const EpdGlyph* glyph, const int cursorY, const bool scaled) {
+    if (glyph == nullptr || glyph->height == 0) return;
+
+    const int glyphTop = scaled ? cursorY - glyph->top / 2 : cursorY - glyph->top;
+    const int glyphHeight = scaled ? (glyph->height + 1) / 2 : glyph->height;
+    const int glyphBottom = glyphTop + glyphHeight;
+    if (!haveBounds) {
+      *minY = glyphTop;
+      *maxY = glyphBottom;
+      haveBounds = true;
+    } else {
+      *minY = std::min(*minY, glyphTop);
+      *maxY = std::max(*maxY, glyphBottom);
+    }
+  };
+
+  const bool mixedArabicFallback = hasArabicFallbackCandidate(resolvedFontId, renderedText, style);
+  if (mixedArabicFallback) {
+    const char* textCursor = renderedText;
+    uint32_t cp;
+    int lastBaseTop = 0;
+    while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&textCursor)))) {
+      if (utf8IsNonRenderingFormat(cp)) continue;
+
+      int currentFontId = resolveArabicFallbackFontId(resolvedFontId, cp, style);
+      auto currentFontIt = fontMap.find(currentFontId);
+      if (currentFontIt == fontMap.end()) continue;
+      const EpdFontFamily* currentFont = &currentFontIt->second;
+
+      bool isFallback = currentFontId != resolvedFontId;
+      if (utf8IsTextMark(cp)) {
+        const EpdGlyph* combiningGlyph = currentFont->getGlyph(cp, style);
+        if (isFallback && combiningGlyph != nullptr) {
+          const auto anchor = combiningMark::anchorFor(cp);
+          const int raiseBy = combiningMark::raiseAboveBase(anchor, combiningGlyph->top, combiningGlyph->height,
+                                                            lastBaseTop);
+          includeGlyph(combiningGlyph, baselineY - raiseBy, false);
+        }
+        continue;
+      }
+
+      cp = currentFont->applyLigatures(cp, textCursor, style);
+      const int shapedFontId = resolveArabicGlyphFontId(resolvedFontId, currentFontId, cp, style);
+      if (shapedFontId != currentFontId) {
+        currentFontId = shapedFontId;
+        currentFontIt = fontMap.find(currentFontId);
+        if (currentFontIt == fontMap.end()) continue;
+        currentFont = &currentFontIt->second;
+        isFallback = currentFontId != resolvedFontId;
+      }
+
+      const EpdGlyph* glyph = currentFont->getGlyph(cp, style);
+      lastBaseTop = glyph ? glyph->top : 0;
+      if (isFallback) {
+        includeGlyph(glyph, baselineY, (style & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0);
+      }
+    }
+  } else {
+    // No fallback font is selected on this path. Ignoring primary-font bounds
+    // is intentional: the existing Latin/CJK line geometry is unchanged.
+  }
+
+  return haveBounds;
 }
 
 void GfxRenderer::drawCenteredText(const int fontId, const int y, const char* text, const bool black,
@@ -786,7 +927,15 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
       const char* scanCursor = renderedText;
       uint32_t scanCp;
       while ((scanCp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&scanCursor)))) {
-        fontCacheManager_->recordCodepoint(scanCp, resolveArabicFallbackFontId(resolvedFontId, scanCp, style), style);
+        if (utf8IsNonRenderingFormat(scanCp)) continue;
+        int scanFontId = resolveArabicFallbackFontId(resolvedFontId, scanCp, style);
+        auto scanFontIt = fontMap.find(scanFontId);
+        if (scanFontIt == fontMap.end()) continue;
+        if (!utf8IsTextMark(scanCp)) {
+          scanCp = scanFontIt->second.applyLigatures(scanCp, scanCursor, style);
+          scanFontId = resolveArabicGlyphFontId(resolvedFontId, scanFontId, scanCp, style);
+        }
+        fontCacheManager_->recordCodepoint(scanCp, scanFontId, style);
       }
     }
     return;
@@ -798,32 +947,40 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
     uint32_t prevCp = 0;
     int prevFontId = 0;
     while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&textCursor)))) {
-      const int currentFontId = resolveArabicFallbackFontId(resolvedFontId, cp, style);
-      const auto currentFontIt = fontMap.find(currentFontId);
+      if (utf8IsNonRenderingFormat(cp)) continue;
+      int currentFontId = resolveArabicFallbackFontId(resolvedFontId, cp, style);
+      auto currentFontIt = fontMap.find(currentFontId);
       if (currentFontIt == fontMap.end()) continue;
-      const auto& currentFont = currentFontIt->second;
+      const EpdFontFamily* currentFont = &currentFontIt->second;
 
       if (utf8IsTextMark(cp)) {
-        const EpdGlyph* combiningGlyph = currentFont.getGlyph(cp, style);
+        const EpdGlyph* combiningGlyph = currentFont->getGlyph(cp, style);
         if (!combiningGlyph) continue;
         const auto anchor = combiningMark::anchorFor(cp);
         const int raiseBy =
             combiningMark::raiseAboveBase(anchor, combiningGlyph->top, combiningGlyph->height, lastBaseTop);
         const int combiningX = combiningMark::anchorOver(anchor, lastBaseX, lastBaseLeft, lastBaseWidth,
                                                          combiningGlyph->left, combiningGlyph->width);
-        renderCharImpl<TextRotation::None>(*this, renderMode, currentFont, cp, combiningX, yPos - raiseBy, black,
+        renderCharImpl<TextRotation::None>(*this, renderMode, *currentFont, cp, combiningX, yPos - raiseBy, black,
                                            style);
         continue;
       }
 
-      cp = currentFont.applyLigatures(cp, textCursor, style);
+      cp = currentFont->applyLigatures(cp, textCursor, style);
+      const int shapedFontId = resolveArabicGlyphFontId(resolvedFontId, currentFontId, cp, style);
+      if (shapedFontId != currentFontId) {
+        currentFontId = shapedFontId;
+        currentFontIt = fontMap.find(currentFontId);
+        if (currentFontIt == fontMap.end()) continue;
+        currentFont = &currentFontIt->second;
+      }
       if (prevCp != 0) {
         int32_t advance = prevAdvanceFP;
-        if (prevFontId == currentFontId) advance += currentFont.getKerning(prevCp, cp, style);
+        if (prevFontId == currentFontId) advance += currentFont->getKerning(prevCp, cp, style);
         lastBaseX += fp4::toPixel(advance);
       }
 
-      const EpdGlyph* glyph = currentFont.getGlyph(cp, style);
+      const EpdGlyph* glyph = currentFont->getGlyph(cp, style);
       lastBaseLeft = glyph ? glyph->left : 0;
       lastBaseWidth = glyph ? glyph->width : 0;
       lastBaseTop = glyph ? glyph->top : 0;
@@ -832,9 +989,9 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
       const bool isSupSub = (style & (EpdFontFamily::SUP | EpdFontFamily::SUB)) != 0;
       if (isSupSub) prevAdvanceFP = (prevAdvanceFP + 1) / 2;
       if (isSupSub) {
-        renderCharScaled(*this, renderMode, currentFont, cp, lastBaseX, yPos, black, style);
+        renderCharScaled(*this, renderMode, *currentFont, cp, lastBaseX, yPos, black, style);
       } else {
-        renderCharImpl<TextRotation::None>(*this, renderMode, currentFont, cp, lastBaseX, yPos, black, style);
+        renderCharImpl<TextRotation::None>(*this, renderMode, *currentFont, cp, lastBaseX, yPos, black, style);
       }
       prevCp = cp;
       prevFontId = currentFontId;
@@ -853,6 +1010,7 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
   uint32_t cp;
   uint32_t prevCp = 0;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&textCursor)))) {
+    if (utf8IsNonRenderingFormat(cp)) continue;
     // RTL vowel marks (Hebrew niqqud, Arabic harakat) ride the combining-mark
     // path: zero-advance overlays on the preceding base glyph (applyBidiVisual
     // emits base-then-marks per UAX#9 L3). anchorFor pins position-sensitive
@@ -2270,7 +2428,6 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
   // right margin.
   std::string visual;
   const char* renderedText = resolveVisualText(text, visual, BidiUtils::BidiBaseDir::AUTO);
-
   if (hasArabicFallbackCandidate(resolvedFontId, renderedText, style)) {
     return getRenderedTextAdvanceX(resolvedFontId, renderedText, style);
   }
@@ -2292,6 +2449,7 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
     }
     const auto& font = fontIt->second;
     while (uint32_t cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text))) {
+      if (utf8IsNonRenderingFormat(cp)) continue;
       // RTL vowel marks (niqqud/harakat) are zero-advance overlays in drawText — no width.
       if (utf8IsTextMark(cp)) {
         continue;
@@ -2318,6 +2476,7 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
   int32_t prevAdvanceFP = 0;  // 12.4 fixed-point: prev glyph's advance + next kern for snap
   const auto& font = fontIt->second;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text)))) {
+    if (utf8IsNonRenderingFormat(cp)) continue;
     // RTL vowel marks (niqqud/harakat) are zero-advance overlays in drawText — no width.
     if (utf8IsTextMark(cp)) {
       continue;
@@ -2403,12 +2562,13 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
     uint32_t cp;
     int prevFontId = 0;
     while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text)))) {
-      const int currentFontId = resolveArabicFallbackFontId(resolvedFontId, cp, style);
-      const auto currentFontIt = fontMap.find(currentFontId);
+      if (utf8IsNonRenderingFormat(cp)) continue;
+      int currentFontId = resolveArabicFallbackFontId(resolvedFontId, cp, style);
+      auto currentFontIt = fontMap.find(currentFontId);
       if (currentFontIt == fontMap.end()) continue;
-      const auto& currentFont = currentFontIt->second;
+      const EpdFontFamily* currentFont = &currentFontIt->second;
       if (utf8IsTextMark(cp)) {
-        const EpdGlyph* combiningGlyph = currentFont.getGlyph(cp, style);
+        const EpdGlyph* combiningGlyph = currentFont->getGlyph(cp, style);
         if (!combiningGlyph) continue;
         const auto anchor = combiningMark::anchorFor(cp);
         const int raiseBy =
@@ -2416,24 +2576,31 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
         const int combiningX = x - raiseBy;
         const int combiningY = combiningMark::anchorOverRotated90CW(anchor, lastBaseY, lastBaseLeft, lastBaseWidth,
                                                                     combiningGlyph->left, combiningGlyph->width);
-        renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, currentFont, cp, combiningX, combiningY, black,
+        renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, *currentFont, cp, combiningX, combiningY, black,
                                                   style);
         continue;
       }
 
-      cp = currentFont.applyLigatures(cp, text, style);
+      cp = currentFont->applyLigatures(cp, text, style);
+      const int shapedFontId = resolveArabicGlyphFontId(resolvedFontId, currentFontId, cp, style);
+      if (shapedFontId != currentFontId) {
+        currentFontId = shapedFontId;
+        currentFontIt = fontMap.find(currentFontId);
+        if (currentFontIt == fontMap.end()) continue;
+        currentFont = &currentFontIt->second;
+      }
       if (prevCp != 0) {
         int32_t advance = prevAdvanceFP;
-        if (prevFontId == currentFontId) advance += currentFont.getKerning(prevCp, cp, style);
+        if (prevFontId == currentFontId) advance += currentFont->getKerning(prevCp, cp, style);
         lastBaseY -= fp4::toPixel(advance);
       }
 
-      const EpdGlyph* glyph = currentFont.getGlyph(cp, style);
+      const EpdGlyph* glyph = currentFont->getGlyph(cp, style);
       lastBaseLeft = glyph ? glyph->left : 0;
       lastBaseWidth = glyph ? glyph->width : 0;
       lastBaseTop = glyph ? glyph->top : 0;
       prevAdvanceFP = glyph ? glyph->advanceX : 0;
-      renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, currentFont, cp, x, lastBaseY, black, style);
+      renderCharImpl<TextRotation::Rotated90CW>(*this, renderMode, *currentFont, cp, x, lastBaseY, black, style);
       prevCp = cp;
       prevFontId = currentFontId;
     }
@@ -2451,6 +2618,7 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
   uint32_t cp;
   uint32_t prevCp = 0;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text)))) {
+    if (utf8IsNonRenderingFormat(cp)) continue;
     // RTL vowel marks (Hebrew niqqud, Arabic harakat) ride the combining-mark
     // path: zero-advance overlays on the preceding base glyph (applyBidiVisual
     // emits base-then-marks per UAX#9 L3). anchorFor pins position-sensitive
