@@ -5,10 +5,14 @@ history, decisions, and feature inventory.
 
 ## Current position
 
-- Active development line: Folio Nooir **1.6.1**
-- Known-good baseline: completed Folio Nooir **1.6.0**
+- Active development line: Folio Nooir **1.6.2** investigation
+- Known-good baseline: released Folio Nooir **1.6.1**
 - Authoritative branch: `codex/folio-nooir`
 - 1.6.1 source checkpoint before release preparation: `c13eda8c490b53c0d787d641e144b4e1d332478b`
+- Published 1.6.1 tag/release commit: `2c817a73f1a1143d7f62ac1e768501280abacaa3`
+- Current fetched branch tip: `7fa773d73457a225dc99cb0e19da76af824b2da5`, a README-only
+  update on top of the 1.6.1 release commit; local HEAD matches
+  `origin/codex/folio-nooir`.
 - FreeInk is a real Nooir dependency through the `freeink-sdk` submodule.
 - The 1.5.10 baseline uses the Nooir-specific FreeInk commit
   `958720659ea289ae325e83db20049d0ea844800d` (`9587206`).
@@ -20,11 +24,11 @@ history, decisions, and feature inventory.
   `9c8e9751`, which is an ancestor of the current development branch.
 - The normal/default firmware build has succeeded. Carousel/HQ cover behavior
   and the Statistics/Sleep work have been physically exercised on X4. The
-  1.6.1 release state is now being prepared from this branch; release assets
-  and hardware uploads remain separate release operations.
+  1.6.1 release is complete; 1.6.2 is currently a baseline and investigation
+  pass, with no feature implementation authorized yet.
 - The existing CBZ reader and cache behavior listed below are 1.6.0 baseline
   functionality.
-- The immediate 1.6.1 focus was EPUB reading quality, especially Arabic/RTL
+- The completed 1.6.1 focus was EPUB reading quality, especially Arabic/RTL
   support, text shaping, fonts, and layout. The Arabic/EPUB foundation,
   typography work, EOF finalization, glyph-bound compensation, and warm-turn
   path are included in the release candidate being frozen below.
@@ -34,9 +38,9 @@ history, decisions, and feature inventory.
   deferred until after the EPUB phase. Their detailed architecture and design
   must still be planned and audited separately before implementation.
 
-## 1.6.1 release candidate state
+## 1.6.1 released baseline
 
-- The release candidate retains the completed 1.6.0 baseline and the planned
+- The release retains the completed 1.6.0 baseline and the planned
   CBZ/Manga work remains future work in `docs/CBZ_MANGA_PLAN.md`.
 - The 1.6.1 EPUB work includes Arabic fallback, shaping/RTL integration,
   Quranic-mark bounds compensation, malformed-XML recovery, generic block
@@ -49,9 +53,16 @@ history, decisions, and feature inventory.
 - Physical X4 validation covered the EPUB fixes and Arabic/Quran reading paths.
   Physical X3 validation is not claimed here; the shared X3/X4 code paths and
   simulator validation remain useful but do not replace that hardware check.
-- No firmware image is being regenerated as part of this documentation and
-  release-preparation pass. Existing ignored build outputs must not be treated
-  as release assets unless their source/configuration is positively verified.
+- A fresh local `gh_release` build is verified from this branch: linked flash
+  is `6,482,287 / 6,553,600` bytes, leaving `71,313` linked bytes; the padded
+  `firmware.bin` is `6,496,144` bytes, leaving `57,456` bytes. PlatformIO
+  static RAM is `53,500 / 327,680` bytes. These are baseline measurements,
+  not a release-publication or flashing action.
+- The host regression suite is `171/171` passing. Physical X4 validation is
+  recorded; physical X3 validation is not claimed. The separate WSL
+  simulator mirror is dirty and must not be synchronized or reset blindly.
+- Existing ignored build outputs must not be treated as release assets unless
+  their source/configuration is positively verified.
 
 ## Completed work
 
@@ -139,28 +150,34 @@ commit. The pin is committed in the authoritative history.
 
 ## Immediate next steps
 
-1. Continue physical X3/X4 regression testing of the completed 1.6.0 paths,
-   including Statistics, Sleep, settings, Featured, Folio shelves, Carousel,
-   CBZ, EPUB images, and clipping restoration.
-2. If simulator validation is needed, synchronize Windows source to the
-   separate WSL mirror and run both native simulator environments there. Do
-   not make unique feature changes in WSL.
-3. To sync FreeInk later, fetch `upstream`, merge or rebase deliberately,
+1. Keep the 1.6.1 release behavior frozen while reviewing the focused 1.6.2
+   EPUB regression coverage added for 1.6.2; do not change production behavior
+   until an investigation task is approved.
+2. Continue physical X3 regression validation of the released shared paths
+   when hardware access is available; X4 evidence does not substitute for it.
+3. If simulator validation is needed, first inspect the separate dirty WSL
+   mirror and preserve its unique work; do not synchronize or reset it blindly.
+4. To sync FreeInk later, fetch `upstream`, merge or rebase deliberately,
    test Nooir, push the tested branch to `origin`, and only then update the
    parent pointer to a new exact commit. Avoid a blind `git pull` inside
    `freeink-sdk`.
-4. After the EPUB phase, return to the preserved CBZ/Manga preparation and
+5. Review `docs/FOLIO_1.6.2_BACKLOG.md` and approve one investigation at a
+   time. Keep cache format, pagination, rendering quality, and Arabic/Quran
+   behavior unchanged unless a later task explicitly authorizes otherwise.
+6. After the EPUB phase, return to the preserved CBZ/Manga preparation and
    cache plan and complete its separate architecture/safety audit before
    implementation.
-5. Review any future post-1.6.1 source change with the X3 safety, cache, storage,
+7. Review any future post-1.6.2 source change with the X3 safety, cache, storage,
    and format-isolation constraints below before implementation.
-6. Create or upload release artifacts only from a positively identified,
+8. Create or upload release artifacts only from a positively identified,
    appropriately built image; never use an arbitrary ignored `firmware.bin`.
 
 ## Resource map
 
 - Repository: <https://github.com/toshio2011/folio-nooir>
 - Authoritative development branch: `codex/folio-nooir`
+- 1.6.1 release tag commit: `2c817a73f1a1143d7f62ac1e768501280abacaa3`
+- Current 1.6.2 branch tip: `7fa773d73457a225dc99cb0e19da76af824b2da5`
 - 1.6.1 source checkpoint before release preparation: `c13eda8c490b53c0d787d641e144b4e1d332478b`
 - Previous 1.6.0 safety checkpoint: `safety/1.6.0-carousel-layouts-hq` at
   `9c8e9751`
@@ -190,7 +207,7 @@ not stage or copy them into the repository.
   `git pull` blindly inside the submodule.
 - Leave `.codex-*`, `_epub-inspect*`, `codex-work-monitor/`, logs, probes,
   caches, binaries, and build output untouched and unstaged.
-- Preserve the reviewed 1.6.1 Arabic/EPUB fixes and keep future diagnostics,
+- Preserve the released 1.6.1 Arabic/EPUB fixes and keep future diagnostics,
   probes, logs, caches, and arbitrary build outputs out of release commits.
 - Treat the existing 1.6.0 CBZ reader as baseline functionality. CBZ/Manga
   preparation and cache work is deferred until after the EPUB phase and its

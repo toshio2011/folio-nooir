@@ -56,21 +56,57 @@ troubleshooting.
 Folio Nooir 1.6.1 focuses on more compatible and dependable EPUB reading while
 preserving the existing X3/X4 reader experience.
 
-- Improved Arabic and Quran EPUB rendering with fallback fonts, contextual
-  joining, RTL/bidi ordering, and better handling of harakat and combining
-  marks.
-- Improved generic EPUB block flow so publisher-defined separated content,
-  including mixed Arabic/Latin books, keeps its intended paragraph structure.
-- Improved tolerance for common malformed EPUB XML, including bounded recovery
-  for bare ampersands in navigation and chapter content.
-- Added bounded EPUB CSS typography support for inherited `font-size` and
-  `line-height`, with values resolved against the user's selected reader size.
-- Improved EPUB pagination resilience, final-page handling, and cache rebuild
-  safety, plus a faster warm page-turn path on supported devices.
+### EPUB correctness and resilience
 
-The 1.6.1 EPUB improvements remain incremental and bounded for X3/X4 memory;
-unsupported CSS values and unusual publisher layouts may still require further
-work.
+- Fixed a chapter-end issue where final content on a partially filled page
+  could disappear before the reader moved to the next chapter. Final EPUB
+  content is now flushed and retained correctly at XHTML end-of-file.
+- Improved tolerance for common malformed EPUB XHTML and navigation markup,
+  including bounded recovery for genuinely bare ampersands in TOC/NAV and
+  chapter content. Valid XML entities remain unchanged.
+- Improved block flow, anchors, page-break content, pagination resilience, and
+  cache rebuilding while preserving incremental section construction.
+
+### Arabic and Quran reading
+
+- Added Arabic reader-font fallback with post-shaping fallback routing, Arabic
+  contextual joining, RTL/bidi ordering, and better harakat and combining-mark
+  rendering.
+- Improved mixed Arabic/Latin and Arabic/Malay block separation while keeping
+  genuinely inline mixed content inline.
+- Arabic fallback data is divided into smaller bounded decompression groups to
+  reduce heap pressure on constrained devices. Per-line glyph bounds are also
+  accounted for when Arabic or Quranic marks extend above the normal line box.
+
+Arabic and Quran EPUBs are substantially more readable, but rendering is not
+guaranteed to be perfect for every publisher, font, or unusual Quranic text
+variant.
+
+### EPUB typography
+
+- Added bounded CSS `font-size` and `line-height` support, including inheritance
+  through block styles and sizing relative to the user's selected reader size.
+- Supported values are resolved to registered reader fonts and cover `px`,
+  `pt`, `em`, `rem`, and `%`; unitless values apply to `line-height` only.
+  Keyword sizes, `normal`, viewport units, and physical units remain outside
+  this intentionally bounded implementation.
+
+### Reading responsiveness
+
+- Warm EPUB page turns can skip an unnecessary preliminary loading refresh when
+  the requested page is already ready.
+- Cold opens, chapter transitions, cache misses, partial-build cases, and
+  genuinely slow work retain loading feedback. This improves perceived warm
+  turn responsiveness without eliminating normal e-ink panel refresh time.
+
+### Carousel refinements
+
+- Carousel source-cache lifetime handling is safer during cover preparation,
+  refresh, replacement, and activity transitions.
+- Small collections show only their available distinct books: one book is
+  centered and two books are not duplicated to fill side positions. Existing
+  3-cover and 5-cover layouts and circular navigation remain available for
+  larger collections.
 
 ## What's New in 1.6.0
 

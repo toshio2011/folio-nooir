@@ -152,6 +152,23 @@ TEST(ArabicFoundation, GeneratedReaderFallbackCoversShapedArabicAndKeepsReaderMe
   EXPECT_EQ(arabic_14_regular.descender, -9);
 }
 
+TEST(ArabicFoundation, GeneratedFallbackKeepsCombiningMarksZeroAdvanceAndAddsVerticalBounds) {
+  EpdFont fallback(&arabic_14_regular);
+  const std::string base = encode({0x0628});
+  const std::string vocalized = encode({0x0628, 0x0651, 0x064E, 0x06D6});
+
+  int baseWidth = 0;
+  int baseHeight = 0;
+  int vocalizedWidth = 0;
+  int vocalizedHeight = 0;
+  fallback.getTextDimensions(base.c_str(), &baseWidth, &baseHeight);
+  fallback.getTextDimensions(vocalized.c_str(), &vocalizedWidth, &vocalizedHeight);
+
+  EXPECT_EQ(vocalizedWidth, baseWidth);
+  EXPECT_GE(vocalizedHeight, baseHeight);
+  EXPECT_GT(vocalizedHeight, 0);
+}
+
 TEST(ArabicFoundation, MeasureAndDrawAdvanceAgreeForMarksAndMixedText) {
   const std::string arabic = encode({0x0628});
   const std::string vocalized = encode({0x0628, 0x0651, 0x064E});

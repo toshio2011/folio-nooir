@@ -27,8 +27,12 @@ struct XmlProbe {
   std::vector<std::string> elementNames;
   std::vector<std::string> ids;
   std::vector<std::string> hrefs;
+  std::vector<std::string> classes;
+  std::vector<std::string> styles;
   std::vector<std::string> guideTypes;
   std::vector<std::pair<std::string, std::string>> guideReferences;
+  std::vector<std::pair<std::string, std::string>> blockTexts;
+  std::vector<size_t> openBlockIndexes;
 };
 
 std::string readFixture(const char* name) {
@@ -50,13 +54,25 @@ bool isPagebreak(const XML_Char** atts) {
          (epubType && std::string_view(epubType) == "pagebreak");
 }
 
+bool isBlockElement(const std::string_view name) {
+  return name == "p" || name == "li" || name == "div" || name == "br" || name == "blockquote" ||
+         (name.size() == 2 && name[0] == 'h' && name[1] >= '1' && name[1] <= '6');
+}
+
 void XMLCALL onStart(void* data, const XML_Char* name, const XML_Char** atts) {
   auto& probe = *static_cast<XmlProbe*>(data);
   probe.elementNames.emplace_back(name);
   probe.depth++;
 
+  if (isBlockElement(name)) {
+    probe.blockTexts.emplace_back(name, "");
+    probe.openBlockIndexes.push_back(probe.blockTexts.size() - 1);
+  }
+
   if (const char* id = attribute(atts, "id")) probe.ids.emplace_back(id);
   if (const char* href = attribute(atts, "href")) probe.hrefs.emplace_back(href);
+  if (const char* className = attribute(atts, "class")) probe.classes.emplace_back(className);
+  if (const char* style = attribute(atts, "style")) probe.styles.emplace_back(style);
   const char* type = attribute(atts, "type");
   const char* guideHref = attribute(atts, "href");
   if (type) probe.guideTypes.emplace_back(type);
@@ -69,12 +85,16 @@ void XMLCALL onText(void* data, const XML_Char* text, const int length) {
   auto& probe = *static_cast<XmlProbe*>(data);
   probe.text.append(text, length);
   if (probe.pagebreakDepth >= 0 && probe.depth >= probe.pagebreakDepth) probe.pagebreakText.append(text, length);
+  if (!probe.openBlockIndexes.empty()) probe.blockTexts[probe.openBlockIndexes.back()].second.append(text, length);
 }
 
-void XMLCALL onEnd(void* data, const XML_Char*) {
+void XMLCALL onEnd(void* data, const XML_Char* name) {
   auto& probe = *static_cast<XmlProbe*>(data);
   if (probe.depth == 1) probe.rootClosed = true;
   if (probe.depth == probe.pagebreakDepth) probe.pagebreakDepth = -1;
+  if (!probe.openBlockIndexes.empty() && probe.blockTexts[probe.openBlockIndexes.back()].first == name) {
+    probe.openBlockIndexes.pop_back();
+  }
   probe.depth--;
 }
 
@@ -172,7 +192,7 @@ TEST(EpubParserRegression, ApostropheEntityIsAvailableToChapterEntityExpansion) 
   ASSERT_FALSE(xhtml.empty());
   ASSERT_EQ(parseXml(xhtml, probe), XML_ERROR_NONE);
   EXPECT_NE(probe.text.find("This 'entity' must survive."), std::string::npos);
-  EXPECT_STREQ(lookupHtmlEntity("&apos;", 7), "'");
+  EXPECT_STREQ(lookupHtmlEntity("&apos;", 6), "'");
 }
 
 TEST(EpubParserRegression, PagebreakTextRemainsVisibleContent) {
@@ -312,14 +332,14 @@ TEST(EpubParserRegression, UnrelatedMalformedChapterXmlStillFailsAfterRecovery) 
 
 TEST(EpubParserRegression, ChapterRecoveryHandlesAmpersandsAndEntitiesSplitAcrossBuffers) {
   const std::string xhtml =
-      R"(<html><body><p>Valid &amp; text, bare & text, numeric &#123;, hex &#x1F;.</p></body></html>)";
+      R"(<html><body><p>Valid &amp; text, bare & text, numeric &#123;, hex &#x1F600;.</p></body></html>)";
   bool ok = false;
   bool changed = false;
   const std::string sanitized = sanitizeInChunks(xhtml, 1, &ok, &changed);
 
   ASSERT_TRUE(ok);
   ASSERT_TRUE(changed);
-  EXPECT_NE(sanitized.find("Valid &amp; text, bare &amp; text, numeric &#123;, hex &#x1F;."),
+  EXPECT_NE(sanitized.find("Valid &amp; text, bare &amp; text, numeric &#123;, hex &#x1F600;."),
             std::string::npos);
 
   XmlProbe probe;
@@ -342,4 +362,56 @@ TEST(EpubParserRegression, EofAfterHiddenPageMapElementPreservesAllVisibleText) 
   for (const auto text : visible) {
     ASSERT_EQ(probe.text.find(text), probe.text.rfind(text)) << text;
   }
+  ASSERT_TRUE(probe.rootClosed);
+  ASSERT_EQ(probe.ids.size(), 2u);
+  ASSERT_EQ(probe.classes.size(), 2u);
+  EXPECT_EQ(probe.classes[0], "chapter");
+  EXPECT_EQ(probe.classes[1], "page-map");
+  ASSERT_EQ(probe.styles.size(), 1u);
+  EXPECT_EQ(probe.styles.front(), "display:none;");
+  EXPECT_EQ(probe.ids[0], "GBS.TEST.01");
+  EXPECT_EQ(probe.ids[1], "GBS.TEST.02");
+  const auto prefix = probe.text.find("VISIBLE_PAGE_PREFIX");
+  const auto finalParagraph = probe.text.find("VISIBLE_FINAL_PARAGRAPH");
+  const auto tail = probe.text.find("VISIBLE_TAIL_MARKER");
+  ASSERT_NE(prefix, std::string::npos);
+  ASSERT_NE(finalParagraph, std::string::npos);
+  ASSERT_NE(tail, std::string::npos);
+  EXPECT_LT(prefix, finalParagraph);
+  EXPECT_LT(finalParagraph, tail);
+}
+
+TEST(EpubParserRegression, BareAmpersandInChapterAttributeIsRecovered) {
+  const std::string xhtml =
+      R"(<html><body><p><a href="chapter.xhtml?left=1&right=2">Query link</a></p></body></html>)";
+  XmlProbe strictProbe;
+  EXPECT_EQ(parseXml(xhtml, strictProbe), XML_ERROR_INVALID_TOKEN);
+
+  bool ok = false;
+  bool changed = false;
+  const std::string sanitized = sanitizeInChunks(xhtml, 5, &ok, &changed);
+  ASSERT_TRUE(ok);
+  ASSERT_TRUE(changed);
+  EXPECT_NE(sanitized.find("chapter.xhtml?left=1&amp;right=2"), std::string::npos);
+
+  XmlProbe recoveredProbe;
+  ASSERT_EQ(parseXml(sanitized, recoveredProbe), XML_ERROR_NONE);
+  ASSERT_EQ(recoveredProbe.hrefs.size(), 1u);
+  EXPECT_EQ(recoveredProbe.hrefs.front(), "chapter.xhtml?left=1&right=2");
+}
+
+TEST(EpubParserRegression, MixedArabicLatinBlockElementsRemainDistinct) {
+  const std::string xhtml =
+      R"(<html xmlns="http://www.w3.org/1999/xhtml"><body><div id="arabic-block">&#x645;&#x631;&#x62D;&#x628;&#x627; ARABIC_BLOCK_END</div><p id="latin-block">LATIN_BLOCK_START English paragraph.</p><div id="inline-mixed">MIXED_START <span>&#x645;&#x631;&#x62D;&#x628;&#x627;</span> MIXED_END</div></body></html>)";
+  XmlProbe probe;
+  ASSERT_EQ(parseXml(xhtml, probe), XML_ERROR_NONE);
+  ASSERT_EQ(probe.blockTexts.size(), 3u);
+
+  EXPECT_EQ(probe.blockTexts[0].first, "div");
+  EXPECT_NE(probe.blockTexts[0].second.find("ARABIC_BLOCK_END"), std::string::npos);
+  EXPECT_EQ(probe.blockTexts[1].first, "p");
+  EXPECT_NE(probe.blockTexts[1].second.find("LATIN_BLOCK_START"), std::string::npos);
+  EXPECT_EQ(probe.blockTexts[2].first, "div");
+  EXPECT_NE(probe.blockTexts[2].second.find("MIXED_START"), std::string::npos);
+  EXPECT_NE(probe.blockTexts[2].second.find("MIXED_END"), std::string::npos);
 }

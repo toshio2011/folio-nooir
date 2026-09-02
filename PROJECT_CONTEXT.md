@@ -17,8 +17,8 @@ Xteink X3/X4 devices. The primary goals are:
 - no regressions in XTC/XTCH, TXT, sleep, web, dictionary, or existing reader
   workflows.
 
-Folio Nooir **1.6.1** is the current release line. The completed **1.6.0**
-work is the known-good baseline for this cycle. The 1.6.1 EPUB work covers
+Folio Nooir **1.6.2** is the current investigation line. The released
+**1.6.1** work is the known-good baseline for this cycle. The 1.6.1 EPUB work covers
 Arabic/RTL support, text shaping, fonts, layout, malformed-EPUB recovery,
 bounded typography, EOF finalization, and warm page-turn responsiveness.
 CBZ/Manga preparation and cache work remain a future planned phase; its detailed
@@ -38,6 +38,11 @@ fast-path grayscale artifacts seen during Nooir validation.
 Authoritative parent repository:
 
 - Branch: `codex/folio-nooir`
+- Published 1.6.1 release/tag commit:
+  `2c817a73f1a1143d7f62ac1e768501280abacaa3`
+- Current fetched branch tip:
+  `7fa773d73457a225dc99cb0e19da76af824b2da5` (README-only change after the
+  release commit); local HEAD matches `origin/codex/folio-nooir`.
 - 1.6.1 source checkpoint before release preparation:
   `c13eda8c490b53c0d787d641e144b4e1d332478b`
 - The completed 1.6.0 source, translations, README inventory, and related
@@ -50,12 +55,17 @@ Authoritative parent repository:
 - The normal/default PlatformIO environment has compiled successfully, and
   Carousel/HQ cover plus Statistics/Sleep behavior has been physically
   exercised on X4. Simulator validation remains a separate WSL-mirror task.
-- The 1.6.1 release state is being prepared from this branch. Firmware assets
-  and hardware uploads remain separate release operations.
+- The 1.6.1 release is complete. The current 1.6.2 pass establishes
+  regression coverage and measurements only; firmware assets and hardware
+  uploads remain separate release operations.
+- Fresh local `gh_release` baseline: `firmware.bin` is `6,496,144` bytes;
+  linked flash is `6,482,287 / 6,553,600` bytes (`71,313` linked bytes
+  remaining; `57,456` bytes after padded-bin accounting). PlatformIO static
+  RAM is `53,500 / 327,680` bytes. The host suite is `171/171` passing.
 
-### 1.6.1 release candidate state
+### 1.6.1 released baseline
 
-The release candidate retains the completed 1.6.0 baseline and includes the
+The release retains the completed 1.6.0 baseline and includes the
 reviewed Arabic/EPUB foundation and typography work. This includes Arabic
 fallback, shaping/RTL integration, Quranic-mark bounds compensation,
 malformed-XML recovery, generic block flow, bounded CSS typography,
@@ -67,10 +77,16 @@ used during investigation and have been removed from the release source. The
 functional fallback, font grouping, and rendering fixes remain. Physical X4
 validation covered the EPUB fixes and Arabic/Quran reading paths; physical X3
 validation is not claimed here. Existing ignored build outputs are not release
-assets unless their source and configuration are positively verified.
+assets unless their source and configuration are positively verified. The
+separate WSL simulator mirror is currently dirty and must not be synchronized
+or reset blindly.
 
 The detailed CBZ/Manga preparation and cache plan remains deferred in
 `docs/CBZ_MANGA_PLAN.md` and is not part of this EPUB release scope.
+
+The focused 1.6.2 investigation backlog is in
+`docs/FOLIO_1.6.2_BACKLOG.md`. No production feature implementation is part of
+this baseline pass.
 
 Nested `freeink-sdk`:
 
@@ -247,12 +263,12 @@ probes, caches, binaries, and build output must remain untracked and untouched.
 7. **Explicit release actions.** Tags, GitHub Releases, firmware assets,
    flashing, and physical-device validation require an explicit request and a
    positively identified build/configuration.
-8. **1.6.1 focus and CBZ/Manga sequencing.** The existing CBZ reader is 1.6.0
-   baseline functionality. The 1.6.1 EPUB quality phase covers Arabic/RTL,
-   shaping, fonts, layout, malformed-EPUB recovery, typography, and
-   pagination resilience. CBZ/Manga preparation and cache work remain planned
-   for after the EPUB phase, followed by their separate requirements,
-   architecture, and safety audit.
+8. **1.6.2 investigation sequencing.** The released 1.6.1 behavior is the
+   baseline. The 1.6.2 pass starts with focused EPUB regression coverage and
+   measurements, then investigates the prioritized backlog one item at a time.
+   No change to Arabic/Quran behavior, rendering quality, pagination, or cache
+   format is authorized by this baseline. CBZ/Manga preparation and cache work
+   remain planned for a later requirements, architecture, and safety audit.
 
 ## Simulator workflow
 
@@ -305,21 +321,24 @@ machine before using them.
 
 ## Recommended next steps
 
-1. Continue physical X3/X4 regression testing for completed 1.6.0 paths,
-   especially CBZ page turns/cache replay, EPUB images, clipping restoration,
-   Statistics/Sleep, Folio shelves, Featured, and Carousel.
-2. If simulator validation is needed, synchronize the authoritative Windows
-   source to WSL and smoke-test both `simulator_x4` and `simulator_x3`; do not
-   infer simulator readiness from the default firmware build alone.
-3. To consume later FreeInk updates, `fetch upstream`, merge or rebase, test,
+1. Keep the released 1.6.1 behavior frozen and review the new focused EPUB
+   regression coverage before approving production work.
+2. Continue physical X3 regression testing for the released shared paths;
+   X4 validation does not substitute for X3 evidence.
+3. If simulator validation is needed, inspect the dirty WSL mirror first and
+   preserve its unique work; do not synchronize or reset it blindly.
+4. To consume later FreeInk updates, `fetch upstream`, merge or rebase, test,
    push the tested result to `origin`, and deliberately update Nooir's pinned
    submodule SHA. Never blindly pull inside `freeink-sdk`.
-4. After the EPUB phase, return to the preserved CBZ/Manga preparation and
+5. Review `docs/FOLIO_1.6.2_BACKLOG.md` and approve one investigation at a
+   time. Preserve cache format, pagination, rendering quality, and Arabic/Quran
+   behavior unless a later task explicitly authorizes a change.
+6. After the EPUB phase, return to the preserved CBZ/Manga preparation and
    cache plan and complete its separate architecture/safety audit before
    implementation.
-5. Keep future changes scoped and classify them as CBZ-only, EPUB-only,
+7. Keep future changes scoped and classify them as CBZ-only, EPUB-only,
    shared, simulator-only, or documentation-only before editing source.
-6. Review and publish release artifacts only when explicitly authorized and
+8. Review and publish release artifacts only when explicitly authorized and
    only from a positively identified, appropriately built image; do not use an
    arbitrary ignored `firmware.bin`.
 
