@@ -545,3 +545,110 @@ Current order remains:
 7. inherited linked functionality.
 
 The next source-only audit should focus on **inherited feature reachability and network/TLS dependencies**, because removing an apparently unused feature only matters when it also lets substantial dependent libraries fall out of the link.
+
+
+## 2026-09-18 — inherited feature reachability and network/TLS audit
+
+### WolfSSL is intentional shared infrastructure, not obvious dead weight
+
+**Confirmed source fact:** `platformio.ini` deliberately enables the FreeInk secure-network path with `FREEINK_NET_WOLFSSL=1` and explicitly configures wolfSSL features including TLS 1.3, SP ECC, HKDF, supported curves, Curve25519, FFDHE-2048, RSA-PSS and SNI. The comments document that the SP ECC path was selected to avoid large temporary big-number allocations under the low-heap reading-session conditions.
+
+**Confirmed source fact:** `HttpDownloader.cpp` selects `SecureHttpClient` whenever `FREEINK_NET_WOLFSSL` is defined. This downloader is shared by HTTPS functionality rather than belonging to one optional screen.
+
+**Confirmed source fact:** `OtaUpdater.cpp` deliberately routes GitHub release checks and firmware downloads through `HttpDownloader`. Its comments state that this avoids the precompiled esp-tls/mbedTLS path for the required TLS behavior and reuses wolfSSL redirect handling.
+
+**Interpretation:** removing wolfSSL is not a safe generic flash optimization. It would require replacing a released shared HTTPS transport and revalidating OTA, KOSync, OPDS/font downloads and any other `HttpDownloader` users. Treat wolfSSL as a map-measurement bucket, not a deletion candidate.
+
+### There are two crypto/TLS families for different jobs
+
+**Confirmed source fact:** despite wolfSSL being the network TLS path, `FirmwareFlasher.cpp` directly uses mbedTLS SHA-256 for offline SD firmware-image integrity verification.
+
+**Interpretation:** even if a future network experiment changed TLS stacks, not every mbedTLS object would disappear. Conversely, seeing both wolfSSL and mbedTLS in a map does not by itself prove duplicate HTTPS stacks are linked. Attribute symbols by caller before estimating recoverable flash.
+
+### Network functionality is highly shared
+
+**Confirmed source fact:** `CrossPointWebServer` is not just a decorative browser page. It provides Transfer/file management, library/stats/settings/To-Do/font endpoints, OPDS-server configuration, Wi-Fi/clock-weather settings, WebSocket uploads, UDP discovery and WebDAV.
+
+**Confirmed source fact:** `CalibreConnectActivity` instantiates this same `CrossPointWebServer`, starts mDNS and uses the server for transfer/upload status.
+
+**Confirmed source fact:** `CrossPointWebServer::begin()` always adds a `WebDAVHandler`; the handler implements OPTIONS, PROPFIND, GET, HEAD, PUT, DELETE, MKCOL, MOVE, COPY, LOCK and UNLOCK.
+
+**Interpretation:** deleting a single visible network menu item may recover much less than expected because the web server and its dependencies are shared. Any removal experiment must follow dependency fallout in the linker map, not count source files.
+
+### WebDAV is a clean feature-level A/B candidate
+
+**Confirmed source fact:** WebDAV is registered as a request handler by the built-in web server and has a substantial dedicated implementation.
+
+**Hypothesis requiring build measurement:** if WebDAV is not important to Nooir's intended workflows, compiling it out may provide a measurable but bounded saving while retaining the ordinary web Transfer API. It is a better isolated A/B experiment than removing the entire web server.
+
+Before any change:
+- confirm whether current users/docs rely on WebDAV;
+- measure `WebDAVHandler` symbols plus helpers that become unreachable;
+- verify ordinary browser upload/download/rename/move/delete still works without it;
+- do not count generic `WebServer` code as removable unless the map proves it falls out.
+
+### Calibre naming does not mean an independent Calibre protocol stack
+
+**Confirmed source fact:** `CalibreConnectActivity` primarily wraps Wi-Fi selection, mDNS and the existing `CrossPointWebServer`; it does not establish evidence here for a second large independent transfer stack.
+
+**Interpretation:** removing this activity alone is unlikely to remove the web-server implementation while other Transfer features remain. Map it separately, but keep expectations low.
+
+### BLE source exists but normal release capability must be measured carefully
+
+**Confirmed source fact:** `BleInput.cpp/.h` is real application glue around FreeInk `BleKeyboardHost`. Its teardown explicitly returns NimBLE RAM to heap.
+
+**Confirmed source fact:** the default development environment explicitly sets `FREEINK_CAP_BLE_HID_HOST=0`. The normal `gh_release` stanza shown in `platformio.ini` does not explicitly set that macro, while `BleKeyboardHost` remains listed in `lib_deps`.
+
+**Important unresolved point:** do not infer from `lib_deps` alone that NimBLE/BLE is linked into the normal release. FreeInk capability defaults and linker reachability must be checked at the pinned SDK commit, then confirmed in the release map.
+
+**Hypothesis requiring build measurement:** if release capability resolution is disabled/stubbed, `BleInput` may cost only thin application glue or be discarded. If capability defaults unexpectedly enable the host in `gh_release`, this could be a much larger accidental bucket. This is now a high-value map check because Bluetooth is not intended as a normal released Nooir feature yet.
+
+### Existing core/component trimming is already deliberate
+
+**Confirmed source fact:** `platformio.ini` already enables Arduino selective compilation and removes unused cloud components including Insights, RainMaker, diagnostics, scheduling, RCP update, secure-cert-manager and CBOR-related components. Wi-Fi IRAM options are also disabled deliberately to reclaim shared C3 SRAM.
+
+**Interpretation:** avoid generic suggestions such as “turn on selective compilation” or “remove RainMaker”; Nooir already does them. Future inherited-feature cleanup must identify a concrete currently linked object/library.
+
+### Network/TLS map checklist for the next build-capable session
+
+Rank linked flash by library/object/symbol for:
+- wolfSSL core and enabled crypto algorithms;
+- FreeInk `SecureNet` / `SecureHttpClient`;
+- any esp-tls/mbedTLS network objects versus mbedTLS SHA-only firmware validation;
+- `HttpDownloader`;
+- OTA updater and release JSON parser;
+- `CrossPointWebServer`;
+- WebSockets;
+- WebDAV;
+- mDNS;
+- UDP discovery;
+- OPDS parser/store/activity/download path;
+- weather/clock HTTP path;
+- KOSync;
+- Font Manager network path;
+- BLE/NimBLE/`BleKeyboardHost`.
+
+For every candidate, distinguish:
+1. direct feature code;
+2. shared dependency that remains needed elsewhere;
+3. dependency that actually falls out when the feature is disabled.
+
+### New one-variable experiments worth queuing
+
+After the existing hyphenation/font/i18n/web-asset measurements:
+
+1. **WebDAV-off build** — ordinary web Transfer retained.
+2. **BLE capability explicit-off release build** — only if the baseline map shows unexpected BLE/NimBLE symbols.
+3. **UDP/mDNS discovery isolation** — separately measure convenience discovery code without removing transfer.
+4. **Optional web page isolation** — only after compressed generated-symbol ranking.
+5. **TLS algorithm audit** — inspect what wolfSSL algorithms are actually retained before changing any compile flags. Never remove an algorithm solely from the config list; test the real servers Nooir supports.
+
+### Updated interpretation
+
+The network stack is not a promising “delete Wi-Fi and win huge flash” target because Nooir intentionally relies on it for OTA, sync, fonts, OPDS and transfer. The useful opportunity is **surgical reachability cleanup**: optional WebDAV/discovery/static-web pieces and any accidentally linked BLE or crypto objects.
+
+The highest-value unresolved question from this audit is now:
+
+> Does the production `gh_release` actually link any BLE/NimBLE host implementation despite Bluetooth not being a released normal feature?
+
+That should be answered from the pinned FreeInk capability definition first and then from the 1.6.2 release map.
