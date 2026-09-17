@@ -16,10 +16,7 @@
 
 
 # Folio Nooir
-
-Current development line: **v1.6.2**.
-Latest released version: **v1.6.1**.
-Known-good firmware/source milestone: `85dda52a`.
+Latest released version: **v1.6.2**.
 
 ## Hardware warning
 
