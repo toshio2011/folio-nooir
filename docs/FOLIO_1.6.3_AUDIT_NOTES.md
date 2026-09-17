@@ -205,3 +205,120 @@ For every font A/B:
 - test an existing settings file that names the removed built-in family.
 
 No production font removal should be merged from size numbers alone.
+
+
+## 2026-09-18 — hyphenation and UI-language storage audit
+
+### Hyphenation is independent from UI-language availability
+
+**Confirmed source fact:** Nooir currently has **31 UI translation YAML files**, while the EPUB hyphenation registry embeds only **10 language tries**: de, en, es, fi, fr, it, pl, ru, sv and uk.
+
+Therefore UI language and book hyphenation language are separate concerns. Removing a hyphenation trie would not remove that UI language, and adding an UI translation does not automatically add book hyphenation.
+
+`Hyphenator.cpp` chooses a trie from EPUB language metadata/BCP-47 primary tags, with ISO-639-2 normalization. If no language-specific trie exists, explicit hyphens/soft hyphens and apostrophe handling still work; the caller may also request generic fallback break positions. This behavior must be preserved if tries ever move off flash.
+
+### Hyphenation source footprint strongly justifies map measurement
+
+Repository generated-header sizes currently show a very uneven distribution:
+
+- German source header: ~1,289,474 B
+- Russian: ~208,727 B
+- English: ~168,745 B
+- Swedish: ~147,797 B
+- Ukrainian: ~133,527 B
+- Polish: ~97,391 B
+- Spanish: ~85,633 B
+- French: ~44,003 B
+- Italian: ~10,044 B
+- Finnish: ~8,166 B
+
+These are **repository/source sizes only** and are not flash costs. The useful fact is structural: `LanguageRegistry.cpp` includes every generated header and constructs a global `LanguageHyphenator` for every descriptor, so all ten are intentionally reachable. The map/ELF must report each `*_trie_data[]` symbol's real binary size.
+
+### Strong hyphenation experiment sequence for Codex
+
+1. Baseline `gh_release` + map.
+2. Record each embedded trie symbol's exact size and total.
+3. Temporary A/B build with one large non-default trie (German is the obvious measurement probe) excluded from the registry; record exact binary delta. This verifies whether map attribution matches final image change.
+4. If the total is meaningful, prototype **SD-backed optional hyphenation resources** rather than deleting language support.
+5. Keep at least a boot-safe/default behavior when SD resources are absent or corrupt.
+6. Test EPUB metadata forms such as `de`, `de-DE`, `deu`/`ger`, plus English and Cyrillic examples.
+7. Test explicit hard/soft hyphens, apostrophes, fallback line breaking and CJK no-visible-hyphen behavior.
+
+**Upstream observation:** CrossPoint community planning has explicitly discussed moving fonts, hyphenation and translations out of the firmware binary, and current CrossPoint continues adding language-specific hyphenation. This supports investigating SD-backed resources, but it is not evidence that Nooir can adopt such a change without its own measurements/tests.
+
+### UI language system: 31 languages are compiled into the generated i18n tables
+
+**Confirmed source fact:** Nooir currently contains translation YAMLs for 31 UI languages:
+Arabic, Belarusian, Bosnian, Catalan, Czech, Danish, Dutch, English, Finnish, French, German, Hebrew, Hungarian, Indonesian, Italian, Kazakh, Lithuanian, Norwegian, Polish, Portuguese-BR, Portuguese-PT, Romanian, Russian, Slovak, Slovenian, Spanish, Swedish, Turkish, Ukrainian, Valencian and Vietnamese.
+
+The generator treats English as the reference language. Missing keys in another language fall back to English.
+
+**Confirmed source fact:** the generated representation already has two flash-saving mechanisms:
+
+1. PlatformIO runs `gen_i18n.py` with `strip_unused=True`, removing translation keys not referenced by `src/` or `lib/`.
+2. For every non-English language, a string identical to English is **not duplicated** in that language's string blob. Its 16-bit offset sets bit 15 and points back into the English blob.
+
+This means Nooir's i18n implementation is already more compact than a naive “31 complete copies of every string” design.
+
+### The likely remaining i18n cost is offset-table scaling
+
+**Confirmed source fact:** every compiled language still receives a `uint16_t OFFSETS_<LANG>[]` entry for **every retained StrId**, even when many values fall back to English. The generator's own report computes this fixed component as:
+
+`number_of_languages × retained_string_keys × 2 bytes`
+
+plus the deduplicated UTF-8 string blobs.
+
+With 31 languages, each retained UI string key costs **62 bytes of offset-table flash across all languages**, before any translated text bytes. The exact retained-key count after stripping must be captured from a real generator run; do not estimate it from the ~618 lines in `english.yaml`.
+
+This makes offset-table representation a more credible i18n optimization target than simply deleting untranslated/English-identical strings, because the latter are already deduplicated.
+
+### Language completeness is not uniform
+
+**Confirmed source observation:** translation files have materially different amounts of authored content. For example the current repository files have roughly 618 lines for English, 546 for German, 428 for Hebrew and 413 for Arabic. Missing translation keys intentionally fall back to English.
+
+These line counts are **not** a quality score and should not be used to delete a language. They simply mean the flash cost of translated blobs differs by language while the per-language offset table remains fixed for all retained keys.
+
+### UI-language experiment sequence for Codex
+
+Before considering removal/offloading of any language:
+
+1. Run the generator during a clean normal build and preserve its table:
+   - language count;
+   - retained/unused key count;
+   - each language's deduplicated string bytes;
+   - total string-blob bytes;
+   - total offset-table bytes.
+2. Confirm the generated output is actually linked as reported.
+3. Use map/ELF to attribute `STRINGS_*_DATA` and `OFFSETS_*` symbols.
+4. Only if i18n is a meaningful share of the recoverable flash, investigate representation changes.
+
+Potential representation experiments, in preferred order:
+- reduce/deduplicate offset-table storage without changing user-visible language coverage;
+- investigate sparse overrides for non-English languages rather than a full offset array per language;
+- investigate SD-loaded optional language packs only as a larger architectural experiment, with English built in as recovery fallback;
+- do **not** start by deleting languages.
+
+### Important language/boot constraints
+
+Any future SD-loaded language design needs:
+- English always available without SD;
+- safe fallback if the selected language pack is missing/corrupt;
+- migration compatibility for persisted `SETTINGS.language`;
+- preservation of the generator's frozen V1 language migration table;
+- language names/menu available early enough to recover/change language;
+- Arabic/Hebrew RTL UI tested separately from reader-language fonts;
+- no assumption that UI language equals book language, keyboard language or hyphenation language.
+
+Current CrossPoint settings explicitly separate UI language from keyboard-layout choice because book/input language can differ from UI language. Nooir should preserve the same conceptual separation.
+
+### Revised flash-recovery research order
+
+Based on source reachability rather than guessed byte savings:
+
+1. **Hyphenation map symbols** — ten intentionally embedded automata, uneven and potentially substantial.
+2. **Optional built-in reader family measurement** — especially Noto Sans reader sizes/styles, while preserving UI + Arabic safety fonts.
+3. **I18n generator/map report** — especially the fixed per-language offset tables; unused-key stripping and English-string dedup are already active.
+4. Themes/assets/web/inherited linked code.
+5. Only then choose which architecture is worth implementing.
+
+The goal remains to preserve multilingual capability while making optional resources pay their flash cost only when they are actually needed.
