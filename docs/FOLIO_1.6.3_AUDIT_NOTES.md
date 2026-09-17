@@ -322,3 +322,130 @@ Based on source reachability rather than guessed byte savings:
 5. Only then choose which architecture is worth implementing.
 
 The goal remains to preserve multilingual capability while making optional resources pay their flash cost only when they are actually needed.
+
+
+## 2026-09-18 — candidate SD resource-pack architecture
+
+### Status
+
+**INVESTIGATE — architecture candidate, not an approved implementation.**
+
+The flash audit now has three related classes of optional/static resources that may be better paid for from SD rather than permanently from the application image:
+
+1. non-English UI translations;
+2. language-specific EPUB hyphenation tries;
+3. optional reader font families/styles.
+
+Nooir already has important pieces of the required pattern: built-in fallback fonts, SD font discovery/Font Manager, English translation fallback, and graceful no-language-hyphenator behavior. This makes a shared SD-resource direction worth measuring before building three unrelated loaders.
+
+### Proposed safety model
+
+Keep a **small recovery-safe core in firmware**:
+- English UI strings and language name/recovery controls;
+- the minimum boot-safe UI font set;
+- the default boot-safe reader font/fallback required to open a book without optional SD resources;
+- enough line-breaking behavior to remain usable if an optional hyphenation pack is absent;
+- resource loader/validation/versioning code.
+
+Move only resources proven optional and worthwhile by measurement.
+
+A missing, corrupt or incompatible SD resource must never prevent boot, Settings access, reading with the built-in fallback, or changing back to English/default resources.
+
+### Translation packs
+
+Candidate layout, naming still provisional:
+
+`/.crosspoint/languages/<code>.lang`
+
+A language pack should contain only what differs from the built-in English reference where practical, rather than another complete copy of the English table.
+
+Before designing the binary format, Codex must measure current `STRINGS_*_DATA` and `OFFSETS_*` cost. If the recoverable flash is small, do not add a complex loader.
+
+Required behavior:
+- English always built in;
+- persisted language code/enum migrates safely;
+- missing selected pack -> English fallback, not boot failure;
+- corrupt/version-mismatched pack -> reject + English fallback;
+- language selection clearly distinguishes installed vs available packs;
+- Arabic/Hebrew UI direction/rendering remains tested;
+- V1 `language.bin` migration compatibility preserved.
+
+### Hyphenation packs
+
+Candidate layout:
+
+`/.crosspoint/hyphenation/<primary-tag>.trie`
+
+The existing serialized trie representation is already a natural starting point because `SerializedHyphenationPatterns` is a descriptor over byte data. Investigate whether the same serialized bytes can be read/mapped/buffered from SD without redesigning Liang behavior.
+
+Potential policy:
+- keep English built in initially, unless measurement later proves even that is worth externalizing;
+- load a language trie on demand from EPUB language metadata;
+- cache only the currently needed resource or a tightly bounded set;
+- missing/corrupt trie -> existing explicit-hyphen/soft-hyphen/apostrophe/fallback behavior, not reader failure.
+
+Do not assume SD I/O is fast enough. Measure chapter/page-turn impact and heap/largest-block behavior before production use.
+
+### Optional font packs
+
+Continue using the existing SD font/`.cpfont` and Font Manager direction rather than inventing a second font-pack system.
+
+The first candidate remains the optional built-in Noto Sans reader family. If map/build evidence shows worthwhile savings, investigate shipping/installing it through Font Manager while retaining the minimum built-in UI/default-reader/Arabic safety set.
+
+### Shared resource infrastructure
+
+If two or more categories prove worth externalizing, investigate one small shared layer for:
+- resource type + version;
+- language/resource identifier;
+- length;
+- CRC/checksum;
+- compatibility/version field;
+- atomic install/update;
+- validation before activation;
+- missing/corrupt fallback;
+- optional catalog/download integration.
+
+Do **not** create a generic resource framework first. Prove the flash savings of each category, then extract shared infrastructure only where it reduces total code/maintenance.
+
+### Installation/update UX
+
+Longer-term options, in order of implementation simplicity:
+
+1. manual SD copy;
+2. web-transfer install/manage;
+3. reuse/extend the existing Font Manager/catalog pattern for downloadable language/hyphenation resources;
+4. optional bundled resource-pack installer.
+
+The firmware must remain fully recoverable without network access.
+
+### Critical accounting rule
+
+Moving data to SD is only a win if:
+
+`flash removed - loader/validation/catalog code added = meaningful net flash recovery`
+
+For every prototype record:
+- original linked resource bytes;
+- new loader/metadata code bytes;
+- net application-image saving;
+- static RAM delta;
+- peak heap/largest-block during load;
+- SD bytes used;
+- first-load latency;
+- steady-state page/menu latency.
+
+A resource migration that saves little flash while increasing heap fragmentation or making boot/reading dependent on SD integrity should be rejected.
+
+### Candidate experiment order
+
+When build access returns:
+
+1. measure all ten hyphenation trie symbols and total;
+2. measure Noto Sans reader-family symbols and total;
+3. measure i18n string blobs vs offset tables;
+4. rank by recoverable bytes;
+5. prototype **one category only** — preferably the largest cleanly separable resource;
+6. measure loader overhead and net saving;
+7. only then decide whether a shared SD resource-pack architecture is justified.
+
+This keeps the idea evidence-driven: the desired end state may be a smaller firmware core with richer optional SD resources, but only if the measured economics support it.
