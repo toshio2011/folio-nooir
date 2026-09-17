@@ -17,8 +17,7 @@ Xteink X3/X4 devices. The primary goals are:
 - no regressions in XTC/XTCH, TXT, sleep, web, dictionary, or existing reader
   workflows.
 
-Folio Nooir **1.6.2** is the current development/release-preparation line; the
-released **1.6.1** behavior remains the compatibility baseline. The known-good
+Folio Nooir **1.6.2 is released** and is now the compatibility baseline. Any new source work belongs to the **1.6.3 development line**. The known-good
 1.6.2 firmware/source milestone is `85dda52a`, which includes the current
 dictionary, reader lifecycle, KOSync/Font Manager, and Spine work. The 1.6.1
 EPUB work covers Arabic/RTL support, text shaping, fonts, layout,
@@ -177,8 +176,7 @@ probes, caches, binaries, and build output must remain untracked and untouched.
 - Bookmark, clipping, highlight, Reading Summary, and per-book statistics
   workflows remain available from the reader and book-action surfaces.
 - Wi-Fi setup, browser-based file transfer, Calibre Wireless, WebDAV, OPDS,
-  OTA update support, and the web To-Do and Clock & Weather flows remain part
-  of the supported device workflow.
+  OTA update support, and the web To-Do and Clock & Weather flows remain part  of the supported device workflow.
 - Themes and settings retain independent layout, typography, orientation,
   refresh, sleep, dictionary, network, and device-configuration persistence.
 
@@ -270,6 +268,55 @@ probes, caches, binaries, and build output must remain untracked and untouched.
 - Power-lock transitions avoid redundant active requests and unnecessary
   frequency bouncing while retaining normal sleep/deep-sleep behavior.
 
+
+## Post-1.6.2 upstream plan — 1.6.3 development line
+
+Folio Nooir **1.6.2 is released**. Any new source change belongs to the **1.6.3 development line** unless explicitly scoped otherwise. The first 1.6.3 objective is to recover flash and preserve/expand heap safety before adding another large subsystem.
+
+### Upstream sources and policy
+
+Track CrossPoint Reader, CrossInk, InkPointX, CrossPDF (PDF architecture), and CrossLink (Bluetooth/X4 reference). Repeat an upstream-delta audit during each Nooir release cycle and classify work as **TAKE NOW / INVESTIGATE / LATER / SKIP / ALREADY COVERED**. Upstream is a source of fixes and ideas, not Nooir's target state; never wholesale-merge simply to catch up.
+
+### 1. Flash recovery — first priority
+
+The 1.6.2 production baseline is 6,492,279 linked flash, 6,506,128 padded firmware.bin, 47,472 app-slot bytes remaining, and 53,492 static RAM. With a preferred ~40 KB production cushion, this is too little headroom for casually adding OPDS, PDF, FB2, or Bluetooth. Before large features, generate a linker/map-level breakdown and audit compiled-in themes, bundled/fallback fonts, icons/assets, inherited unused activities, translations, web assets, duplicate theme/rendering code, dead linked functionality, LTO/garbage collection, and resources that can safely move to SD. Compare CrossPoint's SD-theme direction and CrossInk's font/build-size reductions. Keep Folio Nooir built in unless separately proven safe. Never enlarge/change the partition. Investigation target: recover meaningful headroom, ideally 100–200 KB or more, but claim only measured normal gh_release savings.
+
+### 2. EPUB / fonts / images / memory
+
+Re-diff Nooir against current CrossPoint and CrossInk before adding formats. Re-evaluate CrossPoint #3521 font-cache fragmentation, #3501 SD/SPI batching, #3398 / 9d2f234 packed Font Manager catalog, 3555ff5 image-fragmentation work, 06b5d5b SD-font ligature-view cleanup, and f4b4ff0 partial font-cache space-width recovery. Some older upstream ideas are already adapted in 1.6.2; never port them twice. Also compare CrossInk deferred SD-font discovery, debounced progress writes, streaming EPUB tables, framebuffer lending during indexing, cancellable pre-indexing, low-heap dictionary guards, overlay-image fixes, XTCH memory fixes, and font-cache release around overlay PNG work. Preserve cache version 41, pagination, Arabic/Quran rendering, image quality, and working KOSync unless separately tested evidence requires a change.
+
+### 3. SD/SPI performance
+
+Benchmark CrossPoint #3501-style SD/SPI batching because EPUB, CBZ, XTC/XTCH, covers, metadata, dictionaries, fonts, sleep images, and caches are SD-heavy. Measure before/after on X4 and treat it as an optimization candidate, not an automatic port.
+
+### 4. XTC / XTCH
+
+Keep Nooir's streaming/retained B/W-plane architecture. Diff current CrossPoint/CrossInk for concrete chapter-listing, token-scan, settings, memory, cache, or SD-I/O fixes. Prefer small isolated fixes and re-test XTC/XTCH after shared SD/image/font changes.
+
+### 5. FB2 — strong candidate after flash recovery
+
+Audit InkPointX FB2 in detail. Prefer normalizing FB2 into Nooir's existing reflow/chapter/layout machinery instead of shipping a second full reader, reusing typography, images, progress, bookmarks, statistics, dictionary/clipping, Arabic/Bidi where valid, and cache/lifecycle infrastructure. Prototype separately and measure flash/RAM before integration.
+
+### 6. OPDS — after headroom exists
+
+Audit CrossPoint and InkPointX OPDS for saved servers, search, pagination, authentication if present, direct download, cancellation, XML parsing, persistence, and library refresh. Prefer the smallest useful implementation. Measure linked flash and peak TLS/parser heap before deciding whether it belongs in normal firmware.
+
+### 7. PDF — experimental branch, reflow first
+
+PDF remains unimplemented. Compare InkPointX fixed-layout/raster/zoom with CrossPDF-style text/reflow and SD-prepared caches. For Nooir's novel use case investigate reflow/one-time SD preparation first so the existing reading experience can be reused. Keep fixed-layout raster PDF separate. Do not promise scanned/image-heavy or arbitrary PDF compatibility. Measure parser/raster flash cost, preparation peak heap/largest block, cache size, latency, and failure behavior.
+
+### 8. Bluetooth page turner — experimental only
+
+Do not merge a full BLE stack into normal Nooir with ~47 KB 1.6.2 margin. Audit current CrossPoint Bluetooth/page-turner work, CrossInk where relevant, and CrossLink because it physically worked on X4 although disconnects were observed. First use a separate experimental profile/branch and measure exact flash increase, idle RAM, connection-time heap/largest block, reconnect behavior, chapter-indexing interaction, sleep/wake, battery impact, and physical X4 reliability.
+
+### 9. Quick Actions / UI Dark Mode
+
+Quick Actions remain a good isolated candidate after flash/memory work: preserve the audited CrossInk model of one configurable trigger, five persisted actions, shared popup, context filtering, and existing Nooir dispatch. Full UI/System Dark Mode remains a larger separate project; Reader Dark Mode already exists.
+
+### 10. 1.6.3 sequencing and evidence rules
+
+Recommended order: **flash map/recovery -> EPUB/font/image/memory upstream delta -> SD/SPI benchmark -> small safe fixes -> Quick Actions if headroom allows -> FB2 prototype -> OPDS -> PDF experiment -> Bluetooth experiment**. This is planning, not authorization to implement all of it in 1.6.3. Every upstream adaptation must record source commit/PR, why Nooir needs it, whether Nooir already has an equivalent, measured flash impact, RAM/largest-block effect where relevant, regression risk, and affected X3/X4/shared tests. Never trade recovery safety, cache compatibility, Arabic/Quran behavior, or physical X4 stability merely to match upstream.
+
 ## AUDITED / PLANNED / FUTURE FEATURES
 
 - Reader Dark Mode is implemented. Full UI/System Dark Mode is **not
@@ -357,8 +404,7 @@ repository:
 - Upstream reader / CrossPoint reference:
   <https://github.com/crosspoint-reader/crosspoint-reader>
 - CrossInk reference (reader, display, sleep, Bluetooth, and OPDS ideas):
-  <https://github.com/uxjulia/CrossInk>
-- CrossLink reference (Bluetooth and device workflows):
+  <https://github.com/uxjulia/CrossInk>- CrossLink reference (Bluetooth and device workflows):
   <https://github.com/DaisonChun/crosslink>
 - vCodex/Codex reference (display and firmware ideas):
   <https://github.com/marcoand75/cpr-vcodex-steroids>
