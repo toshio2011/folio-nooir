@@ -121,3 +121,87 @@ The first measurement queue is now:
 **hyphenation tries → built-in font families/styles → i18n report/representation → themes/assets/inherited features**
 
 Reason: i18n unused-key stripping is already enabled, whereas the source currently shows ten explicitly registered embedded hyphenation automata and a broad built-in font set. This is a prioritization hypothesis based on source reachability; exact savings still require `gh_release` map/ELF evidence.
+
+
+## 2026-09-18 — built-in font reachability trace
+
+### Exact construction/registration path
+
+**Confirmed source fact:** `src/main.cpp` is the translation unit that includes `<builtinFonts/all.h>`, constructs the global built-in `EpdFont` / `EpdFontFamily` objects and registers them with `GfxRenderer` in `setupDisplayAndFonts()`.
+
+The normal release build (no `OMIT_FONTS`) explicitly constructs and registers:
+
+- Noto Serif 12/14/16/18: regular + bold + italic + bold-italic;
+- Noto Sans 12/14/16/18: regular + bold + italic + bold-italic;
+- Arabic 12/14/16/18: regular + bold;
+- Noto Sans 8 regular as `SMALL_FONT_ID`;
+- Ubuntu 10 regular + bold as `UI_10_FONT_ID`;
+- Ubuntu 12 regular + bold as `UI_12_FONT_ID`.
+
+The 14 pt Noto Serif and Arabic families plus the three UI families sit outside the `#ifndef OMIT_FONTS` block. The remaining reader sizes/families sit inside it. This is useful because the source already has a concept of a minimum font set, but `OMIT_FONTS` is **not** a proposed production configuration until behavior and size are measured.
+
+### Reader and Arabic fallback coupling
+
+**Confirmed source fact:** `setupDisplayAndFonts()` registers Arabic fallback per point size. Noto Serif and Noto Sans reader families at 12/14/16/18 route missing Arabic glyphs to matching Arabic 12/14/16/18 families. The renderer also keeps a point-size Arabic fallback map for SD reader fonts.
+
+**Consequence:** the dedicated Arabic families are not isolated “Quran-only fonts.” They are part of the general EPUB/SD-font fallback path. Removing them would change Arabic rendering for ordinary books and potentially SD reader fonts. Any size reduction experiment involving Arabic must therefore include normal Arabic EPUB + Quran fixtures + SD-font Arabic fallback, not just English EPUB tests.
+
+### UI font coupling
+
+**Confirmed source fact:** `SdCardFontSystem.cpp` defines built-in UI sizes as:
+- `SMALL_FONT_ID` = 8 pt;
+- `UI_10_FONT_ID` = 10 pt;
+- `UI_12_FONT_ID` = 12 pt.
+
+When the selected SD family has CJK coverage, Nooir loads matching 8/10/12 pt SD files and registers them as CJK fallbacks for those built-in UI IDs. Latin UI remains on the built-in fonts.
+
+**Consequence:** Nooir already has the same broad architectural direction documented by current CrossPoint: small built-in UI fonts plus size-matched SD fallback for scripts that need larger coverage. The safe flash question is therefore not “can UI fonts move to SD?” but “what is the smallest boot-safe built-in UI coverage we can preserve while retaining multilingual fallback?”
+
+### Upstream comparison
+
+Current CrossPoint documentation says its normal reader exposes two built-in reader families (Noto Serif and Noto Sans) and SD fonts for additional families. Its SD-font documentation says CJK UI fallback reuses the selected SD family at 8/10/12 pt instead of embedding a large CJK set in flash.
+
+Current CrossInk documentation says its built-ins are Lexend Deca and Bitter, with custom families on SD. CrossInk v1.4.0 explicitly removed a built-in ChareInk family to reduce firmware size and made it downloadable instead. This is strong prior art for moving **optional reader families** out of firmware while keeping a small built-in safety set.
+
+Nooir is already structurally close to this model, but its normal build still registers both full Noto Serif and full Noto Sans reader families across four sizes/styles, plus dedicated Arabic fallback families.
+
+### Strongest font experiment for a build-capable session
+
+Do **not** start by touching Ubuntu/NotoSans-8 UI fonts or Arabic fallback.
+
+The cleanest first A/B experiment is:
+
+1. baseline normal `gh_release`;
+2. build a temporary measurement variant that removes only the **built-in Noto Sans reader family** (12/14/16/18 and four styles), while leaving:
+   - Noto Serif default reader family intact;
+   - Arabic fallback families intact;
+   - Noto Sans 8 small UI font intact;
+   - Ubuntu 10/12 UI fonts intact;
+   - SD font support intact;
+3. compare firmware binary/map symbols;
+4. do not merge the removal yet;
+5. inspect settings behavior when an existing user has Noto Sans selected and define a safe migration/fallback before any production change.
+
+Why this is the cleanest first experiment: Noto Sans is an alternate built-in reader family, while the UI and Arabic paths have stronger boot/multilingual coupling. CrossInk's removal of an optional built-in family provides upstream precedent for exactly this class of tradeoff.
+
+### Second font experiment, only after the first
+
+If removing/moving Noto Sans produces meaningful savings, investigate packaging it as downloadable `.cpfont` files through the already-existing Font Manager rather than deleting the choice entirely. This preserves user choice while moving optional typography to SD.
+
+Only after that should Codex measure whether multiple Noto Serif point sizes/styles can be reduced or delegated to SD. That is more invasive because Noto Serif is the default boot-safe reader family and style fallback affects EPUB CSS rendering.
+
+### Measurement requirements
+
+For every font A/B:
+- record `firmware.bin` bytes and exact delta;
+- inspect map/ELF symbols for removed generated font arrays/metadata rather than relying on header source size;
+- record static RAM delta;
+- cold boot with no SD font installed;
+- open default English EPUB;
+- test bold/italic/bold-italic CSS;
+- test Arabic EPUB and Quran fixture;
+- test an SD font and dictionary font;
+- test CJK UI fallback if a suitable SD family is present;
+- test an existing settings file that names the removed built-in family.
+
+No production font removal should be merged from size numbers alone.
