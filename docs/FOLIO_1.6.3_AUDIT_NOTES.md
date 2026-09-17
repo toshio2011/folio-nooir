@@ -64,3 +64,60 @@ Search the release map/ELF for:
 - duplicate or unexpectedly retained activities.
 
 Do not infer linked cost from repository file size. The map and normal release binary are authoritative.
+
+
+## 2026-09-18 — font, hyphenation and i18n trace
+
+### I18n: stronger finding — unused stripping is already active in PlatformIO builds
+
+**Confirmed source fact:** `platformio.ini` runs `pre:scripts/gen_i18n.py` for the base firmware build and the native simulators. At the bottom of `gen_i18n.py`, the SCons/PlatformIO path calls `main(strip_unused=True)`. Therefore the normal PlatformIO generation path already strips detected unused `STR_*` keys.
+
+**Consequence:** do **not** give Codex a task to simply “enable `--strip-unused`”; that optimization is already active. The useful follow-up is to capture the generator's current language/string/flash report during a clean release build, verify generated files are current, and only investigate deeper representation/dedup changes if the report shows worthwhile remaining cost. Deleting languages is not currently justified.
+
+### Hyphenation: all ten language tries are directly included by the registry
+
+**Confirmed source fact:** `lib/Epub/Epub/hyphenation/LanguageRegistry.cpp` directly includes generated tries for **de, en, es, fi, fr, it, pl, ru, sv and uk**, constructs ten static `LanguageHyphenator` instances and exposes all ten through one registry. `Hyphenator.cpp` selects among them from EPUB language metadata, including ISO-639-2 normalization.
+
+**Confirmed source fact:** the generated trie headers are raw `constexpr uint8_t[]` firmware data produced from Hypher binary automata. The repository documentation explicitly says the reader keeps these automata in flash.
+
+**Important hypothesis requiring map/build measurement:** because the registry references all ten descriptors, the generated tries are strong candidates for real linked flash cost rather than merely large repository files. The linker map must prove the exact contribution. German is especially worth checking: its generated C++ header is about 1.29 MB of source text, much larger than the others, but this is **not** the binary byte cost and must not be reported as a saving.
+
+**Potential design investigations, not implementation decisions:**
+- determine the actual byte length of each generated `*_trie_data[]` array from symbols/map;
+- test whether uncommon-language tries could become optional SD resources while retaining English or another minimal built-in fallback;
+- alternatively investigate a build-time language subset only if Nooir can preserve a sensible multilingual user experience;
+- compare upstream CrossPoint/CrossInk treatment before inventing a new format;
+- preserve explicit/soft-hyphen and fallback line-breaking behavior even when no language trie is available.
+
+This area may be a more promising flash target than i18n because i18n already strips unused keys, while the language registry deliberately references every hyphenation automaton.
+
+### Fonts: the built-in registry is broad and the generated fonts already mix fallback scripts
+
+**Confirmed source fact:** `lib/EpdFont/builtinFonts/all.h` includes:
+- Noto Serif 12/14/16/18 in regular, bold, italic and bold-italic;
+- Noto Sans 12/14/16/18 in regular, bold, italic and bold-italic;
+- Noto Sans 8 regular;
+- Arabic 12/14/16/18 regular and bold;
+- Ubuntu 10 and 12 regular and bold.
+
+`src/fontIds.h` exposes IDs for the four Noto Serif sizes, four Noto Sans sizes, four Arabic sizes, UI 10/12 and the small font.
+
+**Confirmed source fact:** generated UI/small fonts are not Latin-only. For example, `notosans_8_regular` and `ubuntu_10_regular` are generated with Noto Sans Hebrew/Arabic sources and explicit Hebrew/Arabic/presentation-form intervals. This means “remove Arabic from UI fonts because there is a separate Arabic reader font” is **not safe as an assumption**. UI metadata, menus or fallback rendering may rely on that coverage.
+
+**Confirmed source fact:** EpdFont supports style families with regular/bold/italic/bold-italic fallbacks, while SD-card font infrastructure already exists (`SdCardFont`, manager and registry). This makes “move optional reader faces/styles to SD” architecturally plausible, but the default/fallback/boot-safe set must be traced first.
+
+**Next source-only font trace:**
+1. identify the translation unit that includes `builtinFonts/all.h` and constructs each built-in `EpdFontFamily`;
+2. map every font ID to UI, EPUB reader, fallback and Arabic/Quran call sites;
+3. distinguish mandatory boot/UI fonts from optional reader typography;
+4. identify whether every style/size is referenced strongly enough to force its generated data into the release;
+5. compare CrossInk/CrossPoint current built-in-vs-SD font strategy;
+6. prepare one-variable build experiments for Codex, but make no font deletion before map evidence and Arabic/Quran/UI regression tests.
+
+### Updated priority for the next build-capable session
+
+The first measurement queue is now:
+
+**hyphenation tries → built-in font families/styles → i18n report/representation → themes/assets/inherited features**
+
+Reason: i18n unused-key stripping is already enabled, whereas the source currently shows ten explicitly registered embedded hyphenation automata and a broad built-in font set. This is a prioritization hypothesis based on source reachability; exact savings still require `gh_release` map/ELF evidence.
