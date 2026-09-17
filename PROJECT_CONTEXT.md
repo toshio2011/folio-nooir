@@ -17,7 +17,7 @@ Xteink X3/X4 devices. The primary goals are:
 - no regressions in XTC/XTCH, TXT, sleep, web, dictionary, or existing reader
   workflows.
 
-Folio Nooir **1.6.2 is released** and is now the compatibility baseline. Any new source work belongs to the **1.6.3 development line**. The known-good
+Folio Nooir **1.6.2 is released** and is now the compatibility baseline. Tag `1.6.2` resolves to `25df494020874150a047e2a4b3be62c3e40151e8`; the known-good 1.6.2 firmware/source milestone is `85dda52a102163b40fd4a2ddfde65e6cdc23af36`. Any new source work belongs to the **1.6.3 development line**. The known-good
 1.6.2 firmware/source milestone is `85dda52a`, which includes the current
 dictionary, reader lifecycle, KOSync/Font Manager, and Spine work. The 1.6.1
 EPUB work covers Arabic/RTL support, text shaping, fonts, layout,
@@ -45,8 +45,8 @@ Authoritative parent repository:
 - Fetched remote Quran fixture commit: `e0478714 Quran Epub`; merge
   synchronization commit: `5efe0695`. The remote commit adds only three Quran
   EPUB fixtures and is not a new firmware baseline.
-- 1.6.1 source checkpoint before release preparation:
-  `c13eda8c490b53c0d787d641e144b4e1d332478b`
+- Released 1.6.2 tag: `1.6.2` -> `25df494020874150a047e2a4b3be62c3e40151e8`
+- 1.6.2 firmware/source milestone: `85dda52a102163b40fd4a2ddfde65e6cdc23af36`
 - The completed 1.6.0 source, translations, README inventory, and related
   integration work are committed and pushed on this branch.
 - The 1.6.0 source was integrated by merge `0f1bd556`; `b12f2732` added the
@@ -96,7 +96,7 @@ The detailed CBZ/Manga preparation and cache plan remains deferred in
 `docs/CBZ_MANGA_PLAN.md` and is not part of this EPUB release scope.
 
 The remaining focused 1.6.2 investigation backlog is in
-`docs/FOLIO_1.6.2_BACKLOG.md`. The current dictionary enhancement batch and
+`docs/FOLIO_1.6.3_BACKLOG.md`. The current dictionary enhancement batch and
 its successful-source behavior are documented there; no further feature
 implementation is authorized from this context alone.
 
@@ -356,12 +356,7 @@ Recommended order: **flash map/recovery -> EPUB/font/image/memory upstream delta
 7. **Explicit release actions.** Tags, GitHub Releases, firmware assets,
    flashing, and physical-device validation require an explicit request and a
    positively identified build/configuration.
-8. **1.6.2 investigation sequencing.** The released 1.6.1 behavior is the
-   baseline. The 1.6.2 pass starts with focused EPUB regression coverage and
-   measurements, then investigates the prioritized backlog one item at a time.
-   No change to Arabic/Quran behavior, rendering quality, pagination, or cache
-   format is authorized by this baseline. CBZ/Manga preparation and cache work
-   remain planned for a later requirements, architecture, and safety audit.
+8. **1.6.3 sequencing.** The released 1.6.2 behavior is the immutable comparison baseline. Start with flash-map/recovery and measured upstream memory work; do not change Arabic/Quran behavior, rendering quality, pagination, cache format, KOSync interoperability, partition layout, or user SD data without a separately approved task.
 
 ## Simulator workflow
 
@@ -404,7 +399,12 @@ repository:
 - Upstream reader / CrossPoint reference:
   <https://github.com/crosspoint-reader/crosspoint-reader>
 - CrossInk reference (reader, display, sleep, Bluetooth, and OPDS ideas):
-  <https://github.com/uxjulia/CrossInk>- CrossLink reference (Bluetooth and device workflows):
+  <https://github.com/uxjulia/CrossInk>
+- InkPointX reference (FB2/PDF/OPDS and reader architecture):
+  <https://github.com/yokki-vans/InkPointX>
+- CrossPDF reference (PDF reflow/SD-preparation architecture):
+  <https://github.com/davemessew/CrossPDF>
+- CrossLink reference (Bluetooth and device workflows):
   <https://github.com/DaisonChun/crosslink>
 - vCodex/Codex reference (display and firmware ideas):
   <https://github.com/marcoand75/cpr-vcodex-steroids>
@@ -419,27 +419,13 @@ machine before using them.
 
 ## Recommended next steps
 
-1. Keep the released 1.6.1 behavior frozen and review the new focused EPUB
-   regression coverage before approving production work.
-2. Continue physical X3 regression testing for the released shared paths;
-   X4 validation does not substitute for X3 evidence.
-3. If simulator validation is needed, inspect the WSL mirror's branch and
-   worktree state first and preserve its unique work; do not synchronize or
-   reset it blindly.
-4. To consume later FreeInk updates, `fetch upstream`, merge or rebase, test,
-   push the tested result to `origin`, and deliberately update Nooir's pinned
-   submodule SHA. Never blindly pull inside `freeink-sdk`.
-5. Review `docs/FOLIO_1.6.2_BACKLOG.md` and approve one investigation at a
-   time. Preserve cache format, pagination, rendering quality, and Arabic/Quran
-   behavior unless a later task explicitly authorizes a change.
-6. After the EPUB phase, return to the preserved CBZ/Manga preparation and
-   cache plan and complete its separate architecture/safety audit before
-   implementation.
-7. Keep future changes scoped and classify them as CBZ-only, EPUB-only,
-   shared, simulator-only, or documentation-only before editing source.
-8. Review and publish release artifacts only when explicitly authorized and
-   only from a positively identified, appropriately built image; do not use an
-   arbitrary ignored `firmware.bin`.
+1. Treat tag `1.6.2` at `25df4940` as the released compatibility baseline and `85dda52a` as the known-good firmware/source milestone used for the recorded production measurements.
+2. Start 1.6.3 with `docs/FOLIO_1.6.3_BACKLOG.md`: generate a linker/map flash breakdown, identify measurable removal/move-to-SD opportunities, and keep the partition unchanged.
+3. Re-audit current CrossPoint/CrossInk EPUB, font, image, SD and memory deltas before importing code. Record source commit/PR and whether Nooir already has an equivalent.
+4. Investigate FB2, OPDS, PDF and Bluetooth only after headroom is recovered. Prototype format/network/BLE work separately and measure flash plus peak heap/largest block before normal integration.
+5. Quick Actions remains the smaller user-facing candidate after the stabilization/headroom pass; Full UI/System Dark Mode remains separate and later.
+6. Continue physical X3 validation when hardware is available. Preserve the separate WSL simulator workflow and do not treat simulator success as physical X3 evidence.
+7. Keep future changes scoped and measured. Every normal firmware change should be compared with the 1.6.2 baseline: linked flash 6,492,279 B, padded firmware.bin 6,506,128 B, app-slot margin 47,472 B, static RAM 53,492 B.
 
 ## Useful handoff checks
 
