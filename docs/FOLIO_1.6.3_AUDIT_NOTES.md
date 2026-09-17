@@ -714,3 +714,67 @@ Because accidental BLE linkage is now unlikely from source inspection, the curre
 8. BLE only as a map sanity check for the normal release.
 
 This finding should be revisited only if the production map disagrees.
+
+
+## 2026-09-18 — WebDAV, mDNS and UDP discovery reachability
+
+### WebDAV is genuinely separable from ordinary browser Transfer
+
+**Confirmed source fact:** `CrossPointWebServer::begin()` registers ordinary HTTP routes for file listing, download, multipart upload, mkdir, rename, move and delete **before** separately installing `WebDAVHandler` with `server->addHandler(new WebDAVHandler())`.
+
+**Confirmed source fact:** WebDAV additionally collects six DAV-specific headers and implements OPTIONS, PROPFIND, GET, HEAD, PUT, DELETE, MKCOL, MOVE, COPY, LOCK and UNLOCK. Its PUT path uses atomic-ish `.davtmp` replacement and clears book cache after successful writes.
+
+**Interpretation:** compiling out `WebDAVHandler` should not inherently remove Nooir's normal browser Transfer API. It is therefore a clean one-variable A/B candidate. However, DAV clients would stop working and this must be documented/validated before any permanent removal.
+
+**Build experiment:** baseline vs `NOOIR_WEBDAV=0` (temporary compile guard), preserving all ordinary HTTP and WebSocket transfer. Measure firmware/map delta and verify upload/download/mkdir/rename/move/delete through the browser.
+
+### mDNS is optional convenience and scoped to CalibreConnectActivity
+
+**Confirmed source fact:** `CalibreConnectActivity.cpp` directly includes `ESPmDNS.h`, calls `MDNS.begin("crosspoint")` when starting the server, and always calls `MDNS.end()` on exit.
+
+The source comment explicitly says mDNS is optional for the Calibre plugin but helpful to users. The server remains accessible by its displayed IP when mDNS is unavailable.
+
+**Interpretation:** mDNS is a clean convenience-feature A/B candidate. Removing it would lose `crosspoint.local` discovery/name resolution but should not remove the underlying HTTP/WebSocket transfer server.
+
+**Important linker question:** because ESPmDNS is an Arduino/ESP component, exact recoverable flash depends on whether anything else references it. Map/object evidence is required.
+
+### UDP discovery is independent and very small at application level
+
+**Confirmed source fact:** `CrossPointWebServer` owns a `NetworkUDP` object and starts a listener on local UDP port 8134. During `handleClient()`, it accepts the literal discovery packet `hello` and replies with `crosspoint (on <hostname>);<wsPort>`.
+
+**Confirmed source fact:** stopping the web server explicitly stops this UDP listener.
+
+**Interpretation:** this is convenience discovery for clients, separate from actual HTTP/WebSocket transfer. The Nooir application logic itself is tiny. Removing it may save little because UDP networking remains part of the Wi-Fi stack, but it is cheap to A/B after larger candidates.
+
+### WebSocket upload is NOT equivalent to discovery and should stay
+
+**Confirmed source fact:** the same web server starts `WebSocketsServer` on port 81 and maintains binary-upload state/progress. `CalibreConnectActivity` reads this upload status to render received bytes/file completion.
+
+Do not group WebSockets with removable UDP/mDNS discovery. It is part of the fast transfer path and must be measured/changed separately.
+
+### Recommended A/B sequence
+
+After hyphenation/fonts/i18n/web-static ranking:
+
+1. WebDAV off, ordinary Transfer retained.
+2. mDNS off, direct-IP Transfer retained.
+3. UDP discovery off, direct-IP/WebSocket Transfer retained.
+4. only then test combinations if individual map deltas prove additive.
+
+For each variant record:
+- linked flash and padded firmware delta;
+- which library/object symbols disappear;
+- static RAM delta;
+- browser Transfer;
+- WebSocket binary upload/progress;
+- Calibre workflow by direct IP;
+- file cache invalidation after writes;
+- server start/stop and repeated reconnect.
+
+Do not permanently remove a convenience feature for a tiny saving merely because the source can be isolated.
+
+### Current expectation
+
+**Hypothesis requiring build measurement:** WebDAV is the strongest of these three size candidates because it has substantial dedicated request/path/XML/file-operation code. mDNS may recover a component-sized chunk if no other references retain it. UDP discovery is likely the smallest direct saving.
+
+This ordering is an experiment priority only, not a measured size claim.
