@@ -652,3 +652,65 @@ The highest-value unresolved question from this audit is now:
 > Does the production `gh_release` actually link any BLE/NimBLE host implementation despite Bluetooth not being a released normal feature?
 
 That should be answered from the pinned FreeInk capability definition first and then from the 1.6.2 release map.
+
+
+## 2026-09-18 — pinned FreeInk BLE capability resolution
+
+### Production BLE uncertainty resolved at source level
+
+**Confirmed source fact:** the pinned Nooir FreeInk commit `958720659ea289ae325e83db20049d0ea844800d` defines `FREEINK_CAP_BLE_HID_HOST` as **0 by default** in `BoardConfig.h`. It is explicitly documented as opt-in and not board-derived. The only compatibility override is the older `FREEINK_CAP_BLE_KEYBOARD` macro; absent that, HID host remains 0.
+
+Therefore the normal Nooir `gh_release`, which does not explicitly enable either BLE capability macro, resolves to:
+
+`FREEINK_CAP_BLE_HID_HOST = 0`
+
+for the shared X3/X4 release.
+
+### Disabled FreeInk BLE library is intentionally stub-only
+
+**Confirmed source fact:** the pinned `BleKeyboardHost/library.json` explicitly says:
+- real NimBLE central code compiles only when `FREEINK_CAP_BLE_HID_HOST` is enabled;
+- otherwise stub bodies are linked and reference no BLE code;
+- NimBLE-Arduino is intentionally **not** declared as a library dependency so disabled builds pull in zero BLE stack code.
+
+**Confirmed source fact:** `BleKeyboardHost.cpp` places all `NimBLEDevice.h`, Preferences, scanning, pairing, connection-task and HID implementation behind:
+
+`#if FREEINK_CAP_BLE_HID_HOST`
+
+The public header is deliberately NimBLE-free.
+
+### Conclusion
+
+The earlier concern that production `gh_release` might accidentally pull the NimBLE host stack merely because `BleKeyboardHost` appears in Nooir's `lib_deps` is **not supported by the pinned source**. Normal 1.6.2 release configuration should compile the stub implementation, not the real BLE host.
+
+This makes BLE a **low-priority flash-recovery target for the current release**. Do not spend implementation time adding another explicit release-off flag purely for size unless the map contradicts the source-level expectation.
+
+### Still verify once in the map
+
+The future release-map audit should nevertheless verify:
+- no `NimBLE*` implementation symbols;
+- no BLE controller/host objects retained specifically for `BleKeyboardHost`;
+- only small stub/application glue, if any.
+
+If NimBLE symbols unexpectedly appear, treat that as a build-system/linker anomaly and investigate immediately.
+
+### Architectural implication for future Bluetooth
+
+This also confirms that Nooir's existing BLE work is well isolated for the later experimental page-turner plan. Enabling Bluetooth should be treated as an explicit feature/profile that adds NimBLE-Arduino and flips the capability, rather than silently growing the normal X3/X4 firmware.
+
+That matches the 1.6.3 roadmap: keep Bluetooth experimental until its exact flash increase, runtime heap cost, reconnect stability, sleep/wake behavior and physical X4 reliability are measured.
+
+### Flash-recovery queue adjustment
+
+Because accidental BLE linkage is now unlikely from source inspection, the current source-informed order is:
+
+1. hyphenation tries;
+2. optional built-in reader fonts;
+3. i18n strings/offset tables and SD-language-pack economics;
+4. compressed web assets / JSZip;
+5. WebDAV and discovery convenience features;
+6. themes and embedded UI images;
+7. TLS/crypto symbol reachability;
+8. BLE only as a map sanity check for the normal release.
+
+This finding should be revisited only if the production map disagrees.
