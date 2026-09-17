@@ -8,17 +8,14 @@ history, decisions, and feature inventory.
 - Active development line: Folio Nooir **1.6.3**
 - Latest released baseline: Folio Nooir **1.6.2**
 - Authoritative branch: `codex/folio-nooir`
-- 1.6.1 source checkpoint before release preparation: `c13eda8c490b53c0d787d641e144b4e1d332478b`
-- Published 1.6.1 tag/release commit: `2c817a73f1a1143d7f62ac1e768501280abacaa3`
-- Known-good firmware/source milestone: `85dda52a feat: stabilize Nooir
-  readers, sync and Spine Shelf`.
+- Published 1.6.2 tag/release commit: `25df494020874150a047e2a4b3be62c3e40151e8` (`1.6.2`)
+- 1.6.2 firmware/source milestone: `85dda52a102163b40fd4a2ddfde65e6cdc23af36` (`feat: stabilize Nooir readers, sync and Spine Shelf`)
+- Previous published 1.6.1 tag/release commit: `2c817a73f1a1143d7f62ac1e768501280abacaa3`
 - Remote Quran fixture commit: `e0478714 Quran Epub`; synchronization merge:
   `5efe0695`. The merge added only three repository Quran EPUB fixtures and is
   not a new firmware/source baseline. Documentation commits after the merge
   must remain distinct from the firmware milestone.
-- After documentation work, the branch is expected to be ahead of
-  `origin/codex/folio-nooir` only by the synchronization/documentation commits;
-  no tag or GitHub release is created by this task.
+- Documentation-only commits after the 1.6.2 tag are 1.6.3 planning/context work and do not change the released 1.6.2 firmware baseline.
 - FreeInk is a real Nooir dependency through the `freeink-sdk` submodule.
 - The 1.5.10 baseline uses the Nooir-specific FreeInk commit
   `958720659ea289ae325e83db20049d0ea844800d` (`9587206`).
@@ -35,9 +32,7 @@ history, decisions, and feature inventory.
 - The existing CBZ reader and cache behavior listed below are 1.6.0 baseline
   functionality.
 - The completed 1.6.1 focus was EPUB reading quality, especially Arabic/RTL
-  support, text shaping, fonts, and layout. The Arabic/EPUB foundation,
-  typography work, EOF finalization, glyph-bound compensation, and warm-turn
-  path are included in the release candidate being frozen below.
+  support, text shaping, fonts, and layout. The Arabic/EPUB foundation, typography work, EOF finalization, glyph-bound compensation, and warm-turn path are part of the released baseline.
 - The detailed future CBZ/Manga plan is preserved in
   `docs/CBZ_MANGA_PLAN.md` and remains deferred. Quick Actions are not
   implemented and may be explored only in a later release. Full UI/System
@@ -75,7 +70,7 @@ history, decisions, and feature inventory.
 - Existing ignored build outputs must not be treated as release assets unless
   their source/configuration is positively verified.
 
-## Current 1.6.2 implementation state
+## 1.6.2 released implementation baseline
 
 - Dictionary lookup keeps the remembered/configured dictionary as the fast
   path and continues to the first valid prepared fallback when it misses or
@@ -192,7 +187,7 @@ pushed successfully. Remote verification resolves it to
 `.gitmodules` at the fork and pins the exact tested `9587206` submodule
 commit. The pin is committed in the authoritative history.
 
-## Current release-preparation notes
+## 1.6.3 development constraints
 
 - Normal production profile: `gh_release`; current measurements are
   `6,492,279` linked flash, `6,506,128` padded `firmware.bin`, `47,472` app
@@ -264,26 +259,14 @@ Recommended order: **flash map/recovery -> EPUB/font/image/memory upstream delta
 
 ## Immediate next steps
 
-1. Review the documentation commit and create the manual GitHub release only
-   after independently verifying the intended production artifact.
-2. Continue physical X3 regression validation of the released shared paths
-   when hardware access is available; X4 evidence does not substitute for it.
-3. If simulator validation is needed, use the separate WSL mirror at
-   `/home/fatiha/side-wsl` only after inspecting its branch and dirty state.
-4. To sync FreeInk later, fetch `upstream`, merge or rebase deliberately,
-   test Nooir, push the tested branch to `origin`, and only then update the
-   parent pointer to a new exact commit. Avoid a blind `git pull` inside
-   `freeink-sdk`.
-5. Review `docs/FOLIO_1.6.2_BACKLOG.md` and approve one investigation at a
-   time. Keep cache format, pagination, rendering quality, and Arabic/Quran
-   behavior unchanged unless a later task explicitly authorizes otherwise.
-6. After the current release, return to the preserved CBZ/Manga preparation and
-   cache plan and complete its separate architecture/safety audit before
-   implementation.
-7. Review any future post-1.6.2 source change with the X3 safety, cache, storage,
-   and format-isolation constraints below before implementation.
-8. Create or upload release artifacts only from a positively identified,
-   appropriately built image; never use an arbitrary ignored `firmware.bin`.
+1. Start 1.6.3 with a linker/map-level flash audit against the immutable 1.6.2 production baseline. Do not enlarge or change the partition.
+2. Review `docs/FOLIO_1.6.3_BACKLOG.md` and take one measured investigation at a time. First priority is meaningful flash recovery; every source change must report normal `gh_release` flash/bin/static-RAM deltas.
+3. Re-diff current CrossPoint and CrossInk EPUB/font/image/memory work before importing anything; mark each candidate TAKE NOW / INVESTIGATE / LATER / SKIP / ALREADY COVERED.
+4. Benchmark SD/SPI batching only after establishing the flash baseline, then consider small safe upstream fixes.
+5. Keep FB2, OPDS, PDF and Bluetooth as measured prototypes/experiments until sufficient flash and heap headroom exists. Bluetooth must begin as a separate experimental build/profile.
+6. Quick Actions may be considered after the flash/memory pass. Full UI/System Dark Mode remains a larger separate project.
+7. Continue physical X3 regression validation when hardware is available; X4 physical validation and X3/X4 simulators do not substitute for X3 hardware evidence.
+8. Preserve `SECTION_FILE_VERSION = 41`, Arabic/Quran behavior, KOSync interoperability, user SD data, partition layout and the FreeInk pin unless a separately approved task explicitly changes them.
 
 ## Resource map
 
@@ -293,7 +276,8 @@ Recommended order: **flash map/recovery -> EPUB/font/image/memory upstream delta
 - Known-good firmware/source milestone: `85dda52a`
 - Remote Quran fixture commit: `e0478714`; synchronization merge:
   `5efe0695`
-- 1.6.1 source checkpoint before release preparation: `c13eda8c490b53c0d787d641e144b4e1d332478b`
+- Released 1.6.2 tag: `1.6.2` -> `25df494020874150a047e2a4b3be62c3e40151e8`
+- 1.6.2 firmware/source milestone: `85dda52a102163b40fd4a2ddfde65e6cdc23af36`
 - Previous 1.6.0 safety checkpoint: `safety/1.6.0-carousel-layouts-hq` at
   `9c8e9751`
 - WSL simulator mirror: `/home/fatiha/side-wsl`
