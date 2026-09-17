@@ -34,6 +34,19 @@ For each upstream candidate record **TAKE NOW / INVESTIGATE / LATER / SKIP / ALR
 
 The September 2026 audit is the starting point for 1.6.3. Re-run a delta audit during every Nooir release cycle so future work resumes from the last inspected upstream state instead of starting from memory.
 
+## Current research checkpoint
+
+Detailed research-only findings and the handoff plan for the next build-capable/Codex session are recorded in [`docs/FOLIO_1.6.3_AUDIT_NOTES.md`](FOLIO_1.6.3_AUDIT_NOTES.md).
+
+Key corrections from the source audit:
+- built-in font/generated data is the first **measurement target**, not a claimed saving;
+- the i18n generator already exposes a `--strip-unused` path that should be traced and measured before deleting translation coverage;
+- Nooir already contains an inherited `OpdsParser`, so OPDS must first be reconciled as **existing parser vs. wired/reachable product flow**, not treated as greenfield;
+- Nooir already contains `BleInput` scaffolding around FreeInk BLE HID behavior, so Bluetooth work must first determine compile/link reachability and exact incremental cost rather than assuming a from-scratch implementation;
+- repository file/header size is never a firmware-size result; the normal release ELF/map and `firmware.bin` are authoritative.
+
+While a build-capable Codex/local session is unavailable, continue source/upstream tracing and prepare the exact symbols, callers, guards and candidate commits for later measurement. Do not make speculative production deletions merely to create headroom.
+
 ## P0 — flash recovery first
 
 Generate a linker/map-level breakdown before adding another large subsystem. Audit:
