@@ -1,20 +1,52 @@
 # Folio Nooir 1.6.2 Investigation Backlog
 
-This is an investigation backlog, not approval to implement features. The
-released `1.6.1` tag at `2c817a73` is the behavioral baseline. The current
-branch tip is `7fa773d7`, a README-only update after that release. Until a
-candidate is approved, preserve rendering quality, Arabic/Quran behavior,
+This document tracks the remaining investigation backlog; its entries are not
+approval to implement future features. The released `1.6.1` tag at
+`2c817a73` is the behavioral baseline. The current committed 1.6.2 baseline
+is `637bea97`; the working tree contains the approved dictionary enhancement
+batch. For the remaining candidates, preserve rendering quality,
+Arabic/Quran behavior,
 pagination, section-cache format, book data, and SD-card data.
+
+## Implemented 1.6.2 dictionary batch
+
+The following approved, focused work is now present in the working tree and is
+awaiting host/device validation. It does not change dictionary or cache
+formats:
+
+- preferred/remembered dictionary lookup remains the fast path, with valid
+  fallback lookup when the preferred folder is stale, missing, truncated, or
+  otherwise unavailable;
+- failed-folder diagnostics are detailed on first occurrence and deduplicated
+  during the activity session without rewriting settings/history;
+- alternate matching sources are discovered on demand, capped at six fixed
+  records, and retain metadata only;
+- source switching loads one definition body at a time and resets pagination;
+- the definition header identifies preferred versus fallback results and shows
+  source position when multiple matches exist;
+- the former combined `48 KB` all-dictionaries definition accumulation is gone.
+
+The batch preserves `SECTION_FILE_VERSION = 41`, `.qidx`, dictionary/settings,
+EPUB/CSS, and persistent cache formats, as well as fonts, Arabic/Quran
+behavior, the FreeInk SDK pin, partitions/SPIFFS, and user SD data.
 
 ## Baseline signals
 
 - `SECTION_FILE_VERSION` is `41`.
-- Fresh local `gh_release`: linked firmware is `6,482,287 / 6,553,600` bytes,
-  with `71,313` linked bytes remaining. The padded `firmware.bin` is
-  `6,496,144` bytes, leaving `57,456` bytes in the app slot.
+- Released 1.6.1 reference build: linked firmware is
+  `6,482,287 / 6,553,600` bytes, with `71,313` linked bytes remaining. The
+  padded `firmware.bin` is `6,496,144` bytes, leaving `57,456` bytes in the
+  app slot.
+- Current whole-tree `gh_release` with the working-tree dictionary batch:
+  linked firmware is `6,483,921 / 6,553,600` bytes, with `69,679` linked bytes
+  remaining. The padded `firmware.bin` is `6,497,776` bytes, leaving `55,824`
+  bytes in the app slot.
 - PlatformIO static RAM is `53,500 / 327,680` bytes. The linker DRAM table is a
   separate measure: `120,501 / 321,296` bytes.
-- Host regression coverage is `171/171` passing.
+- The previously verified host regression suite is `171/171` passing. The
+  newly added dictionary source-model test compiles locally, but its link/run
+  is blocked by the installed Visual C++ runtime missing
+  `__CxxFrameHandler4`/`__GSHandlerCheck_EH4`.
 - Ubuntu built-in font headers total `1,727,246` source bytes. Generated
   hyphenation trie headers total `2,215,571` source bytes. These source totals
   are signals for investigation, not direct estimates of linked flash use.
@@ -57,7 +89,7 @@ change; this baseline does not change the cache format.
 
 ## Ordering rule
 
-Start with the P0 regression and measurement work, then investigate the Ubuntu
+For remaining work, start with the P0 regression and measurement work, then investigate the Ubuntu
 font margin opportunity because it is the clearest path to recover the current
 slot headroom. Do not implement a candidate that changes output, pagination,
 Arabic/Quran behavior, or cache semantics until its measurements and a

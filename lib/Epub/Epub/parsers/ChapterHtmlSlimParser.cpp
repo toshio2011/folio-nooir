@@ -4,6 +4,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <Utf8.h>
 #include <XmlParserUtils.h>
 #ifndef SIMULATOR
@@ -23,6 +24,7 @@
 #include "Epub/converters/ImageToFramebufferDecoder.h"
 #include "Epub/htmlEntities.h"
 #include "Epub/parsers/TocNavAmpersandSanitizer.h"
+#include "../../../../src/util/EpubDiagnostics.h"
 
 // Minimum file size (in bytes) to show indexing popup - smaller chapters don't benefit from it
 constexpr size_t MIN_SIZE_FOR_POPUP = 10 * 1024;  // 10KB
@@ -583,13 +585,12 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
 
   currentPageNextY += topSpacing;
 
-  auto pageRule = std::shared_ptr<PageHorizontalRule>(
-      new (std::nothrow) PageHorizontalRule(width, ruleThickness, xPos, currentPageNextY));
+  auto pageRule = makeUniqueNoThrow<PageHorizontalRule>(width, ruleThickness, xPos, currentPageNextY);
   if (!pageRule) {
     LOG_ERR("EHP", "Failed to create PageHorizontalRule");
     return;
   }
-  currentPage->elements.push_back(pageRule);
+  currentPage->elements.push_back(std::move(pageRule));
   currentPageNextY = static_cast<int16_t>(currentPageNextY + ruleThickness + bottomSpacing);
 
   if (!pendingAnchorId.empty()) {
@@ -1045,23 +1046,21 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 self->currentPageNextY += imageMarginTop;
 
                 // Create ImageBlock and add to page
-                // nothrow: make_shared uses bare new, which aborts on OOM under
-                // -fno-exceptions; images arrive mid-parse when the heap is at its
-                // most loaded, so this must fail soft into the null-check below.
-                auto imageBlock = std::shared_ptr<ImageBlock>(
-                    new (std::nothrow) ImageBlock(cachedImagePath, resolvedPath, displayWidth, displayHeight));
+                // Images arrive mid-parse when the heap is at its most loaded,
+                // so both allocations must fail soft into the null-check below.
+                auto imageBlock = makeUniqueNoThrow<ImageBlock>(cachedImagePath, resolvedPath, displayWidth, displayHeight);
                 if (!imageBlock) {
                   self->failAllocation("image block");
                   return;
                 }
                 int xPos = (self->viewportWidth - displayWidth) / 2;
                 auto pageImage =
-                    std::shared_ptr<PageImage>(new (std::nothrow) PageImage(imageBlock, xPos, self->currentPageNextY));
+                    makeUniqueNoThrow<PageImage>(std::move(imageBlock), xPos, self->currentPageNextY);
                 if (!pageImage) {
                   self->failAllocation("page image");
                   return;
                 }
-                self->currentPage->elements.push_back(pageImage);
+                self->currentPage->elements.push_back(std::move(pageImage));
                 self->currentPageNextY += displayHeight + imageMarginBottom;
 
                 // The image consumed the empty block's accumulated vertical spacing.
@@ -1559,7 +1558,7 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
                                         : self->viewportWidth;
     self->currentTextBlock->layoutAndExtractLines(
         self->renderer, self->fontId, effectiveWidth,
-        [self](const std::shared_ptr<TextBlock>& textBlock) { self->addLineToPage(textBlock); },
+        [self](std::unique_ptr<TextBlock> textBlock) { self->addLineToPage(std::move(textBlock)); },
         self->lineHeightForBlock(self->currentTextBlock->getBlockStyle()), false);
   }
 }
@@ -1730,6 +1729,7 @@ bool ChapterHtmlSlimParser::writeSanitizedChunk(void* userData, const uint8_t* d
 }
 
 bool ChapterHtmlSlimParser::beginParse() {
+  EpubDiagnostics::Scope diagnostics("parser_begin_start", "parser_begin_end");
   allocationFailed_ = false;
   parseError_ = XML_ERROR_NONE;
   ampersandSanitizer_.reset();
@@ -1902,6 +1902,9 @@ ChapterHtmlSlimParser::ParseStatus ChapterHtmlSlimParser::parseStep() {
 }
 
 void ChapterHtmlSlimParser::abortParse() {
+  const bool wasActive = xmlParser_ || parseFile_.isOpen() || ampersandSanitizer_ || recoveryInputBuffer_;
+  const unsigned long abortStartMs = millis();
+  if (wasActive) EpubDiagnostics::record("parser_abort_start");
   if (xmlParser_) {
     destroyXmlParser(xmlParser_);
     xmlParser_ = nullptr;
@@ -1915,9 +1918,11 @@ void ChapterHtmlSlimParser::abortParse() {
   referencedAnchorIds.clear();
   unresolvedInlineAnchors.clear();
   typographyStack.clear();
+  if (wasActive) EpubDiagnostics::record("parser_abort_end", -1, -1, millis() - abortStartMs);
 }
 
 bool ChapterHtmlSlimParser::finishParse() {
+  EpubDiagnostics::Scope diagnostics("parser_finish_start", "parser_finish_end");
   if (xmlParser_) {
     LOG_DBG("EHP", "Time to parse and build pages: %lu ms", millis() - parseStartTime_);
     destroyXmlParser(xmlParser_);
@@ -1952,6 +1957,8 @@ bool ChapterHtmlSlimParser::finishParse() {
   }
   currentPage.reset();
 
+  EpubDiagnostics::record("parser_finish_result", -1, -1, 0, 0, completedPageCount, anchorData.size(), 1);
+
   return true;
 }
 
@@ -1972,7 +1979,7 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
   return finishParse();
 }
 
-void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line) {
+void ChapterHtmlSlimParser::addLineToPage(std::unique_ptr<TextBlock> line) {
   const int lineHeight = lineHeightForBlock(line->getBlockStyle());
 
   if (!currentPage) {
@@ -2006,7 +2013,7 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line) {
 
   // Apply horizontal left inset (margin + padding) as x position offset
   const int16_t xOffset = line->getBlockStyle().leftInset();
-  auto pageLine = std::shared_ptr<PageLine>(new (std::nothrow) PageLine(line, xOffset, currentPageNextY));
+  auto pageLine = makeUniqueNoThrow<PageLine>(std::move(line), xOffset, currentPageNextY);
   if (!pageLine) {
     failAllocation("page line");
     return;
@@ -2047,7 +2054,7 @@ void ChapterHtmlSlimParser::makePages() {
 
   currentTextBlock->layoutAndExtractLines(
       renderer, fontId, effectiveWidth,
-      [this](const std::shared_ptr<TextBlock>& textBlock) { addLineToPage(textBlock); }, lineHeight);
+      [this](std::unique_ptr<TextBlock> textBlock) { addLineToPage(std::move(textBlock)); }, lineHeight);
 
   // Fallback: transfer any remaining pending footnotes to current page.
   // Normally addLineToPage handles this via word-index tracking, but this catches

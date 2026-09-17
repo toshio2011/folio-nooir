@@ -1746,10 +1746,19 @@ void FolioLibraryActivity::render(RenderLock&&) {
   }
   const int textX = detailPadding * 2 + detailCoverWidth;
   const int textWidth = renderer.getScreenWidth() - textX - detailPadding;
+  const std::string selectedPath = selected && !selected->directory && selectorIndex < files.size()
+                                       ? fullPath(selectorIndex)
+                                       : std::string{};
+  const int badgeWidth = folioPresentation.featuredFormatBadgeWidth(renderer, selectedPath.c_str());
+  const int badgeGap = badgeWidth > 0 ? 8 : 0;
+  const int titleWidthLimit = std::max(1, textWidth - badgeWidth - badgeGap);
   const char* titleText = selected && selected->loaded ? selected->title.c_str()
                                                         : (files.empty() ? "" : files[selectorIndex].c_str());
   renderer.drawText(UI_12_FONT_ID, textX, featuredTop + 20,
-                    renderer.truncatedText(UI_12_FONT_ID, titleText, textWidth).c_str(), true);
+                    renderer.truncatedText(UI_12_FONT_ID, titleText, titleWidthLimit).c_str(), true);
+  if (badgeWidth > 0) {
+    folioPresentation.drawFeaturedFormatBadge(renderer, selectedPath.c_str(), textX + textWidth, featuredTop + 13);
+  }
   if (selected && !selected->author.empty())
     renderer.drawText(UI_10_FONT_ID, textX, featuredTop + 55,
                       renderer.truncatedText(UI_10_FONT_ID, selected->author.c_str(), textWidth).c_str());
@@ -1770,7 +1779,6 @@ void FolioLibraryActivity::render(RenderLock&&) {
     synopsisDrawY += synopsisLineHeight;
   }
   if (selected && !selected->directory) {
-    const std::string selectedPath = fullPath(selectorIndex);
     const BookState* trackedState = BOOK_STATES.find(selectedPath);
     const RecentBook* trackedRecent = nullptr;
     const auto& recentBooks = RECENT_BOOKS.getBooks();

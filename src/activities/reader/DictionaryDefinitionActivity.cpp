@@ -19,10 +19,7 @@ namespace {
 // Longest measurable/drawable span. Wrapped lines stay under the screen width
 // (far below this); only pathological unbreakable tokens are split at this cap.
 constexpr size_t MAX_LINE_BYTES = 191;
-constexpr size_t MAX_ALL_DICTIONARY_RESULTS = 4;
-constexpr size_t MAX_COMBINED_DICTIONARY_BYTES = 48 * 1024;
 constexpr unsigned long DICTIONARY_MESSAGE_DURATION_MS = 1500;
-constexpr const char* ALL_DICTIONARIES_LABEL = "All dictionaries";
 
 // Body text left/right inset, matching the reader's default feel.
 constexpr int SIDE_PADDING = 20;
@@ -36,45 +33,90 @@ void DictionaryDefinitionActivity::onEnter() {
   std::replace(definition.begin(), definition.end(), '\0', '\n');
   definition = htmlToPlainText(definition);
   dictionaryOptionsReady = false;
-  searchAllOptionIndex = -1;
-  showingAllResults = false;
   suppressBackRelease = false;
   showDictionaryError = false;
+  if (matchingSources.empty() && !dictionaryName.empty()) {
+    matchingSources.add(dictionaryName, headword, dictionaryName == preferredDictionaryName);
+  }
   wrapText();
   requestUpdate();
 }
 
-void DictionaryDefinitionActivity::refreshDictionaryOptions() {
-  if (dictionaryOptionsReady) return;
+void DictionaryDefinitionActivity::onExit() {
+  Activity::onExit();
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    fcm->releaseSdFontCaches();
+  }
+}
 
-  dictionaryOptions.clear();
-  searchAllOptionIndex = -1;
-  std::vector<DictionaryEntry> entries;
-  DictionaryRegistry::discover(entries);
-  for (const auto& entry : entries) {
+bool DictionaryDefinitionActivity::openDictionary(Dictionary& target, const std::string& name) {
+  if (name.empty()) return false;
+
+  // Keep the first detailed diagnostic for a broken folder, but make later
+  // validation passes silent for the same folder during this activity.
+  const bool logErrors = !dictionaryOpenFailures.contains(name) && dictionaryOpenFailures.canTrack();
+  const bool opened = target.open(name.c_str(), logErrors);
+  if (!opened) dictionaryOpenFailures.remember(name);
+  return opened;
+}
+
+void DictionaryDefinitionActivity::ensureDictionaryEntries() {
+  if (dictionaryEntriesReady) return;
+  DictionaryRegistry::discover(dictionaryEntries);
+  dictionaryEntryCursor = 0;
+  dictionaryEntriesReady = true;
+}
+
+bool DictionaryDefinitionActivity::discoverNextMatchingSource() {
+  if (matchingSources.size() >= DictionarySourceMatches::MAX_MATCHES) {
+    dictionaryOptionsReady = true;
+    return false;
+  }
+
+  ensureDictionaryEntries();
+  while (dictionaryEntryCursor < dictionaryEntries.size()) {
+    const DictionaryEntry& entry = dictionaryEntries[dictionaryEntryCursor++];
+    if (matchingSources.contains(entry.name)) continue;
+
     Dictionary dictionary;
-    // Never build an index from this screen. The explicit Settings action is
-    // the only place that prepares alternate dictionaries.
-    if (dictionary.open(entry.name.c_str()) && !dictionary.needsIndex()) {
-      dictionaryOptions.push_back(entry.name);
+    // Do not build qidx sidecars from the result screen. Dictionary::locate()
+    // already provides a bounded indexed path and a correct sequential scan
+    // fallback for unindexed dictionaries; the latter is used only on demand.
+    if (!openDictionary(dictionary, entry.name)) continue;
+
+    std::string resultHeadword;
+    if (!dictionary.hasEntry(lookupWord.c_str(), resultHeadword)) continue;
+    if (!matchingSources.add(entry.name, resultHeadword, entry.name == preferredDictionaryName)) continue;
+    dictionaryOptionsReady = matchingSources.size() >= DictionarySourceMatches::MAX_MATCHES;
+    return true;
+  }
+
+  dictionaryOptionsReady = true;
+  return false;
+}
+
+void DictionaryDefinitionActivity::refreshDictionaryOptions() {
+  if (!dictionaryOptionsReady) {
+    while (matchingSources.size() < DictionarySourceMatches::MAX_MATCHES && discoverNextMatchingSource()) {
     }
   }
 
-  // Keep the active source visible even if its sidecar became stale after
-  // this definition was opened. A switch back to it will simply report an
-  // error rather than performing an unexpected long scan.
-  if (!showingAllResults && !dictionaryName.empty() &&
-      std::find(dictionaryOptions.begin(), dictionaryOptions.end(), dictionaryName) == dictionaryOptions.end()) {
-    dictionaryOptions.insert(dictionaryOptions.begin(), dictionaryName);
-  }
-  if (dictionaryOptions.size() > 1) {
-    searchAllOptionIndex = static_cast<int>(dictionaryOptions.size());
-    dictionaryOptions.emplace_back(I18N.get(StrId::STR_DICT_SEARCH_ALL));
-  }
+  dictionaryOptions.clear();
+  dictionaryOptions.reserve(matchingSources.size());
+  for (size_t i = 0; i < matchingSources.size(); i++) dictionaryOptions.push_back(matchingSources[i].name);
+
   dictionaryOptionsReady = true;
 }
 
 void DictionaryDefinitionActivity::openDictionaryMenu() {
+  if (!dictionaryOptionsReady) {
+    dictionaryBusy = true;
+    showDictionaryError = false;
+    requestUpdateAndWait();
+    refreshDictionaryOptions();
+    dictionaryBusy = false;
+    requestUpdate();
+  }
   refreshDictionaryOptions();
   if (dictionaryOptions.size() <= 1) return;
 
@@ -82,13 +124,66 @@ void DictionaryDefinitionActivity::openDictionaryMenu() {
   const auto current = std::find(dictionaryOptions.begin(), dictionaryOptions.end(), dictionaryName);
   if (current != dictionaryOptions.end()) currentIndex = static_cast<int>(current - dictionaryOptions.begin());
   dictionaryPopup.show(StrId::STR_DICTIONARY, dictionaryOptions, currentIndex, [this](int index) {
-    if (index == searchAllOptionIndex) {
-      searchAllPreparedDictionaries();
-    } else if (index >= 0 && index < static_cast<int>(dictionaryOptions.size())) {
+    if (index >= 0 && index < static_cast<int>(dictionaryOptions.size())) {
       loadFromDictionary(dictionaryOptions[index]);
     }
   });
   requestUpdate();
+}
+
+void DictionaryDefinitionActivity::navigateSource(const int direction) {
+  if (dictionaryBusy || matchingSources.empty() || direction == 0) return;
+
+  const size_t current = currentSourceIndex();
+  const bool needsMore = (direction > 0 && current + 1 >= matchingSources.size()) ||
+                         (direction < 0 && current == 0);
+  if (needsMore && !dictionaryOptionsReady) {
+    dictionaryBusy = true;
+    requestUpdateAndWait();
+    if (direction > 0) {
+      discoverNextMatchingSource();
+    } else {
+      // Previous from the first known source wraps to the last matching source,
+      // so finish the bounded scan before choosing that endpoint.
+      refreshDictionaryOptions();
+    }
+    dictionaryBusy = false;
+  }
+
+  if (matchingSources.size() <= 1) {
+    requestUpdate();
+    return;
+  }
+
+  const int sourceCount = static_cast<int>(matchingSources.size());
+  const int currentIndex = static_cast<int>(currentSourceIndex());
+  const int nextIndex = direction > 0 ? ButtonNavigator::nextIndex(currentIndex, sourceCount)
+                                     : ButtonNavigator::previousIndex(currentIndex, sourceCount);
+  loadFromDictionary(matchingSources[static_cast<size_t>(nextIndex)].name);
+}
+
+void DictionaryDefinitionActivity::navigateDefinitionPage(const int direction) {
+  if (direction > 0 && currentPage + 1 < totalPages) {
+    currentPage++;
+    requestUpdate();
+  } else if (direction < 0 && currentPage > 0) {
+    currentPage--;
+    requestUpdate();
+  }
+}
+
+size_t DictionaryDefinitionActivity::currentSourceIndex() const {
+  for (size_t i = 0; i < matchingSources.size(); i++) {
+    if (matchingSources[i].name == dictionaryName) return i;
+  }
+  return 0;
+}
+
+bool DictionaryDefinitionActivity::currentSourceIsPreferred() const {
+  for (size_t i = 0; i < matchingSources.size(); i++) {
+    if (matchingSources[i].name == dictionaryName) return matchingSources[i].preferred;
+  }
+  return dictionaryName == preferredDictionaryName;
 }
 
 void DictionaryDefinitionActivity::showDictionaryMessage(const StrId message) {
@@ -105,80 +200,35 @@ void DictionaryDefinitionActivity::loadFromDictionary(const std::string& name) {
   requestUpdateAndWait();
 
   Dictionary dictionary;
-  std::string nextDefinition;
-  std::string nextHeadword;
-  const bool ok = dictionary.open(name.c_str()) && !dictionary.needsIndex() &&
-                  dictionary.lookup(lookupWord.c_str(), nextDefinition, nextHeadword);
-  if (!ok) {
+  if (!openDictionary(dictionary, name)) {
     dictionaryBusy = false;
     showDictionaryMessage(StrId::STR_DICT_NOT_FOUND);
     requestUpdate();
     return;
   }
 
-  std::replace(nextDefinition.begin(), nextDefinition.end(), '\0', '\n');
-  nextDefinition = htmlToPlainText(nextDefinition);
-  dictionaryName = name;
-  showingAllResults = false;
-  headword = std::move(nextHeadword);
-  definition = std::move(nextDefinition);
-  currentPage = 0;
-  wrapText();
-  dictionaryBusy = false;
-  requestUpdate();
-}
-
-void DictionaryDefinitionActivity::searchAllPreparedDictionaries() {
-  refreshDictionaryOptions();
-  dictionaryBusy = true;
-  showDictionaryError = false;
-  requestUpdateAndWait();
-
-  // The ready list is bounded by the dictionaries installed on the card, and
-  // each lookup uses a qidx binary search. Build one bounded result directly
-  // instead of retaining several full definition copies at once.
-  std::string combined;
-  combined.reserve(MAX_COMBINED_DICTIONARY_BYTES);
-  size_t resultCount = 0;
-  for (size_t i = 0; i < dictionaryOptions.size(); ++i) {
-    if (static_cast<int>(i) == searchAllOptionIndex) continue;
-    Dictionary dictionary;
-    if (!dictionary.open(dictionaryOptions[i].c_str()) || dictionary.needsIndex()) continue;
-
-    std::string resultDefinition;
-    std::string resultHeadword;
-    if (!dictionary.lookup(lookupWord.c_str(), resultDefinition, resultHeadword)) continue;
-    if (resultCount >= MAX_ALL_DICTIONARY_RESULTS) break;
-    if (!combined.empty()) combined += "\n\n";
-    combined += "--- ";
-    combined += dictionaryOptions[i];
-    combined += " ---\n";
-    const size_t remaining = MAX_COMBINED_DICTIONARY_BYTES > combined.size()
-                                 ? MAX_COMBINED_DICTIONARY_BYTES - combined.size()
-                                 : 0;
-    if (remaining == 0) break;
-    combined.append(resultDefinition, 0, std::min(remaining, resultDefinition.size()));
-    resultCount++;
-    if (combined.size() >= MAX_COMBINED_DICTIONARY_BYTES) break;
-  }
-
-  dictionaryBusy = false;
-  if (resultCount == 0) {
+  // Release the previous body before reading the selected source. Alternate
+  // source records contain metadata only, so this keeps one full definition
+  // body resident even when switching repeatedly on a tight heap.
+  std::string().swap(definition);
+  lines.clear();
+  lines.shrink_to_fit();
+  std::string nextHeadword;
+  if (!dictionary.lookup(lookupWord.c_str(), definition, nextHeadword)) {
+    dictionaryBusy = false;
     showDictionaryMessage(StrId::STR_DICT_NOT_FOUND);
     requestUpdate();
     return;
   }
 
-  dictionaryName = ALL_DICTIONARIES_LABEL;
-  showingAllResults = true;
-  headword = lookupWord;
-  definition = std::move(combined);
   std::replace(definition.begin(), definition.end(), '\0', '\n');
   definition = htmlToPlainText(definition);
+  dictionaryName = dictionary.folderName().empty() ? name : dictionary.folderName();
+  headword = std::move(nextHeadword);
+  matchingSources.add(dictionaryName, headword, dictionaryName == preferredDictionaryName);
   currentPage = 0;
-  searchAllOptionIndex = -1;
-  dictionaryOptionsReady = false;
   wrapText();
+  dictionaryBusy = false;
   requestUpdate();
 }
 
@@ -334,6 +384,18 @@ void DictionaryDefinitionActivity::loop() {
     return;
   }
 
+  const bool sourceNavigationVisible = matchingSources.size() > 1 || !dictionaryOptionsReady;
+  const bool directSourceNavigation = sourceNavigationVisible &&
+                                      SETTINGS.sideButtonLayout != CrossPointSettings::SIDE_BUTTONS_DISABLED;
+  if (directSourceNavigation && mappedInput.wasPressed(MappedInputManager::Button::Left)) {
+    navigateSource(mappedInput.isNavDirectionSwapped() ? 1 : -1);
+    return;
+  }
+  if (directSourceNavigation && mappedInput.wasPressed(MappedInputManager::Button::Right)) {
+    navigateSource(mappedInput.isNavDirectionSwapped() ? -1 : 1);
+    return;
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     finish();
     return;
@@ -356,19 +418,26 @@ void DictionaryDefinitionActivity::loop() {
     return;
   }
 
-  buttonNavigator.onNext([this] {
-    if (currentPage + 1 < totalPages) {
-      currentPage++;
-      requestUpdate();
-    }
-  });
-
-  buttonNavigator.onPrevious([this] {
-    if (currentPage > 0) {
-      currentPage--;
-      requestUpdate();
-    }
-  });
+  if (directSourceNavigation) {
+    // Front left/right are reserved for matching-source navigation. Definition
+    // pages keep their physical navigation on the dedicated side buttons and
+    // their existing touch zones, so the two concepts cannot be confused.
+    buttonNavigator.onPressAndContinuous({MappedInputManager::Button::PageForward}, [this] {
+      navigateDefinitionPage(1);
+    });
+    buttonNavigator.onPressAndContinuous({MappedInputManager::Button::PageBack}, [this] {
+      navigateDefinitionPage(-1);
+    });
+  } else {
+    // If side buttons are disabled, retain the original front-button page
+    // controls. Source switching remains available through the Sources picker.
+    buttonNavigator.onNext([this] {
+      navigateDefinitionPage(1);
+    });
+    buttonNavigator.onPrevious([this] {
+      navigateDefinitionPage(-1);
+    });
+  }
 }
 
 // Draws the current page's line spans (copied into a stack buffer for NUL
@@ -401,14 +470,28 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
   const int contentWidth = renderer.getScreenWidth() - hintGutterWidth;
   const int contentY = isInverted ? metrics.buttonHintsHeight : 0;
 
-  // Header: matched headword and source dictionary left, page counter right.
-  const int headerY = contentY + metrics.topPadding + 10;
+  // Header: matched headword and source dictionary left, page/source counters
+  // right. Only source metadata is retained for alternate results; the body
+  // below always belongs to the currently selected source.
+  const int headerY = contentY + metrics.topPadding;
   renderer.drawText(UI_12_FONT_ID, contentX + SIDE_PADDING, headerY, headword.c_str(), true, EpdFontFamily::BOLD);
   if (!dictionaryName.empty()) {
-    const int dictionaryMaxWidth = std::max(0, contentWidth - 2 * SIDE_PADDING - 70);
+    const int headwordHeight = renderer.getLineHeight(UI_12_FONT_ID);
+    const int sourceFontHeight = renderer.getLineHeight(UI_10_FONT_ID);
+    const int sourceY = headerY + headwordHeight + 1;
+    const int statusY = sourceY + sourceFontHeight;
+    const int dictionaryMaxWidth = std::max(0, contentWidth - 2 * SIDE_PADDING);
     const std::string displayName = renderer.truncatedText(UI_10_FONT_ID, dictionaryName.c_str(), dictionaryMaxWidth);
-    renderer.drawText(UI_10_FONT_ID, contentX + SIDE_PADDING, headerY + renderer.getLineHeight(UI_10_FONT_ID),
-                      displayName.c_str());
+    renderer.drawText(UI_10_FONT_ID, contentX + SIDE_PADDING, sourceY, displayName.c_str());
+
+    std::string sourceStatus = currentSourceIsPreferred() ? "Preferred" : "Fallback";
+    if (matchingSources.size() > 1) {
+      sourceStatus += " · ";
+      sourceStatus += std::to_string(currentSourceIndex() + 1);
+      sourceStatus += " of ";
+      sourceStatus += std::to_string(matchingSources.size());
+    }
+    renderer.drawText(UI_10_FONT_ID, contentX + SIDE_PADDING, statusY, sourceStatus.c_str());
   }
   if (totalPages > 1) {
     char counter[16];
@@ -416,21 +499,26 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
     const int counterWidth = renderer.getTextWidth(UI_10_FONT_ID, counter);
     renderer.drawText(UI_10_FONT_ID, contentX + contentWidth - SIDE_PADDING - counterWidth, headerY, counter);
   }
+  const int bodyStartY = contentY + metrics.topPadding + metrics.headerHeight;
+  renderer.drawLine(contentX + SIDE_PADDING, bodyStartY - 4, contentX + contentWidth - SIDE_PADDING - 1, bodyStartY - 4);
 
   // Body: two-pass draw inside a prewarm scope (same pattern as the reader's
   // renderContents) so SD-card font glyphs load from SD in one batch instead
   // of one on-demand overflow read per character on every page turn.
   const int fontId = SETTINGS.getDictionaryFontId();
-  const int bodyStartY = contentY + metrics.topPadding + metrics.headerHeight;
   auto* fcm = renderer.getFontCacheManager();
   auto scope = fcm->createPrewarmScope();
   drawBody(fontId, contentX + SIDE_PADDING, bodyStartY);  // scan pass: records codepoints only
   scope.endScanAndPrewarm();
   drawBody(fontId, contentX + SIDE_PADDING, bodyStartY);
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DICTIONARY),
-                                            (currentPage > 0 ? "<" : ""),
-                                            (currentPage + 1 < totalPages ? ">" : ""));
+  const bool sourceNavigationVisible = matchingSources.size() > 1 || !dictionaryOptionsReady;
+  const bool directSourceNavigation = sourceNavigationVisible &&
+                                      SETTINGS.sideButtonLayout != CrossPointSettings::SIDE_BUTTONS_DISABLED;
+  const auto labels = mappedInput.mapLabels(
+      tr(STR_BACK), sourceNavigationVisible ? "Sources" : "",
+      directSourceNavigation ? "< Dict" : (currentPage > 0 ? "<" : ""),
+      directSourceNavigation ? "Dict >" : (currentPage + 1 < totalPages ? ">" : ""));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   if (dictionaryPopup.isActive()) {

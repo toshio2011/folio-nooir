@@ -71,6 +71,11 @@ class SdCardFont {
   // when font/size/family/glyph-table state changes.
   void clearPersistentCache();
 
+  // Release disposable glyph, mini-kern, and overflow caches while keeping
+  // the loaded coverage/kerning/ligature metadata and persistent advance
+  // tables needed by Nooir's layout and fallback paths.
+  void releaseDisposableCaches();
+
   // Returns pointer to the managed EpdFont for a given style.
   // Returns nullptr if the style is not present.
   EpdFont* getEpdFont(uint8_t style = 0);

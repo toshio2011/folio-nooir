@@ -28,8 +28,8 @@ Welcome to the **CrossPoint** firmware. This guide outlines the hardware control
       - [3.6.5 OPDS Servers (Multiple Libraries)](#365-opds-servers-multiple-libraries)
       - [3.6.6 Web Settings (Wi-Fi + OPDS)](#366-web-settings-wi-fi--opds)
       - [3.6.7 KOReader Sync Quick Setup](#367-koreader-sync-quick-setup)
-        - [Option A: CrossPoint Sync Server (`sync.crosspointreader.com`, default)](#option-a-crosspoint-sync-server-synccrosspointreadercom-default)
-        - [Option B: Legacy Public KOReader Server (`sync.koreader.rocks`)](#option-b-legacy-public-koreader-server-synckoreaderrocks)
+        - [Option A: Public KOReader Server (`sync.koreader.rocks`, default)](#option-a-public-koreader-server-synckoreaderrocks-default)
+        - [Option B: CrossPoint Sync Server (`sync.crosspointreader.com`)](#option-b-crosspoint-sync-server-synccrosspointreadercom)
         - [Option C: Self-Hosted Server (Docker Compose)](#option-c-self-hosted-server-docker-compose)
         - [Syncing While Reading](#syncing-while-reading)
     - [3.7 Sleep Screen](#37-sleep-screen)
@@ -365,9 +365,9 @@ Behavior notes:
 CrossPoint can sync reading progress with KOReader-compatible sync servers.
 It also interoperates with KOReader apps/devices when they use the same server and credentials.
 
-##### Option A: CrossPoint Sync Server (`sync.crosspointreader.com`, default)
+##### Option A: Public KOReader Server (`sync.koreader.rocks`, default)
 
-When **Sync Server URL** is left empty, CrossPoint uses the free CrossPoint sync server at `https://sync.crosspointreader.com`. It speaks the standard KOReader sync protocol (so KOReader apps can use it too) and additionally stores an exact spine/page position for lossless CrossPoint-to-CrossPoint sync.
+When **Sync Server URL** is left empty, CrossPoint uses the public KOReader sync server at `https://sync.koreader.rocks:443`, matching the standard KOReader default.
 
 1. On each CrossPoint device:
 
@@ -375,21 +375,21 @@ When **Sync Server URL** is left empty, CrossPoint uses the free CrossPoint sync
 
    - Set **Username** and **Password** (enter the plain password; CrossPoint computes MD5 internally, and use the same values on all devices).
 
-   - Leave **Sync Server URL** empty (or set it to `https://sync.crosspointreader.com`).
+   - Leave **Sync Server URL** empty (or set it to `https://sync.koreader.rocks:443`).
 
    - On the first device, run **Sign Up** once to create the account directly from the device. On every other device, just run **Authenticate**.
 
-Accounts are per server. Existing `sync.koreader.rocks` credentials do not exist on the CrossPoint server; either sign up again with the same username/password or use Option B to keep using the legacy server.
+Accounts are per server. Use the same server and credentials on every device you want to synchronize.
 
-##### Option B: Legacy Public KOReader Server (`sync.koreader.rocks`)
+##### Option B: CrossPoint Sync Server (`sync.crosspointreader.com`)
 
-Use this if you already sync KOReader devices against the official public server.
+Use this when you want CrossPoint's richer exact spine/page position data for CrossPoint-to-CrossPoint synchronization.
 
 1. On each CrossPoint device:
 
    - Go to **Settings -> System -> KOReader Sync**.
 
-   - Set **Sync Server URL** to `https://sync.koreader.rocks` (required; an empty URL now points at the CrossPoint server instead).
+   - Set **Sync Server URL** to `https://sync.crosspointreader.com`.
 
    - Set **Username** and **Password** to your existing KOReader Sync credentials.
 

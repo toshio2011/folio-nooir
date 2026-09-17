@@ -10,6 +10,7 @@
 #include <PngToBmpConverter.h>
 #include <Txt.h>
 #include <Xtc.h>
+#include <FontCacheManager.h>
 
 #include <algorithm>
 #include <cmath>
@@ -28,6 +29,7 @@
 #include "images/MoonIcon.h"
 #include "images/NooirLogo360.h"
 #include "util/ClipFile.h"
+#include "util/EpubDiagnostics.h"
 #include "util/StatisticsCover.h"
 #include "util/StatisticsDate.h"
 
@@ -467,6 +469,7 @@ void drawClippingSleepCard(GfxRenderer& renderer, const std::string& text, const
 }  // namespace
 
 void SleepActivity::onEnter() {
+  EpubDiagnostics::Scope diagnostics("sleep_render_start", "sleep_render_end");
   Activity::onEnter();
 
   const bool renderQuickResume =
@@ -1218,6 +1221,12 @@ void SleepActivity::renderCoverSleepScreen(const std::string& requestedBookPath,
     if (bitmap.parseHeaders() == BmpReaderError::Ok) {
       LOG_DBG("SLP", "Rendering sleep cover: %s", coverBmpPath.c_str());
       if (!overlayPath.empty()) {
+        // The overlay path is the memory-heavy sleep render.  Release only
+        // disposable SD-font glyph state here; coverage, advances, kerning,
+        // ligatures, and selected-font metadata remain available for wake.
+        if (auto* fontCacheManager = renderer.getFontCacheManager()) {
+          fontCacheManager->releaseSdFontCaches();
+        }
         renderBitmapSleepScreenWithOverlay(bitmap, overlayPath);
       } else if (!clippingText.empty()) {
         renderBitmapSleepScreenWithClipping(bitmap, clippingText, clippingTitle, clippingPage);

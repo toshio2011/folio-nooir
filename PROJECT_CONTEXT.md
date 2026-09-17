@@ -40,9 +40,10 @@ Authoritative parent repository:
 - Branch: `codex/folio-nooir`
 - Published 1.6.1 release/tag commit:
   `2c817a73f1a1143d7f62ac1e768501280abacaa3`
-- Current fetched branch tip:
-  `7fa773d73457a225dc99cb0e19da76af824b2da5` (README-only change after the
-  release commit); local HEAD matches `origin/codex/folio-nooir`.
+- Current committed branch tip:
+  `637bea977386793fce3f95056b8512b6dc2d64a0` (the committed 1.6.2 baseline);
+  local HEAD matches `origin/codex/folio-nooir`. The working tree contains
+  the uncommitted, approved 1.6.2 dictionary enhancement batch.
 - 1.6.1 source checkpoint before release preparation:
   `c13eda8c490b53c0d787d641e144b4e1d332478b`
 - The completed 1.6.0 source, translations, README inventory, and related
@@ -55,13 +56,18 @@ Authoritative parent repository:
 - The normal/default PlatformIO environment has compiled successfully, and
   Carousel/HQ cover plus Statistics/Sleep behavior has been physically
   exercised on X4. Simulator validation remains a separate WSL-mirror task.
-- The 1.6.1 release is complete. The current 1.6.2 pass establishes
-  regression coverage and measurements only; firmware assets and hardware
-  uploads remain separate release operations.
-- Fresh local `gh_release` baseline: `firmware.bin` is `6,496,144` bytes;
-  linked flash is `6,482,287 / 6,553,600` bytes (`71,313` linked bytes
-  remaining; `57,456` bytes after padded-bin accounting). PlatformIO static
-  RAM is `53,500 / 327,680` bytes. The host suite is `171/171` passing.
+- The 1.6.1 release is complete. The 1.6.2 baseline is established; the
+  focused dictionary enhancement batch is in the working tree, while firmware
+  assets and hardware uploads remain separate release operations.
+- Released 1.6.1 reference: `firmware.bin` was `6,496,144` bytes; linked
+  flash was `6,482,287 / 6,553,600` bytes (`71,313` linked bytes remaining;
+  `57,456` bytes after padded-bin accounting). The current whole-tree
+  `gh_release` build is `6,497,776` padded bytes and
+  `6,483,921 / 6,553,600` linked bytes, leaving `55,824` padded-bin bytes and
+  `69,679` linked bytes. PlatformIO static RAM remains
+  `53,500 / 327,680` bytes. The previously verified host suite was `171/171`;
+  the new dictionary test compiles but cannot link on this machine because its
+  Visual C++ runtime lacks `__CxxFrameHandler4` and `__GSHandlerCheck_EH4`.
 
 ### 1.6.1 released baseline
 
@@ -84,9 +90,10 @@ or reset blindly.
 The detailed CBZ/Manga preparation and cache plan remains deferred in
 `docs/CBZ_MANGA_PLAN.md` and is not part of this EPUB release scope.
 
-The focused 1.6.2 investigation backlog is in
-`docs/FOLIO_1.6.2_BACKLOG.md`. No production feature implementation is part of
-this baseline pass.
+The remaining focused 1.6.2 investigation backlog is in
+`docs/FOLIO_1.6.2_BACKLOG.md`. The approved dictionary enhancement batch is
+documented there and is awaiting host/device validation; no further feature
+implementation is authorized from this context alone.
 
 Nested `freeink-sdk`:
 

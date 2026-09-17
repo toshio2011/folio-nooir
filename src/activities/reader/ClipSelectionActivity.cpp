@@ -93,7 +93,7 @@ void ClipSelectionActivity::extractWords() {
   for (const auto& element : page->elements) {
     if (element->getTag() != TAG_PageLine) continue;
     const auto* line = static_cast<const PageLine*>(element.get());
-    const auto& block = line->getBlock();
+    const auto* block = line->getBlock();
     if (!block || !block->valid()) continue;
 
     bool rowHasWords = false;

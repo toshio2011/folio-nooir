@@ -228,7 +228,7 @@ class ChapterHtmlSlimParser {
     return !recoverBareAmpersands_ && parseError_ == XML_ERROR_INVALID_TOKEN;
   }
 
-  void addLineToPage(std::shared_ptr<TextBlock> line);
+  void addLineToPage(std::unique_ptr<TextBlock> line);
   const std::vector<std::pair<std::string, uint16_t>>& getAnchors() const { return anchorData; }
 
   // Byte progress of the in-flight parse, used to estimate a still-building section's total page

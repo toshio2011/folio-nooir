@@ -24,6 +24,10 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 
+#ifndef NOOIR_KOSYNC_FONT_DIAGNOSTICS
+#define NOOIR_KOSYNC_FONT_DIAGNOSTICS 0
+#endif
+
 namespace {
 std::string calculateDocumentHashForMethod(const std::string& path, const DocumentMatchMethod method) {
   return method == DocumentMatchMethod::FILENAME ? KOReaderDocumentId::calculateFromFilename(path)
@@ -37,6 +41,25 @@ DocumentMatchMethod alternateMatchMethod(const DocumentMatchMethod method) {
 const char* matchMethodName(const DocumentMatchMethod method) {
   return method == DocumentMatchMethod::FILENAME ? "filename" : "binary";
 }
+
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+void syncActivityDiagnostic(const char* stage, const int result, const KOReaderProgress& progress) {
+  LOG_INF("KSDIAG", "stage=%s result=%d free=%u min=%u max=%u plen=%u pct=%.3f", stage, result, ESP.getFreeHeap(),
+          ESP.getMinFreeHeap(), ESP.getMaxAllocHeap(), static_cast<unsigned>(progress.progress.size()),
+          progress.percentage);
+}
+
+void syncDocumentDiagnostic(const char* stage, const DocumentMatchMethod method, const std::string& path,
+                            const std::string& document) {
+  const auto slash = path.rfind('/');
+  std::string basename = slash == std::string::npos ? path : path.substr(slash + 1);
+  const size_t originalBytes = basename.size();
+  if (basename.empty()) basename = "-";
+  if (basename.size() > 80) basename.resize(80);
+  LOG_INF("KSDIAG", "stage=%s method=%s raw=%u name=%s nbytes=%u doc=%s", stage, matchMethodName(method),
+          static_cast<unsigned>(method), basename.c_str(), static_cast<unsigned>(originalBytes), document.c_str());
+}
+#endif
 
 void syncTimeWithNTP() {
   // Stop SNTP if already running (can't reconfigure while running)
@@ -143,6 +166,9 @@ void KOReaderSyncActivity::onWifiSelectionComplete(const bool success) {
 
 void KOReaderSyncActivity::performSync() {
   const DocumentMatchMethod primaryMethod = KOREADER_STORE.getMatchMethod();
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  diagnosticDocumentMethod = static_cast<uint8_t>(primaryMethod);
+#endif
   documentHash = calculateDocumentHashForMethod(epubPath, primaryMethod);
   if (documentHash.empty()) {
     {
@@ -154,6 +180,10 @@ void KOReaderSyncActivity::performSync() {
     return;
   }
   const std::string primaryHash = documentHash;
+
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  syncDocumentDiagnostic("primary_id", primaryMethod, epubPath, documentHash);
+#endif
 
   LOG_DBG("KOSync", "Document hash (%s): %s", matchMethodName(primaryMethod), documentHash.c_str());
 
@@ -185,6 +215,10 @@ void KOReaderSyncActivity::performSync() {
       if (altResult == KOReaderSyncClient::OK &&
           (result == KOReaderSyncClient::NOT_FOUND || altProgress.percentage > remoteProgress.percentage)) {
         documentHash = altHash;
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+        diagnosticDocumentMethod = static_cast<uint8_t>(altMethod);
+        syncDocumentDiagnostic("selected_id", altMethod, epubPath, documentHash);
+#endif
         remoteProgress = std::move(altProgress);
         result = KOReaderSyncClient::OK;
       }
@@ -338,6 +372,18 @@ void KOReaderSyncActivity::performUpload() {
   epub.reset();
 
   const auto result = KOReaderSyncClient::updateProgress(progress);
+
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  if (result == KOReaderSyncClient::OK) {
+    syncDocumentDiagnostic("put_id", static_cast<DocumentMatchMethod>(diagnosticDocumentMethod), epubPath,
+                           progress.document);
+    KOReaderProgress roundTrip;
+    syncDocumentDiagnostic("roundtrip_id", static_cast<DocumentMatchMethod>(diagnosticDocumentMethod), epubPath,
+                           documentHash);
+    const auto verifyResult = KOReaderSyncClient::getProgress(documentHash, roundTrip);
+    syncActivityDiagnostic("roundtrip", verifyResult, verifyResult == KOReaderSyncClient::OK ? roundTrip : progress);
+  }
+#endif
 
   // Drop the radio while user reads the result; full teardown happens at silent reboot.
   esp_wifi_stop();

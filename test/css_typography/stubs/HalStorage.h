@@ -8,6 +8,7 @@ class HalFile {
  public:
   int read(void*, size_t) { return 0; }
   int available() const { return 0; }
+  size_t size() const { return 0; }
   size_t write(const void*, size_t size) { return size; }
   size_t write(uint8_t) { return 1; }
   void close() {}

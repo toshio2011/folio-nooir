@@ -17,9 +17,17 @@ namespace DictionaryRegistry {
 // case-insensitively by name.
 void discover(std::vector<DictionaryEntry>& out);
 
+// Resolve a persisted folder name. Exact names win; when a legacy 31-byte
+// settings/history value is only a prefix, resolve it only if exactly one
+// installed dictionary has that prefix. Ambiguous prefixes fail safely.
+bool resolveFolderName(const char* folderName, std::string& resolvedNameOut);
+
 // Resolve a folder name to its extensionless base path
 // ("/dictionaries/<folder>/<stem>" or "/.dictionaries/<folder>/<stem>").
 // Returns false if the folder holds no usable dictionary in either root.
-bool resolveBasePath(const char* folderName, std::string& basePathOut);
+// resolvedNameOut, when supplied, receives the canonical installed folder
+// name selected by the resolver.
+bool resolveBasePath(const char* folderName, std::string& basePathOut,
+                     std::string* resolvedNameOut = nullptr);
 
 }  // namespace DictionaryRegistry

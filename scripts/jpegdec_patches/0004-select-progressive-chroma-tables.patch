@@ -1,0 +1,30 @@
+From 6f1f1d4b8b7a4f7d9c1e2a3b4c5d6e7f8a9b0c1d Mon Sep 17 00:00:00 2001
+From: patch <patch@local>
+Date: Thu, 17 Sep 2026 10:00:00 +0800
+Subject: [PATCH 4/4] Select chroma tables for progressive grayscale scans
+
+When a progressive grayscale decode includes a chroma component, use the
+Huffman tables selected for that component's scan before consuming its MCU.
+
+---
+ src/jpeg.inl | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/jpeg.inl b/src/jpeg.inl
+index 3e6a7f4..a15c9e2 100644
+--- a/src/jpeg.inl
++++ b/src/jpeg.inl
+@@ -5242,6 +5242,9 @@ static int DecodeJPEG(JPEGIMAGE *pJPEG)
+                         if (pJPEG->JPCI[1].component_needed)
+                             iErr |= JPEGDecodeMCU_P(pJPEG, MCU_SKIP, &iDCPred1);
+-                        if (pJPEG->JPCI[2].component_needed)
++                        if (pJPEG->JPCI[2].component_needed) {
++                            pJPEG->ucACTable = cACTable2;
++                            pJPEG->ucDCTable = cDCTable2;
+                             iErr |= JPEGDecodeMCU_P(pJPEG, MCU_SKIP, &iDCPred2);
++                        }
+                     } else {
+                         iErr |= JPEGDecodeMCU(pJPEG, MCU_SKIP, &iDCPred1); // decode Cr block
+                         iErr |= JPEGDecodeMCU(pJPEG, MCU_SKIP, &iDCPred2); // decode Cb block
+--
+2.50.1

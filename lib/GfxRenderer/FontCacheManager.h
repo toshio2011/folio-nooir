@@ -16,6 +16,9 @@ class FontCacheManager {
   void setFontDecompressor(FontDecompressor* d);
 
   void clearCache();
+  // Drop disposable SD-font glyph/mini-cache state while retaining the
+  // persistent coverage and advance metadata used by Nooir's layout path.
+  void releaseSdFontCaches();
   void prewarmCache(int fontId, const char* utf8Text, uint8_t styleMask = 0x0F);
   void logStats(const char* label = "render");
   void resetStats();

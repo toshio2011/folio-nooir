@@ -5,17 +5,16 @@
 #include <ObfuscationUtils.h>
 
 namespace {
-// Default sync server URL. crosspoint-sync speaks the full KOSync protocol, so
-// pointing at any other kosync server (e.g. https://sync.koreader.rocks:443)
-// still works via the custom server URL setting.
-constexpr char DEFAULT_SERVER_URL[] = "https://sync.crosspointreader.com";
+// The empty server URL follows the public KOReader sync service, matching
+// KOReader and the original Nooir behavior.
+constexpr char DEFAULT_SERVER_URL[] = "https://sync.koreader.rocks:443";
 
-// Default before config version 2. Configs saved without a version stamp and an
-// empty serverUrl were implicitly syncing here — they get pinned on upgrade.
-constexpr char LEGACY_DEFAULT_SERVER_URL[] = "https://sync.koreader.rocks:443";
+// Config version 2 changed the empty default to CrossPoint. Pin that value for
+// existing v2 users before restoring the public default for new setups.
+constexpr char CONFIG_V2_DEFAULT_SERVER_URL[] = "https://sync.crosspointreader.com";
 
 // Bumped when a change to defaults would alter behavior for existing configs.
-constexpr uint8_t CONFIG_VERSION = 2;
+constexpr uint8_t CONFIG_VERSION = 3;
 constexpr char DEFAULT_DEVICE_NAME[] = "Folio Nooir X4";
 }  // namespace
 
@@ -45,15 +44,15 @@ bool KOReaderCredentialStore::fromJson(JsonVariantConst doc) {
   // the editable value survives reboot and remains visible to web settings.
   needsResave = needsResave || missingDeviceName;
 
-  // The default server changed in config v2 (sync.koreader.rocks -> crosspoint-sync).
-  // A pre-v2 config with credentials and no explicit URL was actively syncing
-  // against the old default — pin that URL so the upgrade doesn't switch servers
-  // out from under the user. Fresh setups get the new default.
+  // Config v2 made CrossPoint the empty-URL default. Preserve that behavior for
+  // existing v2 users by pinning it explicitly, while v1/legacy users retain
+  // the public KOReader default. Fresh setups use DEFAULT_SERVER_URL.
   const uint8_t cfgVersion = doc["cfgVersion"] | (uint8_t)1;
   if (cfgVersion < CONFIG_VERSION) {
     if (getServerUrl().empty() && hasCredentials()) {
-      LOG_DBG("KRS", "Pre-v2 config used the old default server; pinning %s", LEGACY_DEFAULT_SERVER_URL);
-      setServerUrl(LEGACY_DEFAULT_SERVER_URL);
+      const char* previousDefault = cfgVersion >= 2 ? CONFIG_V2_DEFAULT_SERVER_URL : DEFAULT_SERVER_URL;
+      LOG_DBG("KRS", "Preserving configured default server; pinning %s", previousDefault);
+      setServerUrl(previousDefault);
     }
     needsResave = true;  // stamp cfgVersion so this migration runs once
   }

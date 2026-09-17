@@ -21,10 +21,17 @@
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
+#include "util/EpubDiagnostics.h"
 #include "util/FullScreenMessageActivity.h"
 #include "util/CbzDiagnostics.h"
 
 static portMUX_TYPE activityManagerSpinlock = portMUX_INITIALIZER_UNLOCKED;
+#if NOOIR_EPUB_DIAGNOSTICS
+static bool lifecycleHomeConstructionRecorded = false;
+static bool lifecycleFirstRenderRecorded = false;
+static bool lifecycleFirstRefreshRecorded = false;
+static bool lifecycleFirstUsableRecorded = false;
+#endif
 
 void ActivityManager::begin() {
 #if defined(configNUM_CORES) && configNUM_CORES > 1
@@ -60,6 +67,22 @@ void ActivityManager::renderTaskLoop() {
       // changing UI Scale cannot alter the bookshelf presentation.
       renderer.setUiScaleTextEnabled(true);
       currentActivity->render(std::move(lock));
+#if NOOIR_EPUB_DIAGNOSTICS
+      if (!lifecycleFirstRenderRecorded) {
+        lifecycleFirstRenderRecorded = true;
+        EpubDiagnostics::phaseRecord("lifecycle_first_render");
+      }
+      if (!lifecycleFirstRefreshRecorded) {
+        lifecycleFirstRefreshRecorded = true;
+        EpubDiagnostics::phaseRecord("lifecycle_first_refresh");
+      }
+      if (!lifecycleFirstUsableRecorded &&
+          (currentActivity->isHomeActivity() || currentActivity->name == "RecentBooks" ||
+           currentActivity->isReaderActivity())) {
+        lifecycleFirstUsableRecorded = true;
+        EpubDiagnostics::phaseRecord("lifecycle_first_usable", currentActivity->isReaderActivity() ? 2 : 1);
+      }
+#endif
     }
     // Notify any task blocked in requestUpdateAndWait() that the render is done.
     TaskHandle_t waiter = nullptr;
@@ -174,6 +197,13 @@ void ActivityManager::loop() {
 
       lock.unlock();  // onEnter may acquire its own lock
       currentActivity->onEnter();
+#if NOOIR_EPUB_DIAGNOSTICS
+      if (!lifecycleHomeConstructionRecorded &&
+          (currentActivity->isHomeActivity() || currentActivity->name == "RecentBooks")) {
+        lifecycleHomeConstructionRecorded = true;
+        EpubDiagnostics::phaseRecord("boot_home_construct");
+      }
+#endif
 
       // onEnter may request another pending action, we will handle it in the next loop iteration
       continue;
@@ -208,6 +238,13 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
     // No current activity, safe to launch immediately
     currentActivity = std::move(newActivity);
     currentActivity->onEnter();
+#if NOOIR_EPUB_DIAGNOSTICS
+    if (!lifecycleHomeConstructionRecorded &&
+        (currentActivity->isHomeActivity() || currentActivity->name == "RecentBooks")) {
+      lifecycleHomeConstructionRecorded = true;
+      EpubDiagnostics::phaseRecord("boot_home_construct");
+    }
+#endif
   }
 }
 

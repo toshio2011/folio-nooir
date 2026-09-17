@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -7,6 +8,10 @@
 #include "SdCardFont.h"
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
+
+#ifndef NOOIR_KOSYNC_FONT_DIAGNOSTICS
+#define NOOIR_KOSYNC_FONT_DIAGNOSTICS 0
+#endif
 
 // JSON schema version of the fonts.json manifest. The canonical version for
 // the build tooling lives in lib/EpdFont/scripts/cpfont_version.py. This
@@ -62,7 +67,6 @@ class FontDownloadActivity : public Activity {
   struct ManifestFamily {
     std::string name;
     std::string description;
-    std::vector<std::string> styles;
     std::vector<ManifestFile> files;
     size_t totalSize = 0;
     bool installed = false;
@@ -86,6 +90,15 @@ class FontDownloadActivity : public Activity {
   int downloadingFamilyIndex_ = 0;
   std::string errorMessage_;
   bool cancelRequested_ = false;
+
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  uint32_t diagnosticMinFree_ = 0xFFFFFFFFu;
+  uint32_t diagnosticMinMaxAlloc_ = 0xFFFFFFFFu;
+
+  void diagnosticReset();
+  void diagnosticRecord(const char* stage, size_t requestedBytes = 0, int result = 0,
+                        size_t itemCount = 0);
+#endif
 
   void onWifiSelectionComplete(bool success);
   bool fetchAndParseManifest();

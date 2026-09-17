@@ -8,6 +8,7 @@
 
 #include "fontIds.h"
 #include "CrossPointSettings.h"
+#include "util/BookFormat.h"
 
 namespace {
 void drawSummaryIcon(const GfxRenderer& renderer, const int x, const int y, const int icon) {
@@ -106,6 +107,28 @@ void FolioNooirTheme::drawShelfStats(const GfxRenderer& renderer, const FolioShe
     renderer.drawText(SMALL_FONT_ID, left + (right - left - labelWidth) / 2, layout.statsTop + 8, labels[i]);
     renderer.drawText(UI_10_FONT_ID, left + (right - left - valueWidth) / 2, layout.statsTop + 29, values[i], true);
   }
+}
+
+int FolioNooirTheme::featuredFormatBadgeWidth(const GfxRenderer& renderer, const char* path) const {
+  const char* label = BookFormat::labelForPath(path);
+  if (label == nullptr) return 0;
+  constexpr int BADGE_HORIZONTAL_PADDING = 6;
+  return renderer.getTextWidth(SMALL_FONT_ID, label) + BADGE_HORIZONTAL_PADDING * 2;
+}
+
+void FolioNooirTheme::drawFeaturedFormatBadge(const GfxRenderer& renderer, const char* path, const int right,
+                                              const int top) const {
+  const char* label = BookFormat::labelForPath(path);
+  if (label == nullptr) return;
+  constexpr int BADGE_HORIZONTAL_PADDING = 6;
+  constexpr int BADGE_VERTICAL_PADDING = 2;
+  const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, label);
+  const int textHeight = renderer.getLineHeight(SMALL_FONT_ID);
+  const int width = textWidth + BADGE_HORIZONTAL_PADDING * 2;
+  const int height = textHeight + BADGE_VERTICAL_PADDING * 2;
+  const int x = right - width;
+  renderer.drawRect(x, top, width, height);
+  renderer.drawText(SMALL_FONT_ID, x + BADGE_HORIZONTAL_PADDING, top + BADGE_VERTICAL_PADDING, label);
 }
 
 void FolioNooirTheme::drawCoverProgress(const GfxRenderer& renderer, const int x, const int y, const int width,

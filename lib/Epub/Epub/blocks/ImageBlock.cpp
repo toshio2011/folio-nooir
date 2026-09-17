@@ -17,6 +17,7 @@
 #include "Epub/converters/ImageDecoderFactory.h"
 #include "Epub/converters/JpegToFramebufferConverter.h"
 #include "Epub/converters/TjpgdToFramebufferConverter.h"
+#include "../../../../src/util/EpubDiagnostics.h"
 
 // Cache file format:
 // - uint16_t width
@@ -146,6 +147,29 @@ int pxcReplayBandOrientation = -1;
 ImageBlock::PixelCacheReplayStats pxcReplayStats;
 
 void releasePxcSlot() {
+  size_t chunkBytes = 0;
+  unsigned long chunkCount = 0;
+  for (const auto& chunk : pxcChunks) {
+    if (chunk) {
+      chunkBytes += PXC_CHUNK_SIZE;
+      ++chunkCount;
+    }
+  }
+#if NOOIR_EPUB_DIAGNOSTICS
+  size_t replayBytes = 0;
+  if (pxcReplayBand) {
+    if (pxcReplayBandIsColumnBand) {
+      const size_t bytesPerRow =
+          (static_cast<size_t>(pxcReplayBandLastCol - pxcReplayBandFirstCol) + 3u) / 4u;
+      replayBytes = static_cast<size_t>(pxcReplayBandHeight) * bytesPerRow;
+    } else {
+      const size_t bytesPerRow = (static_cast<size_t>(pxcReplayBandWidth) + 3u) / 4u;
+      replayBytes = static_cast<size_t>(pxcReplayBandLastRow - pxcReplayBandFirstRow) * bytesPerRow;
+    }
+  }
+#else
+  const size_t replayBytes = 0;
+#endif
   for (auto& chunk : pxcChunks) chunk.reset();
   pxcSlotHash = 0;
   pxcSlotWidth = 0;
@@ -162,6 +186,10 @@ void releasePxcSlot() {
   pxcReplayBandLastCol = 0;
   pxcReplayBandIsColumnBand = false;
   pxcReplayBandOrientation = -1;
+  if (chunkCount || replayBytes) {
+    EpubDiagnostics::record("pixelcache_release", -1, -1, 0, chunkBytes + replayBytes, chunkCount,
+                            chunkBytes + replayBytes, 1);
+  }
 }
 
 void resetPixelCacheReplayStatsInternal() { pxcReplayStats = {}; }
@@ -199,6 +227,7 @@ bool loadPxcSlot(uint64_t cacheHash, HalFile& cacheFile, uint16_t cachedWidth, u
       return false;
     }
     pxcChunks[i] = makeUniqueNoThrow<uint8_t[]>(want);
+    EpubDiagnostics::record("pixelcache_slot_alloc", -1, -1, 0, want, 1, want, pxcChunks[i] ? 1 : 0);
     if (!pxcChunks[i] || cacheFile.read(pxcChunks[i].get(), want) != static_cast<int>(want)) {
       releasePxcSlot();
       return false;
@@ -419,9 +448,13 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
         ESP.getFreeHeap() >= bandBytes + PXC_HEAP_RESERVE &&
         ESP.getMaxAllocHeap() >= bandBytes + PXC_MAX_ALLOC_RESERVE) {
       pxcReplayBand = makeUniqueNoThrow<uint8_t[]>(bandBytes);
+      EpubDiagnostics::record("pixelcache_band_alloc", -1, -1, 0, bandBytes, 1, bandBytes,
+                              pxcReplayBand ? 1 : 0);
       bool bandReadOk = false;
       if (pxcReplayBand && columnBandMode && cacheFile.seek(4u)) {
         auto sourceRow = makeUniqueNoThrow<uint8_t[]>(bytesPerRow);
+        EpubDiagnostics::record("pixelcache_source_row_alloc", -1, -1, 0, bytesPerRow, 1, bytesPerRow,
+                                sourceRow ? 1 : 0);
         if (sourceRow) {
           bandReadOk = true;
           std::memset(pxcReplayBand.get(), 0, bandBytes);
@@ -490,11 +523,16 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
   int rowsPerRead = 4096 / bytesPerRow;
   if (rowsPerRead < 1) rowsPerRead = 1;
   if (rowsPerRead > lastRow - firstRow) rowsPerRead = lastRow - firstRow;
-  uint8_t* readBuffer = (uint8_t*)malloc((size_t)rowsPerRead * bytesPerRow);
+  const size_t requestedReadBytes = (size_t)rowsPerRead * bytesPerRow;
+  uint8_t* readBuffer = (uint8_t*)malloc(requestedReadBytes);
+  EpubDiagnostics::record("pixelcache_read_buffer_alloc", -1, -1, 0, requestedReadBytes, rowsPerRead,
+                          requestedReadBytes, readBuffer ? 1 : 0);
   if (!readBuffer) {
     // Fall back to a single-row buffer under memory pressure.
     rowsPerRead = 1;
     readBuffer = (uint8_t*)malloc(bytesPerRow);
+    EpubDiagnostics::record("pixelcache_read_buffer_alloc", -1, -1, 0, bytesPerRow, 1, bytesPerRow,
+                            readBuffer ? 1 : 0);
   }
   if (!readBuffer) {
     LOG_ERR("IMG", "Failed to allocate row buffer");
@@ -513,6 +551,7 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
       if (cacheFile.read(readBuffer, bytes) != static_cast<int>(bytes)) {
         LOG_ERR("IMG", "Cache read error at row %d", row);
         free(readBuffer);
+        EpubDiagnostics::record("pixelcache_read_buffer_free", -1, -1, 0, bytesPerRow, 1, bytesPerRow, 1);
         return false;
       }
       pxcReplayStats.bytesRead += bytes;
@@ -539,6 +578,8 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
   }
 
   free(readBuffer);
+  EpubDiagnostics::record("pixelcache_read_buffer_free", -1, -1, 0, requestedReadBytes, rowsPerRead,
+                          static_cast<size_t>(rowsPerRead) * bytesPerRow, 1);
   LOG_DBG("IMG", "Cache render complete%s rows=%d..%d", canStreamActiveBand ? " (band)" : "", firstRow,
           lastRow);
   return true;
@@ -607,6 +648,8 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   // passes; on first view this just moves the one-time decode to the BW pass.
   FontCacheManager* fcm = renderer.getFontCacheManager();
   if (fcm && fcm->isScanning()) return;
+
+  EpubDiagnostics::Scope diagnostics("image_render_start", "image_render_end");
 
   LOG_DBG("IMG", "Rendering image at %d,%d: %s (%dx%d)", x, y, imagePath.c_str(), width, height);
 
@@ -755,6 +798,9 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
                     : decoder->decodeToFramebuffer(imagePath, renderer, decodeConfig);
   };
 
+  const unsigned long decodeStartMs = millis();
+  EpubDiagnostics::record("image_decode_start", -1, -1, 0, fileSize, 0,
+                          static_cast<size_t>(width) * static_cast<size_t>(height));
   bool success = decodeImage(config);
   // A full-size image can take a noticeable amount of time to decode.  Do not
   // blindly inflate and decode it a second time when the decoder rejects a
@@ -794,6 +840,8 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
     rememberImageFailure(imagePath);
     cachePresent = false;
     renderPlaceholder(renderer, x, y);
+    EpubDiagnostics::record("image_decode_end", -1, -1, millis() - decodeStartMs, fileSize, 0,
+                            static_cast<size_t>(width) * static_cast<size_t>(height), 0);
     return;
   }
   // A successful decoder pass normally writes the cache atomically before
@@ -802,6 +850,8 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   cachePresent = Storage.exists(cachePath.c_str());
 
   LOG_DBG("IMG", "Decode successful");
+  EpubDiagnostics::record("image_decode_end", -1, -1, millis() - decodeStartMs, fileSize, 1,
+                          static_cast<size_t>(width) * static_cast<size_t>(height), 1);
 }
 
 bool ImageBlock::serialize(HalFile& file) {

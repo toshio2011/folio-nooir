@@ -34,6 +34,7 @@
 #include "fontIds.h"
 #include "Memory.h"
 #include "util/CbzDiagnostics.h"
+#include "util/EpubDiagnostics.h"
 
 namespace {
 #ifndef NOOIR_CBZ_QUALITY_DIAGNOSTICS
@@ -2329,6 +2330,11 @@ void CbzReaderActivity::render(RenderLock&&) {
 }
 
 void CbzReaderActivity::renderPage() {
+#if NOOIR_EPUB_DIAGNOSTICS
+  EpubDiagnostics::Scope diagnostics(
+      "cbz_page_start", "cbz_page_end", -1,
+      currentPage <= static_cast<size_t>(0x7FFFFFFF) ? static_cast<int>(currentPage) : -1);
+#endif
   const uint32_t renderStartedMs = millis();
   auto longOperation = longOperationIndicator.scoped("CBZ_RENDER");
   longOperationIndicator.stage("preparing");

@@ -1,6 +1,7 @@
 #pragma once
 #include <HalStorage.h>
 
+#include <cstdint>
 #include <functional>
 #include <string>
 
@@ -23,6 +24,12 @@ class HttpDownloader {
     ABORTED,
   };
 
+  // Pre-flight floor for starting a TLS transfer. Below this the session or
+  // its ~17KB record buffer can fail mid-stream on the C3. Callers should
+  // check before downloadToFile() and fail into their error UI instead.
+  static constexpr uint32_t MIN_TLS_FREE_HEAP = 40000;
+  static constexpr uint32_t MIN_TLS_MAX_ALLOC = 20000;
+
   /**
    * Fetch text content from a URL with optional credentials.
    */
@@ -40,8 +47,13 @@ class HttpDownloader {
 
   /**
    * Download a file to the SD card with optional credentials.
+   *
+   * downgradeRedirectsToHttp is reserved for the SD-font asset path. It
+   * rewrites followed HTTPS redirect targets to HTTP so a GitHub release
+   * asset does not require a second wolfSSL session on low-heap devices.
    */
   static DownloadError downloadToFile(const std::string& url, const std::string& destPath,
                                       ProgressCallback progress = nullptr, bool* cancelFlag = nullptr,
-                                      const std::string& username = "", const std::string& password = "");
+                                      const std::string& username = "", const std::string& password = "",
+                                      bool downgradeRedirectsToHttp = false);
 };

@@ -5,6 +5,20 @@ They run the normal Nooir setup/loop, activity manager, UI, reader, and host
 HAL through the pinned CrossPoint simulator dependency. No physical device or
 firmware flashing is required.
 
+The simulator dependency is pinned independently from the Nooir application
+version at CrossPoint Simulator commit
+`2b5806df5fbf07389c182540faa7efcf0b2c5b44`. The application version still
+comes from the top-level `crosspoint.version` value, so simulator and physical
+builds identify the same Nooir release. The simulator profile, host shims, and
+dependency revision are infrastructure details, not firmware release versions.
+
+The simulator replaces `lib/hal` with its host HAL. Nooir-specific clock, PNG,
+String, and X3 input compatibility is applied by the small project-side
+scripts in `scripts/simulator_*.py`; those scripts remain separate from
+production HAL code. This is necessary because the upstream simulator
+documents that consumers with a diverged HAL need a matching compatibility
+layer.
+
 ## Supported profiles
 
 | Device profile | PlatformIO environment | Portrait logical geometry |
@@ -155,6 +169,37 @@ existing orientation, inversion, reader-only, threshold, and cooldown logic
 decides whether to turn the page. Holding a key does not repeat the gesture.
 Release it to return the simulated sensor to neutral. With Tilt Page Turn off,
 or outside the reader, A/D do nothing.
+
+## Repeatable host smoke checks
+
+The simulator also accepts scripted input and screenshots. These exercise the
+same application and host-HAL paths without adding a simulator-only app or a
+new test-data format:
+
+```bash
+mkdir -p qa-artifacts
+CROSSPOINT_SIM_INPUT_SCRIPT='900:DOWN;1300:ENTER;3000:DOWN;3600:ESCAPE;5000:QUIT' \
+CROSSPOINT_SIM_SCREENSHOTS='2600:./qa-artifacts/reader.bmp;4400:./qa-artifacts/home.bmp' \
+  .pio/build/simulator_x4/program
+```
+
+Use this bounded manual sequence for X4 and X3: boot → home → Recent/Finished
+→ open an EPUB → turn forward and backward → reader menu → exit to home →
+settings → sleep/wake. On X3, repeat the reader portion with both A and D
+tilt inputs. The native simulator cannot validate real e-ink waveforms,
+ghosting, battery behavior, or physical SD timing; those remain device checks.
+
+For deterministic low-memory UI-path checks, the host simulator can override
+its reported metrics without exhausting the host process:
+
+```bash
+CROSSPOINT_SIM_FREE_HEAP=53860 \
+CROSSPOINT_SIM_MAX_ALLOC_HEAP=19444 \
+  pio run -e simulator_x4 -t run_simulator
+```
+
+The override is diagnostic only and does not represent physical X3/X4 heap
+behavior.
 
 ## EPUB testing and caches
 

@@ -10,9 +10,10 @@ history, decisions, and feature inventory.
 - Authoritative branch: `codex/folio-nooir`
 - 1.6.1 source checkpoint before release preparation: `c13eda8c490b53c0d787d641e144b4e1d332478b`
 - Published 1.6.1 tag/release commit: `2c817a73f1a1143d7f62ac1e768501280abacaa3`
-- Current fetched branch tip: `7fa773d73457a225dc99cb0e19da76af824b2da5`, a README-only
-  update on top of the 1.6.1 release commit; local HEAD matches
-  `origin/codex/folio-nooir`.
+- Current committed branch tip: `637bea977386793fce3f95056b8512b6dc2d64a0`, the
+  1.6.2 baseline commit; local HEAD matches `origin/codex/folio-nooir`. The
+  working tree contains uncommitted 1.6.2 implementation and housekeeping
+  changes, including the focused dictionary enhancement batch described below.
 - FreeInk is a real Nooir dependency through the `freeink-sdk` submodule.
 - The 1.5.10 baseline uses the Nooir-specific FreeInk commit
   `958720659ea289ae325e83db20049d0ea844800d` (`9587206`).
@@ -24,8 +25,9 @@ history, decisions, and feature inventory.
   `9c8e9751`, which is an ancestor of the current development branch.
 - The normal/default firmware build has succeeded. Carousel/HQ cover behavior
   and the Statistics/Sleep work have been physically exercised on X4. The
-  1.6.1 release is complete; 1.6.2 is currently a baseline and investigation
-  pass, with no feature implementation authorized yet.
+  1.6.1 release is complete; the 1.6.2 baseline is established and the
+  focused dictionary enhancement batch is in the working tree awaiting
+  validation. No additional feature implementation is authorized yet.
 - The existing CBZ reader and cache behavior listed below are 1.6.0 baseline
   functionality.
 - The completed 1.6.1 focus was EPUB reading quality, especially Arabic/RTL
@@ -63,6 +65,35 @@ history, decisions, and feature inventory.
   simulator mirror is dirty and must not be synchronized or reset blindly.
 - Existing ignored build outputs must not be treated as release assets unless
   their source/configuration is positively verified.
+
+## 1.6.2 dictionary enhancement batch
+
+- Dictionary lookup keeps the remembered/configured dictionary as the fast
+  path and continues to the first valid prepared fallback when it misses or
+  cannot be opened. A stale, renamed, deleted, truncated, or unsupported
+  preferred folder therefore does not block another working dictionary.
+- The first detailed open diagnostic for a failed folder is retained while
+  repeated validation of the same folder during the reader/dictionary session
+  is suppressed. Settings and dictionary history are not rewritten, and the
+  existing 32-byte settings field / 31-byte history-name limit is unchanged.
+- The definition screen discovers alternate matches only when its Dictionary
+  action is opened. It keeps at most six lightweight source records and loads
+  only the selected definition body; the former combined multi-definition
+  buffer is no longer used. Source switching replaces the body and resets
+  definition pagination.
+- The result header identifies the matched headword, source, preferred/fallback
+  status, page position, and source position where multiple matches exist.
+- StarDict and `.qidx` formats, persistent settings, EPUB caches, fonts,
+  Arabic/Quran behavior, `SECTION_FILE_VERSION = 41`, the FreeInk SDK pin,
+  partitions/SPIFFS, and user SD data remain unchanged.
+- A whole-tree `gh_release` build including this batch completed successfully:
+  linked flash is `6,483,921 / 6,553,600` bytes, leaving `69,679` linked
+  bytes. The padded `firmware.bin` is `6,497,776` bytes, leaving `55,824`
+  bytes in the app slot. Static RAM remains
+  `53,500 / 327,680` bytes. The focused source-model test translation unit
+  compiles, but local execution is currently blocked by the installed Visual
+  C++ runtime libraries missing `__CxxFrameHandler4` and
+  `__GSHandlerCheck_EH4`; no host pass is claimed from that blocked run.
 
 ## Completed work
 
@@ -150,9 +181,8 @@ commit. The pin is committed in the authoritative history.
 
 ## Immediate next steps
 
-1. Keep the 1.6.1 release behavior frozen while reviewing the focused 1.6.2
-   EPUB regression coverage added for 1.6.2; do not change production behavior
-   until an investigation task is approved.
+1. Review the focused 1.6.2 dictionary enhancement batch and its host/build
+   results; physical X3/X4 validation remains outstanding.
 2. Continue physical X3 regression validation of the released shared paths
    when hardware access is available; X4 evidence does not substitute for it.
 3. If simulator validation is needed, first inspect the separate dirty WSL
@@ -177,7 +207,7 @@ commit. The pin is committed in the authoritative history.
 - Repository: <https://github.com/toshio2011/folio-nooir>
 - Authoritative development branch: `codex/folio-nooir`
 - 1.6.1 release tag commit: `2c817a73f1a1143d7f62ac1e768501280abacaa3`
-- Current 1.6.2 branch tip: `7fa773d73457a225dc99cb0e19da76af824b2da5`
+- Current committed 1.6.2 branch tip: `637bea977386793fce3f95056b8512b6dc2d64a0`
 - 1.6.1 source checkpoint before release preparation: `c13eda8c490b53c0d787d641e144b4e1d332478b`
 - Previous 1.6.0 safety checkpoint: `safety/1.6.0-carousel-layouts-hq` at
   `9c8e9751`

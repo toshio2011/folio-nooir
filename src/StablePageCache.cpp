@@ -12,6 +12,8 @@
 #include <string_view>
 #include <utility>
 
+#include "util/EpubDiagnostics.h"
+
 namespace {
 
 constexpr size_t STREAM_BUFFER_SIZE = 512;
@@ -463,6 +465,7 @@ StablePageCache::BuildResult StablePageCache::build(const Epub& epub, Index& out
   for (int i = 0; i < spineCount; ++i) {
     const auto spine = epub.getSpineItem(i);
     unsigned long lastPulseMs = millis();
+    const unsigned long spineStartMs = millis();
     VisibleTextCounter counter([&]() {
       // Check cancellation frequently, but redraw the e-ink popup at most once
       // every 1.5 seconds while a single unusually large chapter is inflating.
@@ -473,15 +476,20 @@ StablePageCache::BuildResult StablePageCache::build(const Epub& epub, Index& out
       return true;
     });
     if (!epub.readItemContentsToStream(spine.href, counter, STREAM_BUFFER_SIZE, true)) {
+      EpubDiagnostics::record("stable_pages_spine", i, -1, millis() - spineStartMs, 0, 0, 0, 0);
       LOG_ERR("SPG", "Could not read spine item %d: %s", i, spine.href.c_str());
       return BuildResult::Failed;
     }
-    if (counter.cancelled()) return BuildResult::Cancelled;
+    if (counter.cancelled()) {
+      EpubDiagnostics::record("stable_pages_spine", i, -1, millis() - spineStartMs, 0, counter.count(), 0, 2);
+      return BuildResult::Cancelled;
+    }
     const uint32_t textUnits = counter.count();
     const uint32_t chapterPages = textUnits == 0 ? 0 : (textUnits + result.charsPerPage - 1) / result.charsPerPage;
     const uint32_t firstPage = chapterPages == 0 ? cumulativePages : cumulativePages + 1;
     cumulativePages = std::min<uint32_t>(UINT32_MAX - chapterPages, cumulativePages) + chapterPages;
     result.entries.push_back({textUnits, firstPage, cumulativePages});
+    EpubDiagnostics::record("stable_pages_spine", i, -1, millis() - spineStartMs, 0, textUnits, chapterPages, 1);
 
     if (progress && !progress(static_cast<uint16_t>(i + 1), static_cast<uint16_t>(spineCount), spine.href,
                               cumulativePages)) {

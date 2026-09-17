@@ -1,8 +1,9 @@
-"""Add Arduino String::equalsIgnoreCase to the simulator String shim.
+"""Add small Arduino String compatibility methods to the simulator shim.
 
 This is a host-only compatibility extension.  It uses ASCII case folding,
 which matches the Arduino String API's practical semantics for HTTP/status
-tokens and does not change the device String implementation.
+tokens and response-body conversions. It does not change the device String
+implementation.
 """
 
 from pathlib import Path
@@ -37,8 +38,9 @@ if simulator_env in ("simulator_x4", "simulator_x3"):
             )
             anchor = "  bool equals(const char *other) const { return s == (other ? other : \"\"); }\n"
             if anchor not in text:
-                raise RuntimeError("Simulator WString.h changed: equals API missing")
-            methods = """  bool equalsIgnoreCase(const String &other) const {
+                print("Simulator String compatibility: equals API shape changed; leaving it unchanged")
+            else:
+                methods = """  bool equalsIgnoreCase(const String &other) const {
     return equalsIgnoreCase(other.c_str());
   }
   bool equalsIgnoreCase(const char *other) const {
@@ -53,8 +55,21 @@ if simulator_env in ("simulator_x4", "simulator_x3"):
     return true;
   }
 """
-            text = text.replace(anchor, anchor + methods, 1)
-            string_path.write_text(text, encoding="utf-8", newline="")
-            print("Patched simulator String with equalsIgnoreCase")
+                text = text.replace(anchor, anchor + methods, 1)
+                string_path.write_text(text, encoding="utf-8", newline="")
+                print("Patched simulator String with equalsIgnoreCase")
         else:
             print("Simulator String already provides equalsIgnoreCase")
+
+        if "operator std::string() const" not in text:
+            anchor = "  const char *c_str() const { return s.c_str(); }\n"
+            if anchor not in text:
+                print("Simulator String compatibility: c_str API shape changed; leaving conversion unchanged")
+            else:
+                text = text.replace(
+                    anchor,
+                    anchor + "  operator std::string() const { return s; }\n",
+                    1,
+                )
+                string_path.write_text(text, encoding="utf-8", newline="")
+                print("Patched simulator String with std::string conversion")

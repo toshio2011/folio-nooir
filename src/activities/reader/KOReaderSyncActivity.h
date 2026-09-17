@@ -9,6 +9,10 @@
 #include "ProgressMapper.h"
 #include "activities/Activity.h"
 
+#ifndef NOOIR_KOSYNC_FONT_DIAGNOSTICS
+#define NOOIR_KOSYNC_FONT_DIAGNOSTICS 0
+#endif
+
 /**
  * Activity for syncing reading progress with KOReader sync server.
  *
@@ -67,6 +71,9 @@ class KOReaderSyncActivity final : public Activity {
   State state = WIFI_SELECTION;
   std::string statusMessage;
   std::string documentHash;
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  uint8_t diagnosticDocumentMethod = 0;
+#endif
 
   // Remote progress data
   bool hasRemoteProgress = false;

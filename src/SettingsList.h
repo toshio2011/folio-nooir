@@ -14,6 +14,7 @@
 #include "CrossPointSettings.h"
 #include "KOReaderCredentialStore.h"
 #include "activities/settings/SettingsActivity.h"
+#include "util/DictionaryNameResolver.h"
 #include "util/DictionaryRegistry.h"
 
 // Build the font family setting dynamically. When registry is non-null, SD card fonts
@@ -112,10 +113,10 @@ inline SettingInfo buildDictionarySetting(const std::vector<DictionaryEntry>& di
   s.category = StrId::STR_CAT_READER;
 
   s.valueGetter = [folderNames]() -> uint8_t {
+    std::string resolvedName;
+    if (!resolveUniqueDictionaryName(folderNames, SETTINGS.dictionaryName, resolvedName)) return 0;
     for (size_t i = 0; i < folderNames.size(); i++) {
-      // Compare within the settings field capacity: an over-long folder name is
-      // stored truncated, and must still match its list entry.
-      if (strncmp(folderNames[i].c_str(), SETTINGS.dictionaryName, sizeof(SETTINGS.dictionaryName) - 1) == 0) {
+      if (folderNames[i] == resolvedName) {
         return static_cast<uint8_t>(i + 1);
       }
     }
@@ -180,11 +181,13 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                           StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_RECENT_BOOK_LAYOUT, &CrossPointSettings::recentBookLayout,
                           {StrId::STR_LAYOUT_GRID_4X2, StrId::STR_LAYOUT_3_COVERS,
-                           StrId::STR_LAYOUT_3_COVER_CAROUSEL, StrId::STR_LAYOUT_5_COVER_CAROUSEL},
+                           StrId::STR_LAYOUT_3_COVER_CAROUSEL, StrId::STR_LAYOUT_5_COVER_CAROUSEL,
+                           StrId::STR_LAYOUT_SPINE},
                           "recentBookLayout", StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_FINISHED_BOOK_LAYOUT, &CrossPointSettings::finishedBookLayout,
                           {StrId::STR_LAYOUT_GRID_4X2, StrId::STR_LAYOUT_3_COVERS,
-                           StrId::STR_LAYOUT_3_COVER_CAROUSEL, StrId::STR_LAYOUT_5_COVER_CAROUSEL},
+                           StrId::STR_LAYOUT_3_COVER_CAROUSEL, StrId::STR_LAYOUT_5_COVER_CAROUSEL,
+                           StrId::STR_LAYOUT_SPINE},
                           "finishedBookLayout", StrId::STR_CAT_DISPLAY),
         SettingInfo::Value(StrId::STR_UI_SCALE, &CrossPointSettings::uiScalePercent, {80, 120, 10}, "uiScalePercent",
                            StrId::STR_CAT_DISPLAY),

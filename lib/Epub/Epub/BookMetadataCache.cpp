@@ -522,6 +522,7 @@ bool BookMetadataCache::loadMetadataOnly() {
   lutOffset = 0;
   spineCount = 0;
   tocCount = 0;
+  cumulativeSizes.clear();
   loaded = true;
   buildMode = false;
   LOG_DBG("BMC", "Loaded lightweight metadata cache");
@@ -553,9 +554,25 @@ bool BookMetadataCache::load() {
   serialization::readString(bookFile, coreMetadata.coverItemHref);
   serialization::readString(bookFile, coreMetadata.textReferenceHref);
 
+  // Spine entries are stored contiguously after the spine and TOC LUTs. Read
+  // only their cumulative sizes once; progress and sync lookups can then stay
+  // off the repeated SD seek + string-allocation path.
+  cumulativeSizes.clear();
+  cumulativeSizes.reserve(spineCount);
+  const uint32_t lutSize = (static_cast<uint32_t>(spineCount) + tocCount) * sizeof(uint32_t);
+  bookFile.seek(lutOffset + lutSize);
+  for (uint16_t i = 0; i < spineCount; i++) {
+    cumulativeSizes.push_back(readSpineEntry(bookFile).cumulativeSize);
+  }
+
   loaded = true;
   LOG_DBG("BMC", "Loaded cache data: %d spine, %d TOC entries", spineCount, tocCount);
   return true;
+}
+
+uint32_t BookMetadataCache::getCumulativeSize(const int index) const {
+  if (index < 0 || index >= static_cast<int>(cumulativeSizes.size())) return 0;
+  return cumulativeSizes[index];
 }
 
 BookMetadataCache::SpineEntry BookMetadataCache::getSpineEntry(const int index) {

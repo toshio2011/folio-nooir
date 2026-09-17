@@ -238,6 +238,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     FOLIO_LAYOUT_THREE_COVERS = 1,
     FOLIO_LAYOUT_THREE_COVER_CAROUSEL = 2,
     FOLIO_LAYOUT_FIVE_COVER_CAROUSEL = 3,
+    FOLIO_LAYOUT_SPINE = 4,
     FOLIO_BOOK_LAYOUT_COUNT
   };
 

@@ -10,6 +10,10 @@
 
 #include <TaskWatchdog.h>
 
+#ifndef NOOIR_KOSYNC_FONT_DIAGNOSTICS
+#define NOOIR_KOSYNC_FONT_DIAGNOSTICS 0
+#endif
+
 #if defined(FREEINK_NET_WOLFSSL)
 #include <SecureHttpClient.h>
 
@@ -35,6 +39,27 @@ constexpr int HTTP_TIMEOUT_MS = 60000;
 constexpr size_t READ_CHUNK = 1024;
 constexpr int MAX_REDIRECTS = 5;
 
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+uint32_t fontNetworkMinFree = 0xFFFFFFFFu;
+uint32_t fontNetworkMinMaxAlloc = 0xFFFFFFFFu;
+
+void fontNetworkDiagnostic(const char* stage, const int status = 0, const size_t bytes = 0,
+                           const bool resetWindow = false) {
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  const uint32_t maxAllocHeap = ESP.getMaxAllocHeap();
+  if (resetWindow) {
+    fontNetworkMinFree = freeHeap;
+    fontNetworkMinMaxAlloc = maxAllocHeap;
+  } else {
+    if (freeHeap < fontNetworkMinFree) fontNetworkMinFree = freeHeap;
+    if (maxAllocHeap < fontNetworkMinMaxAlloc) fontNetworkMinMaxAlloc = maxAllocHeap;
+  }
+  LOG_INF("FNDIAG", "stage=%s free=%u min=%u max=%u omin=%u omax=%u n=%u r=%d", stage, freeHeap,
+          ESP.getMinFreeHeap(), maxAllocHeap, fontNetworkMinFree, fontNetworkMinMaxAlloc,
+          static_cast<unsigned>(bytes), status);
+}
+#endif
+
 struct Sink {
   std::function<bool(const uint8_t*, size_t)> write;  // returns false to abort the transfer
   HttpDownloader::ProgressCallback progress;
@@ -49,15 +74,22 @@ bool isRedirect(int status) {
 
 #if defined(FREEINK_NET_WOLFSSL)
 HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std::string& username,
-                                         const std::string& password, Sink& sink) {
+                                         const std::string& password, Sink& sink,
+                                         const bool downgradeRedirectsToHttp) {
   std::string url = startUrl;
 
   for (int hop = 0; hop <= MAX_REDIRECTS; ++hop) {
     freeink::SecureHttpClient http;
     http.setTimeout(HTTP_TIMEOUT_MS);
     http.setInsecure();
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+    fontNetworkDiagnostic("tls_begin", hop);
+#endif
     if (!http.begin(url)) {
       LOG_ERR("HTTP", "wolfSSL bad URL: %s", url.c_str());
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+      fontNetworkDiagnostic("tls_begin_fail", -1, hop);
+#endif
       return HttpDownloader::HTTP_ERROR;
     }
     // setUserAgent replaces SecureHttpClient's built-in UA; addHeader would
@@ -71,6 +103,9 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
     }
 
     LOG_DBG("HTTP", "wolfSSL GET: %s", url.c_str());
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+    fontNetworkDiagnostic("tls_get", hop);
+#endif
     const int status = http.GET(
         [&http, &sink](const uint8_t* data, size_t len) {
           resetTaskWatchdogIfSubscribed();
@@ -87,6 +122,10 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
         },
         [&sink]() { return sink.cancelFlag && *sink.cancelFlag; });
 
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+    fontNetworkDiagnostic("tls_result", status, sink.downloaded);
+#endif
+
     if (http.aborted()) return HttpDownloader::ABORTED;
     if (status < 0) {
       LOG_ERR("HTTP", "wolfSSL request failed: %s", url.c_str());
@@ -94,10 +133,19 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
     }
     if (isRedirect(status)) {
       const std::string location = http.getHeader("location");
-      if (location.empty() || !freeink::SecureHttpClient::resolveUrl(url, location, url)) {
+      const bool sourceWasHttps = url.rfind("https://", 0) == 0;
+      std::string redirectedUrl;
+      if (location.empty() || !freeink::SecureHttpClient::resolveUrl(url, location, redirectedUrl)) {
         LOG_ERR("HTTP", "wolfSSL bad redirect: %d", status);
         return HttpDownloader::HTTP_ERROR;
       }
+      // Only the explicitly opted-in font-asset path may skip the second TLS
+      // session. Keep ordinary HTTPS redirects (KOSync, OPDS, OTA, etc.)
+      // secure, and do not downgrade an HTTP -> HTTPS redirect.
+      if (downgradeRedirectsToHttp && sourceWasHttps && redirectedUrl.rfind("https://", 0) == 0) {
+        redirectedUrl.replace(0, 8, "http://");
+      }
+      url = std::move(redirectedUrl);
       continue;
     }
     if (status != 200) {
@@ -139,6 +187,9 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   config.keep_alive_enable = true;
 
   esp_http_client_handle_t client = esp_http_client_init(&config);
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  fontNetworkDiagnostic("tls_init", client ? 1 : -1);
+#endif
   if (!client) {
     LOG_ERR("HTTP", "client init failed");
     return HttpDownloader::HTTP_ERROR;
@@ -156,6 +207,9 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   // 30x responses manually. OPDS download endpoints and the GitHub release CDN
   // both redirect.
   esp_err_t err = esp_http_client_open(client, 0);
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  fontNetworkDiagnostic("tls_open", err == ESP_OK ? 0 : -1);
+#endif
   if (err != ESP_OK) {
     LOG_ERR("HTTP", "open failed: %s", esp_err_to_name(err));
     esp_http_client_cleanup(client);
@@ -163,6 +217,9 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   }
   int64_t contentLength = esp_http_client_fetch_headers(client);
   int status = esp_http_client_get_status_code(client);
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  fontNetworkDiagnostic("http_headers", status, contentLength > 0 ? static_cast<size_t>(contentLength) : 0);
+#endif
   for (int hop = 0; isRedirect(status) && hop < MAX_REDIRECTS; ++hop) {
     if (esp_http_client_set_redirection(client) != ESP_OK) break;
     esp_http_client_close(client);
@@ -187,6 +244,9 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   sink.total = contentLength > 0 ? static_cast<size_t>(contentLength) : 0;
 
   auto buf = makeUniqueNoThrow<char[]>(READ_CHUNK);
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  fontNetworkDiagnostic("asset_buffer", buf ? 1 : -1, READ_CHUNK);
+#endif
   if (!buf) {
     LOG_ERR("HTTP", "OOM: %u byte read buffer", (unsigned)READ_CHUNK);
     esp_http_client_cleanup(client);
@@ -218,6 +278,9 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   }
 
   const bool complete = esp_http_client_is_complete_data_received(client);
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  fontNetworkDiagnostic("http_body_done", complete ? 0 : -1, sink.downloaded);
+#endif
   esp_http_client_cleanup(client);
   if (!complete) {
     LOG_ERR("HTTP", "incomplete: got %zu of %zu bytes", sink.downloaded, sink.total);
@@ -232,10 +295,15 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
 // mbedTLS path fails to connect or stalls mid-stream. Plain-http URLs still use a
 // WiFiClient inside runGetWolf, so this is safe for non-TLS targets too.
 HttpDownloader::DownloadError runGetSecure(const std::string& url, const std::string& username,
-                                           const std::string& password, Sink& sink) {
+                                           const std::string& password, Sink& sink,
+                                           const bool downgradeRedirectsToHttp = false) {
 #if defined(FREEINK_NET_WOLFSSL)
-  return runGetWolf(url, username, password, sink);
+  return runGetWolf(url, username, password, sink, downgradeRedirectsToHttp);
 #else
+  // The current esp_http_client path does not expose the redirect target to
+  // this streaming loop. Keep the opt-in ignored there rather than weakening
+  // its verified-HTTPS redirect behavior.
+  (void)downgradeRedirectsToHttp;
   return runGet(url, username, password, sink);
 #endif
 }
@@ -272,15 +340,22 @@ bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData
 
 HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,
                                                              ProgressCallback progress, bool* cancelFlag,
-                                                             const std::string& username, const std::string& password) {
+                                                             const std::string& username, const std::string& password,
+                                                             const bool downgradeRedirectsToHttp) {
   LOG_DBG("HTTP", "Downloading: %s -> %s", url.c_str(), destPath.c_str());
 
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  fontNetworkDiagnostic("file_open", 0);
+#endif
   if (Storage.exists(destPath.c_str())) {
     Storage.remove(destPath.c_str());
   }
   HalFile file;
   if (!Storage.openFileForWrite("HTTP", destPath.c_str(), file)) {
     LOG_ERR("HTTP", "Failed to open file for writing");
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+    fontNetworkDiagnostic("file_open_fail", -1);
+#endif
     return FILE_ERROR;
   }
 
@@ -289,10 +364,16 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   sink.cancelFlag = cancelFlag;
   sink.write = [&file](const uint8_t* data, size_t len) { return file.write(data, len) == len; };
 
-  const DownloadError result = runGetSecure(url, username, password, sink);
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  fontNetworkDiagnostic("transfer_begin", 0, 0, true);
+#endif
+  const DownloadError result = runGetSecure(url, username, password, sink, downgradeRedirectsToHttp);
   // Close before any remove() on the same path; DESTRUCTOR_CLOSES_FILE would
   // otherwise close only after the remove.
   file.close();
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  fontNetworkDiagnostic("transfer_end", result, sink.downloaded);
+#endif
 
   if (result != OK) {
     Storage.remove(destPath.c_str());

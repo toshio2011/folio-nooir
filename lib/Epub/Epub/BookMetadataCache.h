@@ -7,6 +7,7 @@
 #include <deque>
 #include <memory>
 #include <string>
+#include <vector>
 
 class BookMetadataCache {
  public:
@@ -62,6 +63,10 @@ class BookMetadataCache {
   // SdFat's shared sector cache (one 512B transaction per 4-byte pod). One
   // wrapper serves whichever pass is active (spine, then toc).
   std::unique_ptr<serialization::BufferedFileWriter> passOut;
+
+  // Cumulative spine sizes cached at load() so progress and percent lookups
+  // do not repeatedly seek and deserialize a SpineEntry from SD.
+  std::vector<uint32_t> cumulativeSizes;
 
   // Index for fast href→spineIndex lookup (used only for large EPUBs)
   struct SpineHrefIndexEntry {
@@ -120,6 +125,9 @@ class BookMetadataCache {
   bool load();
   SpineEntry getSpineEntry(int index);
   TocEntry getTocEntry(int index);
+  // Cumulative byte size up to and including the given spine item. Returns 0
+  // for an invalid index or before the full cache has been loaded.
+  uint32_t getCumulativeSize(int index) const;
   int getSpineCount() const { return spineCount; }
   int getTocCount() const { return tocCount; }
   bool isLoaded() const { return loaded; }

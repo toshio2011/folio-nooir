@@ -10,6 +10,8 @@
 #include <cstring>
 #include <string_view>
 
+#include "../../../../src/util/EpubDiagnostics.h"
+
 namespace {
 
 // Stack-allocated string buffer to avoid heap reallocations during parsing
@@ -529,6 +531,7 @@ void CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const 
 // Main parsing entry point
 
 bool CssParser::loadFromStream(HalFile& source) {
+  EpubDiagnostics::Scope diagnostics("css_parse_start", "css_parse_end");
   if (!source) {
     LOG_ERR("CSS", "Cannot read from invalid file");
     return false;
@@ -668,6 +671,7 @@ bool CssParser::loadFromStream(HalFile& source) {
   }
 
   LOG_DBG("CSS", "Parsed %zu rules from %zu bytes", rulesBySelector_.size(), totalRead);
+  EpubDiagnostics::record("css_parse_result", -1, -1, 0, 0, rulesBySelector_.size(), totalRead, 1);
   return true;
 }
 
@@ -740,6 +744,7 @@ void CssParser::deleteCache() const {
 }
 
 bool CssParser::saveToCache() const {
+  EpubDiagnostics::Scope diagnostics("css_cache_save_start", "css_cache_save_end");
   if (cachePath.empty()) {
     return false;
   }
@@ -823,6 +828,7 @@ bool CssParser::saveToCache() const {
 }
 
 bool CssParser::loadFromCache() {
+  EpubDiagnostics::Scope diagnostics("css_cache_load_start", "css_cache_load_end");
   if (cachePath.empty()) {
     return false;
   }
@@ -1005,5 +1011,6 @@ bool CssParser::loadFromCache() {
   }
 
   LOG_DBG("CSS", "Loaded %u rules from cache", ruleCount);
+  EpubDiagnostics::record("css_cache_load_result", -1, -1, 0, 0, ruleCount, file.size(), 1);
   return true;
 }

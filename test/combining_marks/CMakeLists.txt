@@ -1,5 +1,6 @@
 add_executable(CombiningMarkAnchorTest
   CombiningMarkAnchorTest.cpp
+  ${REPO_ROOT}/lib/Utf8/Utf8.cpp
 )
 
 target_include_directories(CombiningMarkAnchorTest PRIVATE

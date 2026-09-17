@@ -39,6 +39,7 @@
 #include "fontIds.h"
 #include "images/LoadingIcon.h"
 #include "util/ButtonNavigator.h"
+#include "util/EpubDiagnostics.h"
 #include "util/ScreenshotUtil.h"
 
 GfxRenderer renderer(display);
@@ -212,6 +213,8 @@ static bool loadSleepFrameBuffer() {
 
 // Enter deep sleep mode
 void enterDeepSleep(bool fromTimeout = false) {
+  EpubDiagnostics::startPhase();
+  EpubDiagnostics::phaseRecord("sleep_request", fromTimeout ? 2 : 1);
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
 
@@ -222,14 +225,17 @@ void enterDeepSleep(bool fromTimeout = false) {
   APP_STATE.showBootScreen = !isQuickResumeSleep;
 
   APP_STATE.saveToFile();
+  EpubDiagnostics::phaseRecord("sleep_state_persisted");
 
   // Commit to sleeping before goToSleep() runs the outgoing activity's onExit():
   // a WiFi activity would otherwise silentRestart() here and reboot instead.
   deepSleepInProgress = true;
   activityManager.goToSleep(fromTimeout);
+  EpubDiagnostics::phaseRecord("sleep_screen_ready");
 
   if (isQuickResumeSleep) {
     saveSleepFrameBuffer();
+    EpubDiagnostics::phaseRecord("sleep_quick_frame_saved");
   }
 
   // Tear down WiFi so the modem power domain isn't held alive across deep sleep.
@@ -241,9 +247,12 @@ void enterDeepSleep(bool fromTimeout = false) {
   bleinput::stop();
 
   halTiltSensor.deepSleep();
+  EpubDiagnostics::phaseRecord("sleep_peripherals_cleaned");
   display.deepSleep();
+  EpubDiagnostics::phaseRecord("sleep_display_suspended");
   LOG_DBG("MAIN", "Entering deep sleep");
 
+  EpubDiagnostics::phaseRecord("sleep_enter");
   powerManager.startDeepSleep(gpio);
 }
 
@@ -251,6 +260,7 @@ void setupDisplayAndFonts(bool seamless = false) {
   display.begin(seamless);
   renderer.begin();
   activityManager.begin();
+  EpubDiagnostics::phaseRecord("boot_display_ready");
   LOG_DBG("MAIN", "Display initialized");
 
   // Initialize font decompressor for compressed reader fonts
@@ -299,6 +309,7 @@ void setupDisplayAndFonts(bool seamless = false) {
   // Discover and load SD card fonts
   sdFontSystem.begin(renderer);
 
+  EpubDiagnostics::phaseRecord("boot_fonts_ready");
   LOG_DBG("MAIN", "Fonts setup");
 }
 
@@ -306,6 +317,7 @@ void setup() {
   BoardConfig::holdPowerRails();
 
   t1 = millis();
+  EpubDiagnostics::startPhase();
 
 #ifdef ENABLE_SERIAL_LOG
   // Earliest possible Serial setup. The 250 ms stall before begin() lets the
@@ -319,6 +331,8 @@ void setup() {
   logSerial.setTxTimeoutMs(1);  // This is a load-bearing 1. Do not modify.
 #endif
 #endif
+
+  EpubDiagnostics::phaseRecord("boot_start");
 
   HalSystem::begin();
 
@@ -334,6 +348,7 @@ void setup() {
   powerManager.begin();
   halTiltSensor.begin();
   halClock.begin();
+  EpubDiagnostics::phaseRecord("boot_hardware_ready");
 
   LOG_INF("MAIN", "Hardware detect: %s", gpio.deviceIsX3() ? "X3" : "X4");
 
@@ -345,6 +360,7 @@ void setup() {
     activityManager.goToFullScreenMessage("SD card error", EpdFontFamily::BOLD);
     return;
   }
+  EpubDiagnostics::phaseRecord("boot_sd_ready");
 
   HalSystem::checkPanic();
 
@@ -377,6 +393,7 @@ void setup() {
   OPDS_STORE.loadFromFile();
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
+  EpubDiagnostics::phaseRecord("boot_state_ready");
 
   const auto wakeupReason = gpio.getWakeupReason();
   switch (wakeupReason) {
@@ -443,11 +460,13 @@ void setup() {
       APP_STATE.showBootScreen = true;
       APP_STATE.saveToFile();
       if (loadSleepFrameBuffer()) {
+        EpubDiagnostics::phaseRecord("wake_frame_restore", 1, display.getBufferSize());
         // Frame restored: swap the sleep moon for the loading icon.
         const auto pageHeight = renderer.getScreenHeight();
         renderer.drawImage(LoadingIcon, 0, pageHeight - LOADINGICON_HEIGHT, LOADINGICON_WIDTH, LOADINGICON_HEIGHT);
         renderer.displayBuffer(HalDisplay::HALF_REFRESH);
       } else {
+        EpubDiagnostics::phaseRecord("wake_frame_restore", 0, display.getBufferSize());
         activityManager.goToBoot();  // frame file missing, fall back to the splash
       }
       break;
@@ -486,6 +505,8 @@ void setup() {
     activityManager.goToReader(path);
   }
 
+  EpubDiagnostics::phaseRecord("boot_activity_selected", resume == BootResume::Splash ? 1 : 2);
+
   // lastSleepFromReader is a one-boot routing hint.  Clear it after the wake
   // destination has been selected so a later, ordinary reader exit does not
   // accidentally skip its ghost-clearing refresh when overlay sleep is enabled.
@@ -510,6 +531,8 @@ void setup() {
     delay(10);
     gpio.update();
   }
+
+  EpubDiagnostics::phaseRecord("boot_setup_complete");
 
   // Ensure we're not still holding the power button before leaving setup
   waitForPowerRelease();

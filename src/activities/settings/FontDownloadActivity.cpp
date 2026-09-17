@@ -1,6 +1,7 @@
 #include "FontDownloadActivity.h"
 
 #include <ArduinoJson.h>
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
@@ -17,6 +18,25 @@
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
 
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+void FontDownloadActivity::diagnosticReset() {
+  diagnosticMinFree_ = 0xFFFFFFFFu;
+  diagnosticMinMaxAlloc_ = 0xFFFFFFFFu;
+}
+
+void FontDownloadActivity::diagnosticRecord(const char* stage, const size_t requestedBytes, const int result,
+                                            const size_t itemCount) {
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  const uint32_t minFreeHeap = ESP.getMinFreeHeap();
+  const uint32_t maxAllocHeap = ESP.getMaxAllocHeap();
+  if (freeHeap < diagnosticMinFree_) diagnosticMinFree_ = freeHeap;
+  if (maxAllocHeap < diagnosticMinMaxAlloc_) diagnosticMinMaxAlloc_ = maxAllocHeap;
+  LOG_INF("FNDIAG", "stage=%s free=%u min=%u max=%u omin=%u omax=%u req=%u n=%u r=%d", stage, freeHeap,
+          minFreeHeap, maxAllocHeap, diagnosticMinFree_, diagnosticMinMaxAlloc_,
+          static_cast<unsigned>(requestedBytes), static_cast<unsigned>(itemCount), result);
+}
+#endif
+
 FontDownloadActivity::FontDownloadActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
     : Activity("FontDownload", renderer, mappedInput), fontInstaller_(sdFontSystem.registry()) {}
 
@@ -24,7 +44,15 @@ FontDownloadActivity::FontDownloadActivity(GfxRenderer& renderer, MappedInputMan
 
 void FontDownloadActivity::onEnter() {
   Activity::onEnter();
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  diagnosticReset();
+  diagnosticRecord("enter");
+  diagnosticRecord("wifi_before");
+#endif
   WiFi.mode(WIFI_STA);
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  diagnosticRecord("wifi_after");
+#endif
   startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
                          [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
 }
@@ -41,9 +69,17 @@ void FontDownloadActivity::onExit() {
 
 void FontDownloadActivity::onWifiSelectionComplete(const bool success) {
   if (!success) {
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+    diagnosticRecord("wifi_cancel", 0, -1);
+#endif
     finish();
     return;
   }
+
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  diagnosticReset();
+  diagnosticRecord("wifi_ready");
+#endif
 
   {
     RenderLock lock(*this);
@@ -73,7 +109,45 @@ bool FontDownloadActivity::fetchAndParseManifest() {
   // TLS buffers and the full JSON string in RAM simultaneously.
   static constexpr const char* MANIFEST_TMP = "/fonts_manifest.tmp";
 
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  diagnosticRecord("manifest_begin");
+#endif
+
+  if (std::string(FONT_MANIFEST_URL).rfind("https://", 0) != 0) {
+    LOG_ERR("FONT", "Manifest URL must use HTTPS");
+    errorMessage_ = "Invalid font manifest URL";
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+    diagnosticRecord("manifest_url", 0, -1);
+#endif
+    return false;
+  }
+
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    fcm->releaseSdFontCaches();
+  }
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  diagnosticRecord("manifest_caches");
+#endif
+  const bool manifestLowFree = ESP.getFreeHeap() < HttpDownloader::MIN_TLS_FREE_HEAP;
+  const bool manifestLowBlock = ESP.getMaxAllocHeap() < HttpDownloader::MIN_TLS_MAX_ALLOC;
+  if (manifestLowFree || manifestLowBlock) {
+    LOG_ERR("FONT", "Low heap for manifest (%u free, %u max block)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    errorMessage_ = tr(STR_MEMORY_ERROR);
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+    diagnosticRecord(manifestLowFree ? (manifestLowBlock ? "manifest_gate_both" : "manifest_gate_free")
+                                     : "manifest_gate_block",
+                     manifestLowFree ? HttpDownloader::MIN_TLS_FREE_HEAP : HttpDownloader::MIN_TLS_MAX_ALLOC, -1);
+#endif
+    return false;
+  }
+
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  diagnosticRecord("manifest_http");
+#endif
   auto result = HttpDownloader::downloadToFile(FONT_MANIFEST_URL, MANIFEST_TMP, nullptr);
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  diagnosticRecord("manifest_done", 0, result);
+#endif
   if (result != HttpDownloader::OK) {
     LOG_ERR("FONT", "Failed to fetch manifest from %s", FONT_MANIFEST_URL);
     errorMessage_ = "Failed to fetch font list";
@@ -87,9 +161,15 @@ bool FontDownloadActivity::fetchAndParseManifest() {
     LOG_ERR("FONT", "Failed to open temp manifest");
     Storage.remove(MANIFEST_TMP);
     errorMessage_ = "Failed to read font list";
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+    diagnosticRecord("manifest_open", 0, -1);
+#endif
     return false;
   }
 
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  diagnosticRecord("manifest_parse");
+#endif
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, manifestFile);
   manifestFile.close();
@@ -98,6 +178,9 @@ bool FontDownloadActivity::fetchAndParseManifest() {
   if (err) {
     LOG_ERR("FONT", "Manifest parse error: %s", err.c_str());
     errorMessage_ = "Invalid font manifest";
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+    diagnosticRecord("manifest_json", 0, -1);
+#endif
     return false;
   }
 
@@ -105,11 +188,28 @@ bool FontDownloadActivity::fetchAndParseManifest() {
   if (version != FONTS_MANIFEST_VERSION) {
     LOG_ERR("FONT", "Unsupported manifest version: %d", version);
     errorMessage_ = "Unsupported manifest version";
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+    diagnosticRecord("manifest_version", 0, -1);
+#endif
     return false;
   }
 
   baseUrl_ = doc["baseUrl"] | "";
+  if (baseUrl_.rfind("https://", 0) != 0) {
+    LOG_ERR("FONT", "Manifest asset base URL must use HTTPS");
+    errorMessage_ = "Invalid font manifest";
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+    diagnosticRecord("manifest_base", 0, -1);
+#endif
+    return false;
+  }
   families_.clear();
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  diagnosticRecord("manifest_model");
+#endif
+  // A retry rebuilds the catalog from scratch. Release capacities from a
+  // failed/previous model before the new JSON tree and strings are created.
+  std::vector<ManifestFamily>().swap(families_);
   fontInstaller_.refreshRegistry();
 
   JsonArray familiesArr = doc["families"].as<JsonArray>();
@@ -120,12 +220,13 @@ bool FontDownloadActivity::fetchAndParseManifest() {
     family.name = fObj["name"] | "";
     family.description = fObj["description"] | "";
 
-    for (JsonVariant s : fObj["styles"].as<JsonArray>()) {
-      family.styles.push_back(s.as<std::string>());
-    }
+    // The file count is known from the parsed manifest; reserve it once so
+    // repeated vector growth does not leave stale allocation holes behind.
+    const JsonArray filesArr = fObj["files"].as<JsonArray>();
+    family.files.reserve(filesArr.size());
 
     family.totalSize = 0;
-    for (JsonObject fileObj : fObj["files"].as<JsonArray>()) {
+    for (JsonObject fileObj : filesArr) {
       ManifestFile file;
       file.name = fileObj["name"] | "";
       file.size = fileObj["size"] | 0;
@@ -133,6 +234,9 @@ bool FontDownloadActivity::fetchAndParseManifest() {
       if (!fileObj["crc32"].is<uint32_t>()) {
         LOG_ERR("FONT", "Malformed manifest file entry: missing or invalid crc32 for %s", file.name.c_str());
         errorMessage_ = "Invalid font manifest";
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+        diagnosticRecord("manifest_crc", 0, -1);
+#endif
         return false;
       }
       file.crc32 = fileObj["crc32"].as<uint32_t>();
@@ -169,6 +273,9 @@ bool FontDownloadActivity::fetchAndParseManifest() {
   }
 
   LOG_DBG("FONT", "Manifest loaded: %zu families", families_.size());
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  diagnosticRecord("manifest_ready", 0, 0, families_.size());
+#endif
   return true;
 }
 
@@ -265,6 +372,10 @@ bool FontDownloadActivity::computeFileCrc32(const char* path, uint32_t& outCrc) 
 }
 
 void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  diagnosticReset();
+  diagnosticRecord("family_begin", 0, 0, family.files.size());
+#endif
   {
     RenderLock lock(*this);
     state_ = DOWNLOADING;
@@ -275,7 +386,36 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
   }
   requestUpdateAndWait();
 
+  // Rebuildable SD-font glyph caches can hold enough heap to starve the next
+  // wolfSSL session. They are repopulated on demand after the download.
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    fcm->releaseSdFontCaches();
+  }
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  diagnosticRecord("family_caches", 0, 0, family.files.size());
+#endif
+  const bool familyLowFree = ESP.getFreeHeap() < HttpDownloader::MIN_TLS_FREE_HEAP;
+  const bool familyLowBlock = ESP.getMaxAllocHeap() < HttpDownloader::MIN_TLS_MAX_ALLOC;
+  if (familyLowFree || familyLowBlock) {
+    LOG_ERR("FONT", "Low heap for download (%u free, %u max block)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    RenderLock lock(*this);
+    state_ = ERROR;
+    errorMessage_ = tr(STR_MEMORY_ERROR);
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+    diagnosticRecord(familyLowFree ? (familyLowBlock ? "family_gate_both" : "family_gate_free") : "family_gate_block",
+                     familyLowFree ? HttpDownloader::MIN_TLS_FREE_HEAP : HttpDownloader::MIN_TLS_MAX_ALLOC, -1,
+                     family.files.size());
+#endif
+    return;
+  }
+
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  diagnosticRecord("family_dir");
+#endif
   if (!fontInstaller_.ensureFamilyDir(family.name.c_str())) {
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+    diagnosticRecord("family_dir_fail", 0, -1);
+#endif
     RenderLock lock(*this);
     state_ = ERROR;
     errorMessage_ = "Failed to create font directory";
@@ -297,6 +437,10 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
 
     std::string url = baseUrl_ + file.name;
 
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+    diagnosticRecord("asset_begin", file.size, 0, i);
+    diagnosticRecord("asset_http");
+#endif
     auto result = HttpDownloader::downloadToFile(
         url, destPath,
         [this](size_t downloaded, size_t total) {
@@ -309,9 +453,16 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
           }
           requestUpdate(true);
         },
-        &cancelRequested_);
+        &cancelRequested_, "", "", /*downgradeRedirectsToHttp=*/true);
+
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+    diagnosticRecord("asset_done", file.size, result, i);
+#endif
 
     if (result == HttpDownloader::ABORTED) {
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+      diagnosticRecord("asset_abort", file.size, -1, i);
+#endif
       fontInstaller_.deleteFamily(family.name.c_str());
       family.installed = false;
       family.hasUpdate = false;
@@ -324,6 +475,9 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
 
     if (result != HttpDownloader::OK) {
       LOG_ERR("FONT", "Download failed: %s (%d)", file.name.c_str(), result);
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+      diagnosticRecord("asset_fail", file.size, result, i);
+#endif
       fontInstaller_.deleteFamily(family.name.c_str());
       family.installed = false;
       family.hasUpdate = false;
@@ -334,6 +488,9 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
     }
 
     uint32_t actualCrc = 0;
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+    diagnosticRecord("asset_crc", file.size);
+#endif
     if (!computeFileCrc32(destPath, actualCrc)) {
       LOG_ERR("FONT", "Failed to open file for CRC check: %s", destPath);
       fontInstaller_.deleteFamily(family.name.c_str());
@@ -342,6 +499,9 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
       RenderLock lock(*this);
       state_ = ERROR;
       errorMessage_ = "Failed to compute checksum: " + file.name;
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+      diagnosticRecord("crc_fail", file.size, -1, i);
+#endif
       return;
     }
     if (actualCrc != file.crc32) {
@@ -352,10 +512,16 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
       RenderLock lock(*this);
       state_ = ERROR;
       errorMessage_ = "Checksum mismatch: " + file.name;
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+      diagnosticRecord("crc_mismatch", file.size, -1, i);
+#endif
       return;
     }
     LOG_DBG("FONT", "Downloaded %s (size=%zu crc32=%08x)", file.name.c_str(), file.size, actualCrc);
 
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+    diagnosticRecord("asset_cpfont", file.size, 0, i);
+#endif
     if (!fontInstaller_.validateCpfontFile(destPath)) {
       LOG_ERR("FONT", "Invalid .cpfont: %s", destPath);
       fontInstaller_.deleteFamily(family.name.c_str());
@@ -364,12 +530,18 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
       RenderLock lock(*this);
       state_ = ERROR;
       errorMessage_ = "Invalid font file: " + file.name;
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+      diagnosticRecord("cpfont_fail", file.size, -1, i);
+#endif
       return;
     }
     currentFileIndex_++;
   }
 
   fontInstaller_.refreshRegistry();
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  diagnosticRecord("font_refresh", 0, 0, family.files.size());
+#endif
   family.installed = true;
   family.hasUpdate = false;
 
@@ -377,6 +549,9 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
     RenderLock lock(*this);
     state_ = COMPLETE;
   }
+#if NOOIR_KOSYNC_FONT_DIAGNOSTICS
+  diagnosticRecord("family_done", 0, 0, family.files.size());
+#endif
 }
 
 void FontDownloadActivity::promptDeleteSelectedFamily() {

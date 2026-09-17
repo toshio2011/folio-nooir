@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "lib/EpdFont/EpdFontData.h"
+#include "lib/Utf8/Utf8.h"
 
 // ============================================================================
 // Anchor selection and placement for combining marks without GPOS tables.
@@ -70,4 +71,72 @@ TEST(RaiseAboveBase, CentreRaisedBehaviourUnchanged) {
   EXPECT_EQ(raiseAboveBase(Anchor::CenterRaised, 16, 3, 12), 0);
   // Below-baseline mark (kasra, cedilla): stays at font-native position.
   EXPECT_EQ(raiseAboveBase(Anchor::CenterRaised, 2, 4, 12), 0);
+}
+
+TEST(StackOffsetForOverlap, ShaddaAndFathaStackAboveTheBase) {
+  const combiningMark::Bounds previous{20, 40, 30, 50};
+  const combiningMark::Bounds fatha{20, 45, 30, 55};
+
+  const int delta = combiningMark::stackOffsetForOverlap(fatha, previous, combiningMark::StackAxis::Y, -1);
+  EXPECT_EQ(delta, -17);
+  EXPECT_EQ(fatha.y1 + delta, 38);  // one clear row before the previous mark
+}
+
+TEST(StackOffsetForOverlap, ShaddaAndDammaUseTheSameGenericAboveRule) {
+  const combiningMark::Bounds previous{20, 40, 30, 50};
+  const combiningMark::Bounds damma{19, 44, 31, 54};
+
+  const int delta = combiningMark::stackOffsetForOverlap(damma, previous, combiningMark::StackAxis::Y, -1);
+  EXPECT_EQ(delta, -16);
+  EXPECT_EQ(damma.y1 + delta, 38);
+}
+
+TEST(StackOffsetForOverlap, KasraAndOtherBelowMarksStackDownward) {
+  const combiningMark::Bounds previous{20, 50, 30, 60};
+  const combiningMark::Bounds kasra{20, 55, 30, 65};
+
+  const int delta = combiningMark::stackOffsetForOverlap(kasra, previous, combiningMark::StackAxis::Y, 1);
+  EXPECT_EQ(delta, 7);
+  EXPECT_EQ(kasra.y0 + delta, 62);  // one clear row after the previous mark
+}
+
+TEST(StackOffsetForOverlap, QuranicAndTanwinMarksUseBoundsNotCodepointSpecialCases) {
+  EXPECT_TRUE(utf8IsArabicCodepoint(0x06E1));  // small high dotless head of khah
+  EXPECT_TRUE(utf8IsArabicCodepoint(0x06D6));  // Quranic annotation mark
+  EXPECT_TRUE(utf8IsArabicCodepoint(0x064B));  // fathatan
+
+  const combiningMark::Bounds previous{20, 35, 30, 45};
+  const combiningMark::Bounds quranicMark{20, 40, 30, 50};
+  EXPECT_NE(combiningMark::stackOffsetForOverlap(quranicMark, previous, combiningMark::StackAxis::Y, -1), 0);
+}
+
+TEST(StackOffsetForOverlap, ThreeMarksAreKeptApartIncrementally) {
+  const combiningMark::Bounds first{20, 40, 30, 50};
+  const combiningMark::Bounds second{20, 45, 30, 55};
+  const int secondDelta =
+      combiningMark::stackOffsetForOverlap(second, first, combiningMark::StackAxis::Y, -1);
+  combiningMark::Bounds positionedSecond = second;
+  positionedSecond.y0 += secondDelta;
+  positionedSecond.y1 += secondDelta;
+
+  const combiningMark::Bounds third{20, 35, 30, 45};
+  const int thirdDelta =
+      combiningMark::stackOffsetForOverlap(third, positionedSecond, combiningMark::StackAxis::Y, -1);
+  EXPECT_LT(thirdDelta, 0);
+  EXPECT_LT(third.y1 + thirdDelta, positionedSecond.y0);
+}
+
+TEST(StackOffsetForOverlap, NonOverlappingMarksRemainAtTheirOriginalPosition) {
+  const combiningMark::Bounds previous{20, 35, 30, 45};
+  const combiningMark::Bounds alreadySeparated{20, 20, 30, 30};
+  EXPECT_EQ(combiningMark::stackOffsetForOverlap(alreadySeparated, previous, combiningMark::StackAxis::Y, -1), 0);
+
+  const combiningMark::Bounds single{20, 20, 30, 30};
+  EXPECT_EQ(combiningMark::stackOffsetForOverlap(single, previous, combiningMark::StackAxis::Y, -1), 0);
+}
+
+TEST(StackOffsetForOverlap, HorizontalAndLatinGeometryAreUnaffected) {
+  const combiningMark::Bounds previous{20, 35, 30, 45};
+  const combiningMark::Bounds disjointX{31, 35, 41, 45};
+  EXPECT_EQ(combiningMark::stackOffsetForOverlap(disjointX, previous, combiningMark::StackAxis::Y, -1), 0);
 }

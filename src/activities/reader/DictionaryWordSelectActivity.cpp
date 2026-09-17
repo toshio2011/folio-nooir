@@ -42,6 +42,17 @@ void indexBuildYield(void*) { vTaskDelay(1); }
 
 }  // namespace
 
+bool DictionaryWordSelectActivity::openDictionary(Dictionary& target, const std::string& name) {
+  if (name.empty()) return false;
+
+  // Keep the first detailed diagnostic for a broken folder, but make later
+  // validation passes silent for the same folder during this activity.
+  const bool logErrors = !dictionaryOpenFailures.contains(name) && dictionaryOpenFailures.canTrack();
+  const bool opened = target.open(name.c_str(), logErrors);
+  if (!opened) dictionaryOpenFailures.remember(name);
+  return opened;
+}
+
 void DictionaryWordSelectActivity::onEnter() {
   Activity::onEnter();
   fontId = SETTINGS.getReaderFontId();
@@ -77,7 +88,7 @@ void DictionaryWordSelectActivity::extractWords() {
   for (const auto& element : page->elements) {
     if (element->getTag() != TAG_PageLine) continue;
     const auto* line = static_cast<const PageLine*>(element.get());
-    const auto& block = line->getBlock();
+    const auto* block = line->getBlock();
     if (!block || !block->valid()) continue;
 
     bool rowHasWords = false;
@@ -155,7 +166,12 @@ void DictionaryWordSelectActivity::performLookup() {
   popup = Popup::Busy;
   const std::string cleanedWord = Dictionary::cleanWord(words[selected].text);
   const std::string rememberedDictionary = DICTIONARY_HISTORY.preferredDictionary(cleanedWord);
-  const std::string requestedDictionary = rememberedDictionary.empty() ? SETTINGS.dictionaryName : rememberedDictionary;
+  const std::string requestedStoredName = rememberedDictionary.empty() ? SETTINGS.dictionaryName : rememberedDictionary;
+  std::string requestedDictionary = requestedStoredName;
+  std::string resolvedRequestedName;
+  if (DictionaryRegistry::resolveFolderName(requestedStoredName.c_str(), resolvedRequestedName)) {
+    requestedDictionary = std::move(resolvedRequestedName);
+  }
 
   // Keep one Dictionary instance warm across word selections, but reopen it
   // when history points at a different dictionary.  The qidx sidecar makes
@@ -163,7 +179,11 @@ void DictionaryWordSelectActivity::performLookup() {
   if (!dictOpenAttempted || activeDictionaryName != requestedDictionary) {
     dictOpenAttempted = true;
     activeDictionaryName = requestedDictionary;
-    dictOpenOk = dict.open(activeDictionaryName.c_str());
+    // Use the canonical name when the legacy settings/history value resolves
+    // uniquely, so a later fallback pass keys failure diagnostics to the same
+    // folder rather than to two spellings of it.
+    dictOpenOk = openDictionary(dict, requestedDictionary);
+    if (dictOpenOk && !dict.folderName().empty()) activeDictionaryName = dict.folderName();
   }
   const bool indexing = dictOpenOk && dict.needsIndex();
   popupMsg = indexing ? StrId::STR_DICT_INDEXING : StrId::STR_DICT_LOOKING_UP;
@@ -176,14 +196,10 @@ void DictionaryWordSelectActivity::performLookup() {
   std::string headword;
   bool found = ok && dict.lookup(words[selected].text, definition, headword);
 
-  // CrossInk-style multi-dictionary fallback: keep the configured dictionary
-  // as the fast path, then try the other discovered StarDict folders when the
-  // word is absent. This lets a compact primary dictionary cover common words
-  // while a specialist dictionary supplies names, technical terms, or a second
-  // language without changing the reader gesture.  Never build an alternate
-  // index on this reader path: a miss must stay bounded even when several
-  // large dictionaries are installed. Alternate indexes are intentionally
-  // not built here; they must be prepared separately before they participate.
+  // Multi-dictionary fallback: keep the configured dictionary as the fast
+  // path, then try every discovered StarDict folder until the first hit. Do
+  // not build alternate qidx sidecars here; an unindexed dictionary is still
+  // searchable on demand and should not be excluded from a useful fallback.
   if (!found) {
     if (!fallbackDictionaryCacheReady) {
       std::vector<DictionaryEntry> entries;
@@ -192,11 +208,8 @@ void DictionaryWordSelectActivity::performLookup() {
       readyFallbackDictionaryNames.reserve(entries.size());
       for (const auto& entry : entries) {
         Dictionary alternate;
-        if (!alternate.open(entry.name.c_str())) continue;
-        // Building a sidecar can take seconds (and used to happen once for
-        // every dictionary after a miss).  Only dictionaries with a ready,
-        // current sidecar participate in automatic fallback.
-        if (!alternate.needsIndex()) readyFallbackDictionaryNames.push_back(entry.name);
+        if (!openDictionary(alternate, entry.name)) continue;
+        readyFallbackDictionaryNames.push_back(alternate.folderName().empty() ? entry.name : alternate.folderName());
       }
       fallbackDictionaryCacheReady = true;
     }
@@ -206,14 +219,16 @@ void DictionaryWordSelectActivity::performLookup() {
       // removed from the card, open() below simply rejects its stale name.
       if (dictionaryName == activeDictionaryName) continue;
       Dictionary alternate;
-      if (!alternate.open(dictionaryName.c_str())) continue;
+      if (!openDictionary(alternate, dictionaryName)) continue;
       if (alternate.lookup(words[selected].text, definition, headword)) {
         found = true;
         // Keep the successful dictionary warm for the next word on this
         // page; otherwise activeDictionaryName would point at the alternate
         // while `dict` still held the failed primary instance.
+        const std::string resolvedDictionaryName =
+            alternate.folderName().empty() ? dictionaryName : alternate.folderName();
         dict = std::move(alternate);
-        activeDictionaryName = dictionaryName;
+        activeDictionaryName = resolvedDictionaryName;
         break;
       }
     }
@@ -221,10 +236,14 @@ void DictionaryWordSelectActivity::performLookup() {
 
   if (found) {
     DICTIONARY_HISTORY.remember(cleanedWord, activeDictionaryName);
+    DictionarySourceMatches matchingSources;
+    matchingSources.add(activeDictionaryName, headword, activeDictionaryName == requestedDictionary);
     popup = Popup::None;
     startActivityForResult(std::make_unique<DictionaryDefinitionActivity>(renderer, mappedInput, std::move(headword),
                                                                           std::move(definition), activeDictionaryName,
-                                                                          std::string(words[selected].text)),
+                                                                          std::string(words[selected].text),
+                                                                          std::move(matchingSources),
+                                                                          std::move(dictionaryOpenFailures), requestedDictionary),
                            [this](const ActivityResult&) { requestUpdate(); });
     return;
   }

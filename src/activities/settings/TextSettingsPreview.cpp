@@ -18,6 +18,9 @@
 
 namespace textsettings {
 
+PreviewLayout::PreviewLayout() = default;
+PreviewLayout::~PreviewLayout() = default;
+
 namespace {
 
 // Map the paragraph-alignment setting to the engine's CssTextAlign (BOOK_STYLE = justified)
@@ -53,7 +56,7 @@ void relayout(PreviewLayout& layout, const GfxRenderer& renderer, int fontId, in
   }
 
   parsed.layoutAndExtractLines(renderer, fontId, static_cast<uint16_t>(textWidth),
-                               [&layout](std::shared_ptr<TextBlock> line) { layout.lines.push_back(std::move(line)); });
+                               [&layout](std::unique_ptr<TextBlock> line) { layout.lines.push_back(std::move(line)); });
 }
 
 }  // namespace

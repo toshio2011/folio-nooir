@@ -13,6 +13,7 @@
 #include "Epub/parsers/TocNavAmpersandSanitizer.h"
 #include "Epub/parsers/TocNavParser.h"
 #include "Epub/parsers/TocNcxParser.h"
+#include "../../src/util/EpubDiagnostics.h"
 
 namespace {
 // Retrieve All only needs package metadata. Reject pathological metadata
@@ -477,6 +478,7 @@ bool Epub::loadCachedMetadataOnly() {
 
 // load in the meta data for the epub file
 bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
+  EpubDiagnostics::Scope diagnostics("epub_load_start", "epub_load_end");
   LOG_DBG("EBP", "Loading ePub: %s", filepath.c_str());
 
   metadataOnly = {};
@@ -936,7 +938,10 @@ int Epub::getSpineItemsCount() const {
   return bookMetadataCache->getSpineCount();
 }
 
-size_t Epub::getCumulativeSpineItemSize(const int spineIndex) const { return getSpineItem(spineIndex).cumulativeSize; }
+size_t Epub::getCumulativeSpineItemSize(const int spineIndex) const {
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) return 0;
+  return bookMetadataCache->getCumulativeSize(spineIndex);
+}
 
 BookMetadataCache::SpineEntry Epub::getSpineItem(const int spineIndex) const {
   if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {

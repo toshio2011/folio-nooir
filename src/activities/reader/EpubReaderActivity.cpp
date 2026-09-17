@@ -48,6 +48,7 @@
 #include "fontIds.h"
 #include "util/BookmarkUtil.h"
 #include "util/ClipFile.h"
+#include "util/EpubDiagnostics.h"
 #include "util/ScreenshotUtil.h"
 
 namespace {
@@ -117,7 +118,7 @@ void collectHighlightWords(const Page& page, GfxRenderer& renderer, const int fo
   for (const auto& element : page.elements) {
     if (element->getTag() != TAG_PageLine) continue;
     const auto* line = static_cast<const PageLine*>(element.get());
-    const auto& block = line->getBlock();
+    const auto* block = line->getBlock();
     if (!block || !block->valid()) continue;
 
     bool rowHasWords = false;
@@ -389,6 +390,7 @@ uint8_t highlightStyleMask(const std::vector<HighlightWord>& words, const int fi
 }  // namespace
 
 void EpubReaderActivity::onEnter() {
+  EpubDiagnostics::Scope diagnostics("reader_enter_start", "reader_enter_end");
   Activity::onEnter();
   mappedInput.setReaderMappingMode(true);
   readingSessionStartedMs = millis();
@@ -492,6 +494,7 @@ void EpubReaderActivity::requestPageRender(const bool immediate) {
 }
 
 void EpubReaderActivity::prepareStablePages() {
+  EpubDiagnostics::Scope diagnostics("stable_pages_prepare_start", "stable_pages_prepare_end");
   stablePageIndex = {};
   stablePagesReady = false;
   if (!epub || SETTINGS.pageNumberMode != CrossPointSettings::STABLE_PAGES) return;
@@ -1887,6 +1890,10 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn) {
   const int newPage = section ? section->currentPage : nextPageNumber;
   if (oldSpineIndex != currentSpineIndex || oldPage != newPage) {
     if (sessionPagesTurned < UINT32_MAX) ++sessionPagesTurned;
+    if (oldSpineIndex != currentSpineIndex) {
+      EpubDiagnostics::record("chapter_transition", currentSpineIndex, newPage, 0, 0, 0, 0,
+                              isForwardTurn ? 1 : 2);
+    }
   }
   lastPageTurnTime = millis();
   requestPageRender();
@@ -1894,6 +1901,8 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn) {
 
 // TODO: Failure handling
 void EpubReaderActivity::render(RenderLock&& lock) {
+  EpubDiagnostics::Scope renderDiagnostics("render_entry", "render_exit", currentSpineIndex,
+                                           section ? section->currentPage : -1);
   renderer.setDarkMode(SETTINGS.readerDarkMode != 0);
   renderer.setRenderMode(GfxRenderer::BW);
   if (!epub) {
@@ -2360,6 +2369,10 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
                                         const int orientedMarginRight, const int orientedMarginBottom,
                                         const int orientedMarginLeft) {
   const auto t0 = millis();
+  const int diagnosticSpine = currentSpineIndex;
+  const int diagnosticPage = section ? section->currentPage : -1;
+  EpubDiagnostics::Scope renderContentsDiagnostics("render_contents_entry", "render_cleanup", diagnosticSpine,
+                                                   diagnosticPage);
   const int fontId = SETTINGS.getReaderFontId();
   const bool guideDots = SETTINGS.guideDots != 0;
 
@@ -2367,8 +2380,13 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   // the BW double-refresh and every grayscale band pass); release it on every
   // exit so nothing stays resident across page turns.
   struct PxcSlotGuard {
-    ~PxcSlotGuard() { ImageBlock::releaseRenderCache(); }
-  } pxcSlotGuard;
+    int spine;
+    int page;
+    ~PxcSlotGuard() {
+      ImageBlock::releaseRenderCache();
+      EpubDiagnostics::record("image_cache_release", spine, page);
+    }
+  } pxcSlotGuard{diagnosticSpine, diagnosticPage};
 
   // Font prewarm: scan pass accumulates text, then prewarm, then real render
   auto* fcm = renderer.getFontCacheManager();
@@ -2380,14 +2398,27 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   // beginning the actual BW/gray render.  Cached images are skipped, so normal
   // page turns retain the fast path.
   if (page->hasImagesNeedingDecode()) {
+    unsigned long imageCount = 0;
+    for (const auto& element : page->elements) {
+      if (element->getTag() == TAG_PageImage) ++imageCount;
+    }
+    EpubDiagnostics::record("image_warmup_start", diagnosticSpine, diagnosticPage, 0, 0, imageCount);
+    const unsigned long imageWarmupStart = millis();
     longOperationIndicator.stage("decoding");
     page->warmImageCaches(renderer, orientedMarginLeft, orientedMarginTop);
     renderer.clearScreen();
+    EpubDiagnostics::record("image_warmup_end", diagnosticSpine, diagnosticPage, millis() - imageWarmupStart, 0,
+                            imageCount);
   }
 
+  const unsigned long fontScanStart = millis();
+  EpubDiagnostics::record("font_scan_start", diagnosticSpine, diagnosticPage);
   auto scope = fcm->createPrewarmScope();
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop, guideDots);  // scan pass
+  EpubDiagnostics::record("font_scan_end", diagnosticSpine, diagnosticPage, millis() - fontScanStart);
+  const unsigned long fontPrewarmStart = millis();
   scope.endScanAndPrewarm();
+  EpubDiagnostics::record("font_prewarm_end", diagnosticSpine, diagnosticPage, millis() - fontPrewarmStart);
   const auto tPrewarm = millis();
 
   const bool pageHasImages = page->hasImages();
@@ -2501,8 +2532,33 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       return ESP.getFreeHeap() >= planeBytes + PLANE_BUF_HEADROOM &&
              ESP.getMaxAllocHeap() >= planeBytes + PLANE_BUF_MAX_ALLOC_RESERVE;
     };
+#if NOOIR_EPUB_DIAGNOSTICS
+    const bool planeHeapFits = planeBufFits();
+    const bool lsbPlaneEligible = overlapRefresh && planeHeapFits;
+    // Flags: bit 0 async/headroom overlap policy, bit 1 heap gate, bit 2 image
+    // page, bit 3 text AA, bit 4 renderer reports async support. This keeps a
+    // policy skip distinct from an eligible nothrow allocation failure.
+    const unsigned long planeGateFlags = (overlapRefresh ? 1UL : 0UL) | (planeHeapFits ? 2UL : 0UL) |
+                                         (pageHasImages ? 4UL : 0UL) | (needsTextGrayscale ? 8UL : 0UL) |
+                                         (renderer.supportsAsyncRefresh() ? 16UL : 0UL);
+    EpubDiagnostics::record("grayscale_plane_gate", diagnosticSpine, diagnosticPage, 0, planeBytes,
+                            planeGateFlags, 0, lsbPlaneEligible ? 1 : 0);
+#endif
     auto lsbPlaneBuf = (overlapRefresh && planeBufFits()) ? makeUniqueNoThrow<uint8_t[]>(planeBytes) : nullptr;
+#if NOOIR_EPUB_DIAGNOSTICS
+    EpubDiagnostics::record("grayscale_plane_alloc", diagnosticSpine, diagnosticPage, 0, planeBytes, 1, planeBytes,
+                            lsbPlaneBuf ? 1 : (lsbPlaneEligible ? -1 : 0));
+#endif
+#if NOOIR_EPUB_DIAGNOSTICS
+    const bool msbPlaneEligible = lsbPlaneBuf && planeBufFits();
+#endif
     auto msbPlaneBuf = (lsbPlaneBuf && planeBufFits()) ? makeUniqueNoThrow<uint8_t[]>(planeBytes) : nullptr;
+#if NOOIR_EPUB_DIAGNOSTICS
+    EpubDiagnostics::record("grayscale_plane_alloc", diagnosticSpine, diagnosticPage, 0, planeBytes, 1, planeBytes,
+                            msbPlaneBuf ? 1 : (msbPlaneEligible ? -1 : 0));
+#endif
+    const bool hadLsbPlane = static_cast<bool>(lsbPlaneBuf);
+    const bool hadMsbPlane = static_cast<bool>(msbPlaneBuf);
 
     if (lsbPlaneBuf) {
       renderPlaneToBuffer(true, lsbPlaneBuf.get());
@@ -2539,7 +2595,10 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       // Per-strip scratch tier: blocking panels (X3) and the OOM fallback.
       // The strip writes below need the panel idle, so wait out any pending
       // async refresh first (no-op on blocking panels).
-      auto scratch = makeUniqueNoThrow<uint8_t[]>(static_cast<size_t>(gwBytes) * STRIP_ROWS);
+      const size_t scratchBytes = static_cast<size_t>(gwBytes) * STRIP_ROWS;
+      auto scratch = makeUniqueNoThrow<uint8_t[]>(scratchBytes);
+      EpubDiagnostics::record("grayscale_scratch_alloc", diagnosticSpine, diagnosticPage, 0, scratchBytes, 1,
+                              scratchBytes, scratch ? 1 : 0);
       renderer.waitRefreshComplete();
       if (!scratch) {
         LOG_ERR("ERS", "OOM: grayscale strip scratch (%d bytes); skipping AA this page", gwBytes * STRIP_ROWS);
@@ -2592,7 +2651,14 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
                 tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tGrayLsb - tDisplay, tGrayMsb - tGrayLsb,
                 tGrayDisplay - tGrayMsb, tCleanup - tGrayDisplay, tEnd - t0);
       }
+      if (scratch) {
+        EpubDiagnostics::record("grayscale_scratch_free", diagnosticSpine, diagnosticPage, 0, scratchBytes, 1,
+                                scratchBytes, 1);
+      }
     }
+    EpubDiagnostics::record("grayscale_plane_free", diagnosticSpine, diagnosticPage, 0, planeBytes,
+                            (hadLsbPlane ? 1u : 0u) + (hadMsbPlane ? 1u : 0u),
+                            planeBytes * ((hadLsbPlane ? 1u : 0u) + (hadMsbPlane ? 1u : 0u)), 1);
   } else {
     // Fallback path for a controller without strip support. grayscale rendering
     // TODO: Only do this if font supports it

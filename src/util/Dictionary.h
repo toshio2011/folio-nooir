@@ -26,8 +26,9 @@ class Dictionary {
 
   // Resolve the dictionary folder and validate its files. Rejects
   // dictionaries with 64-bit index offsets (idxoffsetbits=64 in .ifo).
-  bool open(const char* folderName);
+  bool open(const char* folderName, bool logErrors = true);
   bool isOpen() const { return !basePath.empty(); }
+  const std::string& folderName() const { return resolvedFolderName; }
 
   // True when the .qidx sidecar is missing or stale — call buildIndex() first
   // so the UI can show an "Indexing…" message for the slow first pass.
@@ -42,6 +43,10 @@ class Dictionary {
 
   // True when a cancelled Settings build has a valid checkpoint to resume.
   bool hasIndexResume();
+
+  // Find a direct or stemmed entry without reading its definition body. This
+  // is used by the source picker so alternate matches remain metadata-only.
+  bool hasEntry(const char* word, std::string& matchedHeadwordOut);
 
   // Clean the word, look it up, and on a miss retry mini stem variants
   // (-'s/-s/-es/-ies/-ed/-ing). On a hit fills the definition text (capped at
@@ -65,6 +70,7 @@ class Dictionary {
   static int readWordInto(HalFile& file, char* buf, size_t bufSize);
 
   std::string basePath;  // "/dictionaries/<folder>/<stem>", empty when not open
+  std::string resolvedFolderName;
   bool hasPlainDict = false;
 
   // Shared scan buffer: lookups are single-threaded and this avoids a

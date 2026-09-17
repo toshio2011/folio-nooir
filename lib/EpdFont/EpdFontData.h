@@ -35,6 +35,19 @@ constexpr float toFloat(int32_t fp) { return fp / static_cast<float>(1 << FRAC_B
 namespace combiningMark {
 
 constexpr int MIN_GAP_PX = 1;
+constexpr uint8_t MAX_STACKED_MARKS = 4;
+
+/// Inclusive bitmap bounds used by the renderer's fixed-size combining-mark
+/// collision check.  This is deliberately metric-only: it does not retain
+/// glyphs, text, or any render-time state.
+struct Bounds {
+  int x0;
+  int y0;
+  int x1;
+  int y1;
+};
+
+enum class StackAxis : uint8_t { X, Y };
 
 /// Placement of a mark relative to its base glyph.  The default heuristic —
 /// centered over the base, raised clear of its top — suits Latin diacritics
@@ -104,6 +117,41 @@ constexpr int raiseAboveBase(const Anchor anchor, const int markTop, const int m
   if (markTop - markHeight <= 0) return 0;
   const int gap = markTop - markHeight - baseTop;
   return (gap < MIN_GAP_PX) ? (MIN_GAP_PX - gap) : 0;
+}
+
+/// Return the cursor displacement needed to move `candidate` away from the
+/// preceding mark along the requested axis.  A zero result means the bitmap
+/// bounds are disjoint (or invalid), so the existing mark-to-base position is
+/// retained.  `direction` is -1 for above/leading-side stacking and +1 for
+/// below/trailing-side stacking.  The extra pixel leaves a small clear gap.
+constexpr int stackOffsetForOverlap(const Bounds candidate, const Bounds previous, const StackAxis axis,
+                                    const int direction, const int gap = MIN_GAP_PX) {
+  if (direction == 0 || candidate.x0 > candidate.x1 || candidate.y0 > candidate.y1 || previous.x0 > previous.x1 ||
+      previous.y0 > previous.y1) {
+    return 0;
+  }
+
+  const bool overlapsOtherAxis = axis == StackAxis::X
+                                     ? candidate.y0 <= previous.y1 && candidate.y1 >= previous.y0
+                                     : candidate.x0 <= previous.x1 && candidate.x1 >= previous.x0;
+  if (!overlapsOtherAxis) return 0;
+
+  if (axis == StackAxis::X) {
+    if (direction < 0 && candidate.x1 >= previous.x0 && candidate.x0 <= previous.x1) {
+      return -(candidate.x1 - previous.x0 + 1 + gap);
+    }
+    if (direction > 0 && candidate.x0 <= previous.x1 && candidate.x1 >= previous.x0) {
+      return previous.x1 - candidate.x0 + 1 + gap;
+    }
+  } else {
+    if (direction < 0 && candidate.y1 >= previous.y0 && candidate.y0 <= previous.y1) {
+      return -(candidate.y1 - previous.y0 + 1 + gap);
+    }
+    if (direction > 0 && candidate.y0 <= previous.y1 && candidate.y1 >= previous.y0) {
+      return previous.y1 - candidate.y0 + 1 + gap;
+    }
+  }
+  return 0;
 }
 
 }  // namespace combiningMark

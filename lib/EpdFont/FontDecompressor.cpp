@@ -6,6 +6,8 @@
 
 #include <cstdlib>
 
+#include "../../src/util/EpubDiagnostics.h"
+
 FontDecompressor::~FontDecompressor() { deinit(); }
 
 bool FontDecompressor::init() {
@@ -25,6 +27,8 @@ void FontDecompressor::clearCache() {
 
 void FontDecompressor::freePageBuffer() {
   for (uint8_t s = 0; s < pageSlotCount; s++) {
+    const uint32_t glyphBytes = pageSlots[s].glyphCount * sizeof(PageGlyphEntry);
+    EpubDiagnostics::record("fdc_page_buffer_free", -1, -1, 0, 0, pageSlots[s].glyphCount, glyphBytes, 1);
     free(pageSlots[s].buffer);
     free(pageSlots[s].glyphs);
     pageSlots[s] = {};
@@ -33,12 +37,15 @@ void FontDecompressor::freePageBuffer() {
 }
 
 void FontDecompressor::freeHotGroup() {
+  EpubDiagnostics::record("fdc_hot_group_free", -1, -1, 0, hotGroupCapacity, 0, hotGroupCapacity, hotGroup ? 1 : 0);
   free(hotGroup);
   hotGroup = nullptr;
   hotGroupCapacity = 0;
   hotGroupFont = nullptr;
   hotGroupIndex = UINT16_MAX;
   free(hotGlyphBuf);
+  EpubDiagnostics::record("fdc_hot_glyph_free", -1, -1, 0, hotGlyphBufCapacity, 0, hotGlyphBufCapacity,
+                          hotGlyphBuf ? 1 : 0);
   hotGlyphBuf = nullptr;
   hotGlyphBufCapacity = 0;
 }
@@ -249,6 +256,7 @@ int32_t FontDecompressor::findGlyphIndex(const EpdFontData* fontData, uint32_t c
 }
 
 int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8Text) {
+  EpubDiagnostics::Scope diagnostics("fdc_prewarm_start", "fdc_prewarm_end");
   if (!fontData || !fontData->groups || !utf8Text) return 0;
 
   // Allocate the next available slot (caller must call freePageBuffer/clearCache to reset)
@@ -360,6 +368,10 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
   // Step 3: Allocate page buffer and lookup table for this slot
   slot.buffer = static_cast<uint8_t*>(malloc(totalBytes));
   slot.glyphs = static_cast<PageGlyphEntry*>(malloc(glyphCount * sizeof(PageGlyphEntry)));
+  EpubDiagnostics::record("fdc_page_buffer_alloc", -1, -1, 0, totalBytes, glyphCount, totalBytes,
+                          slot.buffer ? 1 : 0);
+  EpubDiagnostics::record("fdc_page_glyph_table_alloc", -1, -1, 0, glyphCount * sizeof(PageGlyphEntry), glyphCount,
+                          glyphCount * sizeof(PageGlyphEntry), slot.glyphs ? 1 : 0);
   if (!slot.buffer || !slot.glyphs) {
     LOG_ERR("FDC", "Failed to allocate page buffer (%u bytes, %u glyphs)", totalBytes, glyphCount);
     free(slot.buffer);
@@ -469,6 +481,8 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
     const EpdFontGroup& group = fontData->groups[groupIdx];
 
     auto* tempBuf = static_cast<uint8_t*>(malloc(group.uncompressedSize));
+    EpubDiagnostics::record("fdc_group_buffer_alloc", -1, -1, 0, group.uncompressedSize, 1,
+                            group.uncompressedSize, tempBuf ? 1 : 0);
     if (!tempBuf) {
       LOG_ERR("FDC", "Failed to allocate temp buffer (%u bytes) for group %u", group.uncompressedSize, groupIdx);
       missed++;
@@ -480,6 +494,8 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
 
     if (!decompressGroup(fontData, groupIdx, tempBuf, group.uncompressedSize)) {
       free(tempBuf);
+      EpubDiagnostics::record("fdc_group_buffer_free", -1, -1, 0, group.uncompressedSize, 1,
+                              group.uncompressedSize, 1);
       missed++;
       continue;
     }
@@ -497,6 +513,8 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
     }
 
     free(tempBuf);
+    EpubDiagnostics::record("fdc_group_buffer_free", -1, -1, 0, group.uncompressedSize, 1,
+                            group.uncompressedSize, 1);
   }
 
   LOG_DBG("FDC", "Prewarm: %u glyphs in %u bytes from %u groups (%d missed)", glyphCount, writeOffset, groupCount,

@@ -8,6 +8,7 @@
 
 #include "activities/Activity.h"
 #include "util/Dictionary.h"
+#include "util/DictionaryResultModel.h"
 
 // Word selection over the current reader page: Left/Right step through words
 // in reading order, Up/Down jump rows, Confirm looks the word up and opens
@@ -45,6 +46,7 @@ class DictionaryWordSelectActivity final : public Activity {
   int wordAt(int x, int y) const;
   void moveVertical(int direction);
   void performLookup();
+  bool openDictionary(Dictionary& target, const std::string& name);
   bool drawHighlightWithSnapshot();
   void drawHints() const;
 
@@ -62,11 +64,12 @@ class DictionaryWordSelectActivity final : public Activity {
   bool dictOpenAttempted = false;
   bool dictOpenOk = false;
   std::string activeDictionaryName;
-  // Filled only after the first primary-dictionary miss. Keeping the ready
-  // names avoids rescanning both dictionary roots (and rechecking every
-  // sidecar) for every later miss on the same page.
+  // Filled only after the first primary-dictionary miss. Keeping the
+  // discovered names avoids rescanning both dictionary roots for every later
+  // miss on the same page.
   std::vector<std::string> readyFallbackDictionaryNames;
   bool fallbackDictionaryCacheReady = false;
+  DictionaryOpenFailureLedger dictionaryOpenFailures;
 
   Popup popup = Popup::None;
   StrId popupMsg = StrId::STR_DICT_NOT_FOUND;

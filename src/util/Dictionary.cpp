@@ -116,29 +116,32 @@ bool ifoDeclares64BitOffsets(const std::string& ifoPath) {
 
 }  // namespace
 
-bool Dictionary::open(const char* folderName) {
+bool Dictionary::open(const char* folderName, const bool logErrors) {
   basePath.clear();
+  resolvedFolderName.clear();
   std::string resolved;
-  if (!DictionaryRegistry::resolveBasePath(folderName, resolved)) {
-    LOG_ERR("DICT", "No dictionary found in folder '%s'", folderName ? folderName : "");
+  std::string resolvedName;
+  if (!DictionaryRegistry::resolveBasePath(folderName, resolved, &resolvedName)) {
+    if (logErrors) LOG_ERR("DICT", "No dictionary found in folder '%s'", folderName ? folderName : "");
     return false;
   }
 
   if (!Storage.exists((resolved + ".idx").c_str())) {
-    LOG_ERR("DICT", "%s.idx missing (compressed .idx.gz is not supported)", resolved.c_str());
+    if (logErrors) LOG_ERR("DICT", "%s.idx missing (compressed .idx.gz is not supported)", resolved.c_str());
     return false;
   }
   hasPlainDict = Storage.exists((resolved + ".dict").c_str());
   if (!hasPlainDict && !Storage.exists((resolved + ".dict.dz").c_str())) {
-    LOG_ERR("DICT", "%s has no .dict or .dict.dz", resolved.c_str());
+    if (logErrors) LOG_ERR("DICT", "%s has no .dict or .dict.dz", resolved.c_str());
     return false;
   }
   if (ifoDeclares64BitOffsets(resolved + ".ifo")) {
-    LOG_ERR("DICT", "%s uses 64-bit index offsets (unsupported)", resolved.c_str());
+    if (logErrors) LOG_ERR("DICT", "%s uses 64-bit index offsets (unsupported)", resolved.c_str());
     return false;
   }
 
   basePath = std::move(resolved);
+  resolvedFolderName = std::move(resolvedName);
   return true;
 }
 
@@ -173,6 +176,22 @@ bool Dictionary::hasIndexResume() {
   const size_t expectedPartSize = QIDX_HEADER_BYTES + static_cast<size_t>(state.sampleCount) * sizeof(uint32_t);
   return state.valid && state.idxFileSize == idxSize && state.scanPos <= idxSize && state.sampleCount > 0 &&
          partFile.fileSize() >= expectedPartSize;
+}
+
+bool Dictionary::hasEntry(const char* word, std::string& matchedHeadwordOut) {
+  const std::string cleaned = cleanWord(word);
+  if (cleaned.empty() || !isOpen()) return false;
+
+  DictLocation location = locate(cleaned.c_str(), &matchedHeadwordOut);
+  if (location.found) return true;
+
+  std::vector<std::string> variants;
+  stemVariants(cleaned, variants);
+  for (const auto& variant : variants) {
+    location = locate(variant.c_str(), &matchedHeadwordOut);
+    if (location.found) return true;
+  }
+  return false;
 }
 
 bool Dictionary::buildIndex(void (*yieldFn)(void*), void* ctx, const IndexProgressFn progressFn) {

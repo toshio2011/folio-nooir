@@ -33,10 +33,11 @@ std::string KOReaderDocumentId::calculateFromFilename(const std::string& filePat
 
 size_t KOReaderDocumentId::getOffset(int i) {
   // Offset = 1024 << (2*i)
-  // For i = -1: KOReader uses a value of 0
+  // For i = -1: Lua's bit.lshift performs a right shift by two, yielding 256.
+  // This first sample is part of KOReader's compatibility algorithm.
   // For i >= 0: 1024 << (2*i)
   if (i < 0) {
-    return 0;
+    return CHUNK_SIZE >> 2;
   }
   return CHUNK_SIZE << (2 * i);
 }

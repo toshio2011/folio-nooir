@@ -9,6 +9,7 @@
 #include <string>
 
 #include "ImageDiagnostics.h"
+#include "../../../../src/util/EpubDiagnostics.h"
 
 // Streaming cache writer for 2-bit pixels (4 levels). Packs 4 pixels per byte,
 // MSB first.
@@ -97,6 +98,8 @@ struct PixelCache {
 
     const size_t bufSize = (size_t)(bandRows + 1) * bytesPerRow;  // +1 spare zero row
     buffer = (uint8_t*)malloc(bufSize);
+    EpubDiagnostics::record("pixelcache_decode_buffer_alloc", -1, -1, 0, bufSize,
+                            static_cast<unsigned long>(bandRows + 1), bufSize, buffer ? 1 : 0);
     if (!buffer) {
       LOG_ERR("IMG", "OOM cache band: %u bytes", (unsigned)bufSize);
       return false;
@@ -203,6 +206,10 @@ struct PixelCache {
     if (buffer) {
       free(buffer);
       buffer = nullptr;
+      EpubDiagnostics::record("pixelcache_decode_buffer_free", -1, -1, 0,
+                              static_cast<size_t>(bandRows + 1) * bytesPerRow,
+                              static_cast<unsigned long>(bandRows + 1),
+                              static_cast<size_t>(bandRows + 1) * bytesPerRow, 1);
     }
   }
 };

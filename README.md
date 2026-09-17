@@ -418,7 +418,7 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Point-based margin controls and line-spacing controls with fine percentage steps.
 - UI scale controls for menus and reader controls; bookshelf geometry remains fixed.
 - Reader dark mode.
-- Multi-dictionary lookup with dictionary history and preferred-dictionary reuse; the selected dictionary may build its index on first use, while alternate dictionaries are searched only when their sidecar is already current so a miss never blocks on several index builds. Definition pages show the source dictionary, allow switching, and can search all prepared dictionaries with source-labelled results.
+- Multi-dictionary lookup with dictionary history and preferred-dictionary reuse; the selected dictionary may build its index on first use, while alternate dictionaries are searched only when their sidecar is already current so a miss never blocks on several index builds. Definition pages show whether the current source is preferred or a fallback, and can switch among up to six prepared sources that contain the word without concatenating their definitions.
 - Reader settings include a one-dictionary-at-a-time **Prepare Dictionary Indexes** screen so larger alternate dictionaries can be prepared before use, with percentage progress, Back-to-cancel, and resumable checkpoints; dictionaries with no installed set show setup guidance instead of a blank screen.
 - Text clipping/highlighting: select a continuous word range (with held-button navigation), save clips, and review saved clips from the reader.
 - Saved clippings are rendered back as continuous highlights with selectable black, dark-gray, light-gray, or white highlight backgrounds.
@@ -455,12 +455,13 @@ rebuildable cache and does not change the dictionary source files.
    Prepare Dictionary Indexes**. Select a dictionary marked **Needs index** to
    see a percentage progress bar. Press **Back** to cancel; the partial index is
    saved as **Paused**, and selecting it again resumes from its checkpoint.
-5. While viewing a definition, the source dictionary is shown below the
-   headword. Open the dictionary action to switch to another prepared source or
-   choose **Search all prepared dictionaries** for source-labelled combined
-   results. Only current prepared sidecars participate in alternate/search-all
-   lookups, so a missing word cannot trigger several long scans or freeze the
-   reader.
+5. While viewing a definition, the source dictionary and whether it is the
+   preferred or fallback result are shown below the headword. Open the
+   dictionary action to discover and switch among prepared sources containing
+   the word. Up to six matching sources are shown; only the selected source's
+   definition is loaded at a time. Only current prepared sidecars participate
+   in alternate lookups, so a missing word cannot trigger several long scans or
+   freeze the reader.
 
 If no valid dictionary folders are found, the index screen explains that a
 dictionary must be added before indexes can be prepared. If a dictionary is

@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "StringUtils.h"
+#include "util/DictionaryNameResolver.h"
 
 namespace DictionaryRegistry {
 namespace {
@@ -94,17 +95,49 @@ void discover(std::vector<DictionaryEntry>& out) {
   });
 }
 
-bool resolveBasePath(const char* folderName, std::string& basePathOut) {
+bool resolveFolderName(const char* folderName, std::string& resolvedNameOut) {
+  resolvedNameOut.clear();
   if (!folderName || folderName[0] == '\0') return false;
   // folderName is persisted in the settings JSON: reject separators and dot
   // prefixes so a crafted value cannot escape the dictionary roots.
   if (folderName[0] == '.' || strpbrk(folderName, "/\\") != nullptr) return false;
 
+  std::vector<DictionaryEntry> entries;
+  discover(entries);
+
+  std::vector<std::string> installedNames;
+  installedNames.reserve(entries.size());
+  for (const auto& entry : entries) installedNames.push_back(entry.name);
+  return resolveUniqueDictionaryName(installedNames, folderName, resolvedNameOut);
+}
+
+bool resolveBasePath(const char* folderName, std::string& basePathOut, std::string* resolvedNameOut) {
+  basePathOut.clear();
+  if (!folderName || folderName[0] == '\0' || folderName[0] == '.' || strpbrk(folderName, "/\\") != nullptr) {
+    return false;
+  }
+
+  // Keep the common canonical-name path as cheap as it was before legacy
+  // prefix compatibility was added. Only a value that does not name a usable
+  // folder directly needs the full registry discovery pass below.
   for (const char* dictRoot : DICT_ROOTS) {
     std::string folderPath = std::string(dictRoot) + "/" + folderName;
     std::string stem;
     if (!findStem(folderPath.c_str(), stem)) continue;
     basePathOut = folderPath + "/" + stem;
+    if (resolvedNameOut) *resolvedNameOut = folderName;
+    return true;
+  }
+
+  std::string resolvedName;
+  if (!resolveFolderName(folderName, resolvedName)) return false;
+
+  for (const char* dictRoot : DICT_ROOTS) {
+    std::string folderPath = std::string(dictRoot) + "/" + resolvedName;
+    std::string stem;
+    if (!findStem(folderPath.c_str(), stem)) continue;
+    basePathOut = folderPath + "/" + stem;
+    if (resolvedNameOut) *resolvedNameOut = resolvedName;
     return true;
   }
   return false;

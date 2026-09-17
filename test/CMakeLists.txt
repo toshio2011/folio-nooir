@@ -28,12 +28,17 @@ add_library(crosspoint_test_common INTERFACE)
 target_include_directories(crosspoint_test_common INTERFACE
   ${REPO_ROOT}
   ${REPO_ROOT}/lib
+  ${REPO_ROOT}/src
 )
-target_compile_options(crosspoint_test_common INTERFACE
-  -Wall
-  -Wextra
-  -pedantic
-)
+if(MSVC)
+  target_compile_options(crosspoint_test_common INTERFACE /W4)
+else()
+  target_compile_options(crosspoint_test_common INTERFACE
+    -Wall
+    -Wextra
+    -pedantic
+  )
+endif()
 
 enable_testing()
 include(GoogleTest)
@@ -51,3 +56,7 @@ add_subdirectory(arabic_foundation)
 add_subdirectory(combining_marks)
 add_subdirectory(gfx_line_clipping)
 add_subdirectory(carousel_geometry)
+add_subdirectory(ligature_guard)
+add_subdirectory(dictionary_sources)
+add_subdirectory(spine_shelf)
+add_subdirectory(book_format)

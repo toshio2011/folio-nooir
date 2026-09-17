@@ -12,6 +12,7 @@
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 #include "util/CoverStackGeometry.h"
+#include "util/SpineShelfPlanner.h"
 #include "components/OptionPopup.h"
 
 class RecentBooksActivity final : public Activity {
@@ -167,6 +168,7 @@ class RecentBooksActivity final : public Activity {
   void writeSnapshot();
   uint8_t activeBookLayout() const;
   bool usesCarouselLayout() const;
+  bool usesSpineLayout() const;
   bool usesThreeCoverGrid() const;
   bool usesFourByTwoGrid() const;
   int activePageItems() const;

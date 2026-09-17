@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "BidiUtils.h"
@@ -16,6 +17,29 @@ std::string encode(std::initializer_list<uint32_t> codepoints) {
   std::string text;
   for (const uint32_t cp : codepoints) utf8AppendCodepoint(cp, text);
   return text;
+}
+
+std::vector<uint32_t> configuredArabicCombiningMarks() {
+  std::vector<uint32_t> codepoints;
+  const auto appendRange = [&codepoints](const uint32_t first, const uint32_t last) {
+    for (uint32_t cp = first; cp <= last; ++cp) codepoints.push_back(cp);
+  };
+
+  // These are the mark ranges actually emitted by the bundled Arabic fallback
+  // fonts. Keep the list explicit so a generated-font coverage regression fails
+  // at the codepoint that disappeared, rather than only failing visually later.
+  appendRange(0x0610, 0x061A);  // Arabic signs / small marks
+  appendRange(0x064B, 0x065F);  // Arabic harakat
+  appendRange(0x0670, 0x0670);  // superscript alef
+  appendRange(0x06D6, 0x06DC);  // Quranic annotation marks
+  appendRange(0x06DF, 0x06E4);
+  appendRange(0x06E7, 0x06E8);
+  appendRange(0x06EA, 0x06ED);
+  appendRange(0x0898, 0x089F);  // Arabic Extended-B marks present in the font
+  appendRange(0x08CA, 0x08E1);  // Arabic Extended-A marks
+  appendRange(0x08E3, 0x08FF);
+  appendRange(0x10EFD, 0x10EFF);  // Arabic Extended-C marks present in the font
+  return codepoints;
 }
 
 std::vector<uint32_t> decode(const std::string& text) {
@@ -167,6 +191,83 @@ TEST(ArabicFoundation, GeneratedFallbackKeepsCombiningMarksZeroAdvanceAndAddsVer
   EXPECT_EQ(vocalizedWidth, baseWidth);
   EXPECT_GE(vocalizedHeight, baseHeight);
   EXPECT_GT(vocalizedHeight, 0);
+}
+
+TEST(ArabicFoundation, ConfiguredArabicFontCoversBundledHarakatAndQuranicMarks) {
+  EpdFont fallback(&arabic_14_regular);
+
+  for (const uint32_t cp : configuredArabicCombiningMarks()) {
+    SCOPED_TRACE(::testing::Message() << "U+" << std::hex << cp);
+    EXPECT_TRUE(utf8IsTextMark(cp));
+    EXPECT_TRUE(fallback.hasCodepoint(cp));
+    const EpdGlyph* glyph = fallback.getGlyph(cp);
+    ASSERT_NE(glyph, nullptr);
+    EXPECT_GT(glyph->dataLength, 0);
+    EXPECT_EQ(glyph->advanceX, 0);
+  }
+}
+
+TEST(ArabicFoundation, QuranicMarkCodepointsSurviveNfcBidiAndStacking) {
+  // The input contains ordinary harakat, a Quranic annotation, and an
+  // Extended-A mark on one Arabic base. NFC must not rewrite these marks, and
+  // the bidi/shaping funnel must emit the shaped base followed by every mark
+  // so the renderer can overlay them in authored order.
+  const std::string logical = encode({0x0628, 0x0651, 0x064E, 0x06D6, 0x06DF, 0x08CA});
+  EXPECT_EQ(utf8ComposeNfc(logical), logical);
+
+  std::string visual;
+  ASSERT_TRUE(BidiUtils::applyBidiVisual(logical.c_str(), visual, /*paragraphLevel=*/1));
+  EXPECT_EQ(decode(visual), (std::vector<uint32_t>{0xFE8F, 0x0651, 0x064E, 0x06D6, 0x06DF, 0x08CA}));
+}
+
+TEST(ArabicFoundation, TanwinAndConsecutiveHarakatSurviveBidiAndHaveOverlayGlyphs) {
+  EpdFont fallback(&arabic_14_regular);
+  const std::vector<std::pair<std::string, std::vector<uint32_t>>> runs = {
+      {encode({0x0628, 0x064B}), {0xFE8F, 0x064B}},
+      {encode({0x0628, 0x064C}), {0xFE8F, 0x064C}},
+      {encode({0x0628, 0x064D}), {0xFE8F, 0x064D}},
+      {encode({0x0628, 0x0651, 0x064E}), {0xFE8F, 0x0651, 0x064E}},
+      {encode({0x0628, 0x064B, 0x0651}), {0xFE8F, 0x064B, 0x0651}},
+      {encode({0x0628, 0x0651, 0x064C}), {0xFE8F, 0x0651, 0x064C}},
+  };
+
+  for (const auto& run : runs) {
+    const std::string& logical = run.first;
+    EXPECT_EQ(utf8ComposeNfc(logical), logical);
+
+    std::string visual;
+    ASSERT_TRUE(BidiUtils::applyBidiVisual(logical.c_str(), visual, /*paragraphLevel=*/1));
+    EXPECT_EQ(decode(visual), run.second);
+  }
+
+  for (const uint32_t cp : {0x064Bu, 0x064Cu, 0x064Du, 0x064Eu, 0x064Fu, 0x0650u, 0x0651u, 0x0652u}) {
+    SCOPED_TRACE(::testing::Message() << "U+" << std::hex << cp);
+    const EpdGlyph* glyph = fallback.getGlyph(cp);
+    ASSERT_NE(glyph, nullptr);
+    EXPECT_GT(glyph->dataLength, 0);
+    EXPECT_EQ(glyph->advanceX, 0);
+  }
+}
+
+TEST(ArabicFoundation, QuranSymbolsRemainDistinctFromCombiningMarks) {
+  // These codepoints are Quran-related but are spacing/control symbols rather
+  // than ordinary non-spacing harakat. They must not be silently folded into
+  // the overlay path while investigating missing annotation glyphs.
+  EXPECT_FALSE(utf8IsTextMark(0x06DD));  // Arabic end of ayah (Cf)
+  EXPECT_FALSE(utf8IsTextMark(0x06DE));  // Arabic start of rub el hizb (So)
+  EXPECT_FALSE(utf8IsTextMark(0x06E5));  // Arabic small waw (Lm)
+  EXPECT_FALSE(utf8IsTextMark(0x06E6));  // Arabic small yeh (Lm)
+  EXPECT_FALSE(utf8IsTextMark(0x06E9));  // Arabic place of sajdah (So)
+  EXPECT_FALSE(utf8IsTextMark(0x08E2));  // Arabic disputed end of ayah (Cf)
+
+  EpdFont fallback(&arabic_14_regular);
+  for (const uint32_t cp : {0x06DDu, 0x06DEu, 0x06E5u, 0x06E6u, 0x06E9u, 0x08E2u}) {
+    SCOPED_TRACE(::testing::Message() << "U+" << std::hex << cp);
+    EXPECT_TRUE(fallback.hasCodepoint(cp));
+    const EpdGlyph* glyph = fallback.getGlyph(cp);
+    ASSERT_NE(glyph, nullptr);
+    EXPECT_GT(glyph->dataLength, 0);
+  }
 }
 
 TEST(ArabicFoundation, MeasureAndDrawAdvanceAgreeForMarksAndMixedText) {
