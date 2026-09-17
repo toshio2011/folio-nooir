@@ -778,3 +778,134 @@ Do not permanently remove a convenience feature for a tiny saving merely because
 **Hypothesis requiring build measurement:** WebDAV is the strongest of these three size candidates because it has substantial dedicated request/path/XML/file-operation code. mDNS may recover a component-sized chunk if no other references retain it. UDP discovery is likely the smallest direct saving.
 
 This ordering is an experiment priority only, not a measured size claim.
+
+
+## 2026-09-18 — remaining source-only audit sweep
+
+This checkpoint closes the six remaining source-only audit categories requested before returning to build/map measurement. Claims below are source-level unless explicitly labelled otherwise.
+
+### 1. OPDS end-to-end reachability
+
+**Confirmed source fact:** OPDS is already a substantial, user-reachable feature, not dormant parser code.
+
+The current chain is:
+- `OpdsServerStore` persists up to 8 servers in `/.crosspoint/opds.json`;
+- server records contain name, URL, username and password; the store documents password obfuscation with a hardware-derived key on disk;
+- Home checks `OPDS_STORE.hasServers()` and inserts the OPDS Browser into the visible menu when configured;
+- settings activities add/edit/delete OPDS servers;
+- `OpdsBookBrowserActivity` performs Wi-Fi selection, navigation history, search, feed pagination, cancellation and download progress;
+- feeds stream through `HttpDownloader -> OpdsParserStream -> OpdsParser`, avoiding whole-feed XML buffering;
+- parser results expose navigation/acquisition entries, search template, previous/next links and bounded/truncated feed state;
+- HTTP Basic-style credentials are passed through the downloader for both feed fetches and book downloads;
+- downloads use a `.part` temporary file, then replace/rename only after success and clear the book cache;
+- download folder and filename-format preferences already live in `CrossPointSettings`.
+
+**Roadmap correction:** 1.6.3 must not describe OPDS as a future greenfield feature. The correct task is **OPDS hardening/reconciliation**: identify missing protocol/auth/catalog cases, test real servers, improve UX only where needed, and measure existing flash/heap.
+
+**Likely remaining investigation:** Atom edge cases, OpenSearch compatibility, redirects/auth variants, unsupported acquisition MIME types, malformed/large feeds, filename collisions, HTTPS server matrix, and post-download library visibility.
+
+### 2. Inherited activities / visible reachability
+
+**Confirmed source fact:** many apparently inherited activities are genuinely reachable from current Nooir UI:
+- Clock & Weather, To-Do, Reading Statistics, all-books Bookmarks and Clippings are explicitly launched from Home's menu;
+- OPDS is conditionally exposed when servers exist;
+- File Transfer launches `CrossPointWebServerActivity`;
+- Network mode selection exposes Join Network, Connect to Calibre and Create Hotspot;
+- AP mode uses DNS captive-portal behavior, mDNS, QR generation and the same web server;
+- Calibre mode uses the shared web server;
+- reader/settings activities cover bookmarks, clippings, footnotes, dictionary, KOSync, OTA/SD update, font download, profiles, status bar and reader settings.
+
+**Important source observation:** Bluetooth settings/state still exist in the Nooir tree and settings schema even though the pinned FreeInk release capability resolves BLE HID host off. This is a **UI/settings reachability check**, not evidence of NimBLE flash cost. Future map/build should distinguish retained settings/activity glue from the disabled FreeInk host implementation.
+
+**Conclusion:** there is no obvious large orphan activity family from this pass that can simply be deleted. Continue to let linker/map evidence identify unusually expensive leaf activities rather than deleting by ancestry.
+
+### 3. Image / decoder dependency audit
+
+**Confirmed source fact:** Nooir intentionally has more than one JPEG path for different failure/performance cases.
+
+The EPUB/framebuffer decoder factory retains:
+- JPEG via `JpegToFramebufferConverter` using JPEGDEC;
+- PNG via `PngToFramebufferConverter`.
+
+JPEGDEC is used for the primary direct-to-framebuffer JPEG path and its source comments note an approximately 17 KB decoder object, allocated on demand. The converter contains coarse JPEG scaling, fixed-point resampling, dithering and CBZ cache integration.
+
+The tree also contains the TJpgDec framebuffer converter and the FreeInk TJpgDec implementation/configuration. This matches the released fallback strategy for baseline JPEGs that JPEGDEC cannot safely handle. Therefore **JPEGDEC vs TJpgDec is not presumed duplication**.
+
+Separate JPEG/PNG-to-BMP converters support generated/cache/thumbnail workflows; CBZ page caching and EPUB image rendering have different output/lifetime requirements.
+
+**Conclusion:** do not collapse decoders based only on library count. Future map must rank JPEGDEC, TJpgDec and PNG/miniz-related objects separately. Any removal A/B must test:
+- baseline and progressive JPEG;
+- long-AC-Huffman fallback fixture;
+- EPUB inline images;
+- cover/thumbnail generation;
+- CBZ Fit Width/Fit Page/Landscape/Zoom and cache;
+- PNG transparency/grayscale cases;
+- low-heap fail-soft behavior.
+
+**Potential optimization question:** if two paths retain equivalent scaling/dither/cache helpers independently, inspect symbol-level duplication after map generation. Source inspection alone is insufficient.
+
+### 4. Storage / cache / persistence ownership audit
+
+**Confirmed persistent SD state includes at least:**
+- `/.crosspoint/book-states.json` — status/progress/dates/reading aggregates;
+- `/.crosspoint/recent.json` — bounded Recent presentation + reading fields;
+- `/.crosspoint/reading-stats.json` — up to 730 daily aggregates;
+- `/.crosspoint/opds.json` — OPDS servers;
+- `/.crosspoint/dictionary-history.json` — bounded 16-entry lookup hint history;
+- `/.crosspoint/profiles/` — settings-only profiles;
+- settings-owned OPDS download folder/filename mode, BLE mappings, font/reader/UI options and other persisted configuration;
+- per-book EPUB/CBZ/XTC caches and progress files under the established `/.crosspoint` cache architecture;
+- stable-page cache, thumbnails/covers, dictionary indexes/history, weather/clock and metadata override stores elsewhere in the same ownership model.
+
+**Confirmed safety properties:** Recent deliberately avoids heavy source parsing during shelf boot; reading stats are committed away from the page-turn path; OPDS downloads use temporary files; cache invalidation is called after web/DAV/OPDS writes; settings profiles deliberately exclude progress, stats, bookmarks, clippings, Wi-Fi credentials and hardware calibration.
+
+**Architecture implication:** future SD language/hyphenation packs should live beside this ecosystem but must have their **own version/validation/ownership boundary**. They must not be swept by generic “Clear Reading Data” or per-book cache deletion.
+
+Before any persistence format change, preserve `SECTION_FILE_VERSION=41` compatibility expectations and separately document whether the changed artifact is settings, user data, reconstructible cache or downloadable resource.
+
+### 5. Build configuration / dependency inventory
+
+**Confirmed direct external/FreeInk dependencies in the current PlatformIO configuration include:** FreeInk hardware/display/UI/storage/network libraries, ArduinoJson 7.4.2, QRCode 0.0.1, JPEGDEC pinned to commit `8628297...`, WebSockets 2.7.3 and Arduino-wolfSSL 5.7.2. Local libraries include expat, miniz and uzlib.
+
+Current classification:
+- **core/required:** BoardConfig, display/input/storage/power pieces, ArduinoJson;
+- **network-shared:** SecureNet/wolfSSL, WebSockets;
+- **feature-specific but currently reachable:** QRCode (File Transfer/AP UI), OPDS parser/expat, image decoder libraries, web/DAV pieces;
+- **capability-stubbed in normal release:** BleKeyboardHost real NimBLE path, as established in the preceding audit;
+- **compression/archive:** miniz/uzlib must be attributed to EPUB/CBZ/PNG/archive callers before changing;
+- **simulator-only:** crosspoint-simulator dependency in simulator environments.
+
+**Confirmed build hygiene already present:** selective compilation and explicit component trimming mean a dependency listed in `lib_deps` is not proof its full implementation is linked.
+
+**Next map task:** produce a library/object contribution table and classify each retained object as core, shared, leaf-feature, fallback or unexpected. Do not optimize dependency declarations before proving linked cost.
+
+### 6. Upstream refresh as of 2026-09-18
+
+**CrossPoint:** latest relevant development commits still reinforce the existing 1.6.3 harvest list:
+- `dc9c3eabc4...` — File Browser rowProvider/materialization fix;
+- `43a3358204...` — button-only toolbar menu;
+- `f4b4ff06cd...` — partial-cache space widths;
+- `06b5d5b3ae...` — clear ligature views when releasing SD font caches.
+A recent file-rename feature (`e0fb688bf...`) overlaps capability Nooir already exposes through its web file management and should not be blindly ported to device UI.
+
+**CrossInk:** current main is largely post-1.5.1 maintenance; the major `9656361d...` 1.5.1 release remains the useful feature/fix harvest checkpoint already captured in the roadmap. Notable release notes continue to support investigation of EPUB tables, Arabic/Hebrew UI fitting, Quick Actions, build-size reduction, dictionary/clipping fixes and UTF-8 text-field correctness.
+
+**InkPointX:** current main remains around the August 2026 v2.2.8 line. PDF/cover/focus-reading work remains reference material for later PDF investigation, not something to merge wholesale.
+
+**CrossPDF:** latest repository commits remain August 2026; notable PDF-cache recovery and text-quality work remain relevant when the dedicated PDF prototype begins.
+
+**CrossLink:** recent visible commits are README-only and the code line is comparatively stale. Continue treating it as Bluetooth behavior/reference evidence, especially because it worked on the user's X4, not as an upstream to merge wholesale.
+
+### Audit-stop condition reached
+
+The broad source-only archaeology is now sufficiently complete for 1.6.3 planning. Additional random source scanning is unlikely to rank flash savings reliably.
+
+The next high-value work when build access is available is measurement:
+1. reproduce frozen normal `gh_release`;
+2. preserve ELF/map/size output;
+3. rank hyphenation, fonts, i18n, compressed web assets, WebDAV/mDNS, decoder libraries, TLS/crypto and leaf activities by **linked bytes**;
+4. run one-variable A/B builds;
+5. record firmware image delta, static RAM, heap/largest block and physical behavior;
+6. only then choose removals/externalization.
+
+Source-only work should now resume only for a concrete roadmap feature, a newly discovered upstream change, or a question raised by the linker map.
