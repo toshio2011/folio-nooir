@@ -12,6 +12,14 @@ comes from the top-level `crosspoint.version` value, so simulator and physical
 builds identify the same Nooir release. The simulator profile, host shims, and
 dependency revision are infrastructure details, not firmware release versions.
 
+The current validated WSL mirror is `/home/fatiha/side-wsl` on branch
+`safety/wsl-cbz-before-carousel-merge-20260824`; both `simulator_x4` and
+`simulator_x3` build and reach RecentBooks with the current Spine source. The
+authoritative Windows checkout remains the source of truth. There is no X4 Pro
+simulator target. In the current Windows environment, simulator validation is
+blocked before compilation when `sdl2-config` is unavailable; use WSL/Linux for
+the supported simulator workflow.
+
 The simulator replaces `lib/hal` with its host HAL. Nooir-specific clock, PNG,
 String, and X3 input compatibility is applied by the small project-side
 scripts in `scripts/simulator_*.py`; those scripts remain separate from

@@ -5,15 +5,20 @@ history, decisions, and feature inventory.
 
 ## Current position
 
-- Active development line: Folio Nooir **1.6.2** investigation
-- Known-good baseline: released Folio Nooir **1.6.1**
+- Active development line: Folio Nooir **1.6.2**, preparing a manual release
+- Latest released baseline: Folio Nooir **1.6.1**
 - Authoritative branch: `codex/folio-nooir`
 - 1.6.1 source checkpoint before release preparation: `c13eda8c490b53c0d787d641e144b4e1d332478b`
 - Published 1.6.1 tag/release commit: `2c817a73f1a1143d7f62ac1e768501280abacaa3`
-- Current committed branch tip: `637bea977386793fce3f95056b8512b6dc2d64a0`, the
-  1.6.2 baseline commit; local HEAD matches `origin/codex/folio-nooir`. The
-  working tree contains uncommitted 1.6.2 implementation and housekeeping
-  changes, including the focused dictionary enhancement batch described below.
+- Known-good firmware/source milestone: `85dda52a feat: stabilize Nooir
+  readers, sync and Spine Shelf`.
+- Remote Quran fixture commit: `e0478714 Quran Epub`; synchronization merge:
+  `5efe0695`. The merge added only three repository Quran EPUB fixtures and is
+  not a new firmware/source baseline. Documentation commits after the merge
+  must remain distinct from the firmware milestone.
+- After documentation work, the branch is expected to be ahead of
+  `origin/codex/folio-nooir` only by the synchronization/documentation commits;
+  no tag or GitHub release is created by this task.
 - FreeInk is a real Nooir dependency through the `freeink-sdk` submodule.
 - The 1.5.10 baseline uses the Nooir-specific FreeInk commit
   `958720659ea289ae325e83db20049d0ea844800d` (`9587206`).
@@ -23,11 +28,10 @@ history, decisions, and feature inventory.
   README-only remote update at `ccddded2`.
 - The previous safety checkpoint was `safety/1.6.0-carousel-layouts-hq` at
   `9c8e9751`, which is an ancestor of the current development branch.
-- The normal/default firmware build has succeeded. Carousel/HQ cover behavior
-  and the Statistics/Sleep work have been physically exercised on X4. The
-  1.6.1 release is complete; the 1.6.2 baseline is established and the
-  focused dictionary enhancement batch is in the working tree awaiting
-  validation. No additional feature implementation is authorized yet.
+- The normal `gh_release` build, combined diagnostic build, host suite, Spine
+  tests, WSL simulators, and physical X4 validation have all passed for the
+  known-good milestone. No new firmware implementation is authorized by this
+  documentation task.
 - The existing CBZ reader and cache behavior listed below are 1.6.0 baseline
   functionality.
 - The completed 1.6.1 focus was EPUB reading quality, especially Arabic/RTL
@@ -35,10 +39,9 @@ history, decisions, and feature inventory.
   typography work, EOF finalization, glyph-bound compensation, and warm-turn
   path are included in the release candidate being frozen below.
 - The detailed future CBZ/Manga plan is preserved in
-  `docs/CBZ_MANGA_PLAN.md` and is deferred until after the EPUB phase.
-- CBZ/Manga preparation and cache improvements remain a future planned phase,
-  deferred until after the EPUB phase. Their detailed architecture and design
-  must still be planned and audited separately before implementation.
+  `docs/CBZ_MANGA_PLAN.md` and remains deferred. Quick Actions are not
+  implemented and may be explored only in a later release. Full UI/System
+  Dark Mode is not implemented and remains deferred.
 
 ## 1.6.1 released baseline
 
@@ -55,18 +58,24 @@ history, decisions, and feature inventory.
 - Physical X4 validation covered the EPUB fixes and Arabic/Quran reading paths.
   Physical X3 validation is not claimed here; the shared X3/X4 code paths and
   simulator validation remain useful but do not replace that hardware check.
-- A fresh local `gh_release` build is verified from this branch: linked flash
-  is `6,482,287 / 6,553,600` bytes, leaving `71,313` linked bytes; the padded
-  `firmware.bin` is `6,496,144` bytes, leaving `57,456` bytes. PlatformIO
-  static RAM is `53,500 / 327,680` bytes. These are baseline measurements,
-  not a release-publication or flashing action.
-- The host regression suite is `171/171` passing. Physical X4 validation is
-  recorded; physical X3 validation is not claimed. The separate WSL
-  simulator mirror is dirty and must not be synchronized or reset blindly.
+- The current normal `gh_release` build is linked at `6,492,279 / 6,553,600`
+  bytes, with `61,321` linked bytes remaining; padded `firmware.bin` is
+  `6,506,128` bytes, leaving `47,472` bytes in the app slot. Static RAM is
+  `53,492 / 327,680` bytes. This leaves `7,472` bytes above the preferred
+  approximately 40 KB production cushion.
+- The combined `gh_release_diag` profile enables
+  `NOOIR_EPUB_DIAGNOSTICS=1` and `NOOIR_KOSYNC_FONT_DIAGNOSTICS=1`; its linked
+  size is `6,506,717` bytes and padded image is `6,520,560` bytes, leaving
+  `33,040` bytes. Normal `gh_release` does not enable these diagnostics.
+- The host regression suite is `211/211` passing and the focused Spine suite is
+  `13/13` passing. WSL `simulator_x4` and `simulator_x3` pass and reach
+  RecentBooks. Physical X4 validation is recorded; physical X3 hardware
+  validation is not claimed. Windows simulator builds are blocked before
+  compilation when `sdl2-config` is unavailable.
 - Existing ignored build outputs must not be treated as release assets unless
   their source/configuration is positively verified.
 
-## 1.6.2 dictionary enhancement batch
+## Current 1.6.2 implementation state
 
 - Dictionary lookup keeps the remembered/configured dictionary as the fast
   path and continues to the first valid prepared fallback when it misses or
@@ -83,17 +92,21 @@ history, decisions, and feature inventory.
   definition pagination.
 - The result header identifies the matched headword, source, preferred/fallback
   status, page position, and source position where multiple matches exist.
+- The Sources picker contains only successful matching sources, up to six, and
+  discovers alternates lazily. Invalid/no-match folders are skipped. The first
+  successful result remains immediate.
+- The current Spine layout is available independently for Recent and Finished:
+  bounded left-to-right pagination, deterministic dimensions and grayscale
+  tones, restrained binding styles, UTF-8-safe title/author fallback, shared
+  render/hit rectangles, shelf/support styling, and an optional decoration-only
+  plant. Library and Carousel are untouched.
+- Font Manager installation is physically confirmed. KOReader Sync is
+  physically interoperable with actual KOReader; Filename mode requires equal
+  actual filenames, Binary mode retains the KOReader partial-MD5 identity, and
+  the public server default is `https://sync.koreader.rocks:443`.
 - StarDict and `.qidx` formats, persistent settings, EPUB caches, fonts,
   Arabic/Quran behavior, `SECTION_FILE_VERSION = 41`, the FreeInk SDK pin,
   partitions/SPIFFS, and user SD data remain unchanged.
-- A whole-tree `gh_release` build including this batch completed successfully:
-  linked flash is `6,483,921 / 6,553,600` bytes, leaving `69,679` linked
-  bytes. The padded `firmware.bin` is `6,497,776` bytes, leaving `55,824`
-  bytes in the app slot. Static RAM remains
-  `53,500 / 327,680` bytes. The focused source-model test translation unit
-  compiles, but local execution is currently blocked by the installed Visual
-  C++ runtime libraries missing `__CxxFrameHandler4` and
-  `__GSHandlerCheck_EH4`; no host pass is claimed from that blocked run.
 
 ## Completed work
 
@@ -179,14 +192,35 @@ pushed successfully. Remote verification resolves it to
 `.gitmodules` at the fork and pins the exact tested `9587206` submodule
 commit. The pin is committed in the authoritative history.
 
+## Current release-preparation notes
+
+- Normal production profile: `gh_release`; current measurements are
+  `6,492,279` linked flash, `6,506,128` padded `firmware.bin`, `47,472` app
+  bytes remaining, and `53,492` static RAM. The preferred app-slot cushion is
+  about 40 KB, so new firmware work must measure its flash delta.
+- Diagnostic profile: `gh_release_diag` with
+  `NOOIR_EPUB_DIAGNOSTICS=1` and `NOOIR_KOSYNC_FONT_DIAGNOSTICS=1`. It is for
+  measurement only and is not the release image. Diagnostic memory result
+  semantics remain `result=0` = policy/dependency skip, `result=-1` = actual
+  allocation failure, and `result=1` = success.
+- EPUB ownership/lifecycle, image/font cleanup, cumulative spine sizing,
+  bounded temporary allocations, and ditherer allocation work are production
+  adaptations from the known-good milestone. Do not alter pagination, cache
+  format, Arabic/Quran behavior, or user SD data without separate approval.
+- JPEGDEC progressive-component patching is kept in the committed patch stack;
+  patches `0001` through `0004` are applied by `scripts/patch_jpegdec.py`.
+- Full UI/System Dark Mode is **not implemented**. Reader Dark Mode is
+  implemented. Quick Actions are **not implemented**; they remain future
+  investigation only. No X4 Pro simulator exists.
+
 ## Immediate next steps
 
-1. Review the focused 1.6.2 dictionary enhancement batch and its host/build
-   results; physical X3/X4 validation remains outstanding.
+1. Review the documentation commit and create the manual GitHub release only
+   after independently verifying the intended production artifact.
 2. Continue physical X3 regression validation of the released shared paths
    when hardware access is available; X4 evidence does not substitute for it.
-3. If simulator validation is needed, first inspect the separate dirty WSL
-   mirror and preserve its unique work; do not synchronize or reset it blindly.
+3. If simulator validation is needed, use the separate WSL mirror at
+   `/home/fatiha/side-wsl` only after inspecting its branch and dirty state.
 4. To sync FreeInk later, fetch `upstream`, merge or rebase deliberately,
    test Nooir, push the tested branch to `origin`, and only then update the
    parent pointer to a new exact commit. Avoid a blind `git pull` inside
@@ -194,7 +228,7 @@ commit. The pin is committed in the authoritative history.
 5. Review `docs/FOLIO_1.6.2_BACKLOG.md` and approve one investigation at a
    time. Keep cache format, pagination, rendering quality, and Arabic/Quran
    behavior unchanged unless a later task explicitly authorizes otherwise.
-6. After the EPUB phase, return to the preserved CBZ/Manga preparation and
+6. After the current release, return to the preserved CBZ/Manga preparation and
    cache plan and complete its separate architecture/safety audit before
    implementation.
 7. Review any future post-1.6.2 source change with the X3 safety, cache, storage,
@@ -207,11 +241,15 @@ commit. The pin is committed in the authoritative history.
 - Repository: <https://github.com/toshio2011/folio-nooir>
 - Authoritative development branch: `codex/folio-nooir`
 - 1.6.1 release tag commit: `2c817a73f1a1143d7f62ac1e768501280abacaa3`
-- Current committed 1.6.2 branch tip: `637bea977386793fce3f95056b8512b6dc2d64a0`
+- Known-good firmware/source milestone: `85dda52a`
+- Remote Quran fixture commit: `e0478714`; synchronization merge:
+  `5efe0695`
 - 1.6.1 source checkpoint before release preparation: `c13eda8c490b53c0d787d641e144b4e1d332478b`
 - Previous 1.6.0 safety checkpoint: `safety/1.6.0-carousel-layouts-hq` at
   `9c8e9751`
-- WSL simulator mirror: `~/side-wsl`
+- WSL simulator mirror: `/home/fatiha/side-wsl`
+- WSL simulator branch: `safety/wsl-cbz-before-carousel-merge-20260824`
+- WSL synchronization backups: `/home/fatiha/nooir-sim-sync-backup-20260917`
 - Simulator instructions: `docs/simulator.md`
 - Cache/format reference: `docs/file-formats.md`
 - Nested SDK: `freeink-sdk/`
@@ -239,6 +277,8 @@ not stage or copy them into the repository.
   caches, binaries, and build output untouched and unstaged.
 - Preserve the released 1.6.1 Arabic/EPUB fixes and keep future diagnostics,
   probes, logs, caches, and arbitrary build outputs out of release commits.
+- WSL-only Carousel work is outside the authoritative Windows milestone and
+  must not be overwritten or described as merged unless explicitly integrated.
 - Treat the existing 1.6.0 CBZ reader as baseline functionality. CBZ/Manga
   preparation and cache work is deferred until after the EPUB phase and its
   separate planning and architecture audit.

@@ -16,8 +16,9 @@
 
 # Folio Nooir
 
-Current release: **v1.6.1**.
-Completed development baseline: **v1.6.0**.
+Current development line: **v1.6.2**.
+Latest released version: **v1.6.1**.
+Known-good firmware/source milestone: `85dda52a`.
 
 ## Hardware warning
 
@@ -32,9 +33,11 @@ Completed development baseline: **v1.6.0**.
 > optional X4 controller probe is only for separately validated hardware.
 >
 > This improves compatibility but is not a guarantee for every production
-> revision. Keep a known-good recovery image and test carefully. X4 Pro/S3
-> hardware is not supported. Do not replace a working CrossInk or CrossPoint
-> installation without a recovery path.
+> revision. Keep a known-good recovery image and test carefully. Physical
+> validation is primarily on the older X4 revision available to the maintainer;
+> older X3 hardware has community success, but X3 panel revisions can differ.
+> X4 Pro/S3 hardware is not supported. Do not replace a working CrossInk or
+> CrossPoint installation without a recovery path.
 
 Folio Nooir is an experimental, bookshelf-focused e-reader firmware for Xteink
 devices. It is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader),
@@ -44,12 +47,46 @@ adding a Folio Nooir interface and reading tools.
 ## Native Simulator
 
 Folio Nooir provides native PlatformIO profiles for `simulator_x4` and
-`simulator_x3`. They exercise the shared Nooir UI, bookshelf, Carousel, library,
-EPUB rendering, and navigation code without flashing a physical device. The X3
-profile also includes simulated tilt testing. Real-device testing is still
-recommended. See the complete [native simulator guide](docs/simulator.md) for
-WSL/Linux setup, build/run commands, controls, virtual SD-card use, and
+`simulator_x3`. Both profiles exercise the shared Nooir UI, bookshelf, Carousel,
+library, EPUB rendering, and navigation code without flashing a physical
+device. The X3 profile also includes simulated tilt testing. The validated
+desktop targets are X3 and X4 only; there is no X4 Pro simulator. WSL builds
+are the supported simulator workflow, while the current Windows environment is
+blocked before compilation when `sdl2-config` is unavailable. Real-device
+testing is still recommended. See the complete [native simulator guide](docs/simulator.md)
+for setup, build/run commands, controls, virtual SD-card use, and
 troubleshooting.
+
+## What's new in 1.6.2
+
+The 1.6.2 development line builds on the released 1.6.1 EPUB/Arabic baseline
+and the existing X3/X4 reader workflows. The current known-good milestone adds
+user-facing improvements without changing the section-cache format or the
+partition layout:
+
+- **Spine Shelf** is an optional single-shelf layout for Recent and Finished.
+  Books have deterministic proportions, light grayscale variation, restrained
+  binding details, safe UTF-8 title handling, bounded pagination, and matching
+  selection rectangles. The complete title, author, synopsis, and status remain
+  in the Featured Book area. Library and Carousel presentations are unchanged.
+- **Dictionary results** keep the preferred-dictionary fast path while falling
+  back to another working dictionary when needed. Invalid or missing folders
+  are skipped, and the Sources picker shows only successful matching sources,
+  up to six, discovered lazily. The current source and preferred/fallback
+  status are visible, and only the selected definition body is loaded.
+- **Font Manager** can browse compatible downloadable font families and install
+  them as SD-card fonts. Existing manual SD-card and web-upload installation
+  paths remain available.
+- **KOReader Sync** uses the public KOReader server by default, retains
+  filename and binary/partial-MD5 matching choices, and supports the validated
+  Nooir ↔ KOReader progress workflow. Filename matching requires the actual
+  book filenames to match on both devices.
+- EPUB ownership/lifecycle, image/font cleanup, network cleanup, and reader
+  stability have been tightened while preserving the 1.6.1 rendering and
+  Arabic/Quran behavior.
+
+Diagnostic-only build profiles and internal memory traces are not enabled in
+the normal release build and are not ordinary reader features.
 
 ## What's New in 1.6.1
 
@@ -365,6 +402,15 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 ### Folio Nooir bookshelf
 
 - Folio Nooir boot logo and visual theme.
+- Optional **Spine** layout for Recent and Finished: one bounded shelf of
+  deterministic book spines with mixed light grayscale tones, restrained
+  binding details, a plank/support treatment, safe title abbreviation, and
+  page-aware selection. It uses only existing metadata; the Featured Book
+  panel remains the place for complete title, author, synopsis, and status.
+- Spine titles preserve valid UTF-8, use the existing Arabic/Bidi text path
+  when the metadata is renderable, and omit unsafe or unsupported spine text
+  rather than showing replacement-glyph garbage. Missing or malformed title
+  metadata may use a safe filename-stem fallback.
 - Direct CBZ/Comic Book support with `ComicInfo.xml` metadata, cover/thumbnail caching, bounded page indexing, and Library/Recent/Finished integration.
 - Normal `.cbz` files can be copied directly to the SD card and read without conversion or Web UI preprocessing.
 - CBZ metadata retrieval remains lightweight: metadata can be retrieved without treating the book as opened, while Recent is updated only when the CBZ is actually opened for reading.
@@ -418,7 +464,9 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
 - Point-based margin controls and line-spacing controls with fine percentage steps.
 - UI scale controls for menus and reader controls; bookshelf geometry remains fixed.
 - Reader dark mode.
-- Multi-dictionary lookup with dictionary history and preferred-dictionary reuse; the selected dictionary may build its index on first use, while alternate dictionaries are searched only when their sidecar is already current so a miss never blocks on several index builds. Definition pages show whether the current source is preferred or a fallback, and can switch among up to six prepared sources that contain the word without concatenating their definitions.
+- Reader Dark Mode applies to reading views; full UI/System Dark Mode is not
+  implemented.
+- Multi-dictionary lookup with dictionary history and preferred-dictionary reuse; the selected dictionary may build its index on first use, while alternate dictionaries are searched only when their sidecar is already current so a miss never blocks on several index builds. Definition pages show whether the current source is preferred or a fallback, and can switch among up to six successful matching sources discovered lazily. Invalid, unavailable, unopened, and no-match folders are not shown as sources.
 - Reader settings include a one-dictionary-at-a-time **Prepare Dictionary Indexes** screen so larger alternate dictionaries can be prepared before use, with percentage progress, Back-to-cancel, and resumable checkpoints; dictionaries with no installed set show setup guidance instead of a blank screen.
 - Text clipping/highlighting: select a continuous word range (with held-button navigation), save clips, and review saved clips from the reader.
 - Saved clippings are rendered back as continuous highlights with selectable black, dark-gray, light-gray, or white highlight backgrounds.
@@ -428,6 +476,10 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
   side-button layout and long-press actions, plus Reader Options shortcuts while reading.
 - Dictionary settings are available directly from the Reader settings tab as well as Text Settings.
 - Dictionary font and dictionary font-size settings are available independently from reading typography.
+- **Font Manager** can download compatible SD-card font families over Wi-Fi;
+  installed `.cpfont` families then appear in the reader font settings. Manual
+  SD-card and web-upload installation remain supported; see
+  [SD-card font setup](docs/sd-card-fonts.md).
 - Reader Options can be opened while reading from the reader menu, mapped front button, long-press menu, or configured power-button action.
 - Bluetooth HID/page-turner support is present in the codebase but remains experimental and is not considered stable for release yet.
 
@@ -456,12 +508,12 @@ rebuildable cache and does not change the dictionary source files.
    see a percentage progress bar. Press **Back** to cancel; the partial index is
    saved as **Paused**, and selecting it again resumes from its checkpoint.
 5. While viewing a definition, the source dictionary and whether it is the
-   preferred or fallback result are shown below the headword. Open the
-   dictionary action to discover and switch among prepared sources containing
-   the word. Up to six matching sources are shown; only the selected source's
-   definition is loaded at a time. Only current prepared sidecars participate
-   in alternate lookups, so a missing word cannot trigger several long scans or
-   freeze the reader.
+   preferred or fallback result are shown below the headword. The first
+   successful definition is shown immediately. Open the dictionary action to
+   discover and switch among prepared sources that also contain the word; up
+   to six successful matches are retained, and only the selected source's
+   definition is loaded at a time. Invalid or missing folders are skipped and
+   repeated failures are kept quiet during the lookup session.
 
 If no valid dictionary folders are found, the index screen explains that a
 dictionary must be added before indexes can be prepared. If a dictionary is
@@ -481,7 +533,7 @@ continue between Nooir and KOReader on another device.
 To use the public KOReader server, open **Settings → System → KOReader Sync**
 and enter:
 
-- Server URL: `https://sync.koreader.rocks`
+- Server URL: `https://sync.koreader.rocks:443`
 - Your KOReader Sync username
 - Your KOReader Sync password
 
@@ -491,11 +543,18 @@ send the current Nooir position. Use the same server where your KOReader
 account was created; accounts are not shared between different sync servers.
 
 The sync settings include an editable **Sync Device Name**, defaulting to
-`Folio Nooir X4`. The existing device ID remains unchanged for compatibility.
-CrossPoint sync receives the richer CrossPoint position data, while generic
-KOReader servers receive standard KOReader fields only. On download, portable
-XPath/percentage mapping is tried first, with the rich CrossPoint page and
-paragraph position used as a fallback when needed.
+`Folio Nooir X4`, plus a document matching choice:
+
+- **Filename** is portable and is the default, but the actual filenames must
+  match between Nooir and KOReader.
+- **Binary** uses KOReader's partial-MD5 content identity and therefore needs
+  identical book files.
+
+The existing device ID remains unchanged for compatibility. CrossPoint sync
+receives richer CrossPoint position data, while generic KOReader servers
+receive standard KOReader fields only. On download, portable XPath/percentage
+mapping is tried first, with richer page/paragraph position used as a fallback
+when needed. Nooir ↔ KOReader interoperability has been physically confirmed.
 
 ### CBZ / Manga reading guide
 

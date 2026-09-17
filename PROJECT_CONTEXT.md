@@ -17,13 +17,14 @@ Xteink X3/X4 devices. The primary goals are:
 - no regressions in XTC/XTCH, TXT, sleep, web, dictionary, or existing reader
   workflows.
 
-Folio Nooir **1.6.2** is the current investigation line. The released
-**1.6.1** work is the known-good baseline for this cycle. The 1.6.1 EPUB work covers
-Arabic/RTL support, text shaping, fonts, layout, malformed-EPUB recovery,
-bounded typography, EOF finalization, and warm page-turn responsiveness.
-CBZ/Manga preparation and cache work remain a future planned phase; its detailed
-architecture/design will still be planned and audited separately before
-implementation. The complete deferred plan is preserved in
+Folio Nooir **1.6.2** is the current development/release-preparation line; the
+released **1.6.1** behavior remains the compatibility baseline. The known-good
+1.6.2 firmware/source milestone is `85dda52a`, which includes the current
+dictionary, reader lifecycle, KOSync/Font Manager, and Spine work. The 1.6.1
+EPUB work covers Arabic/RTL support, text shaping, fonts, layout,
+malformed-EPUB recovery, bounded typography, EOF finalization, and warm
+page-turn responsiveness. CBZ/Manga preparation and cache work remain future
+planned phases; the complete deferred plan is preserved in
 `docs/CBZ_MANGA_PLAN.md`.
 
 FreeInk is a real Nooir dependency through the `freeink-sdk` submodule. The
@@ -40,10 +41,11 @@ Authoritative parent repository:
 - Branch: `codex/folio-nooir`
 - Published 1.6.1 release/tag commit:
   `2c817a73f1a1143d7f62ac1e768501280abacaa3`
-- Current committed branch tip:
-  `637bea977386793fce3f95056b8512b6dc2d64a0` (the committed 1.6.2 baseline);
-  local HEAD matches `origin/codex/folio-nooir`. The working tree contains
-  the uncommitted, approved 1.6.2 dictionary enhancement batch.
+- Known-good firmware/source milestone:
+  `85dda52a feat: stabilize Nooir readers, sync and Spine Shelf`.
+- Fetched remote Quran fixture commit: `e0478714 Quran Epub`; merge
+  synchronization commit: `5efe0695`. The remote commit adds only three Quran
+  EPUB fixtures and is not a new firmware baseline.
 - 1.6.1 source checkpoint before release preparation:
   `c13eda8c490b53c0d787d641e144b4e1d332478b`
 - The completed 1.6.0 source, translations, README inventory, and related
@@ -55,19 +57,23 @@ Authoritative parent repository:
   `9c8e9751` is an ancestor of this branch.
 - The normal/default PlatformIO environment has compiled successfully, and
   Carousel/HQ cover plus Statistics/Sleep behavior has been physically
-  exercised on X4. Simulator validation remains a separate WSL-mirror task.
-- The 1.6.1 release is complete. The 1.6.2 baseline is established; the
-  focused dictionary enhancement batch is in the working tree, while firmware
-  assets and hardware uploads remain separate release operations.
-- Released 1.6.1 reference: `firmware.bin` was `6,496,144` bytes; linked
-  flash was `6,482,287 / 6,553,600` bytes (`71,313` linked bytes remaining;
-  `57,456` bytes after padded-bin accounting). The current whole-tree
-  `gh_release` build is `6,497,776` padded bytes and
-  `6,483,921 / 6,553,600` linked bytes, leaving `55,824` padded-bin bytes and
-  `69,679` linked bytes. PlatformIO static RAM remains
-  `53,500 / 327,680` bytes. The previously verified host suite was `171/171`;
-  the new dictionary test compiles but cannot link on this machine because its
-  Visual C++ runtime lacks `__CxxFrameHandler4` and `__GSHandlerCheck_EH4`.
+  exercised on X4. The separate WSL mirror has also passed the current
+  simulator smoke checks; it remains a separate validation checkout.
+- The 1.6.1 release is complete. The current 1.6.2 milestone is known-good;
+  documentation/release preparation and firmware publication remain separate
+  operations.
+- Current normal `gh_release`: linked flash `6,492,279 / 6,553,600` bytes,
+  `6,506,128` padded `firmware.bin`, `47,472` app-slot bytes remaining, and
+  `53,492` static RAM. This is `7,472` bytes above the preferred approximately
+  40 KB release cushion.
+- `gh_release_diag` enables `NOOIR_EPUB_DIAGNOSTICS=1` and
+  `NOOIR_KOSYNC_FONT_DIAGNOSTICS=1`; it is diagnostic-only at `6,506,717`
+  linked bytes / `6,520,560` padded bytes with `33,040` remaining. Normal
+  `gh_release` does not enable those macros.
+- Host suite: `211/211`; focused Spine suite: `13/13`; WSL
+  `simulator_x4` and `simulator_x3`: pass and reach RecentBooks; physical X4:
+  pass. Physical X3 hardware is not claimed. Windows simulator builds are
+  blocked before compilation when `sdl2-config` is unavailable.
 
 ### 1.6.1 released baseline
 
@@ -84,15 +90,15 @@ functional fallback, font grouping, and rendering fixes remain. Physical X4
 validation covered the EPUB fixes and Arabic/Quran reading paths; physical X3
 validation is not claimed here. Existing ignored build outputs are not release
 assets unless their source and configuration are positively verified. The
-separate WSL simulator mirror is currently dirty and must not be synchronized
-or reset blindly.
+separate WSL simulator mirror has unique branch/worktree state and must be
+inspected before future synchronization; it must not be reset blindly.
 
 The detailed CBZ/Manga preparation and cache plan remains deferred in
 `docs/CBZ_MANGA_PLAN.md` and is not part of this EPUB release scope.
 
 The remaining focused 1.6.2 investigation backlog is in
-`docs/FOLIO_1.6.2_BACKLOG.md`. The approved dictionary enhancement batch is
-documented there and is awaiting host/device validation; no further feature
+`docs/FOLIO_1.6.2_BACKLOG.md`. The current dictionary enhancement batch and
+its successful-source behavior are documented there; no further feature
 implementation is authorized from this context alone.
 
 Nested `freeink-sdk`:
@@ -110,7 +116,7 @@ The authoritative source tree is kept separate from the simulator mirror.
 Scratch paths such as `.codex-*`, `_epub-inspect*`, `codex-work-monitor/`, logs,
 probes, caches, binaries, and build output must remain untracked and untouched.
 
-## Completed functionality
+## CURRENT IMPLEMENTED FEATURES
 
 ### CBZ
 
@@ -180,6 +186,15 @@ probes, caches, binaries, and build output must remain untracked and untouched.
 
 - KOReader Sync accepts all successful HTTP 2xx responses, including bodyless
   successful updates, while still validating required progress payloads.
+- The public default server is `https://sync.koreader.rocks:443`.
+- Filename matching uses the existing filename identity and requires the
+  actual filenames to match across devices. Binary matching retains KOReader's
+  partial-MD5 content identity and requires identical files. The earlier
+  apparent Filename incompatibility was caused by different filenames, not a
+  hashing defect. Nooir ↔ actual KOReader interoperability is physically
+  confirmed; do not change the Filename algorithm.
+- Font Manager installation/download is physically confirmed; diagnostic
+  identity markers and sync payload traces remain diagnostic-only.
 - X3/X4 native simulator support, X3 geometry/profile handling, simulated X3
   tilt controls, compatibility scripts, and documentation are already merged
   in the parent history.
@@ -208,6 +223,14 @@ probes, caches, binaries, and build output must remain untracked and untouched.
   local source protection against LRU eviction, unavailable-HQ probe caching,
   and shared perspective-rendering precomputation/fast paths without caching
   decoded pixel buffers or changing image quality.
+- The optional Spine layout is available independently for Recent and Finished.
+  It uses fixed bounded planning, deterministic widths/heights and
+  White/LightGray/DarkGray tones, restrained spine styles, UTF-8-safe
+  title/author rendering, title-only fallback, filename-stem fallback only
+  when metadata is absent/malformed, shelf/plank/support styling, an optional
+  decoration-only plant, pagination, and shared render/hit rectangles. Valid
+  Arabic metadata remains Arabic and uses the existing font/Bidi/shaping path;
+  it is not converted into a filename.
 
 ### Reading Statistics and Sleep
 
@@ -247,6 +270,22 @@ probes, caches, binaries, and build output must remain untracked and untouched.
 - Power-lock transitions avoid redundant active requests and unnecessary
   frequency bouncing while retaining normal sleep/deep-sleep behavior.
 
+## AUDITED / PLANNED / FUTURE FEATURES
+
+- Reader Dark Mode is implemented. Full UI/System Dark Mode is **not
+  implemented** and remains deferred.
+- Quick Actions are **not implemented**; they were audited/planned only and
+  may be considered for a later release.
+- There is no X4 Pro simulator target, and X4 Pro/S3 compatibility is not
+  claimed without hardware evidence.
+- PDF and FB2 readers are not implemented; only feasibility documentation is
+  present.
+- CBZ/Manga preparation and cache architecture remain deferred to the separate
+  `docs/CBZ_MANGA_PLAN.md` audit. Existing direct CBZ reading is implemented.
+- Ubuntu built-in font flash optimization, hyphenation flash reduction, further
+  EPUB responsiveness/memory work, and remaining typography improvements are
+  backlog investigations, not current release claims.
+
 ## Important decisions and constraints
 
 1. **X3 safety is the baseline.** Avoid full-resolution buffers, concurrent
@@ -282,7 +321,8 @@ probes, caches, binaries, and build output must remain untracked and untouched.
 The native simulator checkout is separate from the authoritative Windows
 repository:
 
-- WSL working copy: `~/side-wsl`
+- WSL working copy: `/home/fatiha/side-wsl`
+- WSL branch: `safety/wsl-cbz-before-carousel-merge-20260824`
 - Supported environments: `simulator_x4` and `simulator_x3`
 - Windows is the source of truth; synchronize Windows to WSL for simulator
   validation only.
@@ -291,6 +331,10 @@ repository:
 - Before syncing future simulator work, inspect its branch, HEAD, tracked
   changes, untracked files, and simulator-specific configuration. Preserve any
   genuinely unique local simulator work; never reset it blindly.
+- Current WSL validation reaches RecentBooks on both targets. Synchronization
+  backups at `/home/fatiha/nooir-sim-sync-backup-20260917` are outside the
+  repository and must never be committed. Windows simulator validation is
+  blocked before compilation when `sdl2-config` is unavailable.
 - Detailed setup, virtual SD-card usage, keyboard controls, tilt testing, and
   limitations are documented in `docs/simulator.md`.
 
@@ -303,7 +347,8 @@ repository:
 - Previous 1.6.0 safety checkpoint: `safety/1.6.0-carousel-layouts-hq` at
   `9c8e9751`
 - GitHub source merge: `0f1bd556`; README 1.6.0 summary: `b12f2732`
-- Native simulator checkout: `~/side-wsl` (separate from this Windows copy)
+- Native simulator checkout: `/home/fatiha/side-wsl` (separate from this
+  Windows copy)
 - Simulator guide: `docs/simulator.md`
 - File/cache format notes: `docs/file-formats.md`
 - Nested SDK: `freeink-sdk/`
@@ -332,8 +377,9 @@ machine before using them.
    regression coverage before approving production work.
 2. Continue physical X3 regression testing for the released shared paths;
    X4 validation does not substitute for X3 evidence.
-3. If simulator validation is needed, inspect the dirty WSL mirror first and
-   preserve its unique work; do not synchronize or reset it blindly.
+3. If simulator validation is needed, inspect the WSL mirror's branch and
+   worktree state first and preserve its unique work; do not synchronize or
+   reset it blindly.
 4. To consume later FreeInk updates, `fetch upstream`, merge or rebase, test,
    push the tested result to `origin`, and deliberately update Nooir's pinned
    submodule SHA. Never blindly pull inside `freeink-sdk`.

@@ -3,16 +3,19 @@
 This document tracks the remaining investigation backlog; its entries are not
 approval to implement future features. The released `1.6.1` tag at
 `2c817a73` is the behavioral baseline. The current committed 1.6.2 baseline
-is `637bea97`; the working tree contains the approved dictionary enhancement
-batch. For the remaining candidates, preserve rendering quality,
+is the firmware/source milestone `85dda52a` (`feat: stabilize Nooir readers,
+sync and Spine Shelf`). The fetched branch also contains the separate Quran
+EPUB fixture commit `e0478714`; merge commit `5efe0695` only synchronized that
+remote content and is not a new firmware baseline. Documentation commits after
+that point must remain clearly separate from source/build claims. For the
+remaining candidates, preserve rendering quality,
 Arabic/Quran behavior,
 pagination, section-cache format, book data, and SD-card data.
 
-## Implemented 1.6.2 dictionary batch
+## Current implemented 1.6.2 work
 
-The following approved, focused work is now present in the working tree and is
-awaiting host/device validation. It does not change dictionary or cache
-formats:
+The following work is present in the known-good milestone and does not change
+the persistent cache formats:
 
 - preferred/remembered dictionary lookup remains the fast path, with valid
   fallback lookup when the preferred folder is stale, missing, truncated, or
@@ -25,6 +28,18 @@ formats:
 - the definition header identifies preferred versus fallback results and shows
   source position when multiple matches exist;
 - the former combined `48 KB` all-dictionaries definition accumulation is gone.
+- Spine is an optional Recent/Finished layout with fixed bounded planning,
+  deterministic book dimensions/tones/details, UTF-8-safe title handling,
+  shelf pagination, shared hit rectangles, and a decoration-only plant.
+- Font Manager download/install and SD-font lifecycle work are physically
+  validated; manual SD-font and web-upload paths remain supported.
+- KOReader Sync supports the public server default, filename and binary/
+  partial-MD5 matching, and the Nooir ↔ KOReader workflow. Filename mode
+  requires matching filenames on both devices; the hashing algorithm is
+  unchanged.
+- EPUB/reader lifecycle, memory diagnostics, image/font cleanup, and network
+  cleanup are compile-gated or production-safe adaptations; normal release
+  builds leave diagnostics disabled.
 
 The batch preserves `SECTION_FILE_VERSION = 41`, `.qidx`, dictionary/settings,
 EPUB/CSS, and persistent cache formats, as well as fonts, Arabic/Quran
@@ -37,22 +52,27 @@ behavior, the FreeInk SDK pin, partitions/SPIFFS, and user SD data.
   `6,482,287 / 6,553,600` bytes, with `71,313` linked bytes remaining. The
   padded `firmware.bin` is `6,496,144` bytes, leaving `57,456` bytes in the
   app slot.
-- Current whole-tree `gh_release` with the working-tree dictionary batch:
-  linked firmware is `6,483,921 / 6,553,600` bytes, with `69,679` linked bytes
-  remaining. The padded `firmware.bin` is `6,497,776` bytes, leaving `55,824`
-  bytes in the app slot.
-- PlatformIO static RAM is `53,500 / 327,680` bytes. The linker DRAM table is a
-  separate measure: `120,501 / 321,296` bytes.
-- The previously verified host regression suite is `171/171` passing. The
-  newly added dictionary source-model test compiles locally, but its link/run
-  is blocked by the installed Visual C++ runtime missing
-  `__CxxFrameHandler4`/`__GSHandlerCheck_EH4`.
+- Current normal `gh_release`: linked firmware is
+  `6,492,279 / 6,553,600` bytes, with `61,321` linked bytes remaining. The
+  padded `firmware.bin` is `6,506,128` bytes, leaving `47,472` bytes in the
+  app slot. The preferred release cushion is approximately 40 KB, leaving
+  `7,472` bytes above that cushion.
+- PlatformIO static RAM is `53,492 / 327,680` bytes.
+- The combined diagnostic profile `gh_release_diag` enables
+  `NOOIR_EPUB_DIAGNOSTICS=1` and `NOOIR_KOSYNC_FONT_DIAGNOSTICS=1`; it builds
+  at `6,506,717` linked bytes and `6,520,560` padded bytes, leaving `33,040`
+  bytes in the app slot. It is not the production release image.
+- The host suite is `211/211` passing and the focused Spine suite is `13/13`.
+- WSL `simulator_x4` and `simulator_x3` validation passed and reached
+  RecentBooks. Direct physical X4 validation is recorded; physical X3
+  validation is not claimed. Windows simulator builds remain blocked before
+  compilation when `sdl2-config` is unavailable.
 - Ubuntu built-in font headers total `1,727,246` source bytes. Generated
   hyphenation trie headers total `2,215,571` source bytes. These source totals
   are signals for investigation, not direct estimates of linked flash use.
-- Physical X4 validation is recorded; physical X3 validation is not claimed.
-  The WSL simulator mirror is currently dirty and is not a safe blind-sync
-  target.
+- The WSL mirror is `/home/fatiha/side-wsl` on
+  `safety/wsl-cbz-before-carousel-merge-20260824`; backups from synchronization
+  are outside repository content and must never be committed.
 
 Estimates below are preliminary net firmware effects and must be measured from
 the `gh_release` map/bin before implementation. With only about 57.5 KB of

@@ -22,6 +22,13 @@ Not supported: `.syn` synonym files (ignored), dictionaries with 64-bit index of
 
 The Dictionary setting only appears when at least one usable dictionary folder exists. Folders containing more than one dictionary (multiple `.idx` stems) are skipped as ambiguous.
 
+The selected dictionary is the fast path. If it cannot be opened or has no
+matching entry, Nooir can continue to another usable configured dictionary and
+show the first successful result. Invalid, missing, unavailable, and no-match
+folders are skipped; they do not block dictionaries that work. A failed folder
+is reported at most once during the active lookup/session rather than flooding
+the log.
+
 ## Looking Up a Word
 
 Two ways to start a lookup while reading:
@@ -46,6 +53,13 @@ On the very first lookup with a dictionary (and again if the dictionary file cha
 ## The Definition Screen
 
 When a word is found, the definition screen shows the matched headword at the top and the definition text below, with a page counter for long definitions.
+
+The source dictionary and whether it was the preferred dictionary or a fallback
+are shown with the result. Open the dictionary action to discover alternate
+prepared dictionaries on demand. The picker contains only dictionaries that
+successfully contain the current word, up to six sources; it never lists every
+installed folder. Only the selected definition body is held at once, so source
+switching remains bounded on X3/X4.
 
 - **Left/Right** or side **Up/Down** — previous / next page
 - **Back** — return to word selection
