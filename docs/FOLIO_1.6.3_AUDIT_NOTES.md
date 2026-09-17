@@ -449,3 +449,99 @@ When build access returns:
 7. only then decide whether a shared SD resource-pack architecture is justified.
 
 This keeps the idea evidence-driven: the desired end state may be a smaller firmware core with richer optional SD resources, but only if the measured economics support it.
+
+
+## 2026-09-18 — themes, embedded images and web-assets reachability audit
+
+### Themes: prior measurement already answers most of this bucket
+
+**Confirmed source fact:** Nooir already contains `docs/theme-flash-analysis.md`, based on an older 1.6.0 ELF/map. It found fine-grained linker GC was active and unused theme functions were discarded. The historical estimates were small: RoundedRaff was the largest clean standalone candidate at roughly 4.5–7 KB; Lyra 3 Covers roughly 1.5–2.5 KB; removing Classic alone was negligible because `BaseTheme` remains shared.
+
+**Confirmed current-source fact:** `UITheme.cpp` now constructs six selectable themes: Classic, Lyra, RoundedRaff, Lyra 3 Covers, Folio Nooir and Carousel. Folio Nooir/Carousel share Lyra metrics, and Folio Nooir remains behaviorally tied to bookshelf activities rather than being a detachable bitmap skin.
+
+**Interpretation:** themes remain a lower-priority flash target than hyphenation/fonts/i18n. The old numbers must not be treated as current 1.6.2 measurements, especially because Carousel was added later. Future map audit should refresh theme symbols, but broad theme removal should not lead the recovery plan.
+
+### Repository screenshots are not firmware assets
+
+**Confirmed source fact:** the multi-megabyte JPEG/PNG files under `docs/images/` are documentation assets. Their repository size is irrelevant to application flash unless a build step explicitly embeds them. No such embedding path was found in this audit.
+
+Do not waste Codex time optimizing/removing documentation images for firmware size.
+
+### Device image headers are deliberately embedded
+
+**Confirmed source fact:** `src/images/` contains generated/compiled image headers such as:
+- `LoadingIcon.h`;
+- `MoonIcon.h`;
+- `Logo120.h`;
+- `NooirLogo360.h`.
+
+The corresponding PNG/SVG source files are not themselves proof of flash use; the C/C++ headers referenced by firmware are the measurement target.
+
+**Confirmed source fact:** `main.cpp` directly includes and renders `LoadingIcon.h` during quick-resume wake. Other logo/sleep imagery must be traced through their call sites before deciding whether any can move to SD.
+
+**Interpretation:** these are worth map-symbol accounting but are unlikely to rival the larger data buckets. Preserve boot/recovery visibility and quick-resume behavior.
+
+### Web UI is a real embedded flash bucket, but source HTML sizes overstate it
+
+**Confirmed source fact:** `scripts/build_html.py` walks `src/`, minifies HTML, gzip-compresses HTML/JS at compression level 9, and emits generated `constexpr ... PROGMEM` byte arrays.
+
+**Confirmed source fact:** `CrossPointWebServer.cpp` includes and serves the generated arrays for:
+- Files/Transfer;
+- Fonts;
+- Home;
+- Library;
+- Stats;
+- Settings;
+- To-Do;
+- JSZip.
+
+Therefore the web pages are deliberately linked firmware resources, not SD-hosted files.
+
+The raw source files currently include a very large `FilesPage.html` (~233 KB) and `jszip.min.js` (~98 KB), but **raw source bytes are not flash cost** because the build gzip-compresses them. Future build output/map must capture the generated compressed sizes and final linked symbols.
+
+### JSZip deserves a dedicated measurement
+
+**Confirmed source fact:** Files/Transfer loads `/js/jszip.min.js`, and the web server exposes a dedicated JSZip handler. The raw minified JS source is ~97.6 KB before gzip.
+
+**Hypothesis requiring build measurement:** JSZip may be one of the larger individual web static assets even after gzip. Determine exactly which Transfer workflow requires browser-side ZIP handling (for example CBZ preparation/upload) before considering removal, replacement, lazy external hosting, or SD hosting.
+
+Do not remove it merely because the raw file is large: web-transfer CBZ/JPEG preparation is released functionality and must remain intact unless a replacement is proven.
+
+### Web assets and the SD-resource idea
+
+Unlike translations/hyphenation, moving the entire web UI to SD has a less attractive failure model: File Transfer is itself a recovery/management path, so making its core page depend on SD files can reduce robustness.
+
+Preferred investigation order:
+1. keep a minimal built-in web management/transfer page;
+2. measure each compressed page/JS symbol;
+3. identify unusually large optional pages/scripts;
+4. only if worthwhile, consider optional richer web assets on SD with a built-in fallback page;
+5. never make firmware update/recovery/file transfer depend solely on an optional SD web bundle.
+
+### Build-capable web measurement checklist
+
+Capture `build_html.py` output and map/ELF symbols for every generated asset:
+- original source bytes;
+- minified bytes;
+- gzip bytes;
+- final linked symbol bytes.
+
+Then rank:
+`FilesPageHtml`, `FontsPageHtml`, `HomePageHtml`, `LibraryPageHtml`, `SettingsPageHtml`, `StatsPageHtml`, `ToDoPageHtml`, `jszip_minJs`.
+
+Run one-variable A/B only for a genuinely large optional asset. Account for any replacement/fallback code.
+
+### Revised priority after this audit
+
+No source evidence currently promotes themes or small device icons above the existing top candidates.
+
+Current order remains:
+1. hyphenation tries;
+2. optional built-in reader fonts;
+3. i18n strings/offset tables;
+4. **compressed web assets, especially JSZip/Transfer**;
+5. current theme symbols (refresh the old 1.6.0 measurements);
+6. small embedded boot/UI images;
+7. inherited linked functionality.
+
+The next source-only audit should focus on **inherited feature reachability and network/TLS dependencies**, because removing an apparently unused feature only matters when it also lets substantial dependent libraries fall out of the link.
