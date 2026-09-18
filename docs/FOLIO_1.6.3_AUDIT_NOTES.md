@@ -23,6 +23,57 @@ Research-only notes for the 1.6.3 development line. These findings are intended 
 
 The current flash-recovery hypothesis is **font/generated-data/link reachability first**, but nothing has yet proved how many bytes can be recovered. The goal of the next build-capable session is measurement, not deletion.
 
+## 2026-09-18 — 1.6.2 firmware-size discrepancy audit
+
+This is documentation-only measurement; it does not authorize production,
+partition, cache-format, dependency, or version changes.
+
+Source proof: 85dda52a is the Nooir 1.6.2 firmware/source milestone, tag
+1.6.2 resolves to 25df4940, current HEAD is 124581ff, and fetched d7f1a862
+is documentation-only. The complete 85dda52a..124581ff tracked-path union has
+only documentation changes and three Quran EPUB fixtures; no production,
+PlatformIO, generated-font, partition, dependency, FreeInk, or release-resource
+path changed. The Quran files are fixtures and are not firmware filesystem
+inputs. The historical size values came from docs commit 620871ea; no matching
+ELF/map/bin artifact is preserved in Git.
+
+Controlled normal gh_release results, app slot 6,553,600 B:
+
+| Build state | Linked | firmware.bin | Margin | Static RAM |
+| --- | ---: | ---: | ---: | ---: |
+| Historical documented figure | 6,492,279 | 6,506,128 | 47,472 | 53,492 |
+| Clean 85dda52a worktree | 6,493,837 | 6,507,680 | 45,920 | 53,140 |
+| Clean current 124581ff worktree | 6,493,837 | 6,507,680 | 45,920 | 53,140 |
+| Existing main-worktree build | 6,497,905 | 6,511,760 | 41,840 | 53,576 |
+
+The clean current and clean 85 builds match exactly. The existing main build
+was not a clean reproduction: it consumed an ignored sdkconfig.defaults with
+3,658 lines and SHA-256
+900D5D03F3C5A21DCF92964430BC46922F37FAA4D7F332BF685B2D2E392C91D1, versus
+3,118 lines and SHA-256
+E9E2602D96F6614E8DDCEBD2BA105AC71CADD7436407A58DF22E14F033C4EF12 in clean
+worktrees. The stale file has 580 extra generated Kconfig lines, including
+inherited RainMaker/Insights/Matter sections. This is build-state drift, not
+tracked source.
+
+Against the clean build, the non-clean delta is exactly +4,068 linked bytes:
+.flash.rodata +3,632 B (0x3f302c versus 0x3f21fc) and .dram0.data +436 B
+(0x4a5d versus 0x48a9); .flash.text, .iram0.text and .dram0.bss are unchanged.
+Defined-symbol sizes, including Arabic/Noto/Ubuntu fonts and hyphenation tries,
+are unchanged. Therefore the observed delta is not a 1.6.2 source expansion.
+
+The eight generated web payloads have identical decompressed hashes and
+compressed lengths. scripts/build_html.py uses gzip.compress without a fixed
+mtime, so same-state builds differ in 81 timestamp/checksum/SHA bytes but not
+in size. The only old C-workspace matches are historical generator-command
+comments in tracked font headers; no old C path is an active input or appears
+in the current linker map.
+
+Classification: **historical measurement mismatch plus stale generated build
+state**, not a proven production regression. Use the clean current baseline
+(6,493,837 linked; 6,507,680 bin; 45,920 margin; 53,140 RAM) for 1.6.3
+planning. Do not treat the existing non-clean artifact as a release measurement.
+
 ## Work that can continue without Codex/local builds
 
 Research can continue safely while no build-capable Codex session is available:

@@ -36,6 +36,15 @@ The September 2026 audit is the starting point for 1.6.3. Re-run a delta audit d
 
 ## Current research checkpoint
 
+The 2026-09-18 firmware-size audit establishes the clean 1.6.3 comparison
+baseline: 6,493,837 linked bytes, 6,507,680-byte firmware.bin, 45,920 app
+bytes remaining, and 53,140 static RAM. Clean builds from 85dda52a and current
+HEAD 124581ff match. The earlier 6,492,279/6,506,128/53,492 values remain
+historical 1.6.2 documentation because their ELF/map artifacts are not
+preserved. The larger 6,497,905 linked result came from stale ignored generated
+sdkconfig.defaults state, not tracked production-source changes. See the audit
+note for the Kconfig, linker-section and generated-resource evidence.
+
 Detailed research-only findings and the handoff plan for the next build-capable/Codex session are recorded in [`docs/FOLIO_1.6.3_AUDIT_NOTES.md`](FOLIO_1.6.3_AUDIT_NOTES.md).
 
 Key corrections from the source audit:
