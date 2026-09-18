@@ -33,6 +33,20 @@ FreeInk is a real Nooir dependency through the `freeink-sdk` submodule. The
 `JD_FASTDECODE` from `1` to `0` to use the portable Huffman path and avoid the
 fast-path grayscale artifacts seen during Nooir validation.
 
+## Authoritative development workspace
+
+The workspace migration completed on 2026-09-18. The authoritative Windows checkout is now **`D:\fatiha\side`**. All normal Windows development and production `gh_release` builds must use that checkout.
+
+The active Linux validation checkout is **`/home/fatiha/side-wsl`**, a clean native-WSL mirror of the D: source exposed to WSL at **`/mnt/d/fatiha/side`**. Simulator/build synchronization therefore flows:
+
+`D:\fatiha\side -> /mnt/d/fatiha/side -> /home/fatiha/side-wsl -> simulator/build validation`.
+
+The previous Windows location **`C:\Users\fatiha\Documents\side`** is intentionally retained as a pre-migration safety/reference checkout only. The previous dirty native-WSL checkout is likewise retained as **`/home/fatiha/side-wsl-pre-d-migration-20260918`**, preserving original HEAD `90c42ce35ad3cc594a8f70ebac6d7e05bc283ada`, its branch, modified state, and representative untracked font/test fixtures. Neither preserved location is an active workspace: do not develop or build there, sync over it, reset/clean it, or delete it. It may be inspected read-only for historical reconciliation.
+
+Migration validation used branch `codex/folio-nooir` at `124581ff14db309ffca52c4d334fd08409b43d96`, with clean D: and fresh WSL states matching the remote at that checkpoint. Firmware version source was still 1.6.2, `SECTION_FILE_VERSION = 41`, and FreeInk remained exactly `958720659ea289ae325e83db20049d0ea844800d`. The fresh Windows toolchain is D-local Python 3.12.10 with PlatformIO 6.1.19 and `D:\fatiha\side\.pio-home`; the fresh WSL mirror validated with Python 3.12.3, PlatformIO 6.1.19, and SDL2 2.30.0.
+
+Fresh migration validation produced a successful normal `gh_release` at **6,497,905 linked bytes**, **6,511,760-byte firmware.bin**, **41,840-byte final app-slot margin**, and **53,576-byte static RAM**. `simulator_x4` and `simulator_x3` both built and ran through Boot to RecentBooks without crashes/allocation failures; missing virtual-SD fonts/books/home-state messages were expected. The historical released 1.6.2 measurement remains **6,492,279 linked / 6,506,128 bin / 47,472 margin / 53,492 RAM**. Keep both records until the approximately 5.6 KB fresh-build discrepancy is explained; do not silently rewrite the historical measurement.
+
 ## Current repository state
 
 Authoritative parent repository:
