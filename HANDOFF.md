@@ -3,6 +3,26 @@
 Read [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) for the complete project
 history, decisions, and feature inventory.
 
+## Workspace migration — authoritative locations (2026-09-18)
+
+The C: -> D: migration is complete. Use these locations for all future work:
+
+- **Primary/authoritative Windows workspace:** `D:\fatiha\side`
+- **Native WSL build/simulator mirror:** `/home/fatiha/side-wsl`
+- Windows source is visible in WSL as `/mnt/d/fatiha/side`; the native WSL mirror must mirror **D:**, not C:.
+- Windows production `gh_release` builds must run from `D:\fatiha\side`.
+- Linux `simulator_x4` / `simulator_x3` validation must run from the fresh native mirror `/home/fatiha/side-wsl`.
+
+Preserved references/safety copies — **not active workspaces**:
+
+- Old Windows location: `C:\Users\fatiha\Documents\side`. This is the pre-migration safety checkout and is retained only for recovery/reference.
+- Archived pre-migration dirty WSL mirror: `/home/fatiha/side-wsl-pre-d-migration-20260918`, preserved at original HEAD `90c42ce35ad3cc594a8f70ebac6d7e05bc283ada` with its dirty tracked/untracked work intact.
+- Do **not** develop, build, sync into, reset, clean, or delete either safety copy. Read-only inspection is allowed when reconciling historical work.
+
+Migration validation was performed while firmware version source remained **1.6.2**, `SECTION_FILE_VERSION = 41`, and FreeInk remained pinned to `958720659ea289ae325e83db20049d0ea844800d`. At migration validation HEAD `124581ff14db309ffca52c4d334fd08409b43d96`, D: and the fresh WSL mirror were clean and matched the remote. Windows used Python 3.12.10 / PlatformIO 6.1.19; WSL used Python 3.12.3 / PlatformIO 6.1.19 / SDL2 2.30.0.
+
+The fresh D: `gh_release` build succeeded at **6,497,905 linked flash**, **6,511,760-byte firmware.bin**, **41,840-byte final app-slot margin**, and **53,576-byte static RAM**. Both fresh WSL simulators built and ran through Boot to RecentBooks. These fresh numbers are recorded separately from the historical released 1.6.2 measurement (6,492,279 linked / 6,506,128 bin / 47,472 margin / 53,492 RAM); the approximately 5.6 KB discrepancy must be investigated before selecting the reproducible 1.6.3 starting baseline.
+
 ## Current position
 
 - Active development line: Folio Nooir **1.6.3**

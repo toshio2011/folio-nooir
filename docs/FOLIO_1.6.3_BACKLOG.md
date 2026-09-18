@@ -143,14 +143,37 @@ Only then decide whether Bluetooth can fit normal Nooir.
 - Additional image/dither fragmentation work only if physical traces show a remaining problem.
 - KOSync redesign only for a concrete interoperability/protocol fix; current Nooir ↔ KOReader behavior is working.
 - Full UI/System Dark Mode as a dedicated palette/architecture project; Reader Dark Mode already exists.
-- X4 Pro support/simulator only with an explicit hardware/architecture plan; no X4 Pro simulator currently exists.
+- X4 Classic and X4 Pro support/simulators follow the mature X3/X4 core pass. Begin with an explicit CrossPoint/CrossInk/FreeInk hardware delta and recovery-safety plan; simulator/build support may precede hardware ownership, but physical support must not be claimed without real-device validation.
 - Broader Arabic/Quran shaping changes only with a specific bug and dedicated regression evidence.
 
 ## Recommended 1.6.3 sequence
 
-**Flash map/recovery → EPUB/font/image/memory upstream delta → SD/SPI benchmark → small safe fixes → Quick Actions if headroom allows → FB2 prototype → OPDS reconciliation/extension → PDF experiment → Bluetooth experiment.**
+### Phase A — mature the existing X3/X4 core first
 
-This sequence is a priority guide, not a promise that all items ship in 1.6.3.
+**Workspace migration/toolchain validation → freeze clean 1.6.3 X3/X4 ELF/map baseline → flash map/recovery → EPUB/font/image/memory upstream delta → SD/SPI benchmark → small safe fixes → Quick Actions only if recovered headroom comfortably allows → OPDS hardening/reconciliation and other already-audited bounded improvements → full X3/X4 simulator regression → physical X4 torture/regression validation → freeze the mature X3/X4 core.**
+
+The September upstream/source audits already provide the harvest queue. Do not restart broad archaeology before executing it; resume source-only audit only for a concrete candidate, a new upstream delta, or a linker/map question.
+
+### Phase B — port the mature core to additional XTEINK hardware
+
+After the X3/X4 core is stable, begin an explicit **X4 Classic + X4 Pro hardware-portability phase**. Do not mix this port with unrelated core reader changes.
+
+For each new device:
+- trace current CrossPoint/CrossInk/FreeInk board support and exact hardware detection rather than guessing;
+- record MCU, flash/partition/OTA/recovery layout, PSRAM where applicable, display/controller, SD interface, buttons/input, touch/frontlight where applicable, power/sleep behavior and flashing/recovery assumptions;
+- reconcile the current pinned FreeInk deliberately; do not update the pin or wholesale-merge upstream merely to obtain a board definition;
+- add a distinct build target and capability-driven HAL/FreeInk boundary without scattering device-name conditionals through Nooir readers/UI;
+- add simulator_x4classic / simulator_x4pro where useful for application/UI/capability-path validation;
+- keep X3/X4 builds and behavior as regression controls;
+- separately audit partition, OTA, flasher and recovery safety before producing a hardware-test candidate.
+
+Simulator/build success is **not** evidence that a firmware is safe to flash. Until real hardware validation exists, X4 Classic/X4 Pro outputs must remain explicitly experimental/unverified and must not be described as physically supported. Locked-device flashing/recovery requires separate proof; do not recommend an unverified Nooir image where a failed flash could remove the user's recovery path.
+
+### Phase C — larger/new subsystems later
+
+FB2, PDF and Bluetooth remain later measured prototypes/experiments rather than prerequisites for the X4 Classic/X4 Pro port. Do not delay the hardware-portability phase merely to finish those large subsystems. Bluetooth continues to require a separate experimental profile first.
+
+This sequence is a priority guide, not a promise that every candidate ships in 1.6.3.
 
 ## Non-negotiable regression boundaries
 
