@@ -1062,3 +1062,25 @@ For every upstream item, record:
 - physical X4 result where hardware behavior or SD/display/network is involved.
 
 **Never cherry-pick a large upstream commit merely because its release notes sound useful.** Reimplement or cherry-pick the smallest semantic fix that fits Nooir's current architecture.
+
+
+## 2026-09-18 — reminder: preserve capability when moving optional resources out of firmware
+
+This is a **design reminder, not approval to implement a Resource Manager or remove resources**. Apply it only if linker/map measurements later show that moving embedded resources out of firmware is worthwhile.
+
+When flash recovery removes an existing **user-facing resource/capability** from the built-in image purely to save space, prefer making that resource **optional and reinstallable/on-demand** rather than permanently deleting the capability, where technically reasonable. Dead, duplicate, obsolete or genuinely unreachable code does not need a downloadable replacement.
+
+Candidate model:
+- keep boot/recovery essentials, English/default UI, minimum safe fonts/fallbacks, generic line breaking and other no-SD/no-network recovery requirements embedded;
+- allow optional UI languages, language-specific hyphenation and optional reader fonts to live on SD if measurements justify it;
+- preserve existing `.cpfont` support for optional fonts;
+- candidate paths remain `/.crosspoint/languages/<code>.lang` and `/.crosspoint/hyphenation/<primary-tag>.trie`;
+- a future resource catalog could be hosted from a Nooir-controlled GitHub repository/release and described by a small versioned manifest, but repository layout/hosting is **not yet committed architecture**;
+- automatic install should follow Nooir's hardened download pattern: HTTPS where applicable, declared size/integrity metadata, temporary `.part` write, validation, then atomic rename/replace;
+- manual SD installation should remain possible; runtime should validate the resource regardless of whether it arrived through Nooir or was copied by the user;
+- resource packs need schema/compatibility/version metadata and safe fallback for missing, corrupt, incompatible or removed files;
+- firmware must remain bootable and recoverable with the optional packs absent and, where practical, with the SD card unavailable.
+
+A future unified **Nooir Resources / Resource Manager** (languages, hyphenation, fonts, and perhaps other optional resources) is only a candidate. Measure the flash savings first and include the manager/catalog/download/validation code cost in the economics. Do not spend 8 KB of firmware infrastructure to recover roughly the same amount of embedded data.
+
+Decision rule: **reduce what must be permanently embedded, not Nooir's useful capability**, when the measured savings and reliability tradeoff justify doing so.
