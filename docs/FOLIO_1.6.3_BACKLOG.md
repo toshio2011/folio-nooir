@@ -71,6 +71,8 @@ Generate a linker/map-level breakdown before adding another large subsystem. Aud
 
 Keep Folio Nooir built in unless an SD-loaded default is separately proven safe. Investigation target: recover meaningful headroom, preferably **100–200 KB or more**, but do not claim savings until measured.
 
+**Optional-resource preservation rule:** if a measured flash-recovery change removes an existing user-facing resource solely because it is expensive to embed, prefer preserving the capability as an installable/on-demand SD resource where technically reasonable. Languages/hyphenation/fonts are the first candidates. Keep boot/recovery/default fallback resources embedded. A future GitHub-backed versioned resource manifest / Nooir Resource Manager is a candidate only if the measured savings exceed the firmware and maintenance cost of the download/validation infrastructure; manual SD installation should remain possible. Dead/duplicate/unreachable code does not require a downloadable replacement. See the audit notes for the full reminder.
+
 ## P1 — EPUB/font/image/memory delta
 
 Re-diff current Nooir against current CrossPoint/CrossInk. Revisit:
