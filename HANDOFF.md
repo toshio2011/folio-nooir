@@ -3,6 +3,14 @@
 Read [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) for the complete project
 history, decisions, and feature inventory.
 
+## 1.6.3 development line opened (2026-09-18)
+
+The Folio Nooir **1.6.3 development line is officially open** at checkpoint
+`12e66d191fe87a0b0006305e2ea661528b4efb65`. Released 1.6.2 remains the
+compatibility and measurement baseline; the first 1.6.3 work is the clean
+flash/headroom audit. No functional firmware change is implied by opening the
+line.
+
 ## Workspace migration — authoritative locations (2026-09-18)
 
 The C: -> D: migration is complete. Use these locations for all future work:

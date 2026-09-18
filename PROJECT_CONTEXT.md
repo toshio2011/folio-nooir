@@ -17,6 +17,12 @@ Xteink X3/X4 devices. The primary goals are:
 - no regressions in XTC/XTCH, TXT, sleep, web, dictionary, or existing reader
   workflows.
 
+The Folio Nooir **1.6.3 development line is officially open** at checkpoint
+`12e66d191fe87a0b0006305e2ea661528b4efb65`. Released 1.6.2 remains the
+compatibility and measurement baseline; the first 1.6.3 task is the clean
+flash/headroom audit. Opening the line does not itself change firmware
+behavior, cache formats, dependencies, partitions, or generated resources.
+
 Folio Nooir **1.6.2 is released** and is now the compatibility baseline. Tag `1.6.2` resolves to `25df494020874150a047e2a4b3be62c3e40151e8`; the known-good 1.6.2 firmware/source milestone is `85dda52a102163b40fd4a2ddfde65e6cdc23af36`. Any new source work belongs to the **1.6.3 development line**. The known-good
 1.6.2 firmware/source milestone is `85dda52a`, which includes the current
 dictionary, reader lifecycle, KOSync/Font Manager, and Spine work. The 1.6.1
