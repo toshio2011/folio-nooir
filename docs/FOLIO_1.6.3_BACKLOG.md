@@ -36,14 +36,15 @@ The September 2026 audit is the starting point for 1.6.3. Re-run a delta audit d
 
 ## Current research checkpoint
 
-The 2026-09-18 firmware-size audit establishes the clean 1.6.3 comparison
+The completed flash audit establishes the official clean 1.6.3 comparison
 baseline: 6,493,837 linked bytes, 6,507,680-byte firmware.bin, 45,920 app
-bytes remaining, and 53,140 static RAM. Clean builds from 85dda52a and current
-HEAD 124581ff match. The earlier 6,492,279/6,506,128/53,492 values remain
-historical 1.6.2 documentation because their ELF/map artifacts are not
-preserved. The larger 6,497,905 linked result came from stale ignored generated
-sdkconfig.defaults state, not tracked production-source changes. See the audit
-note for the Kconfig, linker-section and generated-resource evidence.
+bytes remaining, and 53,140 static RAM. The synchronized 1.6.3 source tip is
+09f95ffd9aab4f84690aa28137363492e71abf3d. The earlier
+6,492,279/6,506,128/53,492 values remain historical 1.6.2 documentation
+because their ELF/map artifacts are not preserved. The larger 6,497,905 linked
+result came from stale ignored generated sdkconfig.defaults state, not tracked
+production-source changes. See the audit note for the Kconfig, linker-section
+and generated-resource evidence.
 
 Detailed research-only findings and the handoff plan for the next build-capable/Codex session are recorded in [`docs/FOLIO_1.6.3_AUDIT_NOTES.md`](FOLIO_1.6.3_AUDIT_NOTES.md).
 
@@ -190,3 +191,176 @@ Preserve unless a separately approved task explicitly changes them:
 - physical X4 stability.
 
 Physical X3 evidence remains outstanding and must not be inferred from simulator success.
+
+---
+
+## Consolidated Phase A execution queue — authoritative
+
+This queue consolidates the flash/linker, CrossPoint, CrossInk and resource-pack
+reports. It is an execution order, not blanket approval to implement every
+candidate. The official comparison control is the clean 1.6.3 baseline above.
+Every experiment uses one variable, an isolated branch/worktree, a clean
+gh_release build, a saved ELF/map/size report, host tests, and a documented
+rollback decision. No item may change the partition table, user data, cache
+format, FreeInk pin, or SECTION_FILE_VERSION 41 without a separate approval.
+
+### Evidence summary
+
+- Largest measured separable flash candidate: reader Noto Sans 12–18,
+  approximately 1,033,234 B of the 1,087,118 B Noto Sans family; Noto Sans 8
+  (approximately 53,884 B) remains the small UI/fallback safety font.
+- Hyphenation payloads total 350,397 B; the map grouping for the hyphenation
+  implementation is approximately 358,671 B. German alone is 206,259 B.
+- Generated i18n data/tables measure approximately 297,935 B, but English is
+  boot/recovery critical and optional-language fallback semantics must remain
+  intact.
+- Embedded web HTML/JS data measures approximately 102,429 B; JSZip alone is
+  approximately 28,379 B and is used by EPUB/CBZ/file-management workflows.
+- Built-in font totals are Arabic 556,193 B, Ubuntu 305,766 B, Noto Serif
+  1,079,862 B and Noto Sans 1,087,118 B. Arabic, Ubuntu, Noto Serif and Noto
+  Sans 8 remain embedded until an explicit compatibility experiment proves
+  otherwise.
+- TLS/wolfSSL, WebDAV, mDNS and the network server are shared live
+  infrastructure. BLE HID host code is already capability-disabled/stub-only
+  in the normal release; there is no honest large BLE removal to harvest.
+
+### A. SAFE SMALL FIXES
+
+| ID / source | Nooir subsystem and benefit | Flash / RAM / risk | Tests, hardware and rollback |
+|---|---|---|---|
+| A1 — CrossPoint f4b4ff06cd75508e0317695ab5d81c78272c3f73 | GfxRenderer SD-font space advance fallback in getSpaceWidth/getSpaceAdvance; prevents a partial font-cache miss from producing zero-width spaces. | Tiny flash; RAM neutral; low risk if the existing advance state is preserved. | Partial-cache host test, SD-font EPUB on X4 and X3. Arabic/Quran only as a shared-renderer smoke check. Roll back if space metrics, pagination or cache recovery differ. |
+| A2 — CrossPoint 6eda8f0b7f204b7c51f8f79ddfd37bed688a74df | ChapterHtmlSlimParser treats boolean HTML hidden as display:none; fixes hidden trailing/inline content without changing cache format. | Tiny flash/RAM cost; low parser risk. | Fixtures for hidden div/span/p/heading and trailing EOF content; full host suite; X4/X3 malformed-EPUB smoke test. Roll back on visible-content or final-page regressions. |
+| A3 — CrossPoint 03c484778bc6d4eb5376c7210b69d8d33aaee13e | CrossPointWebServer path normalization and escaped upload/move/delete/rename data; reduces traversal, quoting and Unicode filename failures. | Small web-only flash cost; RAM neutral; low-to-medium web regression risk. | Host path/HTML tests plus X4 direct-IP Transfer, WebSocket upload, WebDAV and Calibre smoke tests; X3 shared path. Arabic/Quran unaffected. Roll back if any file-management workflow or cache invalidation changes. |
+| A4 — CrossInk 5148544b and ddb58903 | KeyboardEntryActivity UTF-8 cursor rendering, deletion and wrapping; fixes byte-based handling of multibyte text fields. | Likely under 1 KB; RAM neutral; low risk with ASCII unchanged. | Accented Latin, Cyrillic, Arabic and multibyte cursor/wrap host tests; X4/X3 keyboard smoke. Reader Quran rendering unaffected. Roll back on byte-boundary or input regressions. |
+| A5 — CrossPoint ecec7e8d5e76ed5f53854c3df41f0f623f2f1889 | OPDS child Wi-Fi/password/keyboard activities keep sleep inhibited while work/input is active. | Tiny flash/RAM cost; low power-state risk. | OPDS scan, password, search and download activity tests; physical X4 sleep/wake and X3 shared ActivityManager smoke. Roll back if sleep is prevented after exit or resumes during network work. |
+| A6 — CrossPoint f437bb5069a43edef82fc162914d90c6a129a28e | Display-only Hangul NFC composition for decomposed filesystem names while preserving raw SD paths. | Tiny flash; RAM neutral; low risk. | UTF-8/Hangul host tests and X4/X3 SD filename smoke. Arabic/Quran unaffected. Roll back if raw path lookup or non-Hangul normalization changes. |
+| A7 — CrossPoint b5fb406f505144c6c4b5703664889455ae6a7538 | Static web ETag/304 and reproducible generated web asset handling; reduces repeated browser transfers. | Small flash; negligible RAM; low-to-medium web risk. | Generated-header test and X4 browser cache/304/direct-IP smoke. X3 same web path. Roll back if stale pages, uploads, captive portal or versioned assets are served. |
+
+These are correctness/safety adaptations, not a reason to wholesale merge
+CrossPoint or CrossInk. A1/A2/A4 are the preferred first production candidates
+after the flash control is preserved.
+
+### B. FLASH A/B EXPERIMENTS
+
+Each row is a separate treatment. Do not combine rows or infer savings from
+generated-source sizes. The treatment must retain enough behavior to boot,
+open books and recover to the control image.
+
+| ID / one variable | Exact footprint and purpose | RAM / risk / required evidence | Physical and rollback gate |
+|---|---|---|---|
+| B1 — reader Noto Sans 12–18 | Remove only the alternate reader Noto Sans 12–18 generated family; retain Noto Sans 8, Noto Serif, Ubuntu and all Arabic fonts. Gross modeled saving approximately 1,033,234 B. | Static RAM likely neutral; fallback/prewarm and pagination risk is high until tested. Map must show the exact removed symbols and any new fallback code. | X4 and X3: UI, Latin/Cyrillic/Vietnamese/Hebrew/Arabic EPUB, SD-font fallback, malformed EPUB, cache reopen. Roll back on any missing glyph, changed pagination, Arabic/Quran difference, or fallback boot failure. |
+| B2 — German hyphenation only | Exclude the German trie, approximately 206,259 B payload, while retaining generic fallback and other languages. | RAM neutral in the image; pagination changes are expected for German and must be treated as a layout/cache contract issue, not a free optimization. | German EPUB on X4/X3 with cache clear/reopen and line-break comparison. Roll back if fallback is not explicit, cache semantics become ambiguous, or latency/quality regresses. |
+| B3 — all hyphenation payloads | Exclude all ten tries, approximately 350,397 B payload / approximately 358,671 B grouped map cost, leaving generic fallback. | RAM neutral but broad pagination/quality risk; not a production proposal without a resource/cache design. | Only after B2 evidence; multilingual EPUB matrix on X4/X3. Roll back on any unacceptable line-break or cache mismatch. |
+| B4 — optional non-English i18n data | Isolate optional translations while keeping English and the existing O(1) fallback contract. Maximum gross data opportunity is approximately 287 KB, not a guaranteed saving. | RAM neutral to small loader cost; high settings/recovery/translation risk. | Simulator plus X4/X3 settings, boot, recovery/update, language switching and missing-pack fallback. Roll back if any boot/recovery screen or persisted language path depends on removed data. |
+| B5 — JSZip only | Compile out only browser JSZip and record all callers before changing behavior; measured live data is approximately 28,379 B. | Small flash recovery; RAM neutral; functional risk is high because EPUB inspection, image preview, conversion and CBZ progressive-JPEG normalization use it. | X4 web file, EPUB/CBZ workflows and direct upload/download; X3 shared path. Roll back if any caller loses required behavior. |
+| B6 — duplicate Nooir logo | Deduplicate the two linked NooirLogo360 copies; approximately 4,590 B candidate. | RAM neutral; very low risk if pixel identity is proven. | Host binary/resource identity and X4 boot/home/sleep image smoke; X3 same. Roll back on any image polarity or refresh difference. |
+| B7 — WebDAV, mDNS, UDP discovery, separately | Three isolated convenience experiments: WebDAV off, mDNS off, UDP discovery off. Ordinary HTTP/WebSocket Transfer remains the control path. | Savings are map-dependent; RAM neutral or component-specific. WebDAV and discovery are user-facing and shared-path risks. | X4 browser Transfer, WebSocket, Calibre, direct-IP and WebDAV tests; X3 shared network path. Roll back if the measured saving is small or a supported workflow breaks. |
+
+The first A/B is **B1 reader Noto Sans 12–18**, in an isolated worktree, because
+it is the largest cleanly separable candidate while leaving Arabic/Quran, UI
+fallback, Noto Serif and the recovery-safe small font set intact. A winning
+experiment must explain its map delta and pass the physical gates; it is not
+automatically merged.
+
+### C. MEMORY / CACHE RECONCILIATION
+
+| ID / source | Nooir path and expected benefit | Flash / RAM / risk | Required validation and rollback |
+|---|---|---|---|
+| C1 — CrossPoint c80c537f287506dbac4f99f0b97a89cffbe36302 and CrossInk 3a59c61c | Reconcile explicit non-accumulating/complete-render SD-font prewarm semantics with Nooir's retained metadata, fallback and failure recovery. | Small code cost; may reduce transient fragmentation but changes prewarm lifetime. High Arabic/fallback risk. | EPDMEM before/after on X4 and X3: uncached EPUB, Arabic/Quran, SD-font, image-heavy pages, rapid turns. Roll back if minimum heap/largest block, glyph coverage, pagination or responsiveness worsens. |
+| C2 — CrossInk eeb4beaa | XtcParser reusable streaming chunk instead of a new vector per loadPageStreaming call. | Small flash; approximately 1 KB retained per open parser, less churn. Medium XTC risk. | XTC/XTCH host fixtures, repeated four-pass rendering, sparse/malformed rows, X4 and X3 heap/latency. Roll back if retained RAM costs more than fragmentation saved or failure cleanup changes. |
+| C3 — CrossPoint 3555ff5569754933be2e0839a583748b42dbe941 / CrossInk 3555ff55, 636c5a62 | Diff remaining image scratch lifetimes against Nooir's contiguous/no-throw PixelCache and XTC safeguards; adapt only a proven non-overlap. | Potential RAM-positive, small flash; generic renderer/XTC risk. | JPEG/PNG/image-cache/PixelCache EPDMEM, XTC, rapid turns and low-heap X4/X3 tests. Roll back on image quality, dark-mode polarity, cache or MaxAlloc regression. |
+| C4 — CrossPoint e33e3cf39d66a35905782866b3cf04a7223b2e31 | Isolated USE_SPI_ARRAY_TRANSFER=1 test for SdFat transfer batching. | Near-zero flash expected; approximately 512 B transfer-path stack use; SD timing/starvation risk. | Physical X4 first: sequential reads/writes, EPUB sections, images, fonts, dictionaries, caches; repeat on X3. Roll back if stack/heap floor, filesystem integrity or latency worsens. |
+| C5 — CrossPoint dc9c3eabc4ac9cd9553064b67dd64d93b103dd08 | Compare rowProvider/lazy FileBrowser rows with Nooir's materialized raw filename vector. | Possible dynamic-RAM benefit only on 500–1000-file folders; SDK compatibility risk and no assumed flash saving. | Large-folder host/simulator and X4/X3 SD test. Roll back if ordering, selection, refresh, Unicode names or path safety changes. |
+| C6 — CrossPoint 6230eba2d8b757b2d480d5a151b1786d0537c7a6 / CrossInk af930f2b | Validate whether Nooir's progressive JPEG patches still miss 4:2:0 component/scan cases; do not replace the existing decoder path without a failing fixture. | Flash/RAM neutral until a real gap is proven; image correctness risk. | 4:4:4, 4:2:2, 4:2:0 progressive, baseline, PNG, cover and CBZ fixtures plus X4/X3. Roll back any decoder change that affects grayscale or cache output. |
+
+Already-covered cache work (EPUB ownership, final-page flush, cumulative
+spine-size cache, font-cache release before layout, dictionary disposable-cache
+release, and the presentation-form guard) is not to be reimplemented.
+
+### D. PHYSICAL X4 BENCHMARKS
+
+| Order | Benchmark / measurements | Acceptance and X3 relevance |
+|---|---|---|
+| D1 | Establish control telemetry from the official normal gh_release: page/section latency, free heap, minimum free heap, MaxAlloc/largest block, SD read timing and image/font cache behavior. | No source change. Repeat on X3 for every shared SD/renderer candidate; X4 is the primary gate. |
+| D2 | Run C4 SD batching A/B across EPUB text/uncached sections, image-cache generation, JPEG/PNG, SD fonts, dictionaries, CBZ, XTC/XTCH and cache writes. | Keep filesystem integrity and stack margin; reject any unexplained X3 regression. |
+| D3 | Run C1/C3 EPDMEM matrix: cached text, uncached section, chapter transition, image-heavy, JPEG, PNG, Quran/Arabic, SD font, rapid forward/backward turns. | Identify minimum-free-heap/MaxAlloc windows, not just recovered steady heap. Arabic/Quran must remain byte-for-byte behaviorally unchanged. |
+| D4 | Run C2 XTC/XTCH repeated streaming and sparse chapter tests. | Confirm retained scratch does not consume the X3 margin it is meant to protect. |
+| D5 | Run C5 large-folder FileBrowser tests at 500 and 1000 entries, including Unicode and long names. | Selection/hit order, refresh, path safety and RAM must remain stable on X4/X3. |
+| D6 | Run F-network tests: OPDS sleep states, WebDAV/Transfer, mDNS/direct-IP, WebSocket, OTA and KOSync. | No TLS/OTA/recovery regressions; no user data changes. |
+
+### E. EPUB / XTC READER IMPROVEMENTS
+
+1. **E1 — hidden HTML and EOF safety:** execute A2 first; retain the existing
+   final-page/anchor/hidden-element regression suite. SECTION_FILE_VERSION 41
+   remains fixed.
+2. **E2 — XTC streaming scratch:** execute C2 only after D4; preserve the
+   retained B/W-plane architecture and no pinch/zoom redesign.
+3. **E3 — progressive JPEG 4:2:0:** fixture-first reconciliation under C6.
+4. **E4 — compact tables and malformed table hardening:** CrossInk
+   2e61e081, 9d36a067, 94d13eb2, 6163ef5c, 7f3a14d4 and b06fd027 are **LATER**.
+   Nooir currently flattens simple tables; a full grid changes page geometry,
+   clipping and likely cache behavior. Take only a demonstrated caption/null
+   safety fix, with an explicit cache analysis.
+5. **E5 — queued image/text-AA deferral:** CrossInk 60e96fd5 and 6037033c are
+   **LATER** because they change turn scheduling and require physical
+   responsiveness evidence.
+6. **E6 — preserve existing EPUB equivalents:** incremental section building,
+   final-page serialization, cumulative spine sizes, image safeguards,
+   fallback/prewarm recovery and malformed-XHTML handling are already present.
+
+### F. OPDS / WEB HARDENING
+
+1. Reconcile current OPDS end-to-end behavior first: saved servers, streamed
+   feeds, search, pagination, cancellation, Basic credentials, downloads,
+   .part replacement, cache invalidation, redirects, MIME types, malformed
+   feeds and post-download visibility. This is hardening, not greenfield OPDS.
+2. Execute A3 path/escaping and A5 sleep guards before considering richer OPDS.
+3. Execute A7 ETag only if its generated-header and stale-content tests pass.
+4. Keep wolfSSL/TLS, WebDAV, mDNS/captive portal and WebSocket infrastructure
+   until a one-variable map experiment proves a worthwhile safe removal.
+5. Keep OTA and Font Manager HTTPS paths intact. Do not treat shared TLS bytes as
+   removable merely because they are large.
+
+### G. OPTIONAL QUICK ACTIONS DECISION
+
+Quick Actions remain deferred. CrossInk's one-trigger/five-slot model is useful
+reference, but adding settings, popup, input ownership and strings is not a
+Phase A default while the app margin is about 45.9 KB. Reconsider only after
+accepted flash experiments, with one measured build and X4/X3 input/sleep tests.
+Rollback if the recovered headroom is not comfortable after all safety margin and
+if settings/persistence or button ownership changes.
+
+### H. PHASE A REGRESSION / FREEZE
+
+The freeze gate is ordered:
+
+1. clean synchronized 1.6.3 source and baseline ELF/map;
+2. accepted small fixes with focused host tests and full host suite;
+3. accepted flash A/B results with section/map explanations;
+4. X4 physical torture matrix and X3 shared-path regression;
+5. XTC/XTCH, CBZ, Arabic/Quran, EPUB pagination, KOSync, OTA, Font Manager,
+   sleep/wake and recovery fallback checks;
+6. simulator_x4 and simulator_x3 full suites;
+7. freeze the mature X3/X4 core before any X4 Classic/X4 Pro port;
+8. document exact firmware, static-RAM, heap and physical evidence.
+
+X4 Classic/X4 Pro begins only after this freeze. PDF, FB2 and Bluetooth remain
+Phase C experiments. Quick Actions remain conditional. No physical X3 support
+claim may be made from simulator results alone.
+
+### Explicitly deferred or skipped
+
+- Full compact EPUB tables, table-aware clipping/highlighting and queued-turn
+  rendering.
+- Styled dictionary HTML; current fallback, successful-source picker, lazy
+  six-source cap, invalid-folder suppression and disposable-cache lifecycle
+  remain the 1.6.2 behavior.
+- Full CrossInk UI-font regeneration, Arabic/Quran font replacement or shaping
+  replacement, and paragraph-direction inheritance without a dedicated defect
+  and cache migration plan.
+- CrossInk retained PSRAM image strategy, XTC pinch/zoom, CrossPoint Library
+  view, on-device rename, timezone/DST, Arabic keyboard and wholesale merges.
+- SPIFFS/resource-pack implementation before the isolated A/B economics and
+  ownership/recovery design are proven.
+- Quick Actions, X4 Classic/X4 Pro work, PDF, FB2 and Bluetooth production
+  integration.

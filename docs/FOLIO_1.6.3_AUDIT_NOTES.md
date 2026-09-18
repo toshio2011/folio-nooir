@@ -1063,7 +1063,6 @@ For every upstream item, record:
 
 **Never cherry-pick a large upstream commit merely because its release notes sound useful.** Reimplement or cherry-pick the smallest semantic fix that fits Nooir's current architecture.
 
-
 ## 2026-09-18 — reminder: preserve capability when moving optional resources out of firmware
 
 This is a **design reminder, not approval to implement a Resource Manager or remove resources**. Apply it only if linker/map measurements later show that moving embedded resources out of firmware is worthwhile.
@@ -1084,3 +1083,157 @@ Candidate model:
 A future unified **Nooir Resources / Resource Manager** (languages, hyphenation, fonts, and perhaps other optional resources) is only a candidate. Measure the flash savings first and include the manager/catalog/download/validation code cost in the economics. Do not spend 8 KB of firmware infrastructure to recover roughly the same amount of embedded data.
 
 Decision rule: **reduce what must be permanently embedded, not Nooir's useful capability**, when the measured savings and reliability tradeoff justify doing so.
+---
+
+## 2026-09-18 — consolidated Phase A execution plan
+
+This section is the authoritative reconciliation of the four completed Phase A
+reports: the flash/linker-map audit, CrossPoint reconciliation, CrossInk
+reconciliation and resource-pack/flash architecture audit. It resolves their
+overlap rather than adding their queues together. The detailed ordered queue is
+also recorded in FOLIO_1.6.3_BACKLOG.md.
+
+### Control state and evidence boundary
+
+- Current synchronized source: branch codex/folio-nooir at
+  09f95ffd9aab4f84690aa28137363492e71abf3d.
+- The completed clean 1.6.3 measurement is 6,493,837 linked bytes,
+  6,507,680-byte firmware.bin, 45,920 app-slot bytes remaining and 53,140
+  static RAM. This is the official comparison control for experiments.
+- Released 1.6.2 figures remain historical: 6,492,279 linked,
+  6,506,128-byte firmware.bin, 47,472 app-slot bytes and 53,492 static RAM.
+- SECTION_FILE_VERSION remains 41. FreeInk remains
+  958720659ea289ae325e83db20049d0ea844800d.
+- The partition/recovery path, user persistence, Arabic/Quran rendering,
+  EPUB pagination, XTC/XTCH, CBZ, KOSync, OTA, Font Manager and boot fallback
+  are protected boundaries.
+- The normal build already resolves BLE HID host capability to zero/stub-only;
+  NimBLE is not a hidden large production contribution. wolfSSL/TLS is live
+  shared infrastructure for OTA, KOSync, Font Manager, OPDS and network
+  services and must not be removed by footprint alone.
+
+### Top flash-recovery candidates
+
+1. Reader Noto Sans 12–18: 1,033,234 B gross family contribution, with Noto
+   Sans 8 retained. This is the first isolated A/B because it is large,
+   separable and does not require moving Arabic/Quran or boot UI resources.
+2. German hyphenation: 206,259 B payload. Test before all-language removal;
+   hyphenation affects line breaks and therefore the layout/cache contract.
+3. All hyphenation payloads: 350,397 B payload / approximately 358,671 B
+   grouped map cost. This is a resource-design candidate, not a deletion.
+4. Optional non-English i18n data: approximately 297,935 B total tables/data,
+   with English required for boot/recovery. Measure only after tracing fallback.
+5. JSZip: approximately 28,379 B live data, but it has EPUB/CBZ/file-manager
+   callers and is not safe to delete without a caller-complete A/B.
+6. Duplicate NooirLogo360: approximately 4,590 B candidate, safe only after
+   pixel-identity verification.
+7. WebDAV, mDNS and UDP discovery: separate map experiments; retain ordinary
+   HTTP/WebSocket Transfer and direct-IP workflows in every control.
+
+No theme-to-SD migration, Arabic-font-to-SD migration, TLS removal, or
+SPIFFS/resource-pack implementation is justified by the reports alone.
+
+### Top correctness and safety fixes
+
+| Disposition | Upstream evidence | Nooir adaptation |
+|---|---|---|
+| TAKE | CrossPoint f4b4ff06cd75508e0317695ab5d81c78272c3f73 | Restore a nonzero space advance after a partial SD-font cache miss in GfxRenderer. |
+| TAKE | CrossPoint 6eda8f0b7f204b7c51f8f79ddfd37bed688a74df | Treat boolean hidden as display:none in ChapterHtmlSlimParser; add trailing-content fixtures. |
+| TAKE | CrossInk 5148544b and ddb58903 | Replace byte-based keyboard cursor/wrapping operations with UTF-8 boundary-safe operations. |
+| ADAPT | CrossPoint 03c484778bc6d4eb5376c7210b69d8d33aaee13e | Apply path normalization and escaping to remaining web transfer names and events. |
+| ADAPT | CrossPoint ecec7e8d5e76ed5f53854c3df41f0f623f2f1889 | Add sleep prevention only to OPDS child activities that still permit sleep during active work/input. |
+| ADAPT | CrossPoint f437bb5069a43edef82fc162914d90c6a129a28e | Compose decomposed Hangul for display only; never alter raw filesystem paths. |
+| ADAPT | CrossPoint b5fb406f505144c6c4b5703664889455ae6a7538 | Add compact static web ETag/304 behavior only after generated-header and stale-page tests. |
+| RECONCILE | CrossPoint 472b5e485f9f55864133a2f64dd25256749041d8 and 8a1a8769d8860469cad4ff67cf70dd76afad3829 | Compare exact KOSync position semantics with Nooir's mapper; do not replace a working interoperability path. |
+
+### Top memory, SD and reader candidates
+
+| Disposition | Evidence | Nooir-specific decision |
+|---|---|---|
+| ADAPT after measurement | CrossPoint e33e3cf39d66a35905782866b3cf04a7223b2e31 | Test USE_SPI_ARRAY_TRANSFER=1 alone on X4, then X3; measure throughput, stack, heap and filesystem integrity. |
+| ADAPT after EPDMEM | CrossPoint c80c537f287506dbac4f99f0b97a89cffbe36302 and CrossInk 3a59c61c | Reconcile only the missing complete-render/non-accumulating prewarm semantics; preserve Nooir fallback and Arabic behavior. |
+| ADAPT after XTC fixtures | CrossInk eeb4beaa | Retain one bounded XtcParser streaming scratch buffer to reduce repeated vector churn; measure the approximately 1 KB retained cost. |
+| RECONCILE | CrossPoint 3555ff5569754933be2e0839a583748b42dbe941 and CrossInk 3555ff55/636c5a62 | Diff image scratch lifetimes against Nooir's existing contiguous/no-throw PixelCache and XTC safeguards; no wholesale port. |
+| RECONCILE | CrossPoint dc9c3eabc4ac9cd9553064b67dd64d93b103dd08 | Benchmark lazy FileBrowser row production against Nooir's raw filename vector before changing the pinned SDK or selection model. |
+| FIXTURE FIRST | CrossPoint 6230eba2d8b757b2d480d5a151b1786d0537c7a6 and CrossInk af930f2b | Verify the documented progressive JPEG 4:2:0 gap before touching already-patched decoder paths. |
+
+### CrossPoint disposition
+
+**TAKE/ADAPT:** partial-cache space widths (f4b4), boolean hidden
+(6eda), path/filename safety (03c), OPDS child sleep guards (ece),
+Hangul display NFC (f437), static web ETag (b5), and KOSync XPath precision
+(472b) after Nooir mapper review.
+
+**BENCHMARK/ADAPT:** SdFat array transfer (e33), FileBrowser rowProvider
+(dc9), font-cache fragmentation/prewarm (c80), image fragmentation (3555),
+and any remaining progressive-JPEG case (623).
+
+**ALREADY COVERED/EQUIVALENT:** button-only reader toolbar (43a), EPUB
+unique ownership (c33), release-font-cache timing (c4d8), ligature-view
+cleanup (06b5), and Nooir's existing final-page/cumulative-spine safeguards.
+
+**SKIP or LATER:** CrossPoint Library view (652), on-device rename (e0),
+timezone/DST (581), Arabic keyboard without a FreeInk update (b0), and any
+wholesale UI/library merge.
+
+### CrossInk disposition
+
+**TAKE:** UTF-8 cursor and wrapping fixes 5148544b and ddb58903.
+
+**ADAPT/LATER:** reusable XTC streaming scratch eeb4beaa; defensive table
+caption/null handling from 9d36a067 and 94d13eb2 only if a Nooir fixture
+fails; compact table/grid work from 2e61e081, 6163ef5c, 7f3a14d4 and
+b06fd027 only in a later cache/layout-reviewed phase; styled dictionary HTML
+from the current DictHtmlRenderer only after flash and memory headroom work;
+UI Arabic/Hebrew font inventory review only for a demonstrated UI defect.
+
+**RECONCILE/ALREADY COVERED:** chained dictionary lookup/source switching,
+dictionary cache release, progress-file recovery, normal clipping/highlight
+reflow, incremental EPUB indexing/final-page protection/cached spine sizes,
+progressive JPEG component handling, SD-font release, KOSync mapping and
+Nooir's XTC B/W-plane architecture.
+
+**LATER/SKIP:** queued image/text-AA deferral (60e96fd5/6037033c),
+retained two-image PSRAM cache (2702845c), paragraph-direction inheritance
+ce6c6cbc without a dedicated defect and cache plan, Quick Actions, XTC
+pinch/zoom and CrossInk library/UI architecture. The CrossInk 1.5.1
+checkpoint 9656361d3329 remains a behavior reference, not a merge base.
+
+### Already-covered upstream work
+
+No new work is justified for Nooir's existing EPUB incremental/on-demand
+sections, final EOF/trailing-page serialization, anchor maps, cumulative
+spine-size RAM cache, parser allocation recovery, SD-font release before
+layout, disposable dictionary font-cache release, presentation-form
+ligature guard, Quran/Arabic fallback and combining-mark behavior,
+progressive-JPEG component patches, image safeguards, successful-source
+dictionary fallback/lazy six-source picker, invalid-folder suppression,
+atomic progress writes, clipping reflow relocation, KOReader mapping or
+streaming XTC/XTCH B/W-plane rendering. These are baseline behavior, not new
+1.6.3 features.
+
+### Ordered execution and freeze
+
+1. Preserve the clean 1.6.3 control and map/section accounting.
+2. Run B1 reader Noto Sans 12–18 as the exact first flash A/B in its own
+   worktree; record linked/padded/static-RAM deltas and symbol explanations.
+3. Apply only accepted small correctness fixes A1/A2/A4, with focused tests,
+   full host suite and normal gh_release comparisons.
+4. Run the X4 physical SD/SPI benchmark C4, then repeat shared-path evidence
+   on X3.
+5. Run EPDMEM font/image and XTC benchmarks C1/C2/C3, preserving all Arabic,
+   Quran, image, pagination and cache behavior.
+6. Execute fixture-first EPUB/XTC/JPEG checks and OPDS/web hardening.
+7. Reconsider optional resources, WebDAV/mDNS/discovery and Quick Actions only
+   when measured flash recovery leaves comfortable margin.
+8. Run full X3/X4 simulator and physical X4 torture/regression checks,
+   including CBZ, XTC/XTCH, KOSync, OTA, Font Manager, sleep/wake, recovery
+   fallback and user-data preservation.
+9. Freeze mature X3/X4 before X4 Classic/X4 Pro. Keep PDF, FB2 and Bluetooth
+   in Phase C.
+
+The four reports agree that the safest migration direction, if later justified,
+is optional resources with independent magic/version/CRC, bounded loading,
+English/reader/Arabic boot-safe fallback, separate ownership from book-cache
+deletion, and no startup dependency. The reports do not justify implementing
+that infrastructure in this consolidation.
