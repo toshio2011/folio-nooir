@@ -909,3 +909,105 @@ The next high-value work when build access is available is measurement:
 6. only then choose removals/externalization.
 
 Source-only work should now resume only for a concrete roadmap feature, a newly discovered upstream change, or a question raised by the linker map.
+
+
+## 2026-09-18 — upstream-to-Nooir delta matrix
+
+Purpose: convert upstream watching into an actionable harvest queue. This is a source-level triage, not approval to cherry-pick. Every TAKE/ADAPT item still requires Nooir-side diff review, build-size/RAM measurement where relevant, regression tests, and preservation of the 1.6.2 baseline.
+
+### CrossPoint — current high-value delta
+
+| Upstream | Classification | Nooir relevance / action |
+|---|---|---|
+| `dc9c3eabc4` File Browser FUI rowProvider | **TAKE/ADAPT** | High-value memory/UI scalability candidate for large folders. No matching Nooir symbol found in the current branch search. Review against Nooir's file/library browser changes before porting. |
+| `43a3358204` toolbar reader menu on button-only devices | **INVESTIGATE** | Relevant to X3/X4 button-only ergonomics. Check whether Nooir's current reader menu already preserves equivalent access before taking. |
+| `f4b4ff06cd` restore space widths on partial cache misses | **TAKE/ADAPT** | Reader correctness fix in the font/cache path; particularly relevant because Nooir has extensive EPUB/font-cache modifications. Port semantically, not blindly. |
+| `06b5d5b3ae` clear ligature views when releasing SD font caches | **TAKE/ADAPT** | Strong match for Nooir's SD-font/cache-release work and low-memory goals. Verify FreeInk/font-cache API compatibility. |
+| `3555ff5569` reduce image-related heap fragmentation | **INVESTIGATE** | Nooir already has significant image fragmentation/fail-soft work. Diff for any remaining non-overlapping allocation-lifetime improvement; likely partial overlap. |
+| `e33e3cf39d` batch SdFat SPI transfers on ESP32 | **HIGH-PRIORITY INVESTIGATE** | Potential broad SD throughput win for EPUB, CBZ, XTC, dictionaries, fonts and caches. Must benchmark physical X4 and confirm no latency/starvation regressions. |
+| `c4d8c395dc` release font caches before EPUB chapter layout | **ALREADY/PARTIAL — RECONCILE** | Nooir already releases SD/font caches in several memory-sensitive paths. Compare exact timing/coverage rather than porting wholesale. |
+| `c80c537f28` reduce font-cache heap fragmentation | **INVESTIGATE/RECONCILE** | Same reason: likely overlaps Nooir 1.6.2 memory work but may contain a remaining allocator/lifetime improvement. |
+| `c33a8b0e88` EPUB unique ownership | **ALREADY COVERED** | Nooir 1.6.2 already adopted unique-ownership style EPUB memory work. Do not duplicate. |
+| `6230eba2d8` progressive JPEG separated-component scans | **INVESTIGATE** | Nooir has progressive JPEG/TJpgDec fallback work; test whether this fixes a distinct JPEGDEC case not already covered. |
+| `6eda8f0b7f` hidden HTML attribute | **TAKE if missing** | Small EPUB correctness fix. Current simple repository search found no obvious equivalent marker; inspect parser/render implementation before port. |
+| `03c484778b` normalize web user paths / escape filenames | **SECURITY/CORRECTNESS REVIEW** | Nooir has expanded web transfer. Compare path canonicalization and HTML escaping carefully; take any missing hardening independent of flash work. |
+| `b5fb406f50` Cache-Control/ETag for static HTTP assets | **INVESTIGATE** | Could make the embedded web UI faster/less chatty without changing stored assets. Small feature; only take if implementation is compact. |
+| `ecec7e8d5e` OPDS catalog auto-sleep | **TAKE if missing** | OPDS is already user-reachable in Nooir. Check ActivityManager/sleep behavior and adopt if Nooir currently prevents idle sleep while browsing catalogs. |
+| `472b5e485f`, `8a1a8769d8` KOSync position fixes | **RECONCILE ONLY** | Nooir has real KOReader interoperability and its own KOSync fixes. Never cherry-pick without comparing position semantics and physical interop. |
+| `f437bb5069` NFD Hangul filenames | **INVESTIGATE** | Useful Unicode filesystem robustness; broader relevance than Korean-only because macOS can create decomposed filenames. Check Nooir's UTF-8/path handling first. |
+| `e0fb688bfbe` on-device rename files | **SKIP FOR NOW** | Nooir web file manager already renames files; device-side UI is feature growth during a flash-recovery release. |
+| `652ae0d83a` upstream Library view | **SKIP/REFERENCE** | Nooir has its own library identity, metadata/cache behavior, Folio/Carousel and shelves. Harvest isolated fixes only, not the upstream UI architecture. |
+| `581c63745f` timezone/DST settings | **LATER/REFERENCE** | Nooir already has weather/clock/location behavior. Useful only if current timezone handling proves wrong; not a 1.6.3 flash priority. |
+| `b0b844fcc2` Arabic keyboard | **LATER** | Potentially useful with Arabic OPDS/search/text entry, but adds UI/data during a size-constrained cycle. Preserve as future multilingual enhancement. |
+
+### CrossInk — harvest checkpoint
+
+CrossInk's current default branch after the 1.5.1 release is mostly maintenance. Treat release commit `9656361d3329` as the principal comparison checkpoint rather than attempting to merge the fork.
+
+**TAKE/ADAPT if absent after exact diff:**
+- EPUB table crash/caption hardening and table-column rendering;
+- Arabic/Hebrew UI font fitting;
+- dictionary styled-HTML first-page and heading-break correctness;
+- UTF-8-safe keyboard/text-field cursor and wrapping fixes;
+- progress-write corruption protection;
+- selected clipping/highlight pagination fixes;
+- XTC chapter/token/pinch correctness where Nooir's XTC path does not already diverge.
+
+**RECONCILE / likely partial overlap:**
+- build-size reductions;
+- SD-font discovery/cache release;
+- image/cache fragmentation;
+- progressive JPEG handling;
+- KOReader position/sync improvements;
+- EPUB image and table memory work;
+- deferred indexing/input-priority changes.
+
+**LATER:**
+- Quick Actions/control-center concepts. Nooir's desired design remains one compact popup/trigger reusing existing dispatchers; do not import CrossInk's whole UI.
+- X4 Pro-specific behavior until Nooir has hardware or a reliable validation path.
+
+**SKIP as a wholesale merge:** CrossInk contains a broad UX/product direction different from Nooir. Harvest fixes by behavior and commit, preserving Nooir's Folio/Carousel/library identity and flash constraints.
+
+### InkPointX / CrossPDF / CrossLink
+
+**InkPointX — REFERENCE/LATER**
+- retain as reference for fixed/raster PDF, bounded rendering/cache, zoom and low-memory behavior;
+- do not pull PDF code into 1.6.3 before flash headroom and the dedicated prototype;
+- inspect individual generic cache/integrity techniques only when they solve a concrete Nooir issue.
+
+**CrossPDF — REFERENCE/LATER**
+- retain its reflow/preparation/cache-recovery work for the eventual novel-PDF prototype;
+- compare against InkPointX instead of choosing an architecture in advance;
+- PDF remains after FB2/OPDS hardening and headroom recovery.
+
+**CrossLink — BLUETOOTH REFERENCE**
+- preserve as behavioral/reference material because its Bluetooth path has worked on an X4 in real use;
+- do not merge wholesale;
+- future experimental BLE profile should compare reconnect/pairing/page-turn semantics against CrossLink while keeping normal Nooir BLE-disabled.
+
+### Recommended harvest order after flash headroom work
+
+Do not start feature harvesting until the baseline map and first flash-recovery experiments are complete. Then use this order:
+
+1. small correctness/safety fixes with negligible growth: hidden HTML, path escaping/canonicalization, OPDS sleep, UTF-8 fixes;
+2. font/cache correctness: partial-cache spaces, ligature-view release;
+3. performance/memory: File Browser rowProvider, image/font fragmentation deltas;
+4. physical X4 benchmark of SdFat SPI batching;
+5. reconcile EPUB table/XTC fixes from CrossInk;
+6. Quick Actions only if recovered flash comfortably supports it;
+7. FB2 / OPDS hardening;
+8. PDF and Bluetooth remain separate later prototypes.
+
+### Porting rule
+
+For every upstream item, record:
+- exact upstream commit;
+- Nooir equivalent/overlap;
+- files/functions touched;
+- expected user-visible benefit;
+- firmware delta;
+- static RAM and relevant peak heap/largest block;
+- simulator/host tests;
+- physical X4 result where hardware behavior or SD/display/network is involved.
+
+**Never cherry-pick a large upstream commit merely because its release notes sound useful.** Reimplement or cherry-pick the smallest semantic fix that fits Nooir's current architecture.
