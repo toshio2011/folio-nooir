@@ -483,3 +483,7 @@ Hardware is eventually required for:
 > Capture the remote faithfully first. Map it second. Keep the BLE layer ignorant of book formats. Measure memory and battery as part of correctness.
 
 A successful Nooir BLE implementation is not the one that merely turns a page. It is the one that can understand a broad class of remotes, map them predictably to existing Nooir actions, reconnect cleanly, release resources safely, and remain boringly reliable through a long reading session.
+
+## Ecosystem-wide companion survey
+
+A broader screen of the current XTEINK firmware ecosystem (47 catalog entries plus additional BLE lineages) is preserved in [`BLE_ECOSYSTEM_SURVEY.md`](BLE_ECOSYSTEM_SURVEY.md). It covers direct BLE implementations as well as memory, power, radio arbitration, input and workload ideas from firmware that does not advertise page-turner support.
