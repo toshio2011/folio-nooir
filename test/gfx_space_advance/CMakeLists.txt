@@ -1,0 +1,4 @@
+add_executable(gfx_space_advance_test GfxSpaceAdvanceTest.cpp)
+target_link_libraries(gfx_space_advance_test PRIVATE GTest::gtest_main crosspoint_test_common)
+
+gtest_discover_tests(gfx_space_advance_test)
