@@ -708,8 +708,11 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
 
   self->pushTypographyState(elementDepth, cssStyle);
 
-  // Skip elements with display:none before all fast paths (tables, links, etc.).
-  if (cssStyle.hasDisplay() && cssStyle.display == CssDisplay::None) {
+  // Skip elements hidden by CSS or the HTML boolean attribute before all fast
+  // paths (tables, links, etc.). Any value is valid for a boolean attribute;
+  // Expat presents hidden="" as a non-null empty string, just like hidden="hidden".
+  const bool hiddenAttribute = getAttribute(atts, "hidden") != nullptr;
+  if (hiddenAttribute || (cssStyle.hasDisplay() && cssStyle.display == CssDisplay::None)) {
     self->skipUntilDepth = self->depth;
     self->depth += 1;
     return;
@@ -1585,6 +1588,24 @@ void XMLCALL ChapterHtmlSlimParser::defaultHandlerExpand(void* userData, const X
 void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* name) {
   auto* self = static_cast<ChapterHtmlSlimParser*>(userData);
   if (self->allocationFailed_) return;
+
+  // A skipped element and all of its descendants still produce Expat end
+  // callbacks. Restore only the bounded skip/depth state here; running the
+  // normal block/table/style teardown for skipped tags could pop an ancestor's
+  // state and leak hidden/display:none handling into following siblings.
+  if (self->skipUntilDepth < self->depth) {
+    const bool closingSkippedRoot = self->depth - 1 == self->skipUntilDepth;
+    self->depth -= 1;
+    self->popTypographyState(self->depth);
+    // listDepth is incremented before CSS/hidden state is resolved for the
+    // skipped list element itself. Descendants never reach that increment.
+    if (closingSkippedRoot && (strcmp(name, "ul") == 0 || strcmp(name, "ol") == 0) && self->listDepth > 0) {
+      self->listDepth--;
+    }
+    if (self->depth == 0 && self->documentRootSeen_) self->documentRootClosed_ = true;
+    if (self->skipUntilDepth == self->depth) self->skipUntilDepth = INT_MAX;
+    return;
+  }
 
   // Check if any style state will change after we decrement depth
   // If so, we MUST flush the partWordBuffer with the CURRENT style first

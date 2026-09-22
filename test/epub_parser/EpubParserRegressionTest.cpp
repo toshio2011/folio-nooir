@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <climits>
 #include <cstdint>
 #include <fstream>
 #include <iterator>
@@ -33,6 +34,12 @@ struct XmlProbe {
   std::vector<std::pair<std::string, std::string>> guideReferences;
   std::vector<std::pair<std::string, std::string>> blockTexts;
   std::vector<size_t> openBlockIndexes;
+};
+
+struct VisibilityProbe {
+  int depth = 0;
+  int skipUntilDepth = INT_MAX;
+  std::string visibleText;
 };
 
 std::string readFixture(const char* name) {
@@ -98,6 +105,35 @@ void XMLCALL onEnd(void* data, const XML_Char* name) {
   probe.depth--;
 }
 
+void XMLCALL onVisibilityStart(void* data, const XML_Char*, const XML_Char** atts) {
+  auto& probe = *static_cast<VisibilityProbe*>(data);
+  if (probe.skipUntilDepth < probe.depth) {
+    probe.depth++;
+    return;
+  }
+
+  const char* hidden = attribute(atts, "hidden");
+  const char* style = attribute(atts, "style");
+  const bool displayNone = style && std::string_view(style).find("display:none") != std::string_view::npos;
+  if (hidden != nullptr || displayNone) probe.skipUntilDepth = probe.depth;
+  probe.depth++;
+}
+
+void XMLCALL onVisibilityText(void* data, const XML_Char* text, const int length) {
+  auto& probe = *static_cast<VisibilityProbe*>(data);
+  if (probe.skipUntilDepth >= probe.depth) probe.visibleText.append(text, length);
+}
+
+void XMLCALL onVisibilityEnd(void* data, const XML_Char*) {
+  auto& probe = *static_cast<VisibilityProbe*>(data);
+  if (probe.skipUntilDepth < probe.depth) {
+    probe.depth--;
+    if (probe.skipUntilDepth == probe.depth) probe.skipUntilDepth = INT_MAX;
+    return;
+  }
+  probe.depth--;
+}
+
 enum XML_Error parseXml(const std::string& input, XmlProbe& probe) {
   XML_Parser parser = XML_ParserCreate(nullptr);
   XML_SetUserData(parser, &probe);
@@ -113,6 +149,20 @@ enum XML_Error parseXml(const std::string& input, XmlProbe& probe) {
       error = XML_GetErrorCode(parser);
       break;
     }
+  }
+  XML_ParserFree(parser);
+  return error;
+}
+
+enum XML_Error parseVisibilityXml(const std::string& input, VisibilityProbe& probe) {
+  XML_Parser parser = XML_ParserCreate(nullptr);
+  XML_SetUserData(parser, &probe);
+  XML_SetElementHandler(parser, onVisibilityStart, onVisibilityEnd);
+  XML_SetCharacterDataHandler(parser, onVisibilityText);
+
+  enum XML_Error error = XML_ERROR_NONE;
+  if (XML_Parse(parser, input.data(), static_cast<int>(input.size()), XML_TRUE) == XML_STATUS_ERROR) {
+    error = XML_GetErrorCode(parser);
   }
   XML_ParserFree(parser);
   return error;
@@ -414,4 +464,45 @@ TEST(EpubParserRegression, MixedArabicLatinBlockElementsRemainDistinct) {
   EXPECT_EQ(probe.blockTexts[2].first, "div");
   EXPECT_NE(probe.blockTexts[2].second.find("MIXED_START"), std::string::npos);
   EXPECT_NE(probe.blockTexts[2].second.find("MIXED_END"), std::string::npos);
+}
+
+TEST(EpubParserRegression, HtmlHiddenBooleanAttributeSuppressesOnlyItsSubtree) {
+  const std::string xhtml = readFixture("chapter_hidden_attribute.xhtml");
+  ASSERT_FALSE(xhtml.empty());
+
+  VisibilityProbe probe;
+  ASSERT_EQ(parseVisibilityXml(xhtml, probe), XML_ERROR_NONE);
+
+  EXPECT_NE(probe.visibleText.find("VISIBLE_BEFORE"), std::string::npos);
+  EXPECT_NE(probe.visibleText.find("VISIBLE_AFTER"), std::string::npos);
+  EXPECT_NE(probe.visibleText.find("VISIBLE_INLINE"), std::string::npos);
+  EXPECT_NE(probe.visibleText.find("VISIBLE_FINAL"), std::string::npos);
+
+  EXPECT_EQ(probe.visibleText.find("HIDDEN_EMPTY_FORM"), std::string::npos);
+  EXPECT_EQ(probe.visibleText.find("HIDDEN_EMPTY_CHILD"), std::string::npos);
+  EXPECT_EQ(probe.visibleText.find("HIDDEN_NAMED_FORM"), std::string::npos);
+  EXPECT_EQ(probe.visibleText.find("HIDDEN_CSS_PARENT"), std::string::npos);
+  EXPECT_EQ(probe.visibleText.find("HIDDEN_CSS_CHILD"), std::string::npos);
+  EXPECT_EQ(probe.visibleText.find("HIDDEN_INLINE"), std::string::npos);
+}
+
+TEST(EpubParserRegression, HtmlHiddenAttributeFormsArePresenceBased) {
+  const std::string xhtml =
+      R"(<root><item hidden="">EMPTY</item><item hidden="hidden">NAMED</item><item>VISIBLE</item></root>)";
+
+  VisibilityProbe probe;
+  ASSERT_EQ(parseVisibilityXml(xhtml, probe), XML_ERROR_NONE);
+  EXPECT_EQ(probe.visibleText.find("EMPTY"), std::string::npos);
+  EXPECT_EQ(probe.visibleText.find("NAMED"), std::string::npos);
+  EXPECT_NE(probe.visibleText.find("VISIBLE"), std::string::npos);
+}
+
+TEST(EpubParserRegression, BareHtmlHiddenAttributeIsRejectedByStrictXhtmlParser) {
+  const std::string xhtml = R"(<root><item hidden>HIDDEN</item><item>VISIBLE</item></root>)";
+  XmlProbe probe;
+
+  // ChapterHtmlSlimParser uses Expat in XML mode. A bare HTML boolean
+  // attribute has no value and therefore never reaches startElement(); the
+  // supported XHTML forms are hidden="" and hidden="hidden" above.
+  EXPECT_EQ(parseXml(xhtml, probe), XML_ERROR_INVALID_TOKEN);
 }
