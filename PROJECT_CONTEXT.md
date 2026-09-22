@@ -17,6 +17,14 @@ Xteink X3/X4 devices. The primary goals are:
 - no regressions in XTC/XTCH, TXT, sleep, web, dictionary, or existing reader
   workflows.
 
+The durable EPUB/CSS research record is
+[`docs/EPUB_CSS_RESEARCH.md`](docs/EPUB_CSS_RESEARCH.md). It captures the
+current Nooir parser/layout/cache baseline, the constrained-reader findings
+from Microreader, CrossPoint, and PapyriX, known selector/inheritance and
+malformed-EPUB gaps, memory/performance gates, torture fixtures, candidate
+dispositions, and the phased research-to-implementation order. It is
+documentation only and does not authorize firmware/source changes.
+
 The Folio Nooir **1.6.3 development line is officially open** at checkpoint
 `12e66d191fe87a0b0006305e2ea661528b4efb65`. Released 1.6.2 remains the
 compatibility and measurement baseline; the first 1.6.3 task is the clean
@@ -302,6 +310,11 @@ Track CrossPoint Reader, CrossInk, InkPointX, CrossPDF (PDF architecture), and C
 The 1.6.2 production baseline is 6,492,279 linked flash, 6,506,128 padded firmware.bin, 47,472 app-slot bytes remaining, and 53,492 static RAM. With a preferred ~40 KB production cushion, this is too little headroom for casually adding OPDS, PDF, FB2, or Bluetooth. Before large features, generate a linker/map-level breakdown and audit compiled-in themes, bundled/fallback fonts, icons/assets, inherited unused activities, translations, web assets, duplicate theme/rendering code, dead linked functionality, LTO/garbage collection, and resources that can safely move to SD. Compare CrossPoint's SD-theme direction and CrossInk's font/build-size reductions. Keep Folio Nooir built in unless separately proven safe. Never enlarge/change the partition. Investigation target: recover meaningful headroom, ideally 100–200 KB or more, but claim only measured normal gh_release savings.
 
 ### 2. EPUB / fonts / images / memory
+
+Read [`docs/EPUB_CSS_RESEARCH.md`](docs/EPUB_CSS_RESEARCH.md) before changing
+EPUB/CSS behavior. It distinguishes existing Nooir equivalents from upstream
+ideas and marks claims that still need source, fixture, or hardware
+re-verification.
 
 Re-diff Nooir against current CrossPoint and CrossInk before adding formats. Re-evaluate CrossPoint #3521 font-cache fragmentation, #3501 SD/SPI batching, #3398 / 9d2f234 packed Font Manager catalog, 3555ff5 image-fragmentation work, 06b5d5b SD-font ligature-view cleanup, and f4b4ff0 partial font-cache space-width recovery. Some older upstream ideas are already adapted in 1.6.2; never port them twice. Also compare CrossInk deferred SD-font discovery, debounced progress writes, streaming EPUB tables, framebuffer lending during indexing, cancellable pre-indexing, low-heap dictionary guards, overlay-image fixes, XTCH memory fixes, and font-cache release around overlay PNG work. Preserve cache version 41, pagination, Arabic/Quran rendering, image quality, and working KOSync unless separately tested evidence requires a change.
 
