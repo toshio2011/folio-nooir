@@ -9,6 +9,7 @@
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "KeyboardUtf8.h"
 
 namespace fui = freeink::ui;
 
@@ -238,10 +239,7 @@ size_t KeyboardEntryActivity::utf8Prev(const std::string& s, size_t pos) {
 }
 
 size_t KeyboardEntryActivity::utf8Next(const std::string& s, size_t pos) {
-  if (pos >= s.length()) return s.length();
-  pos++;
-  while (pos < s.length() && (static_cast<uint8_t>(s[pos]) & 0xC0) == 0x80) pos++;
-  return pos;
+  return keyboard_utf8::nextBoundary(s, pos);
 }
 
 void KeyboardEntryActivity::insertUtf8(const char* out) {
@@ -373,14 +371,21 @@ int KeyboardEntryActivity::measureRange(std::string& s, const int start, const i
 
 int KeyboardEntryActivity::lineBreakEnd(std::string& s, const int start, const int maxWidth) const {
   const int len = static_cast<int>(s.length());
+  if (start >= len) return len;
   if (measureRange(s, start, len) <= maxWidth) return len;
-  int lo = start + 1;
-  int hi = len - 1;
-  int best = start + 1;
+
+  // Search byte offsets for speed, but measure only complete codepoints. The
+  // snapped candidate sequence remains monotonic, so the binary search still
+  // needs no full UTF-8 scan or temporary string.
+  const int firstEnd = static_cast<int>(utf8Next(s, static_cast<size_t>(start)));
+  int lo = firstEnd;
+  int hi = len;
+  int best = firstEnd;
   while (lo <= hi) {
     const int mid = lo + (hi - lo) / 2;
-    if (measureRange(s, start, mid) <= maxWidth) {
-      best = mid;
+    const int candidate = static_cast<int>(keyboard_utf8::endAtOrBefore(s, static_cast<size_t>(mid)));
+    if (measureRange(s, start, candidate) <= maxWidth) {
+      best = candidate;
       lo = mid + 1;
     } else {
       hi = mid - 1;
@@ -443,14 +448,16 @@ bool KeyboardEntryActivity::cursorPositionFromPoint(const int x, const int y, si
       }
 
       int previousWidth = 0;
-      for (int i = lineStartIdx; i < lineEndIdx; i++) {
-        const int nextWidth = measureRange(displayText, lineStartIdx, i + 1);
+      for (int i = lineStartIdx; i < lineEndIdx;) {
+        const int next = static_cast<int>(utf8Next(displayText, static_cast<size_t>(i)));
+        const int nextWidth = measureRange(displayText, lineStartIdx, next);
         const int midpoint = lineStartX + previousWidth + (nextWidth - previousWidth) / 2;
         if (x < midpoint) {
           position = static_cast<size_t>(i);
           return true;
         }
         previousWidth = nextWidth;
+        i = next;
       }
       position = static_cast<size_t>(lineEndIdx);
       return true;
@@ -718,7 +725,8 @@ void KeyboardEntryActivity::render(RenderLock&&) {
 
   int cursorCharWidth = 6;
   if (cursorPos < text.length()) {
-    int w = renderer.getTextWidth(UI_12_FONT_ID, text.substr(cursorPos, 1).c_str());
+    const size_t cursorEnd = utf8Next(text, cursorPos);
+    int w = renderer.getTextWidth(UI_12_FONT_ID, text.substr(cursorPos, cursorEnd - cursorPos).c_str());
     if (w > cursorCharWidth) cursorCharWidth = w;
   }
 
@@ -746,11 +754,12 @@ void KeyboardEntryActivity::render(RenderLock&&) {
         int beforeWidth = renderer.getTextAdvanceX(UI_12_FONT_ID, beforeCursor.c_str(), EpdFontFamily::REGULAR);
         int kernOffset = 0;
         if (cursorPos < displayText.length()) {
-          std::string beforeAndCursor = beforeCursor + displayText.substr(cursorPos, 1);
+          const size_t cursorEnd = utf8Next(displayText, cursorPos);
+          const std::string cursorText = displayText.substr(cursorPos, cursorEnd - cursorPos);
+          std::string beforeAndCursor = beforeCursor + cursorText;
           int beforeAndCursorWidth =
               renderer.getTextAdvanceX(UI_12_FONT_ID, beforeAndCursor.c_str(), EpdFontFamily::REGULAR);
-          int charAdvance =
-              renderer.getTextAdvanceX(UI_12_FONT_ID, displayText.substr(cursorPos, 1).c_str(), EpdFontFamily::REGULAR);
+          int charAdvance = renderer.getTextAdvanceX(UI_12_FONT_ID, cursorText.c_str(), EpdFontFamily::REGULAR);
           kernOffset = beforeAndCursorWidth - beforeWidth - charAdvance;
         }
         if (centerText) {
@@ -772,7 +781,8 @@ void KeyboardEntryActivity::render(RenderLock&&) {
         renderer.drawText(UI_12_FONT_ID, lineStartX, inputStartY + inputHeight, part1.c_str());
         // Part 2: skip cursor slot (block + actual char drawn later)
         // Part 3: chars after cursor position (skip char under cursor), starting at cursorPixelX + cursorCharWidth
-        const int afterStart = static_cast<int>(cursorPos) + (cursorPos < text.length() ? 1 : 0);
+        const int afterStart = static_cast<int>(cursorPos < displayText.length() ? utf8Next(displayText, cursorPos)
+                                                                                  : displayText.length());
         const int afterEnd = lineEndIdx;
         if (afterStart < afterEnd) {
           const std::string part3 = displayText.substr(afterStart, afterEnd - afterStart);
@@ -799,8 +809,9 @@ void KeyboardEntryActivity::render(RenderLock&&) {
     static constexpr int blockPadding = 1;
     renderer.fillRect(cursorPixelX - blockPadding, cursorLineY, cursorCharWidth + blockPadding * 2, lineHeight, true);
     if (cursorPos < text.length()) {
-      const char buf[2] = {text[cursorPos], '\0'};
-      renderer.drawText(UI_12_FONT_ID, cursorPixelX, cursorLineY, buf, false);
+      const size_t cursorEnd = utf8Next(text, cursorPos);
+      const std::string cursorText = text.substr(cursorPos, cursorEnd - cursorPos);
+      renderer.drawText(UI_12_FONT_ID, cursorPixelX, cursorLineY, cursorText.c_str(), false);
     }
   } else if (cursorPos <= displayText.length()) {
     static constexpr int serifW = 3;
