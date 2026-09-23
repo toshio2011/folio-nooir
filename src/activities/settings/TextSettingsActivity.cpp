@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "CrossPointSettings.h"
+#include "FontSelectionCompatibility.h"
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
 #include "TextSettingsPreview.h"
@@ -55,12 +56,12 @@ int findCurrentFontIndex(const SdCardFontRegistry* registry, const char* sdFontF
     const auto& families = registry->getFamilies();
     for (int i = 0; i < static_cast<int>(families.size()); i++) {
       if (families[i].name == sdFontFamilyName) {
-        return CrossPointSettings::BUILTIN_FONT_COUNT + i;
+        return CrossPointSettings::VISIBLE_BUILTIN_FONT_COUNT + i;
       }
     }
   }
 
-  return fontFamily < CrossPointSettings::BUILTIN_FONT_COUNT ? fontFamily : 0;
+  return FontSelectionCompatibility::readerVisibleIndex(fontFamily);
 }
 
 int findCurrentFontSizeIndex(uint8_t fontSize, size_t listSize) {
@@ -88,13 +89,13 @@ void TextSettingsActivity::onEnter() {
   previewHeight = usableHeight * metrics_.previewHeightPercent / 100;
 
   fonts_.clear();
-  fonts_.reserve(CrossPointSettings::BUILTIN_FONT_COUNT + (registry_ ? registry_->getFamilyCount() : 0));
+  fonts_.reserve(CrossPointSettings::VISIBLE_BUILTIN_FONT_COUNT + (registry_ ? registry_->getFamilyCount() : 0));
   fonts_.push_back({I18N.get(StrId::STR_NOTO_SERIF), true, static_cast<uint8_t>(CrossPointSettings::NOTOSERIF)});
-  fonts_.push_back({I18N.get(StrId::STR_NOTO_SANS), true, static_cast<uint8_t>(CrossPointSettings::NOTOSANS)});
   if (registry_) {
     const auto& families = registry_->getFamilies();
     for (int i = 0; i < static_cast<int>(families.size()); i++) {
-      fonts_.push_back({families[i].name, false, static_cast<uint8_t>(CrossPointSettings::BUILTIN_FONT_COUNT + i)});
+      fonts_.push_back({families[i].name, false,
+                        static_cast<uint8_t>(CrossPointSettings::VISIBLE_BUILTIN_FONT_COUNT + i)});
     }
   }
 
@@ -110,15 +111,15 @@ void TextSettingsActivity::onEnter() {
                               static_cast<uint8_t>(CrossPointSettings::DICT_USE_READER)});
   dictionaryFonts_.push_back({I18N.get(StrId::STR_NOTO_SERIF), true,
                               static_cast<uint8_t>(CrossPointSettings::DICT_NOTOSERIF)});
-  dictionaryFonts_.push_back({I18N.get(StrId::STR_NOTO_SANS), true,
-                              static_cast<uint8_t>(CrossPointSettings::DICT_NOTOSANS)});
   dictionarySizes_ = sizes_;
 
   currentFamilyIndex_ = findCurrentFontIndex(registry_, SETTINGS.sdFontFamilyName, SETTINGS.fontFamily);
   currentSizeIndex_ = findCurrentFontSizeIndex(SETTINGS.fontSize, sizes_.size());
   currentDictionaryFamilyIndex_ = 0;
+  const uint8_t visibleDictionaryFamily =
+      FontSelectionCompatibility::dictionaryFamilyForUi(SETTINGS.dictionaryFontFamily);
   for (int i = 0; i < static_cast<int>(dictionaryFonts_.size()); ++i) {
-    if (dictionaryFonts_[i].settingIndex == SETTINGS.dictionaryFontFamily) {
+    if (dictionaryFonts_[i].settingIndex == visibleDictionaryFamily) {
       currentDictionaryFamilyIndex_ = i;
       break;
     }
@@ -390,7 +391,7 @@ void TextSettingsActivity::applyFamily(int listIndex) {
     sdFontSystem.ensureLoaded(renderer);  // unloads the previously resident SD font
     currentFamilyIndex_ = listIndex;
   } else if (registry_) {
-    const int sdIdx = font.settingIndex - CrossPointSettings::BUILTIN_FONT_COUNT;
+    const int sdIdx = font.settingIndex - CrossPointSettings::VISIBLE_BUILTIN_FONT_COUNT;
     const auto& families = registry_->getFamilies();
     if (sdIdx < static_cast<int>(families.size())) {
       strncpy(SETTINGS.sdFontFamilyName, families[sdIdx].name.c_str(), sizeof(SETTINGS.sdFontFamilyName) - 1);

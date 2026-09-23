@@ -431,7 +431,8 @@ void SettingsActivity::toggleCurrentSetting() {
     // Toggle the boolean value using the member pointer
     const bool currentValue = SETTINGS.*(setting.valuePtr);
     SETTINGS.*(setting.valuePtr) = !currentValue;
-  } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
+  } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr &&
+             !(setting.valueGetter && setting.valueSetter)) {
     const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
     const uint8_t totalValues = setting.enumStringValues.empty()
                                     ? static_cast<uint8_t>(setting.enumValues.size())
@@ -652,7 +653,8 @@ void SettingsActivity::render(RenderLock&&) {
         if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
           const bool value = SETTINGS.*(setting.valuePtr);
           valueText = value ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
-        } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
+        } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr &&
+                   !(setting.valueGetter && setting.valueSetter)) {
           const uint8_t value = SETTINGS.*(setting.valuePtr);
           if (!setting.enumStringValues.empty() && value < setting.enumStringValues.size()) {
             valueText = setting.enumStringValues[value];

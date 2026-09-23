@@ -11,6 +11,7 @@
 #include "I18nKeys.h"
 #include "MappedInputManager.h"
 #include "SettingsList.h"
+#include "FontSelectionCompatibility.h"
 #include "fontIds.h"
 
 namespace {
@@ -64,6 +65,10 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
 
   for (const auto& info : getSettingsList()) {
     if (!info.key) continue;
+    // These two compatibility-aware enum fields are serialized explicitly
+    // below so their raw legacy values never pass through visible-option
+    // clamping.
+    if (strcmp(info.key, "fontFamily") == 0 || strcmp(info.key, "dictionaryFontFamily") == 0) continue;
     // Dynamic entries (KOReader etc.) are stored in their own files — skip.
     if (!info.valuePtr && !info.stringOffset) continue;
 
@@ -133,6 +138,9 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
 
   for (const auto& info : getSettingsList()) {
     if (!info.key) continue;
+    // Load these compatibility-aware enum fields explicitly below, preserving
+    // legacy reader=1 and dictionary=2 values without visible-index clamping.
+    if (strcmp(info.key, "fontFamily") == 0 || strcmp(info.key, "dictionaryFontFamily") == 0) continue;
     // Dynamic entries (KOReader etc.) are stored in their own files — skip.
     if (!info.valuePtr && !info.stringOffset) continue;
 
@@ -304,7 +312,9 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
 
   // Font family — uses dynamic getter/setter in SettingsList so the generic loop skips it.
   const uint8_t storedFontFamily = doc["fontFamily"] | (uint8_t)0;
-  fontFamily = clamp(storedFontFamily, BUILTIN_FONT_COUNT, 0);
+  // Keep the legacy Noto Sans enum value in storage so rollback to older
+  // firmware can restore the user's original preference.
+  fontFamily = clamp(storedFontFamily, FONT_FAMILY_COUNT, NOTOSERIF);
   // SD card font family name — not in SettingsList, load manually
   const char* sfn = doc["sdFontFamilyName"] | "";
   strncpy(sdFontFamilyName, sfn, sizeof(sdFontFamilyName) - 1);
@@ -314,7 +324,7 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     strncpy(sdFontFamilyName, "OpenDyslexic", sizeof(sdFontFamilyName) - 1);
     sdFontFamilyName[sizeof(sdFontFamilyName) - 1] = '\0';
     needsResave = true;
-  } else if (storedFontFamily >= BUILTIN_FONT_COUNT) {
+  } else if (storedFontFamily >= FONT_FAMILY_COUNT) {
     needsResave = true;
   }
   // Dictionary folder name — uses dynamic getter/setter in SettingsList, load manually
@@ -417,6 +427,24 @@ int CrossPointSettings::getRefreshFrequency() const {
   }
 }
 
+namespace {
+
+int readerFontIdForSize(const uint8_t size) {
+  switch (size) {
+    case CrossPointSettings::SMALL:
+      return NOTOSERIF_12_FONT_ID;
+    case CrossPointSettings::MEDIUM:
+    default:
+      return NOTOSERIF_14_FONT_ID;
+    case CrossPointSettings::LARGE:
+      return NOTOSERIF_16_FONT_ID;
+    case CrossPointSettings::EXTRA_LARGE:
+      return NOTOSERIF_18_FONT_ID;
+  }
+}
+
+}  // namespace
+
 int CrossPointSettings::getReaderFontId() const {
   // Check SD card font first
   if (sdFontFamilyName[0] != '\0' && sdFontIdResolver) {
@@ -425,32 +453,12 @@ int CrossPointSettings::getReaderFontId() const {
     // Fall through to built-in if SD font not found
   }
 
-  switch (fontFamily) {
+  // The legacy Noto Sans selection is deliberately retained in settings but
+  // resolves to the same-size Noto Serif resource on this firmware.
+  switch (FontSelectionCompatibility::readerFamilyForRendering(fontFamily)) {
     case NOTOSERIF:
     default:
-      switch (fontSize) {
-        case SMALL:
-          return NOTOSERIF_12_FONT_ID;
-        case MEDIUM:
-        default:
-          return NOTOSERIF_14_FONT_ID;
-        case LARGE:
-          return NOTOSERIF_16_FONT_ID;
-        case EXTRA_LARGE:
-          return NOTOSERIF_18_FONT_ID;
-      }
-    case NOTOSANS:
-      switch (fontSize) {
-        case SMALL:
-          return NOTOSANS_12_FONT_ID;
-        case MEDIUM:
-        default:
-          return NOTOSANS_14_FONT_ID;
-        case LARGE:
-          return NOTOSANS_16_FONT_ID;
-        case EXTRA_LARGE:
-          return NOTOSANS_18_FONT_ID;
-      }
+      return readerFontIdForSize(fontSize);
   }
 }
 
@@ -466,31 +474,12 @@ int CrossPointSettings::getDictionaryFontId() const {
     }
   }
 
-  const bool useSans = dictionaryFontFamily == DICT_NOTOSANS ||
-                       (dictionaryFontFamily == DICT_USE_READER && fontFamily == NOTOSANS);
-  if (useSans) {
-    switch (size) {
-      case SMALL:
-        return NOTOSANS_12_FONT_ID;
-      case MEDIUM:
-        return NOTOSANS_14_FONT_ID;
-      case LARGE:
-        return NOTOSANS_16_FONT_ID;
-      case EXTRA_LARGE:
-      default:
-        return NOTOSANS_18_FONT_ID;
-    }
-  }
-
-  switch (size) {
-    case SMALL:
-      return NOTOSERIF_12_FONT_ID;
-    case MEDIUM:
-      return NOTOSERIF_14_FONT_ID;
-    case LARGE:
-      return NOTOSERIF_16_FONT_ID;
-    case EXTRA_LARGE:
+  // A legacy dictionary Noto Sans selection is resolved to Noto Serif.  The
+  // existing Use Reader SD-font fast path above remains unchanged.
+  switch (FontSelectionCompatibility::dictionaryFamilyForRendering(dictionaryFontFamily)) {
+    case DICT_USE_READER:
+    case DICT_NOTOSERIF:
     default:
-      return NOTOSERIF_18_FONT_ID;
+      return readerFontIdForSize(size);
   }
 }

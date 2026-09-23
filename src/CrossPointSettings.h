@@ -101,10 +101,13 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Default: Up = Previous, Down = Next
   enum SIDE_BUTTON_LAYOUT { PREV_NEXT = 0, NEXT_PREV = 1, SIDE_BUTTONS_DISABLED = 2, SIDE_BUTTON_LAYOUT_COUNT };
 
-  // Font family options (built-in fonts only; SD card fonts use sdFontFamilyName)
+  // Font family options (built-in fonts only; SD card fonts use sdFontFamilyName).
+  // NOTOSANS remains a legacy persisted value and resolves to same-size Serif
+  // after the embedded Noto Sans 12-18 resources are removed.
   enum FONT_FAMILY { NOTOSERIF = 0, NOTOSANS = 1, FONT_FAMILY_COUNT };
   static constexpr uint8_t LEGACY_OPENDYSLEXIC = 2;
   static constexpr uint8_t BUILTIN_FONT_COUNT = FONT_FAMILY_COUNT;
+  static constexpr uint8_t VISIBLE_BUILTIN_FONT_COUNT = 1;
   // Font size options
   enum FONT_SIZE { SMALL = 0, MEDIUM = 1, LARGE = 2, EXTRA_LARGE = 3, FONT_SIZE_COUNT };
   // Dictionary typography: the family can follow the reader (including an SD

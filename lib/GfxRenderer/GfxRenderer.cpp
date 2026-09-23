@@ -372,9 +372,9 @@ int GfxRenderer::scaleUiFontId(const int fontId) const {
   }
   if (fontId == UI_12_FONT_ID) {
     if (smaller) return UI_10_FONT_ID;
-    // A 14 px Noto Sans font is available in normal X3/X4 builds. Keep a
+    // Use the same-size reader font for the larger UI-scale fallback. Keep a
     // safe fallback for slim builds that omit the larger font bundle.
-    return fontMap.count(NOTOSANS_14_FONT_ID) ? NOTOSANS_14_FONT_ID : UI_12_FONT_ID;
+    return fontMap.count(NOTOSERIF_14_FONT_ID) ? NOTOSERIF_14_FONT_ID : UI_12_FONT_ID;
   }
   return fontId;
 }
@@ -387,7 +387,6 @@ uint8_t GfxRenderer::getFontPointSize(const int fontId) const {
 
   static constexpr int kReaderFontIds[][4] = {
       {NOTOSERIF_12_FONT_ID, NOTOSERIF_14_FONT_ID, NOTOSERIF_16_FONT_ID, NOTOSERIF_18_FONT_ID},
-      {NOTOSANS_12_FONT_ID, NOTOSANS_14_FONT_ID, NOTOSANS_16_FONT_ID, NOTOSANS_18_FONT_ID},
       {ARABIC_12_FONT_ID, ARABIC_14_FONT_ID, ARABIC_16_FONT_ID, ARABIC_18_FONT_ID},
   };
   static constexpr uint8_t kReaderPointSizes[] = {12, 14, 16, 18};
@@ -405,7 +404,6 @@ int GfxRenderer::resolveFontIdForPointSize(const int fontId, const uint8_t point
 
   static constexpr int kReaderFontIds[][4] = {
       {NOTOSERIF_12_FONT_ID, NOTOSERIF_14_FONT_ID, NOTOSERIF_16_FONT_ID, NOTOSERIF_18_FONT_ID},
-      {NOTOSANS_12_FONT_ID, NOTOSANS_14_FONT_ID, NOTOSANS_16_FONT_ID, NOTOSANS_18_FONT_ID},
       {ARABIC_12_FONT_ID, ARABIC_14_FONT_ID, ARABIC_16_FONT_ID, ARABIC_18_FONT_ID},
   };
   static constexpr uint8_t kReaderPointSizes[] = {12, 14, 16, 18};

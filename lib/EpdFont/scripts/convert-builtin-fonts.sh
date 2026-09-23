@@ -6,7 +6,6 @@ cd "$(dirname "$0")"
 
 READER_FONT_STYLES=("Regular" "Italic" "Bold" "BoldItalic")
 NOTOSERIF_FONT_SIZES=(12 14 16 18)
-NOTOSANS_FONT_SIZES=(12 14 16 18)
 
 for size in ${NOTOSERIF_FONT_SIZES[@]}; do
   for style in ${READER_FONT_STYLES[@]}; do
@@ -18,21 +17,12 @@ for size in ${NOTOSERIF_FONT_SIZES[@]}; do
   done
 done
 
-for size in ${NOTOSANS_FONT_SIZES[@]}; do
-  for style in ${READER_FONT_STYLES[@]}; do
-    font_name="notosans_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
-    font_path="../builtinFonts/source/NotoSans/NotoSans-${style}.ttf"
-    output_path="../builtinFonts/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path --2bit --compress --pnum > $output_path
-    echo "Generated $output_path"
-  done
-done
-
 # Arabic reader fallback.  This is a glyph-level companion to the normal
-# Noto Serif/Sans reader fonts, not a second whole-text reader font.  Keep the
-# Arabic face first for coverage and the matching Noto Sans face last so the
+# Noto Serif reader font, not a second whole-text reader font. Keep the
+# Arabic face first for coverage and the matching Noto Serif face last so the
 # generated line metrics remain compatible with the primary reader fonts.
 ARABIC_READER_FONT_STYLES=("Regular" "Bold")
+ARABIC_FONT_SIZES=(12 14 16 18)
 ARABIC_READER_INTERVALS=(
   --additional-intervals 0x0600,0x06FF  # Arabic
   --additional-intervals 0x0750,0x077F  # Arabic Supplement
@@ -44,11 +34,11 @@ ARABIC_READER_INTERVALS=(
   --additional-intervals 0xFFFD,0xFFFD  # replacement glyph
 )
 
-for size in ${NOTOSANS_FONT_SIZES[@]}; do
+for size in ${ARABIC_FONT_SIZES[@]}; do
   for style in ${ARABIC_READER_FONT_STYLES[@]}; do
     font_name="arabic_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
     arabic_path="../builtinFonts/source/NotoSansArabic/NotoSansArabic-${style}.ttf"
-    metrics_path="../builtinFonts/source/NotoSans/NotoSans-${style}.ttf"
+    metrics_path="../builtinFonts/source/NotoSerif/NotoSerif-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
     python fontconvert.py $font_name $size $arabic_path $metrics_path --only-additional-intervals \
       --2bit --compress --pnum --group-max-uncompressed-bytes 32768 "${ARABIC_READER_INTERVALS[@]}" > $output_path

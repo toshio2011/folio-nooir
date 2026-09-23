@@ -1,0 +1,4 @@
+add_executable(font_selection_compatibility_test FontSelectionCompatibilityTest.cpp)
+target_link_libraries(font_selection_compatibility_test PRIVATE GTest::gtest_main crosspoint_test_common)
+
+gtest_discover_tests(font_selection_compatibility_test)

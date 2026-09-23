@@ -1316,11 +1316,11 @@ void SleepActivity::renderReadingStatsSleepScreen() const {
   const int halfWidth = (pageWidth - side * 2) / 2;
   renderer.drawLine(side + halfWidth, dashboardTop + 4, side + halfWidth, dashboardTop + 76);
   renderer.drawText(SMALL_FONT_ID, side, dashboardTop + 4, tr(STR_TODAY), true, EpdFontFamily::BOLD);
-  renderer.drawText(NOTOSANS_18_FONT_ID, side, dashboardTop + 32,
+  renderer.drawText(NOTOSERIF_18_FONT_ID, side, dashboardTop + 32,
                     sleepDuration(snapshot.overview.todaySeconds).c_str(), true, EpdFontFamily::BOLD);
   renderer.drawText(SMALL_FONT_ID, side + halfWidth, dashboardTop + 4, tr(STR_STATS_CURRENT_STREAK), true,
                     EpdFontFamily::BOLD);
-  renderer.drawText(NOTOSANS_18_FONT_ID, side + halfWidth, dashboardTop + 32,
+  renderer.drawText(NOTOSERIF_18_FONT_ID, side + halfWidth, dashboardTop + 32,
                     (std::to_string(snapshot.overview.currentStreak) + " d").c_str(), true,
                     EpdFontFamily::BOLD);
 
@@ -1409,11 +1409,11 @@ void SleepActivity::renderMinimalStatsSleepScreen() const {
   const int halfWidth = (pageWidth - side * 2) / 2;
   renderer.drawLine(side, statsY - 24, pageWidth - side, statsY - 24);
   renderer.drawText(SMALL_FONT_ID, side, statsY, tr(STR_TODAY), true, EpdFontFamily::BOLD);
-  renderer.drawText(NOTOSANS_18_FONT_ID, side, statsY + 34, sleepDuration(snapshot.overview.todaySeconds).c_str(), true,
+  renderer.drawText(NOTOSERIF_18_FONT_ID, side, statsY + 34, sleepDuration(snapshot.overview.todaySeconds).c_str(), true,
                     EpdFontFamily::BOLD);
   renderer.drawText(SMALL_FONT_ID, side + halfWidth, statsY, tr(STR_STATS_CURRENT_STREAK), true,
                     EpdFontFamily::BOLD);
-  renderer.drawText(NOTOSANS_18_FONT_ID, side + halfWidth, statsY + 34,
+  renderer.drawText(NOTOSERIF_18_FONT_ID, side + halfWidth, statsY + 34,
                     (std::to_string(snapshot.overview.currentStreak) + " d").c_str(), true,
                     EpdFontFamily::BOLD);
   renderer.drawImage(MoonIcon, pageWidth - MOONICON_WIDTH - 16, pageHeight - MOONICON_HEIGHT - 12, MOONICON_WIDTH,

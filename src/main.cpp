@@ -80,31 +80,6 @@ EpdFont notoserif18BoldItalicFont(&notoserif_18_bolditalic);
 EpdFontFamily notoserif18FontFamily(&notoserif18RegularFont, &notoserif18BoldFont, &notoserif18ItalicFont,
                                     &notoserif18BoldItalicFont);
 
-EpdFont notosans12RegularFont(&notosans_12_regular);
-EpdFont notosans12BoldFont(&notosans_12_bold);
-EpdFont notosans12ItalicFont(&notosans_12_italic);
-EpdFont notosans12BoldItalicFont(&notosans_12_bolditalic);
-EpdFontFamily notosans12FontFamily(&notosans12RegularFont, &notosans12BoldFont, &notosans12ItalicFont,
-                                   &notosans12BoldItalicFont);
-EpdFont notosans14RegularFont(&notosans_14_regular);
-EpdFont notosans14BoldFont(&notosans_14_bold);
-EpdFont notosans14ItalicFont(&notosans_14_italic);
-EpdFont notosans14BoldItalicFont(&notosans_14_bolditalic);
-EpdFontFamily notosans14FontFamily(&notosans14RegularFont, &notosans14BoldFont, &notosans14ItalicFont,
-                                   &notosans14BoldItalicFont);
-EpdFont notosans16RegularFont(&notosans_16_regular);
-EpdFont notosans16BoldFont(&notosans_16_bold);
-EpdFont notosans16ItalicFont(&notosans_16_italic);
-EpdFont notosans16BoldItalicFont(&notosans_16_bolditalic);
-EpdFontFamily notosans16FontFamily(&notosans16RegularFont, &notosans16BoldFont, &notosans16ItalicFont,
-                                   &notosans16BoldItalicFont);
-EpdFont notosans18RegularFont(&notosans_18_regular);
-EpdFont notosans18BoldFont(&notosans_18_bold);
-EpdFont notosans18ItalicFont(&notosans_18_italic);
-EpdFont notosans18BoldItalicFont(&notosans_18_bolditalic);
-EpdFontFamily notosans18FontFamily(&notosans18RegularFont, &notosans18BoldFont, &notosans18ItalicFont,
-                                   &notosans18BoldItalicFont);
-
 EpdFont arabic12RegularFont(&arabic_12_regular);
 EpdFont arabic12BoldFont(&arabic_12_bold);
 EpdFontFamily arabic12FontFamily(&arabic12RegularFont, &arabic12BoldFont);
@@ -276,10 +251,6 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(NOTOSERIF_16_FONT_ID, notoserif16FontFamily);
   renderer.insertFont(NOTOSERIF_18_FONT_ID, notoserif18FontFamily);
 
-  renderer.insertFont(NOTOSANS_12_FONT_ID, notosans12FontFamily);
-  renderer.insertFont(NOTOSANS_14_FONT_ID, notosans14FontFamily);
-  renderer.insertFont(NOTOSANS_16_FONT_ID, notosans16FontFamily);
-  renderer.insertFont(NOTOSANS_18_FONT_ID, notosans18FontFamily);
   renderer.insertFont(ARABIC_12_FONT_ID, arabic12FontFamily);
   renderer.insertFont(ARABIC_16_FONT_ID, arabic16FontFamily);
   renderer.insertFont(ARABIC_18_FONT_ID, arabic18FontFamily);
@@ -297,10 +268,6 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.setArabicFallbackFont(NOTOSERIF_12_FONT_ID, ARABIC_12_FONT_ID);
   renderer.setArabicFallbackFont(NOTOSERIF_16_FONT_ID, ARABIC_16_FONT_ID);
   renderer.setArabicFallbackFont(NOTOSERIF_18_FONT_ID, ARABIC_18_FONT_ID);
-  renderer.setArabicFallbackFont(NOTOSANS_12_FONT_ID, ARABIC_12_FONT_ID);
-  renderer.setArabicFallbackFont(NOTOSANS_14_FONT_ID, ARABIC_14_FONT_ID);
-  renderer.setArabicFallbackFont(NOTOSANS_16_FONT_ID, ARABIC_16_FONT_ID);
-  renderer.setArabicFallbackFont(NOTOSANS_18_FONT_ID, ARABIC_18_FONT_ID);
   renderer.setArabicFallbackForPointSize(12, ARABIC_12_FONT_ID);
   renderer.setArabicFallbackForPointSize(16, ARABIC_16_FONT_ID);
   renderer.setArabicFallbackForPointSize(18, ARABIC_18_FONT_ID);

@@ -440,7 +440,7 @@ void ReadingStatsActivity::renderOverview() {
   const int top = contentTop();
 
   renderer.drawText(UI_10_FONT_ID, side, top + 4, tr(STR_TODAY), true, EpdFontFamily::BOLD);
-  renderer.drawText(NOTOSANS_18_FONT_ID, side, top + 30, durationText(snapshot.overview.todaySeconds).c_str(), true,
+  renderer.drawText(NOTOSERIF_18_FONT_ID, side, top + 30, durationText(snapshot.overview.todaySeconds).c_str(), true,
                     EpdFontFamily::BOLD);
   const int smallMetricWidth = width / 4;
   drawCenteredValue(renderer, UI_12_FONT_ID, side + width / 2, top + 30, smallMetricWidth,

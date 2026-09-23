@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "CrossPointSettings.h"
+#include "FontSelectionCompatibility.h"
 #include "KOReaderCredentialStore.h"
 #include "activities/settings/SettingsActivity.h"
 #include "util/DictionaryNameResolver.h"
@@ -21,11 +22,12 @@
 // are appended after the built-in fonts. Otherwise only built-in fonts are listed.
 inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
   // Built-in font labels (StrId)
-  std::vector<StrId> enumValues = {StrId::STR_NOTO_SERIF, StrId::STR_NOTO_SANS};
+  std::vector<StrId> enumValues = {StrId::STR_NOTO_SERIF};
   // Runtime string labels for SD card fonts
   std::vector<std::string> enumStringValues;
 
-  // Reserve: first CrossPointSettings::BUILTIN_FONT_COUNT entries use StrId, rest use strings
+  // Reserve: first CrossPointSettings::VISIBLE_BUILTIN_FONT_COUNT entries use
+  // built-in labels, rest use runtime strings for SD font families.
   if (registry) {
     const auto& families = registry->getFamilies();
     enumStringValues.reserve(families.size());
@@ -43,13 +45,13 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
   std::vector<std::string> allStringValues;
   if (sdFontCount > 0) {
     allStringValues.push_back(I18N.get(StrId::STR_NOTO_SERIF));
-    allStringValues.push_back(I18N.get(StrId::STR_NOTO_SANS));
     allStringValues.insert(allStringValues.end(), enumStringValues.begin(), enumStringValues.end());
   }
 
   SettingInfo s;
   s.nameId = StrId::STR_FONT_FAMILY;
   s.type = SettingType::ENUM;
+  s.valuePtr = &CrossPointSettings::fontFamily;
   s.enumValues = std::move(enumValues);
   s.enumStringValues = std::move(allStringValues);
   s.key = "fontFamily";
@@ -66,24 +68,24 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
   }
 
   s.valueGetter = [sdFamilyNames]() -> uint8_t {
-    // If an SD card font is selected, find its index
+    // If an SD card font is selected, find its visible option index. The
+    // persisted built-in enum is never used as an SD option offset.
     if (SETTINGS.sdFontFamilyName[0] != '\0') {
       for (int i = 0; i < static_cast<int>(sdFamilyNames.size()); i++) {
         if (sdFamilyNames[i] == SETTINGS.sdFontFamilyName) {
-          return static_cast<uint8_t>(CrossPointSettings::BUILTIN_FONT_COUNT + i);
+          return static_cast<uint8_t>(CrossPointSettings::VISIBLE_BUILTIN_FONT_COUNT + i);
         }
       }
-      // SD font name not found in registry — fall through to built-in
     }
-    return SETTINGS.fontFamily < CrossPointSettings::BUILTIN_FONT_COUNT ? SETTINGS.fontFamily : 0;
+    return FontSelectionCompatibility::readerVisibleIndex(SETTINGS.fontFamily);
   };
 
   s.valueSetter = [sdFamilyNames](uint8_t v) {
-    if (v < CrossPointSettings::BUILTIN_FONT_COUNT) {
+    if (v < CrossPointSettings::VISIBLE_BUILTIN_FONT_COUNT) {
       SETTINGS.fontFamily = v;
       SETTINGS.sdFontFamilyName[0] = '\0';
     } else {
-      int sdIdx = v - CrossPointSettings::BUILTIN_FONT_COUNT;
+      int sdIdx = v - CrossPointSettings::VISIBLE_BUILTIN_FONT_COUNT;
       if (sdIdx < static_cast<int>(sdFamilyNames.size())) {
         strncpy(SETTINGS.sdFontFamilyName, sdFamilyNames[sdIdx].c_str(), sizeof(SETTINGS.sdFontFamilyName) - 1);
         SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
@@ -91,6 +93,25 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
     }
   };
 
+  return s;
+}
+
+// The dictionary keeps the legacy enum value in settings but exposes only the
+// current choices. A legacy Noto Sans value is displayed as Noto Serif and is
+// replaced only if the user explicitly selects a different option.
+inline SettingInfo buildDictionaryFontSetting() {
+  SettingInfo s = SettingInfo::Enum(
+      StrId::STR_DICTIONARY_FONT, &CrossPointSettings::dictionaryFontFamily,
+      {StrId::STR_USE_READER_FONT, StrId::STR_NOTO_SERIF}, "dictionaryFontFamily", StrId::STR_CAT_READER);
+  s.inTextSettings = true;
+  s.valueGetter = []() -> uint8_t {
+    return FontSelectionCompatibility::dictionaryFamilyForUi(SETTINGS.dictionaryFontFamily);
+  };
+  s.valueSetter = [](const uint8_t value) {
+    SETTINGS.dictionaryFontFamily = value < FontSelectionCompatibility::kVisibleDictionaryFontCount
+                                        ? value
+                                        : FontSelectionCompatibility::kDictionaryUseReader;
+  };
   return s;
 }
 
@@ -528,11 +549,18 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                            }),
             v.end());
   }
-  if (registry && registry->getFamilyCount() > 0) {
+  // Always replace the built-in entry. With no registry this supplies only
+  // Noto Serif; with a registry it also supplies the correctly indexed SD
+  // families. Persisted fontFamily is still written explicitly by
+  // CrossPointSettings, so legacy enum values are not rewritten.
+  {
     auto it = std::find_if(v.begin(), v.end(), [](const SettingInfo& s) { return s.nameId == StrId::STR_FONT_FAMILY; });
-    if (it != v.end()) {
-      *it = buildFontFamilySetting(registry);
-    }
+    if (it != v.end()) *it = buildFontFamilySetting(registry);
+  }
+  {
+    auto it = std::find_if(v.begin(), v.end(),
+                           [](const SettingInfo& s) { return s.nameId == StrId::STR_DICTIONARY_FONT; });
+    if (it != v.end()) *it = buildDictionaryFontSetting();
   }
   if (dictionaries && !dictionaries->empty()) {
     // Insert at the end of the Reader category (just before the first Controls entry).
