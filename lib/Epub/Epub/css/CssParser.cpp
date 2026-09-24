@@ -127,27 +127,25 @@ size_t collectEdgeValueTokens(std::string_view s, std::string_view (&out)[4]) {
   return count;
 }
 
-std::string_view stripTrailingImportant(std::string_view value) {
-  constexpr std::string_view IMPORTANT = "!important";
+bool stripTrailingImportant(const std::string_view input, std::string_view& stripped) {
+  constexpr std::string_view IMPORTANT = "important";
+  std::string_view value = trimCssWhitespace(input);
+  stripped = value;
 
-  while (!value.empty() && isCssWhitespace(value.back())) {
-    value.remove_suffix(1);
-  }
+  if (value.size() < IMPORTANT.size()) return false;
 
-  if (value.size() < IMPORTANT.size()) {
-    return value;
-  }
+  const size_t keywordPos = value.size() - IMPORTANT.size();
+  if (!iequalsAscii(value.substr(keywordPos), IMPORTANT)) return false;
 
-  const size_t suffixPos = value.size() - IMPORTANT.size();
-  if (!iequalsAscii(value.substr(suffixPos), IMPORTANT)) {
-    return value;
-  }
+  std::string_view prefix = trimCssWhitespace(value.substr(0, keywordPos));
+  if (prefix.empty() || prefix.back() != '!') return false;
 
-  value.remove_suffix(IMPORTANT.size());
-  while (!value.empty() && isCssWhitespace(value.back())) {
-    value.remove_suffix(1);
-  }
-  return value;
+  prefix.remove_suffix(1);
+  prefix = trimCssWhitespace(prefix);
+  if (prefix.empty() || prefix.find('!') != std::string_view::npos) return false;
+
+  stripped = prefix;
+  return true;
 }
 
 }  // anonymous namespace
@@ -375,7 +373,7 @@ CssLength CssParser::interpretLength(std::string_view val) {
 }
 
 CssLength CssParser::interpretLineHeight(std::string_view val) {
-  val = stripTrailingImportant(trimCssWhitespace(val));
+  val = trimCssWhitespace(val);
   CssLength result;
   if (val.empty() || iequalsAscii(val, "normal")) return result;
   if (!tryInterpretLength(val, result) || result.value <= 0.0f) return CssLength{};
@@ -434,117 +432,156 @@ void CssParser::parseDeclarationIntoStyle(std::string_view decl, CssStyle& style
   if (colonPos == std::string_view::npos || colonPos == 0) return;
 
   const std::string_view name = trimCssWhitespace(decl.substr(0, colonPos));
-  const std::string_view value = trimCssWhitespace(decl.substr(colonPos + 1));
+  const std::string_view rawValue = trimCssWhitespace(decl.substr(colonPos + 1));
 
-  if (name.empty() || value.empty()) return;
+  if (name.empty() || rawValue.empty()) return;
+
+  std::string_view value;
+  const bool important = stripTrailingImportant(rawValue, value);
+  // No supported property accepts '!'. If the suffix was malformed, reject the
+  // declaration rather than accidentally treating a priority typo as a value.
+  if (!important && rawValue.find('!') != std::string_view::npos) return;
+  if (value.empty()) return;
+
+  CssStyle parsed;
+  const auto markImportant = [&](const uint8_t property) { parsed.setImportant(property, important); };
 
   if (iequalsAscii(name, "text-align")) {
-    style.textAlign = interpretAlignment(value);
-    style.defined.textAlign = 1;
+    parsed.textAlign = interpretAlignment(value);
+    parsed.defined.textAlign = 1;
+    markImportant(CssPropertyIndex::TextAlign);
   } else if (iequalsAscii(name, "font-style")) {
-    style.fontStyle = interpretFontStyle(value);
-    style.defined.fontStyle = 1;
+    parsed.fontStyle = interpretFontStyle(value);
+    parsed.defined.fontStyle = 1;
+    markImportant(CssPropertyIndex::FontStyle);
   } else if (iequalsAscii(name, "font-weight")) {
-    style.fontWeight = interpretFontWeight(value);
-    style.defined.fontWeight = 1;
+    parsed.fontWeight = interpretFontWeight(value);
+    parsed.defined.fontWeight = 1;
+    markImportant(CssPropertyIndex::FontWeight);
   } else if (iequalsAscii(name, "text-decoration") || iequalsAscii(name, "text-decoration-line")) {
-    style.textDecoration = interpretDecoration(value);
-    style.defined.textDecoration = 1;
+    parsed.textDecoration = interpretDecoration(value);
+    parsed.defined.textDecoration = 1;
+    markImportant(CssPropertyIndex::TextDecoration);
   } else if (iequalsAscii(name, "text-indent")) {
-    style.textIndent = interpretLength(value);
-    style.defined.textIndent = 1;
+    parsed.textIndent = interpretLength(value);
+    parsed.defined.textIndent = 1;
+    markImportant(CssPropertyIndex::TextIndent);
   } else if (iequalsAscii(name, "margin-top")) {
-    style.marginTop = interpretLength(value);
-    style.defined.marginTop = 1;
+    parsed.marginTop = interpretLength(value);
+    parsed.defined.marginTop = 1;
+    markImportant(CssPropertyIndex::MarginTop);
   } else if (iequalsAscii(name, "margin-bottom")) {
-    style.marginBottom = interpretLength(value);
-    style.defined.marginBottom = 1;
+    parsed.marginBottom = interpretLength(value);
+    parsed.defined.marginBottom = 1;
+    markImportant(CssPropertyIndex::MarginBottom);
   } else if (iequalsAscii(name, "margin-left")) {
-    style.marginLeft = interpretLength(value);
-    style.defined.marginLeft = 1;
+    parsed.marginLeft = interpretLength(value);
+    parsed.defined.marginLeft = 1;
+    markImportant(CssPropertyIndex::MarginLeft);
   } else if (iequalsAscii(name, "margin-right")) {
-    style.marginRight = interpretLength(value);
-    style.defined.marginRight = 1;
+    parsed.marginRight = interpretLength(value);
+    parsed.defined.marginRight = 1;
+    markImportant(CssPropertyIndex::MarginRight);
   } else if (iequalsAscii(name, "margin")) {
     std::string_view margins[4];
     const size_t count = collectEdgeValueTokens(value, margins);
     if (count > 0) {
-      style.marginTop = interpretLength(margins[0]);
-      style.marginRight = count >= 2 ? interpretLength(margins[1]) : style.marginTop;
-      style.marginBottom = count >= 3 ? interpretLength(margins[2]) : style.marginTop;
-      style.marginLeft = count >= 4 ? interpretLength(margins[3]) : style.marginRight;
-      style.defined.marginTop = style.defined.marginRight = style.defined.marginBottom = style.defined.marginLeft = 1;
+      parsed.marginTop = interpretLength(margins[0]);
+      parsed.marginRight = count >= 2 ? interpretLength(margins[1]) : parsed.marginTop;
+      parsed.marginBottom = count >= 3 ? interpretLength(margins[2]) : parsed.marginTop;
+      parsed.marginLeft = count >= 4 ? interpretLength(margins[3]) : parsed.marginRight;
+      parsed.defined.marginTop = parsed.defined.marginRight = parsed.defined.marginBottom = parsed.defined.marginLeft = 1;
+      markImportant(CssPropertyIndex::MarginTop);
+      markImportant(CssPropertyIndex::MarginRight);
+      markImportant(CssPropertyIndex::MarginBottom);
+      markImportant(CssPropertyIndex::MarginLeft);
     }
   } else if (iequalsAscii(name, "padding-top")) {
-    style.paddingTop = interpretLength(value);
-    style.defined.paddingTop = 1;
+    parsed.paddingTop = interpretLength(value);
+    parsed.defined.paddingTop = 1;
+    markImportant(CssPropertyIndex::PaddingTop);
   } else if (iequalsAscii(name, "padding-bottom")) {
-    style.paddingBottom = interpretLength(value);
-    style.defined.paddingBottom = 1;
+    parsed.paddingBottom = interpretLength(value);
+    parsed.defined.paddingBottom = 1;
+    markImportant(CssPropertyIndex::PaddingBottom);
   } else if (iequalsAscii(name, "padding-left")) {
-    style.paddingLeft = interpretLength(value);
-    style.defined.paddingLeft = 1;
+    parsed.paddingLeft = interpretLength(value);
+    parsed.defined.paddingLeft = 1;
+    markImportant(CssPropertyIndex::PaddingLeft);
   } else if (iequalsAscii(name, "padding-right")) {
-    style.paddingRight = interpretLength(value);
-    style.defined.paddingRight = 1;
+    parsed.paddingRight = interpretLength(value);
+    parsed.defined.paddingRight = 1;
+    markImportant(CssPropertyIndex::PaddingRight);
   } else if (iequalsAscii(name, "padding")) {
     std::string_view paddings[4];
     const size_t count = collectEdgeValueTokens(value, paddings);
     if (count > 0) {
-      style.paddingTop = interpretLength(paddings[0]);
-      style.paddingRight = count >= 2 ? interpretLength(paddings[1]) : style.paddingTop;
-      style.paddingBottom = count >= 3 ? interpretLength(paddings[2]) : style.paddingTop;
-      style.paddingLeft = count >= 4 ? interpretLength(paddings[3]) : style.paddingRight;
-      style.defined.paddingTop = style.defined.paddingRight = style.defined.paddingBottom = style.defined.paddingLeft =
+      parsed.paddingTop = interpretLength(paddings[0]);
+      parsed.paddingRight = count >= 2 ? interpretLength(paddings[1]) : parsed.paddingTop;
+      parsed.paddingBottom = count >= 3 ? interpretLength(paddings[2]) : parsed.paddingTop;
+      parsed.paddingLeft = count >= 4 ? interpretLength(paddings[3]) : parsed.paddingRight;
+      parsed.defined.paddingTop = parsed.defined.paddingRight = parsed.defined.paddingBottom = parsed.defined.paddingLeft =
           1;
+      markImportant(CssPropertyIndex::PaddingTop);
+      markImportant(CssPropertyIndex::PaddingRight);
+      markImportant(CssPropertyIndex::PaddingBottom);
+      markImportant(CssPropertyIndex::PaddingLeft);
     }
   } else if (iequalsAscii(name, "height")) {
     CssLength len;
     if (tryInterpretLength(value, len)) {
-      style.imageHeight = len;
-      style.defined.imageHeight = 1;
+      parsed.imageHeight = len;
+      parsed.defined.imageHeight = 1;
+      markImportant(CssPropertyIndex::ImageHeight);
     }
   } else if (iequalsAscii(name, "width")) {
     CssLength len;
     if (tryInterpretLength(value, len)) {
-      style.imageWidth = len;
-      style.defined.imageWidth = 1;
+      parsed.imageWidth = len;
+      parsed.defined.imageWidth = 1;
+      markImportant(CssPropertyIndex::ImageWidth);
     }
   } else if (iequalsAscii(name, "font-size")) {
     CssLength len;
-    const std::string_view stripped = stripTrailingImportant(value);
-    if (tryInterpretLength(stripped, len) && len.value > 0.0f && len.unit != CssUnit::Unitless) {
-      style.fontSize = len;
-      style.defined.fontSize = 1;
+    if (tryInterpretLength(value, len) && len.value > 0.0f && len.unit != CssUnit::Unitless) {
+      parsed.fontSize = len;
+      parsed.defined.fontSize = 1;
+      markImportant(CssPropertyIndex::FontSize);
     }
   } else if (iequalsAscii(name, "line-height")) {
     CssLength len = interpretLineHeight(value);
     if (len.value > 0.0f) {
-      style.lineHeight = len;
-      style.defined.lineHeight = 1;
+      parsed.lineHeight = len;
+      parsed.defined.lineHeight = 1;
+      markImportant(CssPropertyIndex::LineHeight);
     }
   } else if (iequalsAscii(name, "display")) {
-    const std::string_view displayValue = stripTrailingImportant(value);
-    style.display = iequalsAscii(displayValue, "none") ? CssDisplay::None : CssDisplay::Block;
-    style.defined.display = 1;
+    parsed.display = iequalsAscii(value, "none") ? CssDisplay::None : CssDisplay::Block;
+    parsed.defined.display = 1;
+    markImportant(CssPropertyIndex::Display);
   } else if (iequalsAscii(name, "direction")) {
-    const std::string_view directionValue = stripTrailingImportant(value);
-    if (iequalsAscii(directionValue, "rtl")) {
-      style.direction = CssTextDirection::Rtl;
-      style.defined.direction = 1;
-    } else if (iequalsAscii(directionValue, "ltr")) {
-      style.direction = CssTextDirection::Ltr;
-      style.defined.direction = 1;
+    if (iequalsAscii(value, "rtl")) {
+      parsed.direction = CssTextDirection::Rtl;
+      parsed.defined.direction = 1;
+      markImportant(CssPropertyIndex::Direction);
+    } else if (iequalsAscii(value, "ltr")) {
+      parsed.direction = CssTextDirection::Ltr;
+      parsed.defined.direction = 1;
+      markImportant(CssPropertyIndex::Direction);
     }
   } else if (iequalsAscii(name, "vertical-align")) {
     if (iequalsAscii(value, "super")) {
-      style.verticalAlign = CssVerticalAlign::Super;
-      style.defined.verticalAlign = 1;
+      parsed.verticalAlign = CssVerticalAlign::Super;
+      parsed.defined.verticalAlign = 1;
+      markImportant(CssPropertyIndex::VerticalAlign);
     } else if (iequalsAscii(value, "sub")) {
-      style.verticalAlign = CssVerticalAlign::Sub;
-      style.defined.verticalAlign = 1;
+      parsed.verticalAlign = CssVerticalAlign::Sub;
+      parsed.defined.verticalAlign = 1;
+      markImportant(CssPropertyIndex::VerticalAlign);
     }
   }
+
+  style.applyOver(parsed);
 }
 
 CssStyle CssParser::parseDeclarations(std::string_view declBlock) {
@@ -785,8 +822,9 @@ CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view clas
   }
 
   CssStyle result;
-  std::array<uint8_t, 20> propertySpecificities{};
-  std::array<uint32_t, 20> propertySourceOrders{};
+  std::array<uint8_t, CssPropertyIndex::Count> propertyImportant{};
+  std::array<uint8_t, CssPropertyIndex::Count> propertySpecificities{};
+  std::array<uint32_t, CssPropertyIndex::Count> propertySourceOrders{};
 
   // Cascade only the rules found by the existing direct lookups. The source
   // order is tracked per property because repeated selector blocks can merge
@@ -794,11 +832,16 @@ CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view clas
   auto applyRule = [&](const auto& rule, const uint8_t specificity) {
     auto applyProperty = [&](const uint8_t slot, const bool defined, const auto& assign) {
       if (!defined) return;
-      if (specificity < propertySpecificities[slot] ||
-          (specificity == propertySpecificities[slot] && rule.sourceOrder <= propertySourceOrders[slot])) {
+      const uint8_t important = rule.style.isImportant(slot) ? 1 : 0;
+      if (important < propertyImportant[slot] ||
+          (important == propertyImportant[slot] &&
+           (specificity < propertySpecificities[slot] ||
+            (specificity == propertySpecificities[slot] && rule.sourceOrder <= propertySourceOrders[slot])))) {
         return;
       }
       assign();
+      result.setImportant(slot, important != 0);
+      propertyImportant[slot] = important;
       propertySpecificities[slot] = specificity;
       propertySourceOrders[slot] = rule.sourceOrder;
     };
@@ -1092,6 +1135,7 @@ bool CssParser::saveToCache() const {
       if (style.defined.fontSize) definedBits |= 1 << 18;
       if (style.defined.lineHeight) definedBits |= 1 << 19;
       writeOk = writeOk && writeBytes(&definedBits, sizeof(definedBits));
+      writeOk = writeOk && writeBytes(&style.importantBits, sizeof(style.importantBits));
     };
 
     for (const auto& pair : rulesBySelector_) {
@@ -1203,7 +1247,8 @@ bool CssParser::loadFromCache() {
   constexpr size_t CSS_LENGTH_FIELD_COUNT = 13;
   constexpr size_t CSS_LENGTH_BYTES = sizeof(float) + sizeof(uint8_t);
   constexpr size_t CSS_FIXED_STYLE_BYTES = sizeof(uint32_t) +
-      5 * sizeof(uint8_t) + (CSS_LENGTH_FIELD_COUNT * CSS_LENGTH_BYTES) + sizeof(uint8_t) + sizeof(uint32_t);
+      5 * sizeof(uint8_t) + (CSS_LENGTH_FIELD_COUNT * CSS_LENGTH_BYTES) + sizeof(uint8_t) +
+      2 * sizeof(uint32_t);
 
   // Read each rule
   for (uint16_t i = 0; i < ruleCount; ++i) {
@@ -1341,6 +1386,13 @@ bool CssParser::loadFromCache() {
     style.defined.verticalAlign = (definedBits & 1 << 17) != 0;
     style.defined.fontSize = (definedBits & 1 << 18) != 0;
     style.defined.lineHeight = (definedBits & 1 << 19) != 0;
+
+    if (file.read(&style.importantBits, sizeof(style.importantBits)) != sizeof(style.importantBits)) {
+      rulesBySelector_.clear();
+      compoundRulesByAnchor_.clear();
+      return false;
+    }
+    style.importantBits &= (uint32_t{1} << CssPropertyIndex::Count) - 1;
 
     if (!storeSelectorRule(selector, style, sourceOrder)) {
       LOG_DBG("CSS", "Invalid or unsupported selector in CSS cache");

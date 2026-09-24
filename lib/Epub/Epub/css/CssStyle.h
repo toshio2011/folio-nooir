@@ -133,9 +133,37 @@ struct CssPropertyFlags {
   }
 };
 
-// Cache serializes defined flags as uint32_t with bit indices 0..19.
+// Cache serializes defined flags and per-property importance as uint32_t masks
+// with bit indices 0..19.
 static_assert(sizeof(CssPropertyFlags) <= sizeof(uint32_t),
               "CssPropertyFlags exceeds 32 bits; update cache read/write in CssParser.cpp");
+
+// Stable property slots shared by cascade priority tracking and CSS-cache
+// serialization. Keep this order in lockstep with CssPropertyFlags and the
+// definedBits/importantBits cache fields.
+struct CssPropertyIndex {
+  static constexpr uint8_t TextAlign = 0;
+  static constexpr uint8_t FontStyle = 1;
+  static constexpr uint8_t FontWeight = 2;
+  static constexpr uint8_t TextDecoration = 3;
+  static constexpr uint8_t TextIndent = 4;
+  static constexpr uint8_t MarginTop = 5;
+  static constexpr uint8_t MarginBottom = 6;
+  static constexpr uint8_t MarginLeft = 7;
+  static constexpr uint8_t MarginRight = 8;
+  static constexpr uint8_t PaddingTop = 9;
+  static constexpr uint8_t PaddingBottom = 10;
+  static constexpr uint8_t PaddingLeft = 11;
+  static constexpr uint8_t PaddingRight = 12;
+  static constexpr uint8_t ImageHeight = 13;
+  static constexpr uint8_t ImageWidth = 14;
+  static constexpr uint8_t Display = 15;
+  static constexpr uint8_t Direction = 16;
+  static constexpr uint8_t VerticalAlign = 17;
+  static constexpr uint8_t FontSize = 18;
+  static constexpr uint8_t LineHeight = 19;
+  static constexpr uint8_t Count = 20;
+};
 
 // Represents a collection of CSS style properties
 // Only stores properties relevant to e-ink text rendering
@@ -164,89 +192,132 @@ struct CssStyle {
   CssVerticalAlign verticalAlign = CssVerticalAlign::Baseline;  // vertical-align (super/sub positioning)
 
   CssPropertyFlags defined;  // Tracks which properties were explicitly set
+  uint32_t importantBits = 0;  // Per-property !important flags, slots 0..19
+
+  [[nodiscard]] bool isImportant(const uint8_t property) const {
+    return property < CssPropertyIndex::Count && (importantBits & (uint32_t{1} << property)) != 0;
+  }
+
+  void setImportant(const uint8_t property, const bool important) {
+    if (property >= CssPropertyIndex::Count) return;
+    const uint32_t mask = uint32_t{1} << property;
+    if (important) {
+      importantBits |= mask;
+    } else {
+      importantBits &= ~mask;
+    }
+  }
 
   // Apply properties from another style, only overwriting if the other style
-  // has that property explicitly defined
+  // has that property explicitly defined. This is also used to apply inline
+  // declarations after stylesheet resolution: an inline important declaration
+  // wins over stylesheet importance, while stylesheet importance defeats an
+  // ordinary inline declaration.
   void applyOver(const CssStyle& base) {
-    if (base.hasTextAlign()) {
+    const auto shouldApply = [&](const uint8_t property, const bool definedHere) {
+      return definedHere && (base.isImportant(property) || !isImportant(property));
+    };
+    const auto recordImportance = [&](const uint8_t property) { setImportant(property, base.isImportant(property)); };
+
+    if (shouldApply(CssPropertyIndex::TextAlign, base.hasTextAlign())) {
       textAlign = base.textAlign;
       defined.textAlign = 1;
+      recordImportance(CssPropertyIndex::TextAlign);
     }
-    if (base.hasFontStyle()) {
+    if (shouldApply(CssPropertyIndex::FontStyle, base.hasFontStyle())) {
       fontStyle = base.fontStyle;
       defined.fontStyle = 1;
+      recordImportance(CssPropertyIndex::FontStyle);
     }
-    if (base.hasFontWeight()) {
+    if (shouldApply(CssPropertyIndex::FontWeight, base.hasFontWeight())) {
       fontWeight = base.fontWeight;
       defined.fontWeight = 1;
+      recordImportance(CssPropertyIndex::FontWeight);
     }
-    if (base.hasTextDecoration()) {
+    if (shouldApply(CssPropertyIndex::TextDecoration, base.hasTextDecoration())) {
       textDecoration = base.textDecoration;
       defined.textDecoration = 1;
+      recordImportance(CssPropertyIndex::TextDecoration);
     }
-    if (base.hasTextIndent()) {
+    if (shouldApply(CssPropertyIndex::TextIndent, base.hasTextIndent())) {
       textIndent = base.textIndent;
       defined.textIndent = 1;
+      recordImportance(CssPropertyIndex::TextIndent);
     }
-    if (base.hasMarginTop()) {
+    if (shouldApply(CssPropertyIndex::MarginTop, base.hasMarginTop())) {
       marginTop = base.marginTop;
       defined.marginTop = 1;
+      recordImportance(CssPropertyIndex::MarginTop);
     }
-    if (base.hasMarginBottom()) {
+    if (shouldApply(CssPropertyIndex::MarginBottom, base.hasMarginBottom())) {
       marginBottom = base.marginBottom;
       defined.marginBottom = 1;
+      recordImportance(CssPropertyIndex::MarginBottom);
     }
-    if (base.hasMarginLeft()) {
+    if (shouldApply(CssPropertyIndex::MarginLeft, base.hasMarginLeft())) {
       marginLeft = base.marginLeft;
       defined.marginLeft = 1;
+      recordImportance(CssPropertyIndex::MarginLeft);
     }
-    if (base.hasMarginRight()) {
+    if (shouldApply(CssPropertyIndex::MarginRight, base.hasMarginRight())) {
       marginRight = base.marginRight;
       defined.marginRight = 1;
+      recordImportance(CssPropertyIndex::MarginRight);
     }
-    if (base.hasPaddingTop()) {
+    if (shouldApply(CssPropertyIndex::PaddingTop, base.hasPaddingTop())) {
       paddingTop = base.paddingTop;
       defined.paddingTop = 1;
+      recordImportance(CssPropertyIndex::PaddingTop);
     }
-    if (base.hasPaddingBottom()) {
+    if (shouldApply(CssPropertyIndex::PaddingBottom, base.hasPaddingBottom())) {
       paddingBottom = base.paddingBottom;
       defined.paddingBottom = 1;
+      recordImportance(CssPropertyIndex::PaddingBottom);
     }
-    if (base.hasPaddingLeft()) {
+    if (shouldApply(CssPropertyIndex::PaddingLeft, base.hasPaddingLeft())) {
       paddingLeft = base.paddingLeft;
       defined.paddingLeft = 1;
+      recordImportance(CssPropertyIndex::PaddingLeft);
     }
-    if (base.hasPaddingRight()) {
+    if (shouldApply(CssPropertyIndex::PaddingRight, base.hasPaddingRight())) {
       paddingRight = base.paddingRight;
       defined.paddingRight = 1;
+      recordImportance(CssPropertyIndex::PaddingRight);
     }
-    if (base.hasImageHeight()) {
+    if (shouldApply(CssPropertyIndex::ImageHeight, base.hasImageHeight())) {
       imageHeight = base.imageHeight;
       defined.imageHeight = 1;
+      recordImportance(CssPropertyIndex::ImageHeight);
     }
-    if (base.hasImageWidth()) {
+    if (shouldApply(CssPropertyIndex::ImageWidth, base.hasImageWidth())) {
       imageWidth = base.imageWidth;
       defined.imageWidth = 1;
+      recordImportance(CssPropertyIndex::ImageWidth);
     }
-    if (base.hasDisplay()) {
+    if (shouldApply(CssPropertyIndex::Display, base.hasDisplay())) {
       display = base.display;
       defined.display = 1;
+      recordImportance(CssPropertyIndex::Display);
     }
-    if (base.hasDirection()) {
+    if (shouldApply(CssPropertyIndex::Direction, base.hasDirection())) {
       direction = base.direction;
       defined.direction = 1;
+      recordImportance(CssPropertyIndex::Direction);
     }
-    if (base.hasVerticalAlign()) {
+    if (shouldApply(CssPropertyIndex::VerticalAlign, base.hasVerticalAlign())) {
       verticalAlign = base.verticalAlign;
       defined.verticalAlign = 1;
+      recordImportance(CssPropertyIndex::VerticalAlign);
     }
-    if (base.hasFontSize()) {
+    if (shouldApply(CssPropertyIndex::FontSize, base.hasFontSize())) {
       fontSize = base.fontSize;
       defined.fontSize = 1;
+      recordImportance(CssPropertyIndex::FontSize);
     }
-    if (base.hasLineHeight()) {
+    if (shouldApply(CssPropertyIndex::LineHeight, base.hasLineHeight())) {
       lineHeight = base.lineHeight;
       defined.lineHeight = 1;
+      recordImportance(CssPropertyIndex::LineHeight);
     }
   }
 
@@ -285,5 +356,6 @@ struct CssStyle {
     display = CssDisplay::Block;
     verticalAlign = CssVerticalAlign::Baseline;
     defined.clearAll();
+    importantBits = 0;
   }
 };

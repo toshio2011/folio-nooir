@@ -78,6 +78,140 @@ TEST(CssCascadeTest, DisplayNoneStillResolves) {
   EXPECT_EQ(style.display, CssDisplay::None);
 }
 
+TEST(CssCascadeTest, LowerSpecificityImportantBeatsHigherSpecificityNormal) {
+  const auto parser = parserFor("#entry { text-align: right; } .a { text-align: left !important; }");
+  const auto style = parser->resolveStyle("p", "a", "entry");
+
+  EXPECT_EQ(style.textAlign, CssTextAlign::Left);
+  EXPECT_TRUE(style.isImportant(CssPropertyIndex::TextAlign));
+}
+
+TEST(CssCascadeTest, EarlierImportantBeatsLaterNormal) {
+  const auto parser = parserFor(".a { text-align: left !important; } .a { text-align: right; }");
+
+  EXPECT_EQ(parser->resolveStyle("p", "a").textAlign, CssTextAlign::Left);
+}
+
+TEST(CssCascadeTest, ImportantDeclarationsUseSpecificityThenSourceOrder) {
+  const auto specific = parserFor(".a { text-align: left !important; } #entry { text-align: right !important; }");
+  EXPECT_EQ(specific->resolveStyle("p", "a", "entry").textAlign, CssTextAlign::Right);
+
+  const auto sourceOrder = parserFor(
+      ".a { text-align: left !important; } .b { text-align: right !important; }");
+  EXPECT_EQ(sourceOrder->resolveStyle("p", "a b").textAlign, CssTextAlign::Right);
+}
+
+TEST(CssCascadeTest, ImportantMetadataIsPerProperty) {
+  const auto parser = parserFor(
+      ".a { font-weight: bold !important; text-align: left; } "
+      ".b { font-weight: normal; text-align: center !important; }");
+  const auto style = parser->resolveStyle("p", "a b");
+
+  EXPECT_EQ(style.fontWeight, CssFontWeight::Bold);
+  EXPECT_TRUE(style.isImportant(CssPropertyIndex::FontWeight));
+  EXPECT_EQ(style.textAlign, CssTextAlign::Center);
+  EXPECT_TRUE(style.isImportant(CssPropertyIndex::TextAlign));
+}
+
+TEST(CssCascadeTest, RepeatedSelectorBlocksMixImportancePerProperty) {
+  const auto parser = parserFor(
+      ".a { font-weight: bold !important; text-align: left; } "
+      ".a { font-weight: normal; text-align: right !important; }");
+  const auto style = parser->resolveStyle("p", "a");
+
+  EXPECT_EQ(style.fontWeight, CssFontWeight::Bold);
+  EXPECT_EQ(style.textAlign, CssTextAlign::Right);
+  EXPECT_TRUE(style.isImportant(CssPropertyIndex::FontWeight));
+  EXPECT_TRUE(style.isImportant(CssPropertyIndex::TextAlign));
+}
+
+TEST(CssCascadeTest, CompoundImportantBeatsSimpleNormalAndUsesCompoundSpecificity) {
+  const auto normal = parserFor(".a.b { text-align: left; } .a { text-align: right !important; }");
+  EXPECT_EQ(normal->resolveStyle("p", "a b").textAlign, CssTextAlign::Right);
+
+  const auto important = parserFor(".a.b { text-align: left !important; } .a { text-align: right !important; }");
+  EXPECT_EQ(important->resolveStyle("p", "a b").textAlign, CssTextAlign::Left);
+}
+
+TEST(CssCascadeTest, IDImportantAndNormalFollowImportancePrecedence) {
+  const auto normalId = parserFor("#entry { text-align: right; } .a { text-align: left !important; }");
+  EXPECT_EQ(normalId->resolveStyle("p", "a", "entry").textAlign, CssTextAlign::Left);
+
+  const auto importantId = parserFor("#entry { text-align: right !important; } .a { text-align: left !important; }");
+  EXPECT_EQ(importantId->resolveStyle("p", "a", "entry").textAlign, CssTextAlign::Right);
+}
+
+TEST(CssCascadeTest, StylesheetImportantBeatsOrdinaryInlineStyle) {
+  const auto parser = parserFor(".a { text-align: left !important; }");
+  auto style = parser->resolveStyle("p", "a");
+  style.applyOver(CssParser::parseInlineStyle("text-align: right;"));
+
+  EXPECT_EQ(style.textAlign, CssTextAlign::Left);
+  EXPECT_TRUE(style.isImportant(CssPropertyIndex::TextAlign));
+}
+
+TEST(CssCascadeTest, InlineImportantBeatsStylesheetImportant) {
+  const auto parser = parserFor("#entry { text-align: left !important; }");
+  auto style = parser->resolveStyle("p", "", "entry");
+  style.applyOver(CssParser::parseInlineStyle("text-align: right !important;"));
+
+  EXPECT_EQ(style.textAlign, CssTextAlign::Right);
+  EXPECT_TRUE(style.isImportant(CssPropertyIndex::TextAlign));
+}
+
+TEST(CssCascadeTest, InlineMixedImportanceResolvesIndependently) {
+  const auto parser = parserFor(".a { font-weight: bold !important; text-align: left !important; }");
+  auto style = parser->resolveStyle("p", "a");
+  style.applyOver(CssParser::parseInlineStyle("font-weight: normal; text-align: right !important;"));
+
+  EXPECT_EQ(style.fontWeight, CssFontWeight::Bold);
+  EXPECT_EQ(style.textAlign, CssTextAlign::Right);
+}
+
+TEST(CssCascadeTest, ImportantDisplayCompetesPerProperty) {
+  const auto parser = parserFor(
+      ".hidden { display: none !important; } .visible { display: block; } "
+      ".shown { display: block !important; }");
+
+  EXPECT_EQ(parser->resolveStyle("p", "hidden visible").display, CssDisplay::None);
+  EXPECT_EQ(parser->resolveStyle("p", "hidden shown").display, CssDisplay::Block);
+}
+
+TEST(CssCascadeTest, CompoundImportantDisplayRequiresCompleteMatch) {
+  const auto parser = parserFor(".secret.hidden { display: none !important; } .secret { display: block; }");
+
+  EXPECT_EQ(parser->resolveStyle("p", "secret hidden").display, CssDisplay::None);
+  EXPECT_EQ(parser->resolveStyle("p", "secret").display, CssDisplay::Block);
+}
+
+TEST(CssCascadeTest, ImportantSyntaxAcceptsCaseWhitespaceAndAdjacentForms) {
+  const auto style = CssParser::parseInlineStyle(
+      "text-align: left !IMPORTANT; font-weight: bold ! important; text-decoration: underline!important;");
+
+  EXPECT_TRUE(style.hasTextAlign());
+  EXPECT_TRUE(style.hasFontWeight());
+  EXPECT_TRUE(style.hasTextDecoration());
+  EXPECT_TRUE(style.isImportant(CssPropertyIndex::TextAlign));
+  EXPECT_TRUE(style.isImportant(CssPropertyIndex::FontWeight));
+  EXPECT_TRUE(style.isImportant(CssPropertyIndex::TextDecoration));
+}
+
+TEST(CssCascadeTest, ImportantMarkerIsNotFoundInsideOrdinaryText) {
+  const auto style = CssParser::parseInlineStyle("text-align: important; font-weight: bold important;");
+
+  EXPECT_FALSE(style.isImportant(CssPropertyIndex::TextAlign));
+  EXPECT_FALSE(style.isImportant(CssPropertyIndex::FontWeight));
+}
+
+TEST(CssCascadeTest, MalformedImportantSyntaxFailsSafely) {
+  const auto style = CssParser::parseInlineStyle(
+      "text-align: left !importantx; font-weight: bold !!important; line-height: 1.2 !;");
+
+  EXPECT_FALSE(style.hasTextAlign());
+  EXPECT_FALSE(style.hasFontWeight());
+  EXPECT_FALSE(style.hasLineHeight());
+}
+
 TEST(CssCascadeTest, CompoundClassSelectorMatchesInEitherHtmlOrder) {
   const auto parser = parserFor(".a.b { text-align: center; }");
 
@@ -164,11 +298,11 @@ TEST(CssCascadeTest, CompoundDisplayNoneRequiresCompleteMatchAndInlineStillWins)
   EXPECT_EQ(style.textAlign, CssTextAlign::Right);
 }
 
-TEST(CssCascadeTest, CacheVersionBumpRejectsVersionEleven) {
+TEST(CssCascadeTest, CacheVersionBumpRejectsVersionTwelve) {
   resetStorage();
   HalFile file;
   ASSERT_TRUE(Storage.openFileForWrite("CSS", "css_cascade_test/css_rules.cache", file));
-  file.write(static_cast<uint8_t>(11));
+  file.write(static_cast<uint8_t>(12));
   file.close();
 
   CssParser parser("css_cascade_test");
@@ -176,10 +310,10 @@ TEST(CssCascadeTest, CacheVersionBumpRejectsVersionEleven) {
   EXPECT_FALSE(Storage.exists("css_cascade_test/css_rules.cache"));
 }
 
-TEST(CssCascadeTest, VersionTwelveCacheRoundTripPreservesCompoundCascade) {
+TEST(CssCascadeTest, VersionThirteenCacheRoundTripPreservesCompoundCascadeAndImportance) {
   resetStorage();
-  const std::string css = ".a { font-weight: bold; text-align: left; } .b { text-align: center; } "
-                          ".a.b { text-align: right; }";
+  const std::string css = ".a { font-weight: bold !important; text-align: left; } "
+                          ".b { text-align: center !important; } .a.b { text-align: right !important; }";
   const auto writer = parserFor(css);
   ASSERT_TRUE(writer->saveToCache());
 
@@ -188,9 +322,10 @@ TEST(CssCascadeTest, VersionTwelveCacheRoundTripPreservesCompoundCascade) {
   EXPECT_EQ(reader.resolveStyle("div", "a b").textAlign, CssTextAlign::Right);
   EXPECT_EQ(reader.resolveStyle("div", "b a").textAlign, CssTextAlign::Right);
   EXPECT_EQ(reader.resolveStyle("div", "a").fontWeight, CssFontWeight::Bold);
+  EXPECT_TRUE(reader.resolveStyle("div", "a").isImportant(CssPropertyIndex::FontWeight));
 }
 
-TEST(CssCascadeTest, CacheVersionIsTwelve) { EXPECT_EQ(CssParser::CSS_CACHE_VERSION, 12); }
+TEST(CssCascadeTest, CacheVersionIsThirteen) { EXPECT_EQ(CssParser::CSS_CACHE_VERSION, 13); }
 
 TEST(CssCascadeTest, CacheCreationPublishesOnlyCompletedFinalFile) {
   resetStorage();
