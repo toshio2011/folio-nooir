@@ -47,20 +47,50 @@ planned phases; the complete deferred plan is preserved in
   physical findings remain durable engineering context; the temporary
   profiling changes were removed and no Phase B optimization remains to be
   implemented.
-- **Phase C — EPUB CSS correctness:** ACTIVE — READ-ONLY AUDIT STAGE.
-  Parallel audits are currently organized as:
-  - **C-A:** selector / cascade / inheritance
-  - **C-B:** properties / values / layout
-  - **C-C:** CSS performance / memory / cache
-  - **C-D:** comparative firmware CSS audit
-  - **C-E:** torture EPUB / resilience / failure modes
-- **Next gate:** **C-Synthesis**. C1/C2/etc. are not decided. Audit
-  hypotheses must remain findings until the synthesis and approval gate.
+- **Phase C — EPUB CSS correctness:** COMPLETE / FROZEN.
+  - **C1:** deterministic source-order/per-property cascade — committed and
+    physically validated on the old-model XTEINK X4.
+  - **C2:** transactional CSS-cache publication — committed and physically
+    validated through normal cache creation/reuse/reboot on X4; destructive
+    interruption or power-loss testing is not claimed.
+  - **C3:** bounded compound selectors — committed and physically validated
+    on X4.
+  - **C4:** per-property `!important` cascade — committed as
+    `601b7005a0d8eb0f975ed0a77ee02f0fb9d4b12c` and physically validated on X4.
+  - **C5:** targeted inheritance — not implemented; deferred because no
+    meaningful reading failure was demonstrated.
+  - **C6:** additional resilience hardening — not implemented as a separate
+    Phase C slice; deferred into evidence-driven Phase D work.
+- **Phase D — EPUB resilience + richer rendering:** NEXT / ACTIVE PLANNING.
 
-Phase C must preserve bounded memory, incremental parsing, warm-cache
-behavior, the section-cache lifecycle, low hot-path allocation pressure,
-minimal unnecessary SD work, Arabic/Quran behavior, pagination, and the
-principle that Nooir can get smarter, but not sluggish.
+Phase C is frozen at `CSS_CACHE_VERSION = 13` and
+`SECTION_FILE_VERSION = 41`. It leaves a deliberately bounded CSS subset:
+deterministic per-property source order, bounded specificity, repeated
+selector blocks, ordinary inline styles, supported tag/class/ID compounds,
+up to three required classes, class-token-order-independent matching,
+per-property `!important`, importance > specificity > source order, supported
+inline/important interaction, `display:none` cascade interaction, and
+transactional CSS-cache publication. It is not browser-complete CSS and does
+not claim descendant, child, sibling, attribute, pseudo, universal,
+generic-AST, complete-inheritance, font-family, arbitrary-specificity, or
+user-origin support.
+
+Phase D must preserve bounded memory, incremental parsing, warm-cache behavior,
+the section-cache lifecycle, low hot-path allocation pressure, minimal
+unnecessary SD work, Arabic/Quran behavior, pagination, and the principle that
+Nooir can get smarter, but not sluggish.
+
+The integrated standalone Phase C validation EPUB passed on a real old-model
+XTEINK X4. It covered 62 visual tests across C1/C2/C3/C4, hidden/display
+behavior, cache reopen/reuse, and resilience. ZIP/container/XML structure was
+checked; EPUBCheck was unavailable and is not claimed. No destructive power-
+loss test was performed. The shared `gh_release` configuration compiles X3/X4
+paths, but physical Phase C validation is X4 only.
+
+Final C4 engineering state: 5,470,841 linked bytes, 5,484,688-byte
+`firmware.bin`, 1,068,912 padded app-slot bytes remaining, and 53,448 bytes
+static RAM. C4 versus C3: +3,176 linked flash, +3,168 padded bytes,
+-3,168 app-slot margin, and 0 static RAM.
 
 FreeInk is a real Nooir dependency through the `freeink-sdk` submodule. The
 1.5.10 baseline uses the Nooir-specific FreeInk commit
@@ -483,10 +513,10 @@ machine before using them.
 ## Recommended next steps
 
 1. Treat tag `1.6.2` at `25df4940` as the released compatibility baseline and `85dda52a` as the known-good firmware/source milestone used for the recorded production measurements.
-2. Finish the parallel Phase C-A through C-E read-only audits and produce the C-Synthesis gate report.
-3. Decide whether any C1/C2 work is justified only after C-Synthesis; do not turn audit hypotheses into implementation decisions.
-4. Preserve the Phase A/B freeze boundaries, the partition, cache formats, Arabic/Quran behavior, KOSync interoperability, user SD data, and the exact FreeInk pin.
-5. Keep future changes scoped and measured. Every approved normal firmware change should be compared with the 1.6.2 baseline: linked flash 6,492,279 B, padded firmware.bin 6,506,128 B, app-slot margin 47,472 B, static RAM 53,492 B.
+2. Begin Phase D with a short source re-check focused on malformed/problematic EPUBs, huge or hostile CSS/value cases, huge paragraphs, image-heavy behavior, tables/layout edges, low-memory failure behavior, and graceful degradation.
+3. Use the failure ladder: full supported styling -> reduced safe styling -> default styling -> readable text. Revisit C5 inheritance only if a real fixture or book exposes a meaningful reading problem; C6-style hardening is evidence-driven.
+4. Preserve the Phase A/B/C freeze boundaries, the partition, cache formats, Arabic/Quran behavior, KOSync interoperability, user SD data and the exact FreeInk pin.
+5. Keep future changes scoped and measured. Every approved normal firmware change should be compared with the relevant clean baseline and report linked flash, padded `firmware.bin`, app-slot margin, static RAM, and relevant X3/X4 evidence.
 6. Continue physical X3 validation when hardware is available. Preserve the separate WSL simulator workflow and do not treat simulator success as physical X3 evidence.
 
 ## Useful handoff checks

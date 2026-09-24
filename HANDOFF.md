@@ -48,18 +48,55 @@ The fresh D: `gh_release` build succeeded at **6,497,905 linked flash**, **6,511
 - **Phase A — headroom/foundations:** FROZEN / COMPLETE.
 - **Phase B — EPUB foundation/performance:** FROZEN / COMPLETE. The temporary
   B1/B2 diagnostic work was removed and was not merged into production.
-- **Phase C — EPUB CSS correctness:** ACTIVE — READ-ONLY AUDIT STAGE.
-  - **C-A:** selector / cascade / inheritance
-  - **C-B:** properties / values / layout
-  - **C-C:** CSS performance / memory / cache
-  - **C-D:** comparative firmware CSS audit
-  - **C-E:** torture EPUB / resilience / failure modes
-- **Next gate:** C-Synthesis. C1/C2/etc. are not decided yet; audit findings
-  must not be treated as implementation authorization.
+- **Phase C — EPUB CSS correctness:** COMPLETE / FROZEN.
+  - **C1:** deterministic source-order/per-property cascade — committed as
+    `de299fd541906646f278ccdb28af94928fbe1111` and physically validated on
+    the old-model XTEINK X4.
+  - **C2:** transactional CSS-cache publication — committed as
+    `538d19e692f28eb42feca3dcc4fae2d959580bac` and physically
+    validated through normal cache creation/reuse/reboot on X4. Destructive
+    interruption or power-loss testing is not claimed.
+  - **C3:** bounded compound selectors — committed as
+    `1ee54f63fe14d3201936bbaa424a4d1af7439427` and physically validated on X4.
+  - **C4:** per-property `!important` cascade — committed as
+    `601b7005a0d8eb0f975ed0a77ee02f0fb9d4b12c` and physically validated on X4.
+  - **C5:** targeted inheritance — not implemented; deferred because no
+    meaningful reading failure was demonstrated.
+  - **C6:** additional resilience hardening — not implemented as a separate
+    Phase C slice; deferred into evidence-driven Phase D work.
+- **Phase D — EPUB resilience + richer rendering:** NEXT / ACTIVE PLANNING.
 
-Immediate next action is to finish the parallel read-only audits and combine
-their evidence into the C-Synthesis gate while preserving the frozen firmware
-baseline and the rule that Nooir can get smarter, but not sluggish.
+Immediate next action is a short Phase D source re-check followed by focused,
+evidence-driven resilience work. Do not repeat the completed Phase C selector
+and cascade audit unless new source or fixture evidence contradicts this
+freeze. Preserve the frozen firmware baseline and the rule that Nooir can get
+smarter, but not sluggish.
+
+## Phase C complete / frozen — 2026-09-24
+
+The integrated standalone validation EPUB passed on a real old-model XTEINK
+X4. It covered the reviewed C1/C2/C3/C4 cascade, specificity, compound,
+inline, `display:none`, HTML `hidden`, cache reopen/reuse, and resilience
+cases. The fixture had 10 chapters, 62 visual tests, 7 CSS files, and was
+approximately 11.9 KB. ZIP/container/XML structure was checked; EPUBCheck
+was unavailable and is not claimed. No destructive power-loss test was
+performed.
+
+Phase C leaves Nooir with a deliberately bounded CSS subset: deterministic
+per-property source order, bounded specificity, repeated selector blocks,
+ordinary inline styles, supported tag/class/ID compounds, up to three required
+classes, class-token-order-independent matching, per-property `!important`,
+importance > specificity > source order, supported inline/important
+interaction, `display:none` cascade interaction, and transactional CSS-cache
+publication. This is not browser-complete CSS and does not add descendant,
+child, sibling, attribute, pseudo, universal, generic-AST, full-inheritance,
+font-family, arbitrary-specificity, or user-origin support.
+
+Final C4 engineering state: 5,470,841 linked bytes, 5,484,688-byte
+`firmware.bin`, 1,068,912 padded app-slot bytes remaining, and 53,448 bytes
+static RAM. The C4 delta versus C3 was +3,176 linked flash, +3,168 padded
+bytes, -3,168 app-slot margin, and 0 static RAM. The shared `gh_release`
+configuration compiles the X3/X4 paths; physical validation here is X4 only.
 
 - Active development line: Folio Nooir **1.6.3**
 - Latest released baseline: Folio Nooir **1.6.2**
@@ -328,9 +365,9 @@ Recommended order: **flash map/recovery -> EPUB/font/image/memory upstream delta
 
 ## Immediate next steps
 
-1. Finish the parallel Phase C-A through C-E read-only audits and produce the C-Synthesis gate report.
-2. Do not decide or implement C1/C2/etc. until C-Synthesis selects and scopes the work.
-3. Preserve the Phase A/B freeze boundaries, the partition, cache formats, Arabic/Quran behavior, KOSync interoperability, user SD data and the exact FreeInk pin.
+1. Begin Phase D with a short source re-check focused on malformed/problematic EPUBs, huge or hostile CSS/value cases, huge paragraphs, image-heavy behavior, tables/layout edges, low-memory failure behavior, and graceful degradation.
+2. Use the failure ladder: full supported styling -> reduced safe styling -> default styling -> readable text. C5 inheritance and C6-style hardening remain evidence-driven, not automatic.
+3. Preserve the Phase A/B/C freeze boundaries, the partition, cache formats, Arabic/Quran behavior, KOSync interoperability, user SD data and the exact FreeInk pin.
 4. Keep future changes scoped and measured. Every approved normal firmware change must report linked flash, padded `firmware.bin`, app-slot margin, static RAM, and relevant X3/X4 evidence against the frozen baseline.
 5. Continue physical X3 regression validation when hardware is available; X4 physical validation and X3/X4 simulators do not substitute for X3 hardware evidence.
 

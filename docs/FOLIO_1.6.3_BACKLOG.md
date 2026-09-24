@@ -8,20 +8,43 @@ This is the actionable post-1.6.2 investigation queue. It is **not approval to i
 - **Phase B — EPUB foundation/performance:** FROZEN / COMPLETE. B1/B2
   diagnostics were temporary, their findings are archived, and no Phase B
   production optimization remains open.
-- **Phase C — EPUB CSS correctness:** ACTIVE — READ-ONLY AUDIT STAGE.
-  - **C-A:** selector / cascade / inheritance
-  - **C-B:** properties / values / layout
-  - **C-C:** CSS performance / memory / cache
-  - **C-D:** comparative firmware CSS audit
-  - **C-E:** torture EPUB / resilience / failure modes
-- **Next gate:** **C-Synthesis**.
+- **Phase C — EPUB CSS correctness:** COMPLETE / FROZEN.
+  - **C1:** deterministic source-order/per-property cascade — committed and
+    physically validated on the old-model XTEINK X4.
+  - **C2:** transactional CSS-cache publication — committed and physically
+    validated through normal cache creation/reuse/reboot on X4; destructive
+    interruption or power-loss testing is not claimed.
+  - **C3:** bounded compound selectors — committed and physically validated
+    on X4.
+  - **C4:** per-property `!important` cascade — committed as
+    `601b7005a0d8eb0f975ed0a77ee02f0fb9d4b12c` and physically validated on X4.
+  - **C5:** targeted inheritance — not implemented; deferred because no
+    meaningful reading failure was demonstrated.
+  - **C6:** additional resilience hardening — not implemented as a separate
+    Phase C slice; deferred into evidence-driven Phase D work.
+- **Phase D — EPUB resilience + richer rendering:** NEXT / ACTIVE PLANNING.
 
-C1/C2/etc. are not decided yet. The parallel audit tracks produce evidence
-and candidate findings only; no implementation begins until C-Synthesis
-selects and scopes any work. Any future CSS change must preserve bounded
-memory, incremental parsing, warm-cache behavior, the section-cache lifecycle,
-low hot-path allocation pressure, minimal unnecessary SD work, and the
-principle that Nooir can get smarter, but not sluggish.
+Phase C's bounded CSS result supports deterministic per-property source order,
+bounded specificity, repeated selector blocks, ordinary inline styles,
+supported tag/class/ID compounds, up to three required classes,
+class-token-order-independent matching, per-property `!important`, importance
+> specificity > source order, supported inline/important interaction,
+`display:none` cascade interaction, and transactional CSS-cache publication.
+It is not browser-complete CSS: descendant, child, sibling, attribute, pseudo,
+universal, generic-AST, complete-inheritance, font-family, arbitrary-
+specificity, and user-origin support remain out of scope.
+
+The integrated standalone validation EPUB passed on a real old-model XTEINK
+X4 with 62 visual tests. ZIP/container/XML structure was checked; EPUBCheck
+was unavailable and is not claimed. No destructive power-loss test was
+performed. The shared `gh_release` build compiles X3/X4 paths, but physical
+Phase C validation is X4 only.
+
+Final C4 engineering state: 5,470,841 linked bytes, 5,484,688-byte
+`firmware.bin`, 1,068,912 padded app-slot bytes remaining, and 53,448 bytes
+static RAM. C4 versus C3: +3,176 linked flash, +3,168 padded bytes,
+-3,168 app-slot margin, and 0 static RAM. CSS cache version is 13 and
+`SECTION_FILE_VERSION` remains 41.
 
 ## Immutable comparison baseline
 
@@ -366,8 +389,8 @@ The freeze gate is ordered:
 8. document exact firmware, static-RAM, heap and physical evidence.
 
 X4 Classic/X4 Pro begins only after this freeze. PDF, FB2 and Bluetooth remain
-Phase C experiments. Quick Actions remain conditional. No physical X3 support
-claim may be made from simulator results alone.
+later experiments, not Phase D prerequisites. Quick Actions remain conditional.
+No physical X3 support claim may be made from simulator results alone.
 
 ### Explicitly deferred or skipped
 
