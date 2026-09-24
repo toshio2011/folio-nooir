@@ -34,7 +34,7 @@
 class CssParser {
  public:
   // Bump when CSS cache format or rules change; section caches are invalidated when this changes
-  static constexpr uint8_t CSS_CACHE_VERSION = 10;
+  static constexpr uint8_t CSS_CACHE_VERSION = 11;
 
   explicit CssParser(std::string cachePath) : cachePath(std::move(cachePath)) {}
   ~CssParser() = default;
@@ -82,7 +82,10 @@ class CssParser {
   /**
    * Clear all loaded rules
    */
-  void clear() { rulesBySelector_.clear(); }
+  void clear() {
+    rulesBySelector_.clear();
+    nextSourceOrder_ = 0;
+  }
 
   /**
    * Check if CSS rules cache file exists
@@ -139,13 +142,22 @@ class CssParser {
     bool operator()(std::string_view a, CompositeKey b) const noexcept;
   };
 
-  // Storage: maps selector -> style properties. Hash/equal are case-insensitive.
-  std::unordered_map<std::string, CssStyle, SvHash, SvEqual> rulesBySelector_;
+  struct StoredRule {
+    CssStyle style;
+    uint32_t sourceOrder = 0;
+  };
+
+  // Multiple entries for one selector are retained so each declaration block's
+  // source order remains available during per-property cascade resolution.
+  // Hash/equal are case-insensitive and lookups remain direct.
+  std::unordered_multimap<std::string, StoredRule, SvHash, SvEqual> rulesBySelector_;
+
+  uint32_t nextSourceOrder_ = 0;
 
   std::string cachePath;
 
   // Internal parsing helpers
-  void processRuleBlockWithStyle(std::string_view selectorGroup, const CssStyle& style);
+  void processRuleBlockWithStyle(std::string_view selectorGroup, const CssStyle& style, uint32_t sourceOrder);
   static CssStyle parseDeclarations(std::string_view declBlock);
   static void parseDeclarationIntoStyle(std::string_view decl, CssStyle& style);
 

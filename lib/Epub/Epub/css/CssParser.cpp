@@ -460,7 +460,8 @@ CssStyle CssParser::parseDeclarations(std::string_view declBlock) {
 
 // Rule processing
 
-void CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const CssStyle& style) {
+void CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const CssStyle& style,
+                                          const uint32_t sourceOrder) {
   // Skip rules that don't define any supported properties to save RAM.
   if (!style.defined.anySet()) {
     return;
@@ -517,14 +518,10 @@ void CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const 
           return;
         }
 
-        // Store or merge with existing. Hash/equal are case-insensitive, so two
-        // selectors that differ only in ASCII case collide on insert and merge.
-        auto it = rulesBySelector_.find(sel);
-        if (it != rulesBySelector_.end()) {
-          it->second.applyOver(style);
-        } else {
-          rulesBySelector_.emplace(std::string(sel), style);
-        }
+        // Retain repeated selector blocks separately. This preserves the source
+        // order of each declaration block, including when different properties
+        // of one selector were declared in different blocks.
+        rulesBySelector_.emplace(std::string(sel), StoredRule{style, sourceOrder});
       });
 }
 
@@ -601,7 +598,9 @@ bool CssParser::loadFromStream(HalFile& source) {
           parseDeclarationIntoStyle(declBuffer, currentStyle);
         }
         if (!skippingRule) {
-          processRuleBlockWithStyle(selector, currentStyle);
+          const uint32_t sourceOrder = nextSourceOrder_;
+          if (nextSourceOrder_ != UINT32_MAX) ++nextSourceOrder_;
+          processRuleBlockWithStyle(selector, currentStyle, sourceOrder);
         }
         selector.clear();
         declBuffer.clear();
@@ -678,7 +677,7 @@ bool CssParser::loadFromStream(HalFile& source) {
 // Style resolution
 
 CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view classAttr,
-                                 std::string_view idAttr) const {
+                                  std::string_view idAttr) const {
   static bool lowHeapWarningLogged = false;
   if (ESP.getFreeHeap() < MIN_FREE_HEAP_FOR_CSS) {
     if (!lowHeapWarningLogged) {
@@ -690,39 +689,124 @@ CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view clas
   }
 
   CssStyle result;
+  std::array<uint8_t, 20> propertySpecificities{};
+  std::array<uint32_t, 20> propertySourceOrders{};
 
-  // 1. Apply element-level style (lowest priority). The map's hash/equal are
-  // case-insensitive, so the raw tagName view can be used as the lookup key.
-  if (auto it = rulesBySelector_.find(tagName); it != rulesBySelector_.end()) {
-    result.applyOver(it->second);
-  }
+  // Cascade only the rules found by the existing direct lookups. The source
+  // order is tracked per property because repeated selector blocks can merge
+  // different properties at different positions in the stylesheet.
+  auto applyRule = [&](const StoredRule& rule, const uint8_t specificity) {
+    auto applyProperty = [&](const uint8_t slot, const bool defined, const auto& assign) {
+      if (!defined) return;
+      if (specificity < propertySpecificities[slot] ||
+          (specificity == propertySpecificities[slot] && rule.sourceOrder <= propertySourceOrders[slot])) {
+        return;
+      }
+      assign();
+      propertySpecificities[slot] = specificity;
+      propertySourceOrders[slot] = rule.sourceOrder;
+    };
 
-  // TODO: Support combinations of classes (e.g. style on .class1.class2)
-  // 2. Apply class styles (medium priority). The transparent hash/equal accept
-  // a CompositeKey, so we never materialize the concatenation.
-  forEachDelimitedToken(classAttr, isCssWhitespace, [&](std::string_view cls) {
-    if (auto it = rulesBySelector_.find(CompositeKey{".", cls}); it != rulesBySelector_.end()) {
-      result.applyOver(it->second);
+    const CssStyle& style = rule.style;
+    applyProperty(0, style.hasTextAlign(), [&] {
+      result.textAlign = style.textAlign;
+      result.defined.textAlign = 1;
+    });
+    applyProperty(1, style.hasFontStyle(), [&] {
+      result.fontStyle = style.fontStyle;
+      result.defined.fontStyle = 1;
+    });
+    applyProperty(2, style.hasFontWeight(), [&] {
+      result.fontWeight = style.fontWeight;
+      result.defined.fontWeight = 1;
+    });
+    applyProperty(3, style.hasTextDecoration(), [&] {
+      result.textDecoration = style.textDecoration;
+      result.defined.textDecoration = 1;
+    });
+    applyProperty(4, style.hasTextIndent(), [&] {
+      result.textIndent = style.textIndent;
+      result.defined.textIndent = 1;
+    });
+    applyProperty(5, style.hasMarginTop(), [&] {
+      result.marginTop = style.marginTop;
+      result.defined.marginTop = 1;
+    });
+    applyProperty(6, style.hasMarginBottom(), [&] {
+      result.marginBottom = style.marginBottom;
+      result.defined.marginBottom = 1;
+    });
+    applyProperty(7, style.hasMarginLeft(), [&] {
+      result.marginLeft = style.marginLeft;
+      result.defined.marginLeft = 1;
+    });
+    applyProperty(8, style.hasMarginRight(), [&] {
+      result.marginRight = style.marginRight;
+      result.defined.marginRight = 1;
+    });
+    applyProperty(9, style.hasPaddingTop(), [&] {
+      result.paddingTop = style.paddingTop;
+      result.defined.paddingTop = 1;
+    });
+    applyProperty(10, style.hasPaddingBottom(), [&] {
+      result.paddingBottom = style.paddingBottom;
+      result.defined.paddingBottom = 1;
+    });
+    applyProperty(11, style.hasPaddingLeft(), [&] {
+      result.paddingLeft = style.paddingLeft;
+      result.defined.paddingLeft = 1;
+    });
+    applyProperty(12, style.hasPaddingRight(), [&] {
+      result.paddingRight = style.paddingRight;
+      result.defined.paddingRight = 1;
+    });
+    applyProperty(13, style.hasImageHeight(), [&] {
+      result.imageHeight = style.imageHeight;
+      result.defined.imageHeight = 1;
+    });
+    applyProperty(14, style.hasImageWidth(), [&] {
+      result.imageWidth = style.imageWidth;
+      result.defined.imageWidth = 1;
+    });
+    applyProperty(15, style.hasDisplay(), [&] {
+      result.display = style.display;
+      result.defined.display = 1;
+    });
+    applyProperty(16, style.hasDirection(), [&] {
+      result.direction = style.direction;
+      result.defined.direction = 1;
+    });
+    applyProperty(17, style.hasVerticalAlign(), [&] {
+      result.verticalAlign = style.verticalAlign;
+      result.defined.verticalAlign = 1;
+    });
+    applyProperty(18, style.hasFontSize(), [&] {
+      result.fontSize = style.fontSize;
+      result.defined.fontSize = 1;
+    });
+    applyProperty(19, style.hasLineHeight(), [&] {
+      result.lineHeight = style.lineHeight;
+      result.defined.lineHeight = 1;
+    });
+  };
+
+  auto applyMatches = [&](const auto& key, const uint8_t specificity) {
+    const auto matches = rulesBySelector_.equal_range(key);
+    for (auto it = matches.first; it != matches.second; ++it) {
+      applyRule(it->second, specificity);
     }
-  });
+  };
 
-  // TODO: Support combinations of classes (e.g. style on p.class1.class2)
-  // 3. Apply element.class styles (higher priority).
-  forEachDelimitedToken(classAttr, isCssWhitespace, [&](std::string_view cls) {
-    if (auto it = rulesBySelector_.find(CompositeKey{tagName, ".", cls}); it != rulesBySelector_.end()) {
-      result.applyOver(it->second);
-    }
-  });
-
-  // ID selectors have higher specificity than element and class selectors.
-  // Transparent composite lookup avoids constructing temporary strings.
+  // Preserve Nooir's existing specificity categories. Source order is only
+  // compared when two matched selectors have the same category.
+  applyMatches(tagName, 1);
+  forEachDelimitedToken(classAttr, isCssWhitespace,
+                        [&](std::string_view cls) { applyMatches(CompositeKey{".", cls}, 2); });
+  forEachDelimitedToken(classAttr, isCssWhitespace,
+                        [&](std::string_view cls) { applyMatches(CompositeKey{tagName, ".", cls}, 3); });
   if (!idAttr.empty()) {
-    if (auto it = rulesBySelector_.find(CompositeKey{"#", idAttr}); it != rulesBySelector_.end()) {
-      result.applyOver(it->second);
-    }
-    if (auto it = rulesBySelector_.find(CompositeKey{tagName, "#", idAttr}); it != rulesBySelector_.end()) {
-      result.applyOver(it->second);
-    }
+    applyMatches(CompositeKey{"#", idAttr}, 4);
+    applyMatches(CompositeKey{tagName, "#", idAttr}, 5);
   }
 
   return result;
@@ -768,8 +852,11 @@ bool CssParser::saveToCache() const {
     file.write(reinterpret_cast<const uint8_t*>(&selectorLen), sizeof(selectorLen));
     file.write(reinterpret_cast<const uint8_t*>(pair.first.data()), selectorLen);
 
+    // Persist the declaration block's source order before its style fields.
+    file.write(reinterpret_cast<const uint8_t*>(&pair.second.sourceOrder), sizeof(pair.second.sourceOrder));
+
     // Write CssStyle fields (all are POD types)
-    const CssStyle& style = pair.second;
+    const CssStyle& style = pair.second.style;
     file.write(static_cast<uint8_t>(style.textAlign));
     file.write(static_cast<uint8_t>(style.fontStyle));
     file.write(static_cast<uint8_t>(style.fontWeight));
@@ -873,7 +960,7 @@ bool CssParser::loadFromCache() {
 
   constexpr size_t CSS_LENGTH_FIELD_COUNT = 13;
   constexpr size_t CSS_LENGTH_BYTES = sizeof(float) + sizeof(uint8_t);
-  constexpr size_t CSS_FIXED_STYLE_BYTES =
+  constexpr size_t CSS_FIXED_STYLE_BYTES = sizeof(uint32_t) +
       5 * sizeof(uint8_t) + (CSS_LENGTH_FIELD_COUNT * CSS_LENGTH_BYTES) + sizeof(uint8_t) + sizeof(uint32_t);
 
   // Read each rule
@@ -904,6 +991,12 @@ bool CssParser::loadFromCache() {
 
     if (!hasRemainingBytes(CSS_FIXED_STYLE_BYTES)) {
       LOG_DBG("CSS", "Truncated CSS cache while reading style payload");
+      rulesBySelector_.clear();
+      return false;
+    }
+
+    uint32_t sourceOrder = 0;
+    if (file.read(&sourceOrder, sizeof(sourceOrder)) != sizeof(sourceOrder)) {
       rulesBySelector_.clear();
       return false;
     }
@@ -1007,7 +1100,10 @@ bool CssParser::loadFromCache() {
     style.defined.fontSize = (definedBits & 1 << 18) != 0;
     style.defined.lineHeight = (definedBits & 1 << 19) != 0;
 
-    rulesBySelector_[selector] = style;
+    rulesBySelector_.emplace(std::move(selector), StoredRule{style, sourceOrder});
+    if (sourceOrder != UINT32_MAX && nextSourceOrder_ <= sourceOrder) {
+      nextSourceOrder_ = sourceOrder + 1;
+    }
   }
 
   LOG_DBG("CSS", "Loaded %u rules from cache", ruleCount);
