@@ -485,7 +485,7 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
         // blank space before the following paragraph so the scene/section break is visible.
         // This only fires when the <br> block stayed empty (i.e. no inline text was added).
         const int16_t lineHeight = static_cast<int16_t>(lineHeightForBlock(incoming));
-        incoming.marginTop = static_cast<int16_t>(incoming.marginTop + lineHeight);
+        incoming.marginTop = BlockStyle::saturatingAdd(incoming.marginTop, lineHeight);
       }
 
       currentTextBlock->setBlockStyle(style.getCombinedBlockStyle(incoming, BlockStyle::CombineAxis::Vertical));
@@ -559,18 +559,18 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
 
   const int16_t lineHeight = static_cast<int16_t>(lineHeightForBlock(blockStyle));
   const int16_t defaultVerticalSpacing = static_cast<int16_t>(lineHeight / 2);
-  const int16_t topSpacing =
-      static_cast<int16_t>((blockStyle.marginTop > 0 ? blockStyle.marginTop : defaultVerticalSpacing) +
-                           (blockStyle.paddingTop > 0 ? blockStyle.paddingTop : 0));
-  const int16_t bottomSpacing =
-      static_cast<int16_t>((blockStyle.marginBottom > 0 ? blockStyle.marginBottom : defaultVerticalSpacing) +
-                           (blockStyle.paddingBottom > 0 ? blockStyle.paddingBottom : 0));
+  const int16_t topSpacing = BlockStyle::saturatingAdd(
+      blockStyle.marginTop > 0 ? blockStyle.marginTop : defaultVerticalSpacing,
+      blockStyle.paddingTop > 0 ? blockStyle.paddingTop : 0);
+  const int16_t bottomSpacing = BlockStyle::saturatingAdd(
+      blockStyle.marginBottom > 0 ? blockStyle.marginBottom : defaultVerticalSpacing,
+      blockStyle.paddingBottom > 0 ? blockStyle.paddingBottom : 0);
   constexpr uint8_t ruleThickness = 2;
   const int16_t availableWidth =
       std::max<int16_t>(1, static_cast<int16_t>(viewportWidth - blockStyle.totalHorizontalInset()));
   const int16_t width = std::max<int16_t>(1, static_cast<int16_t>(availableWidth / 4));
   const int16_t xPos = static_cast<int16_t>(blockStyle.leftInset() + ((availableWidth - width) / 2));
-  const int16_t totalHeight = static_cast<int16_t>(topSpacing + ruleThickness + bottomSpacing);
+  const int totalHeight = static_cast<int>(topSpacing) + ruleThickness + bottomSpacing;
 
   if (!currentPage->elements.empty() && currentPageNextY + totalHeight > viewportHeight) {
     completePageFn(std::move(currentPage), xpathParagraphIndex, xpathListItemIndex);
@@ -583,7 +583,7 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
     currentPageNextY = 0;
   }
 
-  currentPageNextY += topSpacing;
+  currentPageNextY = BlockStyle::saturatingAdd(currentPageNextY, topSpacing);
 
   auto pageRule = makeUniqueNoThrow<PageHorizontalRule>(width, ruleThickness, xPos, currentPageNextY);
   if (!pageRule) {
@@ -591,7 +591,8 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
     return;
   }
   currentPage->elements.push_back(std::move(pageRule));
-  currentPageNextY = static_cast<int16_t>(currentPageNextY + ruleThickness + bottomSpacing);
+  currentPageNextY = BlockStyle::saturatingAdd(
+      BlockStyle::saturatingAdd(currentPageNextY, ruleThickness), bottomSpacing);
 
   if (!pendingAnchorId.empty()) {
     anchorData.push_back({std::move(pendingAnchorId), static_cast<uint16_t>(completedPageCount)});
@@ -1046,7 +1047,7 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 }
 
                 // Apply top margin from container block
-                self->currentPageNextY += imageMarginTop;
+                self->currentPageNextY = BlockStyle::saturatingAdd(self->currentPageNextY, imageMarginTop);
 
                 // Create ImageBlock and add to page
                 // Images arrive mid-parse when the heap is at its most loaded,
@@ -1064,7 +1065,9 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                   return;
                 }
                 self->currentPage->elements.push_back(std::move(pageImage));
-                self->currentPageNextY += displayHeight + imageMarginBottom;
+                self->currentPageNextY = BlockStyle::saturatingAdd(
+                    BlockStyle::saturatingAdd(self->currentPageNextY, static_cast<int16_t>(displayHeight)),
+                    imageMarginBottom);
 
                 // The image consumed the empty block's accumulated vertical spacing.
                 // Reset the block so the Vertical merge in startNewTextBlock doesn't
@@ -2040,7 +2043,7 @@ void ChapterHtmlSlimParser::addLineToPage(std::unique_ptr<TextBlock> line) {
     return;
   }
   currentPage->elements.push_back(std::move(pageLine));
-  currentPageNextY += lineHeight;
+  currentPageNextY = BlockStyle::saturatingAdd(currentPageNextY, static_cast<int16_t>(lineHeight));
 }
 
 void ChapterHtmlSlimParser::makePages() {
@@ -2062,10 +2065,10 @@ void ChapterHtmlSlimParser::makePages() {
   const BlockStyle& blockStyle = currentTextBlock->getBlockStyle();
   const int lineHeight = lineHeightForBlock(blockStyle);
   if (blockStyle.marginTop > 0) {
-    currentPageNextY += blockStyle.marginTop;
+    currentPageNextY = BlockStyle::saturatingAdd(currentPageNextY, blockStyle.marginTop);
   }
   if (blockStyle.paddingTop > 0) {
-    currentPageNextY += blockStyle.paddingTop;
+    currentPageNextY = BlockStyle::saturatingAdd(currentPageNextY, blockStyle.paddingTop);
   }
 
   // Calculate effective width accounting for horizontal margins/padding
@@ -2089,14 +2092,14 @@ void ChapterHtmlSlimParser::makePages() {
 
   // Apply bottom spacing after the paragraph (stored in pixels)
   if (blockStyle.marginBottom > 0) {
-    currentPageNextY += blockStyle.marginBottom;
+    currentPageNextY = BlockStyle::saturatingAdd(currentPageNextY, blockStyle.marginBottom);
   }
   if (blockStyle.paddingBottom > 0) {
-    currentPageNextY += blockStyle.paddingBottom;
+    currentPageNextY = BlockStyle::saturatingAdd(currentPageNextY, blockStyle.paddingBottom);
   }
 
   // Extra paragraph spacing if enabled (default behavior)
   if (extraParagraphSpacing) {
-    currentPageNextY += lineHeight / 2;
+    currentPageNextY = BlockStyle::saturatingAdd(currentPageNextY, static_cast<int16_t>(lineHeight / 2));
   }
 }

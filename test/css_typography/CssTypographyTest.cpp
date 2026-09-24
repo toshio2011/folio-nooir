@@ -1,7 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <limits>
 #include <string_view>
 
+#include "blocks/BlockStyle.h"
 #include "CssParser.h"
 
 TEST(CssTypographyTest, ParsesBoundedFontSizeUnits) {
@@ -52,4 +55,29 @@ TEST(CssTypographyTest, RejectsUnsupportedOrUnsafeValues) {
 
   const CssStyle unitlessFont = CssParser::parseInlineStyle("font-size: 2;");
   EXPECT_FALSE(unitlessFont.hasFontSize());
+}
+
+TEST(CssTypographyTest, SaturatesPathologicalLengthsBeforeCompactLayout) {
+  const CssStyle style = CssParser::parseInlineStyle(
+      "margin-top: 1000000px; padding-top: 1000000px; margin-bottom: -1000000px; padding-bottom: -1000000px;");
+
+  const BlockStyle block = BlockStyle::fromCssStyle(style, 16.0f, CssTextAlign::None, 792);
+  EXPECT_EQ(block.marginTop, std::numeric_limits<int16_t>::max());
+  EXPECT_EQ(block.paddingTop, std::numeric_limits<int16_t>::max());
+  EXPECT_EQ(block.marginBottom, std::numeric_limits<int16_t>::min());
+  EXPECT_EQ(block.paddingBottom, std::numeric_limits<int16_t>::min());
+  EXPECT_EQ(block.topInset(), std::numeric_limits<int16_t>::max());
+  EXPECT_EQ(block.bottomInset(), std::numeric_limits<int16_t>::min());
+}
+
+TEST(CssTypographyTest, NormalLengthsKeepTheirExistingPixelValues) {
+  const CssStyle style = CssParser::parseInlineStyle("margin: 12px; padding: 4px;");
+  const BlockStyle block = BlockStyle::fromCssStyle(style, 16.0f, CssTextAlign::None, 792);
+
+  EXPECT_EQ(block.marginTop, 12);
+  EXPECT_EQ(block.marginRight, 12);
+  EXPECT_EQ(block.marginBottom, 12);
+  EXPECT_EQ(block.marginLeft, 12);
+  EXPECT_EQ(block.paddingTop, 4);
+  EXPECT_EQ(block.totalHorizontalInset(), 32);
 }
