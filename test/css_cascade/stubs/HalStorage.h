@@ -8,6 +8,11 @@
 #include <unordered_map>
 #include <vector>
 
+namespace CssCacheTestHooks {
+inline bool failClose = false;
+inline bool shortWrite = false;
+}  // namespace CssCacheTestHooks
+
 class HalFile {
  public:
   static HalFile readBuffer(const std::string& contents) {
@@ -31,6 +36,13 @@ class HalFile {
 
   size_t write(const void* source, const size_t count) {
     if (!open || readOnly || writeData == nullptr) return 0;
+    if (CssCacheTestHooks::shortWrite) {
+      CssCacheTestHooks::shortWrite = false;
+      const size_t partial = count == 0 ? 0 : count - 1;
+      const auto* bytes = static_cast<const uint8_t*>(source);
+      writeData->insert(writeData->end(), bytes, bytes + partial);
+      return partial;
+    }
     const auto* bytes = static_cast<const uint8_t*>(source);
     writeData->insert(writeData->end(), bytes, bytes + count);
     return count;
@@ -38,7 +50,13 @@ class HalFile {
 
   size_t write(const uint8_t value) { return write(&value, sizeof(value)); }
 
-  void close() { open = false; }
+  void flush() {}
+  bool close() {
+    open = false;
+    const bool ok = !CssCacheTestHooks::failClose;
+    CssCacheTestHooks::failClose = false;
+    return ok;
+  }
   bool isOpen() const { return open; }
   operator bool() const { return open; }
 
@@ -68,9 +86,26 @@ class HalStorage {
 
   bool exists(const char* path) const { return files.find(path) != files.end(); }
 
-  bool remove(const char* path) { return files.erase(path) != 0; }
+  bool remove(const char* path) {
+    if (failRemoveAt != 0 && ++removeCalls == failRemoveAt) return false;
+    return files.erase(path) != 0;
+  }
+
+  bool rename(const char* oldPath, const char* newPath) {
+    const size_t call = ++renameCalls;
+    if (failRenameAt != 0 && call == failRenameAt) return false;
+    const auto it = files.find(oldPath);
+    if (it == files.end() || files.find(newPath) != files.end()) return false;
+    files.emplace(newPath, std::move(it->second));
+    files.erase(it);
+    return true;
+  }
 
   bool openFileForRead(const char*, const std::string& path, HalFile& file) {
+    if (failOpenRead) {
+      failOpenRead = false;
+      return false;
+    }
     const auto it = files.find(path);
     if (it == files.end()) return false;
     file.readData = it->second;
@@ -82,13 +117,34 @@ class HalStorage {
   }
 
   bool openFileForWrite(const char*, const std::string& path, HalFile& file) {
+    if (failOpenWrite) {
+      failOpenWrite = false;
+      return false;
+    }
     auto& contents = files[path];
     contents.clear();
     file.bind(&contents);
     return true;
   }
 
-  void clear() { files.clear(); }
+  void clear() {
+    files.clear();
+    failOpenRead = false;
+    failOpenWrite = false;
+    failRenameAt = 0;
+    renameCalls = 0;
+    failRemoveAt = 0;
+    removeCalls = 0;
+    CssCacheTestHooks::failClose = false;
+    CssCacheTestHooks::shortWrite = false;
+  }
+
+  bool failOpenRead = false;
+  bool failOpenWrite = false;
+  size_t failRenameAt = 0;
+  size_t renameCalls = 0;
+  size_t failRemoveAt = 0;
+  size_t removeCalls = 0;
 
  private:
   std::unordered_map<std::string, std::vector<uint8_t>> files;

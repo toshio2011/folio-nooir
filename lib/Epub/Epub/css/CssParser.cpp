@@ -820,11 +820,20 @@ CssStyle CssParser::parseInlineStyle(std::string_view styleValue) { return parse
 
 // Cache file name (version is CssParser::CSS_CACHE_VERSION)
 constexpr char rulesCache[] = "/css_rules.cache";
+constexpr char rulesCacheTmp[] = "/css_rules.cache.tmp";
+constexpr char rulesCacheBackup[] = "/css_rules.cache.bak";
+
+bool removeCacheArtifact(const std::string& path) {
+  return !Storage.exists(path.c_str()) || Storage.remove(path.c_str());
+}
 
 bool CssParser::hasCache() const { return Storage.exists((cachePath + rulesCache).c_str()); }
 
 void CssParser::deleteCache() const {
-  if (hasCache()) Storage.remove((cachePath + rulesCache).c_str());
+  if (cachePath.empty()) return;
+  removeCacheArtifact(cachePath + rulesCache);
+  removeCacheArtifact(cachePath + rulesCacheTmp);
+  removeCacheArtifact(cachePath + rulesCacheBackup);
 }
 
 bool CssParser::saveToCache() const {
@@ -833,81 +842,147 @@ bool CssParser::saveToCache() const {
     return false;
   }
 
-  HalFile file;
-  if (!Storage.openFileForWrite("CSS", cachePath + rulesCache, file)) {
+  const std::string finalPath = cachePath + rulesCache;
+  const std::string tempPath = cachePath + rulesCacheTmp;
+  const std::string backupPath = cachePath + rulesCacheBackup;
+
+  // A previous interrupted publication can strand the old final as .bak. Recover
+  // it before rebuilding when the canonical path is absent; otherwise a stale
+  // backup is safe to discard before the next replacement.
+  if (!Storage.exists(finalPath.c_str()) && Storage.exists(backupPath.c_str())) {
+    if (Storage.rename(backupPath.c_str(), finalPath.c_str())) {
+      LOG_DBG("CSS", "Recovered CSS cache backup before replacement");
+    }
+  }
+  if (Storage.exists(finalPath.c_str()) && !removeCacheArtifact(backupPath)) {
+    LOG_ERR("CSS", "Could not remove stale CSS cache backup");
+    return false;
+  }
+  if (!removeCacheArtifact(tempPath)) {
+    LOG_ERR("CSS", "Could not remove stale CSS cache temp file");
     return false;
   }
 
-  // Write version
-  file.write(CssParser::CSS_CACHE_VERSION);
-
-  // Write rule count
   const auto ruleCount = static_cast<uint16_t>(rulesBySelector_.size());
-  file.write(reinterpret_cast<const uint8_t*>(&ruleCount), sizeof(ruleCount));
+  bool candidateReady = false;
+  {
+    HalFile file;
+    if (!Storage.openFileForWrite("CSS", tempPath, file)) {
+      return false;
+    }
 
-  // Write each rule: selector string + CssStyle fields
-  for (const auto& pair : rulesBySelector_) {
-    // Write selector string (length-prefixed)
-    const auto selectorLen = static_cast<uint16_t>(pair.first.size());
-    file.write(reinterpret_cast<const uint8_t*>(&selectorLen), sizeof(selectorLen));
-    file.write(reinterpret_cast<const uint8_t*>(pair.first.data()), selectorLen);
-
-    // Persist the declaration block's source order before its style fields.
-    file.write(reinterpret_cast<const uint8_t*>(&pair.second.sourceOrder), sizeof(pair.second.sourceOrder));
-
-    // Write CssStyle fields (all are POD types)
-    const CssStyle& style = pair.second.style;
-    file.write(static_cast<uint8_t>(style.textAlign));
-    file.write(static_cast<uint8_t>(style.fontStyle));
-    file.write(static_cast<uint8_t>(style.fontWeight));
-    file.write(static_cast<uint8_t>(style.textDecoration));
-    file.write(static_cast<uint8_t>(style.direction));
-
-    // Write CssLength fields (value + unit)
-    auto writeLength = [&file](const CssLength& len) {
-      file.write(reinterpret_cast<const uint8_t*>(&len.value), sizeof(len.value));
-      file.write(static_cast<uint8_t>(len.unit));
+    auto writeBytes = [&file](const void* data, const size_t length) {
+      return file.write(data, length) == length;
     };
+    auto writeByte = [&file](const uint8_t value) { return file.write(value) == 1; };
 
-    writeLength(style.textIndent);
-    writeLength(style.marginTop);
-    writeLength(style.marginBottom);
-    writeLength(style.marginLeft);
-    writeLength(style.marginRight);
-    writeLength(style.paddingTop);
-    writeLength(style.paddingBottom);
-    writeLength(style.paddingLeft);
-    writeLength(style.paddingRight);
-    writeLength(style.imageHeight);
-    writeLength(style.imageWidth);
-    writeLength(style.fontSize);
-    writeLength(style.lineHeight);
-    file.write(static_cast<uint8_t>(style.display));
-    file.write(static_cast<uint8_t>(style.verticalAlign));
+    bool writeOk = writeByte(CssParser::CSS_CACHE_VERSION);
 
-    // Write defined flags as uint32_t
-    uint32_t definedBits = 0;
-    if (style.defined.textAlign) definedBits |= 1 << 0;
-    if (style.defined.fontStyle) definedBits |= 1 << 1;
-    if (style.defined.fontWeight) definedBits |= 1 << 2;
-    if (style.defined.textDecoration) definedBits |= 1 << 3;
-    if (style.defined.textIndent) definedBits |= 1 << 4;
-    if (style.defined.marginTop) definedBits |= 1 << 5;
-    if (style.defined.marginBottom) definedBits |= 1 << 6;
-    if (style.defined.marginLeft) definedBits |= 1 << 7;
-    if (style.defined.marginRight) definedBits |= 1 << 8;
-    if (style.defined.paddingTop) definedBits |= 1 << 9;
-    if (style.defined.paddingBottom) definedBits |= 1 << 10;
-    if (style.defined.paddingLeft) definedBits |= 1 << 11;
-    if (style.defined.paddingRight) definedBits |= 1 << 12;
-    if (style.defined.imageHeight) definedBits |= 1 << 13;
-    if (style.defined.imageWidth) definedBits |= 1 << 14;
-    if (style.defined.display) definedBits |= 1 << 15;
-    if (style.defined.direction) definedBits |= 1 << 16;
-    if (style.defined.verticalAlign) definedBits |= 1 << 17;
-    if (style.defined.fontSize) definedBits |= 1 << 18;
-    if (style.defined.lineHeight) definedBits |= 1 << 19;
-    file.write(reinterpret_cast<const uint8_t*>(&definedBits), sizeof(definedBits));
+    // Write rule count
+    writeOk = writeOk && writeBytes(&ruleCount, sizeof(ruleCount));
+
+    // Write each rule: selector string + CssStyle fields
+    for (const auto& pair : rulesBySelector_) {
+      if (!writeOk) break;
+
+      // Write selector string (length-prefixed)
+      const auto selectorLen = static_cast<uint16_t>(pair.first.size());
+      writeOk = writeBytes(&selectorLen, sizeof(selectorLen));
+      writeOk = writeOk && writeBytes(pair.first.data(), selectorLen);
+
+      // Persist the declaration block's source order before its style fields.
+      writeOk = writeOk && writeBytes(&pair.second.sourceOrder, sizeof(pair.second.sourceOrder));
+
+      // Write CssStyle fields (all are POD types)
+      const CssStyle& style = pair.second.style;
+      writeOk = writeOk && writeByte(static_cast<uint8_t>(style.textAlign));
+      writeOk = writeOk && writeByte(static_cast<uint8_t>(style.fontStyle));
+      writeOk = writeOk && writeByte(static_cast<uint8_t>(style.fontWeight));
+      writeOk = writeOk && writeByte(static_cast<uint8_t>(style.textDecoration));
+      writeOk = writeOk && writeByte(static_cast<uint8_t>(style.direction));
+
+      // Write CssLength fields (value + unit)
+      auto writeLength = [&writeOk, &writeBytes](const CssLength& len) {
+        writeOk = writeOk && writeBytes(&len.value, sizeof(len.value));
+        writeOk = writeOk && writeBytes(&len.unit, sizeof(len.unit));
+      };
+
+      writeLength(style.textIndent);
+      writeLength(style.marginTop);
+      writeLength(style.marginBottom);
+      writeLength(style.marginLeft);
+      writeLength(style.marginRight);
+      writeLength(style.paddingTop);
+      writeLength(style.paddingBottom);
+      writeLength(style.paddingLeft);
+      writeLength(style.paddingRight);
+      writeLength(style.imageHeight);
+      writeLength(style.imageWidth);
+      writeLength(style.fontSize);
+      writeLength(style.lineHeight);
+      writeOk = writeOk && writeByte(static_cast<uint8_t>(style.display));
+      writeOk = writeOk && writeByte(static_cast<uint8_t>(style.verticalAlign));
+
+      // Write defined flags as uint32_t
+      uint32_t definedBits = 0;
+      if (style.defined.textAlign) definedBits |= 1 << 0;
+      if (style.defined.fontStyle) definedBits |= 1 << 1;
+      if (style.defined.fontWeight) definedBits |= 1 << 2;
+      if (style.defined.textDecoration) definedBits |= 1 << 3;
+      if (style.defined.textIndent) definedBits |= 1 << 4;
+      if (style.defined.marginTop) definedBits |= 1 << 5;
+      if (style.defined.marginBottom) definedBits |= 1 << 6;
+      if (style.defined.marginLeft) definedBits |= 1 << 7;
+      if (style.defined.marginRight) definedBits |= 1 << 8;
+      if (style.defined.paddingTop) definedBits |= 1 << 9;
+      if (style.defined.paddingBottom) definedBits |= 1 << 10;
+      if (style.defined.paddingLeft) definedBits |= 1 << 11;
+      if (style.defined.paddingRight) definedBits |= 1 << 12;
+      if (style.defined.imageHeight) definedBits |= 1 << 13;
+      if (style.defined.imageWidth) definedBits |= 1 << 14;
+      if (style.defined.display) definedBits |= 1 << 15;
+      if (style.defined.direction) definedBits |= 1 << 16;
+      if (style.defined.verticalAlign) definedBits |= 1 << 17;
+      if (style.defined.fontSize) definedBits |= 1 << 18;
+      if (style.defined.lineHeight) definedBits |= 1 << 19;
+      writeOk = writeOk && writeBytes(&definedBits, sizeof(definedBits));
+    }
+
+    file.flush();
+    const bool closeOk = file.close();
+    candidateReady = writeOk && closeOk;
+    if (!candidateReady) {
+      LOG_ERR("CSS", "Failed to finalize CSS cache candidate");
+    }
+  }
+
+  if (!candidateReady) {
+    removeCacheArtifact(tempPath);
+    return false;
+  }
+
+  const bool hadFinal = Storage.exists(finalPath.c_str());
+  if (hadFinal) {
+    if (!Storage.rename(finalPath.c_str(), backupPath.c_str())) {
+      LOG_ERR("CSS", "Could not move existing CSS cache to backup");
+      removeCacheArtifact(tempPath);
+      return false;
+    }
+  }
+
+  if (!Storage.rename(tempPath.c_str(), finalPath.c_str())) {
+    LOG_ERR("CSS", "Could not publish CSS cache candidate");
+    if (hadFinal && !Storage.rename(backupPath.c_str(), finalPath.c_str())) {
+      LOG_ERR("CSS", "Could not restore previous CSS cache");
+    }
+    removeCacheArtifact(tempPath);
+    return false;
+  }
+
+  // The final file is complete. A stale backup is no longer needed; failure to
+  // remove it is harmless and will be cleaned on the next cache operation.
+  if (Storage.exists(backupPath.c_str()) && !Storage.remove(backupPath.c_str())) {
+    LOG_DBG("CSS", "Could not remove stale CSS cache backup");
   }
 
   LOG_DBG("CSS", "Saved %u rules to cache", ruleCount);
@@ -920,8 +995,21 @@ bool CssParser::loadFromCache() {
     return false;
   }
 
+  const std::string finalPath = cachePath + rulesCache;
+  const std::string tempPath = cachePath + rulesCacheTmp;
+  const std::string backupPath = cachePath + rulesCacheBackup;
+
+  // Temporary candidates are never authoritative. Remove one left by an
+  // interrupted prior write, and recover a backed-up final if publication was
+  // interrupted after the old file was moved aside.
+  removeCacheArtifact(tempPath);
+  if (!Storage.exists(finalPath.c_str()) && Storage.exists(backupPath.c_str()) &&
+      Storage.rename(backupPath.c_str(), finalPath.c_str())) {
+    LOG_DBG("CSS", "Recovered CSS cache backup");
+  }
+
   HalFile file;
-  if (!Storage.openFileForRead("CSS", cachePath + rulesCache, file)) {
+  if (!Storage.openFileForRead("CSS", finalPath, file)) {
     return false;
   }
 
@@ -1106,7 +1194,13 @@ bool CssParser::loadFromCache() {
     }
   }
 
+  const size_t cacheSize = file.size();
+  file.close();
+  if (Storage.exists(backupPath.c_str()) && !Storage.remove(backupPath.c_str())) {
+    LOG_DBG("CSS", "Could not remove stale CSS cache backup");
+  }
+
   LOG_DBG("CSS", "Loaded %u rules from cache", ruleCount);
-  EpubDiagnostics::record("css_cache_load_result", -1, -1, 0, 0, ruleCount, file.size(), 1);
+  EpubDiagnostics::record("css_cache_load_result", -1, -1, 0, 0, ruleCount, cacheSize, 1);
   return true;
 }

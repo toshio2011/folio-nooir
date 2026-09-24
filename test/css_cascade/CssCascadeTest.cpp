@@ -112,3 +112,81 @@ TEST(CssCascadeTest, VersionElevenCacheRoundTripPreservesCascade) {
 }
 
 TEST(CssCascadeTest, CacheVersionIsEleven) { EXPECT_EQ(CssParser::CSS_CACHE_VERSION, 11); }
+
+TEST(CssCascadeTest, CacheCreationPublishesOnlyCompletedFinalFile) {
+  resetStorage();
+  const auto parser = parserFor(".a { text-align: center; }");
+
+  ASSERT_TRUE(parser->saveToCache());
+  EXPECT_TRUE(Storage.exists("css_cascade_test/css_rules.cache"));
+  EXPECT_FALSE(Storage.exists("css_cascade_test/css_rules.cache.tmp"));
+  EXPECT_FALSE(Storage.exists("css_cascade_test/css_rules.cache.bak"));
+}
+
+TEST(CssCascadeTest, FailedCandidateWritePreservesExistingFinalFile) {
+  resetStorage();
+  ASSERT_TRUE(parserFor(".old { text-align: left; }")->saveToCache());
+  CssCacheTestHooks::shortWrite = true;
+
+  EXPECT_FALSE(parserFor(".new { text-align: right; }")->saveToCache());
+  EXPECT_TRUE(Storage.exists("css_cascade_test/css_rules.cache"));
+  EXPECT_FALSE(Storage.exists("css_cascade_test/css_rules.cache.tmp"));
+
+  CssParser reader("css_cascade_test");
+  ASSERT_TRUE(reader.loadFromCache());
+  EXPECT_EQ(reader.resolveStyle("div", "old").textAlign, CssTextAlign::Left);
+  EXPECT_FALSE(reader.resolveStyle("div", "new").hasTextAlign());
+}
+
+TEST(CssCascadeTest, FailedCandidateOpenPreservesExistingFinalFile) {
+  resetStorage();
+  ASSERT_TRUE(parserFor(".old { text-align: left; }")->saveToCache());
+  Storage.failOpenWrite = true;
+
+  EXPECT_FALSE(parserFor(".new { text-align: right; }")->saveToCache());
+  CssParser reader("css_cascade_test");
+  ASSERT_TRUE(reader.loadFromCache());
+  EXPECT_EQ(reader.resolveStyle("div", "old").textAlign, CssTextAlign::Left);
+}
+
+TEST(CssCascadeTest, FailedCandidateClosePreservesExistingFinalFile) {
+  resetStorage();
+  ASSERT_TRUE(parserFor(".old { text-align: left; }")->saveToCache());
+  CssCacheTestHooks::failClose = true;
+
+  EXPECT_FALSE(parserFor(".new { text-align: right; }")->saveToCache());
+  CssParser reader("css_cascade_test");
+  ASSERT_TRUE(reader.loadFromCache());
+  EXPECT_EQ(reader.resolveStyle("div", "old").textAlign, CssTextAlign::Left);
+}
+
+TEST(CssCascadeTest, FailedPromotionRestoresExistingFinalFile) {
+  resetStorage();
+  ASSERT_TRUE(parserFor(".old { text-align: left; }")->saveToCache());
+  Storage.renameCalls = 0;
+  Storage.failRenameAt = 2;  // old final -> backup succeeds; temp -> final fails
+
+  EXPECT_FALSE(parserFor(".new { text-align: right; }")->saveToCache());
+  EXPECT_TRUE(Storage.exists("css_cascade_test/css_rules.cache"));
+  EXPECT_FALSE(Storage.exists("css_cascade_test/css_rules.cache.tmp"));
+  EXPECT_FALSE(Storage.exists("css_cascade_test/css_rules.cache.bak"));
+
+  CssParser reader("css_cascade_test");
+  ASSERT_TRUE(reader.loadFromCache());
+  EXPECT_EQ(reader.resolveStyle("div", "old").textAlign, CssTextAlign::Left);
+}
+
+TEST(CssCascadeTest, StaleTempIsRemovedAndStrandedBackupIsRecovered) {
+  resetStorage();
+  ASSERT_TRUE(parserFor(".old { text-align: left; }")->saveToCache());
+  ASSERT_TRUE(Storage.rename("css_cascade_test/css_rules.cache", "css_cascade_test/css_rules.cache.bak"));
+  HalFile staleTemp;
+  ASSERT_TRUE(Storage.openFileForWrite("CSS", "css_cascade_test/css_rules.cache.tmp", staleTemp));
+  staleTemp.close();
+
+  CssParser reader("css_cascade_test");
+  ASSERT_TRUE(reader.loadFromCache());
+  EXPECT_EQ(reader.resolveStyle("div", "old").textAlign, CssTextAlign::Left);
+  EXPECT_TRUE(Storage.exists("css_cascade_test/css_rules.cache"));
+  EXPECT_FALSE(Storage.exists("css_cascade_test/css_rules.cache.tmp"));
+}
