@@ -7,6 +7,8 @@
 
 #include <new>
 
+#include "PageCacheValidation.h"
+
 namespace {
 
 template <typename Predicate>
@@ -39,10 +41,12 @@ bool PageLine::serialize(HalFile& file) {
 }
 
 std::unique_ptr<PageLine> PageLine::deserialize(HalFile& file) {
-  int16_t xPos;
-  int16_t yPos;
-  serialization::readPod(file, xPos);
-  serialization::readPod(file, yPos);
+  int16_t xPos = 0;
+  int16_t yPos = 0;
+  if (!serialization::readPod(file, xPos) || !serialization::readPod(file, yPos)) {
+    LOG_ERR("PGE", "Deserialization failed: truncated PageLine position");
+    return nullptr;
+  }
 
   auto tb = TextBlock::deserialize(file);
   if (!tb) {
@@ -76,10 +80,12 @@ bool PageImage::serialize(HalFile& file) {
 }
 
 std::unique_ptr<PageImage> PageImage::deserialize(HalFile& file) {
-  int16_t xPos;
-  int16_t yPos;
-  serialization::readPod(file, xPos);
-  serialization::readPod(file, yPos);
+  int16_t xPos = 0;
+  int16_t yPos = 0;
+  if (!serialization::readPod(file, xPos) || !serialization::readPod(file, yPos)) {
+    LOG_ERR("PGE", "Deserialization failed: truncated PageImage position");
+    return nullptr;
+  }
 
   auto ib = ImageBlock::deserialize(file);
   if (!ib) {
@@ -116,10 +122,11 @@ std::unique_ptr<PageHorizontalRule> PageHorizontalRule::deserialize(HalFile& fil
   int16_t yPos = 0;
   uint16_t width = 0;
   uint8_t thickness = 0;
-  serialization::readPod(file, xPos);
-  serialization::readPod(file, yPos);
-  serialization::readPod(file, width);
-  serialization::readPod(file, thickness);
+  if (!serialization::readPod(file, xPos) || !serialization::readPod(file, yPos) ||
+      !serialization::readPod(file, width) || !serialization::readPod(file, thickness)) {
+    LOG_ERR("PGE", "Deserialization failed: truncated horizontal rule metadata");
+    return nullptr;
+  }
 
   if (width == 0 || thickness == 0) {
     LOG_ERR("PGE", "Deserialization failed: invalid horizontal rule metadata (width=%u thickness=%u)", width,
@@ -220,13 +227,25 @@ std::unique_ptr<Page> Page::deserialize(HalFile& file) {
     return nullptr;
   }
 
-  uint16_t count;
-  serialization::readPod(file, count);
+  uint16_t count = 0;
+  if (!serialization::readPod(file, count)) {
+    LOG_ERR("PGE", "Deserialization failed: truncated element count");
+    return nullptr;
+  }
+  const size_t fileSize = file.size();
+  const size_t position = file.position();
+  if (position > fileSize || !page_cache_validation::elementCountFits(count, fileSize - position)) {
+    LOG_ERR("PGE", "Deserialization failed: invalid element count %u", count);
+    return nullptr;
+  }
   page->elements.reserve(std::min<uint16_t>(count, Page::ELEMENT_RESERVE_LIMIT));
 
   for (uint16_t i = 0; i < count; i++) {
-    uint8_t tag;
-    serialization::readPod(file, tag);
+    uint8_t tag = 0;
+    if (!serialization::readPod(file, tag)) {
+      LOG_ERR("PGE", "Deserialization failed: truncated element tag %u", i);
+      return nullptr;
+    }
 
     if (tag == TAG_PageLine) {
       auto pl = PageLine::deserialize(file);
@@ -253,8 +272,11 @@ std::unique_ptr<Page> Page::deserialize(HalFile& file) {
   }
 
   // Deserialize footnotes
-  uint16_t fnCount;
-  serialization::readPod(file, fnCount);
+  uint16_t fnCount = 0;
+  if (!serialization::readPod(file, fnCount)) {
+    LOG_ERR("PGE", "Deserialization failed: truncated footnote count");
+    return nullptr;
+  }
   if (fnCount > MAX_FOOTNOTES_PER_PAGE) {
     LOG_ERR("PGE", "Invalid footnote count %u", fnCount);
     return nullptr;

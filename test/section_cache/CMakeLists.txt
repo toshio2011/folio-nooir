@@ -1,0 +1,4 @@
+add_executable(section_cache_validation_test SectionCacheValidationTest.cpp)
+target_link_libraries(section_cache_validation_test PRIVATE GTest::gtest_main crosspoint_test_common)
+
+gtest_discover_tests(section_cache_validation_test)

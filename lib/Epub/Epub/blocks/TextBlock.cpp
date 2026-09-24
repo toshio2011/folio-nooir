@@ -310,12 +310,14 @@ bool TextBlock::serialize(HalFile& file) const {
 }
 
 std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
-  uint16_t wc;
-  uint8_t hasFocus;
-  uint16_t textBytes;
-  serialization::readPod(file, wc);
-  serialization::readPod(file, hasFocus);
-  serialization::readPod(file, textBytes);
+  uint16_t wc = 0;
+  uint8_t hasFocus = 0;
+  uint16_t textBytes = 0;
+  if (!serialization::readPod(file, wc) || !serialization::readPod(file, hasFocus) ||
+      !serialization::readPod(file, textBytes)) {
+    LOG_ERR("TXB", "Deserialization failed: truncated text header");
+    return nullptr;
+  }
 
   // Sanity checks: cap the arena allocation and reject impossible geometry
   // (every word carries at least its NUL terminator).
@@ -369,23 +371,27 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
 
   // Style (alignment + margins/padding/indent)
   BlockStyle& blockStyle = block->blockStyle;
-  serialization::readPod(file, blockStyle.alignment);
-  serialization::readPod(file, blockStyle.textAlignDefined);
-  serialization::readPod(file, blockStyle.marginTop);
-  serialization::readPod(file, blockStyle.marginBottom);
-  serialization::readPod(file, blockStyle.marginLeft);
-  serialization::readPod(file, blockStyle.marginRight);
-  serialization::readPod(file, blockStyle.paddingTop);
-  serialization::readPod(file, blockStyle.paddingBottom);
-  serialization::readPod(file, blockStyle.paddingLeft);
-  serialization::readPod(file, blockStyle.paddingRight);
-  serialization::readPod(file, blockStyle.textIndent);
-  serialization::readPod(file, blockStyle.textIndentDefined);
-  serialization::readPod(file, blockStyle.isRtl);
-  serialization::readPod(file, blockStyle.directionDefined);
-  serialization::readPod(file, blockStyle.fontPointSize);
-  serialization::readPod(file, blockStyle.lineHeightPx);
-  serialization::readPod(file, blockStyle.lineTopOverhangPx);
+  const bool styleRead = serialization::readPod(file, blockStyle.alignment) &&
+                         serialization::readPod(file, blockStyle.textAlignDefined) &&
+                         serialization::readPod(file, blockStyle.marginTop) &&
+                         serialization::readPod(file, blockStyle.marginBottom) &&
+                         serialization::readPod(file, blockStyle.marginLeft) &&
+                         serialization::readPod(file, blockStyle.marginRight) &&
+                         serialization::readPod(file, blockStyle.paddingTop) &&
+                         serialization::readPod(file, blockStyle.paddingBottom) &&
+                         serialization::readPod(file, blockStyle.paddingLeft) &&
+                         serialization::readPod(file, blockStyle.paddingRight) &&
+                         serialization::readPod(file, blockStyle.textIndent) &&
+                         serialization::readPod(file, blockStyle.textIndentDefined) &&
+                         serialization::readPod(file, blockStyle.isRtl) &&
+                         serialization::readPod(file, blockStyle.directionDefined) &&
+                         serialization::readPod(file, blockStyle.fontPointSize) &&
+                         serialization::readPod(file, blockStyle.lineHeightPx) &&
+                         serialization::readPod(file, blockStyle.lineTopOverhangPx);
+  if (!styleRead) {
+    LOG_ERR("TXB", "Deserialization failed: truncated block style");
+    return nullptr;
+  }
 
   return block;
 }

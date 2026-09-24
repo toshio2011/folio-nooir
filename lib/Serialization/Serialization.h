@@ -15,13 +15,14 @@ void writePod(HalFile& file, const T& value) {
 }
 
 template <typename T>
-void readPod(std::istream& is, T& value) {
+bool readPod(std::istream& is, T& value) {
   is.read(reinterpret_cast<char*>(&value), sizeof(T));
+  return is.gcount() == static_cast<std::streamsize>(sizeof(T));
 }
 
 template <typename T>
-void readPod(HalFile& file, T& value) {
-  file.read(reinterpret_cast<uint8_t*>(&value), sizeof(T));
+bool readPod(HalFile& file, T& value) {
+  return file.read(reinterpret_cast<uint8_t*>(&value), sizeof(T)) == static_cast<int>(sizeof(T));
 }
 
 inline void writeString(std::ostream& os, const std::string& s) {
@@ -37,16 +38,18 @@ inline void writeString(HalFile& file, const std::string& s) {
 }
 
 inline void readString(std::istream& is, std::string& s) {
-  uint32_t len;
+  uint32_t len = 0;
   readPod(is, len);
   s.resize(len);
+  if (len == 0) return;
   is.read(&s[0], len);
 }
 
 inline void readString(HalFile& file, std::string& s) {
-  uint32_t len;
+  uint32_t len = 0;
   readPod(file, len);
   s.resize(len);
+  if (len == 0) return;
   file.read(&s[0], len);
 }
 }  // namespace serialization

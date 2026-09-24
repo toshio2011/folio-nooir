@@ -18,6 +18,7 @@
 #include "Epub/converters/JpegToFramebufferConverter.h"
 #include "Epub/converters/TjpgdToFramebufferConverter.h"
 #include "../../../../src/util/EpubDiagnostics.h"
+#include "../PageCacheValidation.h"
 
 // Cache file format:
 // - uint16_t width
@@ -865,11 +866,30 @@ bool ImageBlock::serialize(HalFile& file) {
 std::unique_ptr<ImageBlock> ImageBlock::deserialize(HalFile& file) {
   std::string path;
   std::string src;
-  serialization::readString(file, path);
-  serialization::readString(file, src);
-  int16_t w, h;
-  serialization::readPod(file, w);
-  serialization::readPod(file, h);
+  const auto readImageString = [&file](std::string& value, const size_t trailingBytes) {
+    const size_t fileSize = file.size();
+    const size_t position = file.position();
+    if (position > fileSize || fileSize - position < sizeof(uint32_t) + trailingBytes) return false;
+
+    uint32_t length = 0;
+    if (!serialization::readPod(file, length)) return false;
+    const size_t remaining = fileSize - file.position();
+    if (!page_cache_validation::stringLengthFits(length, remaining, trailingBytes)) return false;
+
+    value.resize(length);
+    return length == 0 || file.read(&value[0], length) == static_cast<int>(length);
+  };
+  if (!readImageString(path, sizeof(uint32_t) + sizeof(int16_t) * 2) ||
+      !readImageString(src, sizeof(int16_t) * 2)) {
+    LOG_ERR("IMG", "Deserialization failed: truncated image path data");
+    return nullptr;
+  }
+  int16_t w = 0;
+  int16_t h = 0;
+  if (!serialization::readPod(file, w) || !serialization::readPod(file, h)) {
+    LOG_ERR("IMG", "Deserialization failed: truncated image dimensions");
+    return nullptr;
+  }
   if (w <= 0 || h <= 0) {
     LOG_ERR("IMG", "Deserialization failed: invalid image dimensions (%d,%d)", w, h);
     return nullptr;

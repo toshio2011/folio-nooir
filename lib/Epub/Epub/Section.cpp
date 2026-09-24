@@ -151,11 +151,24 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
     return false;
   }
 
+  const auto rejectMalformed = [this](const char* reason) {
+    file.close();
+    LOG_ERR("SCT", "Deserialization failed: %s", reason);
+    clearCache();
+  };
+  if (file.size() < HEADER_SIZE) {
+    rejectMalformed("truncated section header");
+    return false;
+  }
+
   // Match parameters
   bool filePartial = false;
   {
-    uint8_t version;
-    serialization::readPod(file, version);
+    uint8_t version = 0;
+    if (!serialization::readPod(file, version)) {
+      rejectMalformed("truncated section version");
+      return false;
+    }
     if (version != SECTION_FILE_VERSION && version != SECTION_FILE_PARTIAL_VERSION) {
       // Explicit close() required: member variable persists beyond function scope
       file.close();
@@ -165,12 +178,15 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
     }
     filePartial = (version == SECTION_FILE_PARTIAL_VERSION);
 
-    uint8_t fileBidiShapingContractVersion;
-    uint8_t fileMarkContractVersion;
-    uint8_t fileFallbackContractVersion;
-    serialization::readPod(file, fileBidiShapingContractVersion);
-    serialization::readPod(file, fileMarkContractVersion);
-    serialization::readPod(file, fileFallbackContractVersion);
+    uint8_t fileBidiShapingContractVersion = 0;
+    uint8_t fileMarkContractVersion = 0;
+    uint8_t fileFallbackContractVersion = 0;
+    if (!serialization::readPod(file, fileBidiShapingContractVersion) ||
+        !serialization::readPod(file, fileMarkContractVersion) ||
+        !serialization::readPod(file, fileFallbackContractVersion)) {
+      rejectMalformed("truncated text-layout contract");
+      return false;
+    }
     if (fileBidiShapingContractVersion != SECTION_TEXT_BIDI_SHAPING_CONTRACT_VERSION ||
         fileMarkContractVersion != SECTION_TEXT_MARK_CONTRACT_VERSION ||
         fileFallbackContractVersion != SECTION_TEXT_FALLBACK_CONTRACT_VERSION) {
@@ -180,27 +196,31 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
       return false;
     }
 
-    int fileFontId;
-    uint16_t fileViewportWidth, fileViewportHeight;
-    float fileLineCompression;
-    bool fileExtraParagraphSpacing;
-    uint8_t fileParagraphAlignment;
-    bool fileHyphenationEnabled;
-    bool fileEmbeddedStyle;
-    uint8_t fileImageRendering;
-    bool fileFocusReadingEnabled;
-    bool fileForceParagraphIndents;
-    serialization::readPod(file, fileFontId);
-    serialization::readPod(file, fileLineCompression);
-    serialization::readPod(file, fileExtraParagraphSpacing);
-    serialization::readPod(file, fileParagraphAlignment);
-    serialization::readPod(file, fileViewportWidth);
-    serialization::readPod(file, fileViewportHeight);
-    serialization::readPod(file, fileHyphenationEnabled);
-    serialization::readPod(file, fileEmbeddedStyle);
-    serialization::readPod(file, fileImageRendering);
-    serialization::readPod(file, fileFocusReadingEnabled);
-    serialization::readPod(file, fileForceParagraphIndents);
+    int fileFontId = 0;
+    uint16_t fileViewportWidth = 0, fileViewportHeight = 0;
+    float fileLineCompression = 0;
+    bool fileExtraParagraphSpacing = false;
+    uint8_t fileParagraphAlignment = 0;
+    bool fileHyphenationEnabled = false;
+    bool fileEmbeddedStyle = false;
+    uint8_t fileImageRendering = 0;
+    bool fileFocusReadingEnabled = false;
+    bool fileForceParagraphIndents = false;
+    const bool headerRead = serialization::readPod(file, fileFontId) &&
+                            serialization::readPod(file, fileLineCompression) &&
+                            serialization::readPod(file, fileExtraParagraphSpacing) &&
+                            serialization::readPod(file, fileParagraphAlignment) &&
+                            serialization::readPod(file, fileViewportWidth) &&
+                            serialization::readPod(file, fileViewportHeight) &&
+                            serialization::readPod(file, fileHyphenationEnabled) &&
+                            serialization::readPod(file, fileEmbeddedStyle) &&
+                            serialization::readPod(file, fileImageRendering) &&
+                            serialization::readPod(file, fileFocusReadingEnabled) &&
+                            serialization::readPod(file, fileForceParagraphIndents);
+    if (!headerRead) {
+      rejectMalformed("truncated section parameters");
+      return false;
+    }
 
     if (spec.fontId != fileFontId || spec.lineCompression != fileLineCompression ||
         spec.extraParagraphSpacing != fileExtraParagraphSpacing || spec.paragraphAlignment != fileParagraphAlignment ||
@@ -215,17 +235,26 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
     }
   }
 
-  serialization::readPod(file, pageCount);
+  if (!serialization::readPod(file, pageCount)) {
+    rejectMalformed("truncated page count");
+    pageCount = 0;
+    return false;
+  }
 
   if (filePartial) {
     // A partial's pageCount is the watermark of a suspended build. Read the watermark
     // trailer (appended after the li LUT) so estimatedTotalPages can extrapolate.
     uint32_t liLutOffset = 0;
-    file.seek(HEADER_SIZE - sizeof(uint32_t));
-    serialization::readPod(file, liLutOffset);
-    const uint32_t trailerOffset = liLutOffset + static_cast<uint32_t>(pageCount) * sizeof(uint16_t);
+    if (!file.seek(HEADER_SIZE - sizeof(uint32_t)) || !serialization::readPod(file, liLutOffset)) {
+      rejectMalformed("truncated partial LUT metadata");
+      pageCount = 0;
+      return false;
+    }
+    const size_t fileSize = file.size();
+    const size_t liBytes = static_cast<size_t>(pageCount) * sizeof(uint16_t);
     const bool trailerValid =
-        pageCount > 0 && liLutOffset >= HEADER_SIZE && trailerOffset + 2 * sizeof(uint32_t) <= file.size();
+        pageCount > 0 && liLutOffset >= HEADER_SIZE && liLutOffset <= fileSize &&
+        fileSize - liLutOffset >= liBytes + 2 * sizeof(uint32_t);
     if (!trailerValid) {
       file.close();
       LOG_ERR("SCT", "Deserialization failed: malformed partial section");
@@ -233,9 +262,13 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
       pageCount = 0;
       return false;
     }
-    file.seek(trailerOffset);
-    serialization::readPod(file, partialBytesConsumed_);
-    serialization::readPod(file, partialTotalBytes_);
+    const size_t trailerOffset = static_cast<size_t>(liLutOffset) + liBytes;
+    if (!file.seek(trailerOffset) || !serialization::readPod(file, partialBytesConsumed_) ||
+        !serialization::readPod(file, partialTotalBytes_)) {
+      rejectMalformed("truncated partial progress metadata");
+      pageCount = 0;
+      return false;
+    }
     partial_ = true;
     partialPageCount_ = pageCount;
   }
@@ -803,9 +836,9 @@ std::unique_ptr<Page> Section::loadPageDuringBuild(const int page) {
   // The .bin is open O_RDWR for the build. Read the already-written page, then restore
   // the write cursor so the next onPageComplete keeps appending where it left off.
   const uint32_t writePos = file.position();
-  file.seek(pos);
+  if (!file.seek(pos)) return nullptr;
   auto p = Page::deserialize(file);
-  file.seek(writePos);
+  if (!file.seek(writePos)) return nullptr;
   return p;
 }
 
@@ -819,13 +852,23 @@ std::unique_ptr<Page> Section::loadPageAt(const int page) const {
     return nullptr;
   }
 
-  f.seek(HEADER_SIZE - sizeof(uint32_t) * 4);
-  uint32_t lutOffset;
-  serialization::readPod(f, lutOffset);
-  f.seek(lutOffset + sizeof(uint32_t) * page);
-  uint32_t pagePos;
-  serialization::readPod(f, pagePos);
-  f.seek(pagePos);
+  const size_t fileSize = f.size();
+  if (fileSize < HEADER_SIZE || page < 0 || page >= pageCount ||
+      !f.seek(HEADER_SIZE - sizeof(uint32_t) * 4)) {
+    return nullptr;
+  }
+  uint32_t lutOffset = 0;
+  if (!serialization::readPod(f, lutOffset) || lutOffset < HEADER_SIZE || lutOffset > fileSize ||
+      static_cast<size_t>(pageCount) > (fileSize - lutOffset) / sizeof(uint32_t)) {
+    return nullptr;
+  }
+  const size_t pageEntryOffset = static_cast<size_t>(lutOffset) + sizeof(uint32_t) * page;
+  if (!f.seek(pageEntryOffset)) return nullptr;
+  uint32_t pagePos = 0;
+  if (!serialization::readPod(f, pagePos) || pagePos < HEADER_SIZE || pagePos >= lutOffset || pagePos >= fileSize ||
+      !f.seek(pagePos)) {
+    return nullptr;
+  }
 
   return Page::deserialize(f);
   // No f.close() needed -- DESTRUCTOR_CLOSES_FILE=1 handles it at scope exit
