@@ -2,6 +2,27 @@
 
 This is the actionable post-1.6.2 investigation queue. It is **not approval to implement every item in 1.6.3**. Folio Nooir 1.6.2 is released; tag `1.6.2` resolves to `25df494020874150a047e2a4b3be62c3e40151e8`. The known-good firmware/source milestone is `85dda52a102163b40fd4a2ddfde65e6cdc23af36`.
 
+## Current phase status and gate — 2026-09-24
+
+- **Phase A — headroom/foundations:** FROZEN / COMPLETE.
+- **Phase B — EPUB foundation/performance:** FROZEN / COMPLETE. B1/B2
+  diagnostics were temporary, their findings are archived, and no Phase B
+  production optimization remains open.
+- **Phase C — EPUB CSS correctness:** ACTIVE — READ-ONLY AUDIT STAGE.
+  - **C-A:** selector / cascade / inheritance
+  - **C-B:** properties / values / layout
+  - **C-C:** CSS performance / memory / cache
+  - **C-D:** comparative firmware CSS audit
+  - **C-E:** torture EPUB / resilience / failure modes
+- **Next gate:** **C-Synthesis**.
+
+C1/C2/etc. are not decided yet. The parallel audit tracks produce evidence
+and candidate findings only; no implementation begins until C-Synthesis
+selects and scopes any work. Any future CSS change must preserve bounded
+memory, incremental parsing, warm-cache behavior, the section-cache lifecycle,
+low hot-path allocation pressure, minimal unnecessary SD work, and the
+principle that Nooir can get smarter, but not sluggish.
+
 ## Immutable comparison baseline
 
 Normal `gh_release` for the released 1.6.2 source baseline:

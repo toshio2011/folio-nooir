@@ -40,6 +40,28 @@ page-turn responsiveness. CBZ/Manga preparation and cache work remain future
 planned phases; the complete deferred plan is preserved in
 `docs/CBZ_MANGA_PLAN.md`.
 
+## Current phase status and gate — 2026-09-24
+
+- **Phase A — headroom/foundations:** FROZEN / COMPLETE.
+- **Phase B — EPUB foundation/performance:** FROZEN / COMPLETE. Its B1/B2
+  physical findings remain durable engineering context; the temporary
+  profiling changes were removed and no Phase B optimization remains to be
+  implemented.
+- **Phase C — EPUB CSS correctness:** ACTIVE — READ-ONLY AUDIT STAGE.
+  Parallel audits are currently organized as:
+  - **C-A:** selector / cascade / inheritance
+  - **C-B:** properties / values / layout
+  - **C-C:** CSS performance / memory / cache
+  - **C-D:** comparative firmware CSS audit
+  - **C-E:** torture EPUB / resilience / failure modes
+- **Next gate:** **C-Synthesis**. C1/C2/etc. are not decided. Audit
+  hypotheses must remain findings until the synthesis and approval gate.
+
+Phase C must preserve bounded memory, incremental parsing, warm-cache
+behavior, the section-cache lifecycle, low hot-path allocation pressure,
+minimal unnecessary SD work, Arabic/Quran behavior, pagination, and the
+principle that Nooir can get smarter, but not sluggish.
+
 FreeInk is a real Nooir dependency through the `freeink-sdk` submodule. The
 1.5.10 baseline uses the Nooir-specific FreeInk commit
 `958720659ea289ae325e83db20049d0ea844800d` (`9587206`). Its only SDK diff is
@@ -461,12 +483,11 @@ machine before using them.
 ## Recommended next steps
 
 1. Treat tag `1.6.2` at `25df4940` as the released compatibility baseline and `85dda52a` as the known-good firmware/source milestone used for the recorded production measurements.
-2. Start 1.6.3 with `docs/FOLIO_1.6.3_BACKLOG.md`: generate a linker/map flash breakdown, identify measurable removal/move-to-SD opportunities, and keep the partition unchanged.
-3. Re-audit current CrossPoint/CrossInk EPUB, font, image, SD and memory deltas before importing code. Record source commit/PR and whether Nooir already has an equivalent.
-4. Investigate FB2, OPDS, PDF and Bluetooth only after headroom is recovered. Prototype format/network/BLE work separately and measure flash plus peak heap/largest block before normal integration.
-5. Quick Actions remains the smaller user-facing candidate after the stabilization/headroom pass; Full UI/System Dark Mode remains separate and later.
+2. Finish the parallel Phase C-A through C-E read-only audits and produce the C-Synthesis gate report.
+3. Decide whether any C1/C2 work is justified only after C-Synthesis; do not turn audit hypotheses into implementation decisions.
+4. Preserve the Phase A/B freeze boundaries, the partition, cache formats, Arabic/Quran behavior, KOSync interoperability, user SD data, and the exact FreeInk pin.
+5. Keep future changes scoped and measured. Every approved normal firmware change should be compared with the 1.6.2 baseline: linked flash 6,492,279 B, padded firmware.bin 6,506,128 B, app-slot margin 47,472 B, static RAM 53,492 B.
 6. Continue physical X3 validation when hardware is available. Preserve the separate WSL simulator workflow and do not treat simulator success as physical X3 evidence.
-7. Keep future changes scoped and measured. Every normal firmware change should be compared with the 1.6.2 baseline: linked flash 6,492,279 B, padded firmware.bin 6,506,128 B, app-slot margin 47,472 B, static RAM 53,492 B.
 
 ## Useful handoff checks
 

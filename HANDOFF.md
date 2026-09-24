@@ -43,6 +43,24 @@ The fresh D: `gh_release` build succeeded at **6,497,905 linked flash**, **6,511
 
 ## Current position
 
+### Phase status and current gate — 2026-09-24
+
+- **Phase A — headroom/foundations:** FROZEN / COMPLETE.
+- **Phase B — EPUB foundation/performance:** FROZEN / COMPLETE. The temporary
+  B1/B2 diagnostic work was removed and was not merged into production.
+- **Phase C — EPUB CSS correctness:** ACTIVE — READ-ONLY AUDIT STAGE.
+  - **C-A:** selector / cascade / inheritance
+  - **C-B:** properties / values / layout
+  - **C-C:** CSS performance / memory / cache
+  - **C-D:** comparative firmware CSS audit
+  - **C-E:** torture EPUB / resilience / failure modes
+- **Next gate:** C-Synthesis. C1/C2/etc. are not decided yet; audit findings
+  must not be treated as implementation authorization.
+
+Immediate next action is to finish the parallel read-only audits and combine
+their evidence into the C-Synthesis gate while preserving the frozen firmware
+baseline and the rule that Nooir can get smarter, but not sluggish.
+
 - Active development line: Folio Nooir **1.6.3**
 - Latest released baseline: Folio Nooir **1.6.2**
 - Authoritative branch: `codex/folio-nooir`
@@ -310,14 +328,11 @@ Recommended order: **flash map/recovery -> EPUB/font/image/memory upstream delta
 
 ## Immediate next steps
 
-1. Start 1.6.3 with a linker/map-level flash audit against the immutable 1.6.2 production baseline. Do not enlarge or change the partition.
-2. Review `docs/FOLIO_1.6.3_BACKLOG.md` and take one measured investigation at a time. First priority is meaningful flash recovery; every source change must report normal `gh_release` flash/bin/static-RAM deltas.
-3. Re-diff current CrossPoint and CrossInk EPUB/font/image/memory work before importing anything; mark each candidate TAKE NOW / INVESTIGATE / LATER / SKIP / ALREADY COVERED.
-4. Benchmark SD/SPI batching only after establishing the flash baseline, then consider small safe upstream fixes.
-5. Keep FB2, OPDS, PDF and Bluetooth as measured prototypes/experiments until sufficient flash and heap headroom exists. Bluetooth must begin as a separate experimental build/profile.
-6. Quick Actions may be considered after the flash/memory pass. Full UI/System Dark Mode remains a larger separate project.
-7. Continue physical X3 regression validation when hardware is available; X4 physical validation and X3/X4 simulators do not substitute for X3 hardware evidence.
-8. Preserve `SECTION_FILE_VERSION = 41`, Arabic/Quran behavior, KOSync interoperability, user SD data, partition layout and the FreeInk pin unless a separately approved task explicitly changes them.
+1. Finish the parallel Phase C-A through C-E read-only audits and produce the C-Synthesis gate report.
+2. Do not decide or implement C1/C2/etc. until C-Synthesis selects and scopes the work.
+3. Preserve the Phase A/B freeze boundaries, the partition, cache formats, Arabic/Quran behavior, KOSync interoperability, user SD data and the exact FreeInk pin.
+4. Keep future changes scoped and measured. Every approved normal firmware change must report linked flash, padded `firmware.bin`, app-slot margin, static RAM, and relevant X3/X4 evidence against the frozen baseline.
+5. Continue physical X3 regression validation when hardware is available; X4 physical validation and X3/X4 simulators do not substitute for X3 hardware evidence.
 
 ## Resource map
 
