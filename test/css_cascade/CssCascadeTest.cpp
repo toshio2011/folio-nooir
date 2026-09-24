@@ -78,19 +78,97 @@ TEST(CssCascadeTest, DisplayNoneStillResolves) {
   EXPECT_EQ(style.display, CssDisplay::None);
 }
 
-TEST(CssCascadeTest, CompoundSelectorsRemainOutsideC1) {
-  const auto parser = parserFor(".a.b { text-align: center; } p.a.b { font-weight: bold; }");
-  const auto style = parser->resolveStyle("p", "a b");
+TEST(CssCascadeTest, CompoundClassSelectorMatchesInEitherHtmlOrder) {
+  const auto parser = parserFor(".a.b { text-align: center; }");
 
-  EXPECT_FALSE(style.hasTextAlign());
-  EXPECT_FALSE(style.hasFontWeight());
+  EXPECT_EQ(parser->resolveStyle("p", "a b").textAlign, CssTextAlign::Center);
+  EXPECT_EQ(parser->resolveStyle("p", "b a").textAlign, CssTextAlign::Center);
+  EXPECT_FALSE(parser->resolveStyle("p", "a").hasTextAlign());
+  EXPECT_FALSE(parser->resolveStyle("p", "b").hasTextAlign());
 }
 
-TEST(CssCascadeTest, CacheVersionBumpRejectsVersionTen) {
+TEST(CssCascadeTest, CompoundTagAndThreeClassSelectorsRequireAllParts) {
+  const auto parser = parserFor("p.a.b { font-weight: bold; } .a.b.c { text-align: right; }");
+
+  EXPECT_EQ(parser->resolveStyle("p", "a b").fontWeight, CssFontWeight::Bold);
+  EXPECT_FALSE(parser->resolveStyle("div", "a b").hasFontWeight());
+  EXPECT_EQ(parser->resolveStyle("div", "c b a").textAlign, CssTextAlign::Right);
+  EXPECT_FALSE(parser->resolveStyle("div", "a b").hasTextAlign());
+}
+
+TEST(CssCascadeTest, CompoundSelectorOverTheClassLimitIsIgnored) {
+  const auto parser = parserFor(".a.b.c.d { text-align: center; }");
+
+  EXPECT_FALSE(parser->resolveStyle("p", "a b c d").hasTextAlign());
+}
+
+TEST(CssCascadeTest, CompoundSpecificityBeatsSimpleClassAndTagClass) {
+  const auto parser = parserFor(
+      ".a { text-align: left; } p.a { text-align: right; } .a.b { text-align: center; }");
+
+  EXPECT_EQ(parser->resolveStyle("p", "a b").textAlign, CssTextAlign::Center);
+}
+
+TEST(CssCascadeTest, IDBeatsMultiClassAndCompoundIdRequiresClass) {
+  const auto parser = parserFor("#entry { text-align: right; } .a.b { text-align: left; } #entry.a { text-align: center; }");
+
+  EXPECT_EQ(parser->resolveStyle("p", "a b", "entry").textAlign, CssTextAlign::Center);
+  EXPECT_EQ(parser->resolveStyle("p", "a b", "other").textAlign, CssTextAlign::Left);
+  EXPECT_EQ(parser->resolveStyle("p", "a", "entry").textAlign, CssTextAlign::Right);
+  EXPECT_EQ(parser->resolveStyle("p", "b", "entry").textAlign, CssTextAlign::Right);
+  EXPECT_EQ(parser->resolveStyle("p", "a b").textAlign, CssTextAlign::Left);
+}
+
+TEST(CssCascadeTest, CompoundTagIdSelectorRequiresTagIdAndClass) {
+  const auto parser = parserFor("p#entry.a { text-align: center; }");
+
+  EXPECT_EQ(parser->resolveStyle("p", "a", "entry").textAlign, CssTextAlign::Center);
+  EXPECT_EQ(parser->resolveStyle("div", "a", "entry").textAlign, CssTextAlign::Left);
+  EXPECT_EQ(parser->resolveStyle("p", "b", "entry").textAlign, CssTextAlign::Left);
+}
+
+TEST(CssCascadeTest, EqualCompoundSpecificityUsesC1SourceOrder) {
+  const auto parser = parserFor(".a.b { text-align: left; } .b.a { text-align: right; }");
+
+  EXPECT_EQ(parser->resolveStyle("p", "a b").textAlign, CssTextAlign::Right);
+  EXPECT_EQ(parser->resolveStyle("p", "b a").textAlign, CssTextAlign::Right);
+}
+
+TEST(CssCascadeTest, RepeatedCompoundSelectorPreservesPerPropertyCascade) {
+  const auto parser = parserFor(
+      ".a.b { font-weight: bold; text-align: left; } .b.a { text-align: center; }");
+  const auto style = parser->resolveStyle("p", "b a");
+
+  EXPECT_EQ(style.fontWeight, CssFontWeight::Bold);
+  EXPECT_EQ(style.textAlign, CssTextAlign::Center);
+}
+
+TEST(CssCascadeTest, CompoundSelectorListsAndUnsupportedSyntaxRemainBounded) {
+  const auto parser = parserFor(
+      "p.a.b, div.x.y { font-style: italic; } .a.b p { text-align: left; } [data-x] { text-align: right; } "
+      ".a:first-child { text-align: justify; }");
+
+  EXPECT_EQ(parser->resolveStyle("p", "a b").fontStyle, CssFontStyle::Italic);
+  EXPECT_EQ(parser->resolveStyle("div", "x y").fontStyle, CssFontStyle::Italic);
+  EXPECT_FALSE(parser->resolveStyle("p", "a b").hasTextAlign());
+}
+
+TEST(CssCascadeTest, CompoundDisplayNoneRequiresCompleteMatchAndInlineStillWins) {
+  const auto parser = parserFor(".secret.hidden { display: none; } .a.b { text-align: left; }");
+
+  EXPECT_EQ(parser->resolveStyle("div", "secret hidden").display, CssDisplay::None);
+  EXPECT_NE(parser->resolveStyle("div", "secret").display, CssDisplay::None);
+
+  auto style = parser->resolveStyle("div", "a b");
+  style.applyOver(CssParser::parseInlineStyle("text-align: right;"));
+  EXPECT_EQ(style.textAlign, CssTextAlign::Right);
+}
+
+TEST(CssCascadeTest, CacheVersionBumpRejectsVersionEleven) {
   resetStorage();
   HalFile file;
   ASSERT_TRUE(Storage.openFileForWrite("CSS", "css_cascade_test/css_rules.cache", file));
-  file.write(static_cast<uint8_t>(10));
+  file.write(static_cast<uint8_t>(11));
   file.close();
 
   CssParser parser("css_cascade_test");
@@ -98,20 +176,21 @@ TEST(CssCascadeTest, CacheVersionBumpRejectsVersionTen) {
   EXPECT_FALSE(Storage.exists("css_cascade_test/css_rules.cache"));
 }
 
-TEST(CssCascadeTest, VersionElevenCacheRoundTripPreservesCascade) {
+TEST(CssCascadeTest, VersionTwelveCacheRoundTripPreservesCompoundCascade) {
   resetStorage();
-  const std::string css = ".a { font-weight: bold; text-align: left; } .b { text-align: center; }";
+  const std::string css = ".a { font-weight: bold; text-align: left; } .b { text-align: center; } "
+                          ".a.b { text-align: right; }";
   const auto writer = parserFor(css);
   ASSERT_TRUE(writer->saveToCache());
 
   CssParser reader("css_cascade_test");
   ASSERT_TRUE(reader.loadFromCache());
-  EXPECT_EQ(reader.resolveStyle("div", "a b").textAlign, CssTextAlign::Center);
-  EXPECT_EQ(reader.resolveStyle("div", "b a").textAlign, CssTextAlign::Center);
+  EXPECT_EQ(reader.resolveStyle("div", "a b").textAlign, CssTextAlign::Right);
+  EXPECT_EQ(reader.resolveStyle("div", "b a").textAlign, CssTextAlign::Right);
   EXPECT_EQ(reader.resolveStyle("div", "a").fontWeight, CssFontWeight::Bold);
 }
 
-TEST(CssCascadeTest, CacheVersionIsEleven) { EXPECT_EQ(CssParser::CSS_CACHE_VERSION, 11); }
+TEST(CssCascadeTest, CacheVersionIsTwelve) { EXPECT_EQ(CssParser::CSS_CACHE_VERSION, 12); }
 
 TEST(CssCascadeTest, CacheCreationPublishesOnlyCompletedFinalFile) {
   resetStorage();

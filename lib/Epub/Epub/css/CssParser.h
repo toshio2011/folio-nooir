@@ -2,6 +2,7 @@
 
 #include <HalStorage.h>
 
+#include <array>
 #include <initializer_list>
 #include <string>
 #include <string_view>
@@ -23,6 +24,7 @@
  *   - Class selectors: .classname
  *   - Combined: element.classname
  *   - ID selectors: #id, element#id
+ *   - Bounded compounds: .a.b, tag.a.b, #id.a, tag#id.a
  *   - Grouped: selector1, selector2 { }
  *
  * Not supported (silently ignored):
@@ -34,7 +36,7 @@
 class CssParser {
  public:
   // Bump when CSS cache format or rules change; section caches are invalidated when this changes
-  static constexpr uint8_t CSS_CACHE_VERSION = 11;
+  static constexpr uint8_t CSS_CACHE_VERSION = 12;
 
   explicit CssParser(std::string cachePath) : cachePath(std::move(cachePath)) {}
   ~CssParser() = default;
@@ -72,18 +74,19 @@ class CssParser {
   /**
    * Check if any rules have been loaded
    */
-  [[nodiscard]] bool empty() const { return rulesBySelector_.empty(); }
+  [[nodiscard]] bool empty() const { return rulesBySelector_.empty() && compoundRulesByAnchor_.empty(); }
 
   /**
    * Get count of loaded rule sets
    */
-  [[nodiscard]] size_t ruleCount() const { return rulesBySelector_.size(); }
+  [[nodiscard]] size_t ruleCount() const { return rulesBySelector_.size() + compoundRulesByAnchor_.size(); }
 
   /**
    * Clear all loaded rules
    */
   void clear() {
     rulesBySelector_.clear();
+    compoundRulesByAnchor_.clear();
     nextSourceOrder_ = 0;
   }
 
@@ -111,6 +114,10 @@ class CssParser {
   bool loadFromCache();
 
  private:
+  static constexpr uint8_t MAX_COMPOUND_CLASSES = 3;
+  static constexpr size_t MAX_COMPOUND_CANDIDATES_PER_ANCHOR = 16;
+  static constexpr size_t MAX_ELEMENT_CLASSES_FOR_COMPOUNDS = 16;
+
   // Lookup key for a multi-piece selector. The pieces are hashed and compared
   // as if concatenated, so callers can look up composite keys without
   // materializing the concatenation in a scratch buffer. Constructed from a
@@ -147,10 +154,38 @@ class CssParser {
     uint32_t sourceOrder = 0;
   };
 
+  struct SelectorPart {
+    uint16_t offset = 0;
+    uint16_t length = 0;
+  };
+
+  struct SelectorMetadata {
+    SelectorPart tag;
+    SelectorPart id;
+    std::array<SelectorPart, MAX_COMPOUND_CLASSES> classes{};
+    uint8_t classCount = 0;
+    uint8_t hasTag = 0;
+    uint8_t hasId = 0;
+    uint8_t anchorClass = 0;
+
+    [[nodiscard]] bool isCompound() const { return classCount > 1 || (hasId && classCount > 0); }
+  };
+
+  struct CompoundRule {
+    CssStyle style;
+    uint32_t sourceOrder = 0;
+    std::string selector;
+    SelectorMetadata metadata;
+  };
+
   // Multiple entries for one selector are retained so each declaration block's
   // source order remains available during per-property cascade resolution.
   // Hash/equal are case-insensitive and lookups remain direct.
   std::unordered_multimap<std::string, StoredRule, SvHash, SvEqual> rulesBySelector_;
+
+  // Compound rules are indexed by one canonical required class. Matching then
+  // verifies the bounded remaining metadata without scanning unrelated rules.
+  std::unordered_multimap<std::string, CompoundRule, SvHash, SvEqual> compoundRulesByAnchor_;
 
   uint32_t nextSourceOrder_ = 0;
 
@@ -158,6 +193,8 @@ class CssParser {
 
   // Internal parsing helpers
   void processRuleBlockWithStyle(std::string_view selectorGroup, const CssStyle& style, uint32_t sourceOrder);
+  bool storeSelectorRule(std::string_view selector, const CssStyle& style, uint32_t sourceOrder);
+  static bool parseSelectorMetadata(std::string_view selector, SelectorMetadata& metadata);
   static CssStyle parseDeclarations(std::string_view declBlock);
   static void parseDeclarationIntoStyle(std::string_view decl, CssStyle& style);
 

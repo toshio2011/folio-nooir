@@ -209,6 +209,111 @@ bool CssParser::SvEqual::operator()(CompositeKey k, std::string_view sv) const n
 
 bool CssParser::SvEqual::operator()(std::string_view sv, CompositeKey k) const noexcept { return operator()(k, sv); }
 
+bool CssParser::parseSelectorMetadata(const std::string_view selector, SelectorMetadata& metadata) {
+  metadata = {};
+  if (selector.empty() || selector.size() > MAX_SELECTOR_LENGTH) return false;
+
+  const auto isNameChar = [](const char c) {
+    return !isCssWhitespace(c) && c != '.' && c != '#' && c != '+' && c != '>' && c != '[' && c != ']' &&
+           c != ':' && c != '~' && c != '*' && c != '(' && c != ')' && c != '=' && c != ';' && c != '\\';
+  };
+  const auto spansEqual = [&selector](const SelectorPart a, const SelectorPart b) {
+    if (a.length != b.length) return false;
+    for (size_t i = 0; i < a.length; ++i) {
+      if (asciiToLower(selector[a.offset + i]) != asciiToLower(selector[b.offset + i])) return false;
+    }
+    return true;
+  };
+
+  size_t pos = 0;
+  if (selector[0] != '.' && selector[0] != '#') {
+    const size_t start = pos;
+    while (pos < selector.size() && selector[pos] != '.' && selector[pos] != '#') {
+      if (!isNameChar(selector[pos])) return false;
+      ++pos;
+    }
+    if (pos == start) return false;
+    metadata.tag = SelectorPart{static_cast<uint16_t>(start), static_cast<uint16_t>(pos - start)};
+    metadata.hasTag = 1;
+  }
+
+  while (pos < selector.size()) {
+    const char marker = selector[pos++];
+    if (marker != '.' && marker != '#') return false;
+
+    const size_t start = pos;
+    while (pos < selector.size() && selector[pos] != '.' && selector[pos] != '#') {
+      if (!isNameChar(selector[pos])) return false;
+      ++pos;
+    }
+    if (pos == start) return false;
+
+    const SelectorPart part{static_cast<uint16_t>(start), static_cast<uint16_t>(pos - start)};
+    if (marker == '#') {
+      if (metadata.hasId) return false;
+      metadata.id = part;
+      metadata.hasId = 1;
+      continue;
+    }
+
+    if (metadata.classCount >= MAX_COMPOUND_CLASSES) return false;
+    for (uint8_t i = 0; i < metadata.classCount; ++i) {
+      if (spansEqual(metadata.classes[i], part)) return false;
+    }
+    metadata.classes[metadata.classCount++] = part;
+  }
+
+  if (!metadata.hasTag && !metadata.hasId && metadata.classCount == 0) return false;
+
+  if (metadata.classCount > 0) {
+    metadata.anchorClass = 0;
+    for (uint8_t i = 1; i < metadata.classCount; ++i) {
+      const SelectorPart current = metadata.classes[i];
+      const SelectorPart anchor = metadata.classes[metadata.anchorClass];
+      const size_t compareLength = std::min<size_t>(current.length, anchor.length);
+      bool currentComesFirst = false;
+      bool differs = false;
+      for (size_t j = 0; j < compareLength; ++j) {
+        const char currentChar = asciiToLower(selector[current.offset + j]);
+        const char anchorChar = asciiToLower(selector[anchor.offset + j]);
+        if (currentChar != anchorChar) {
+          currentComesFirst = currentChar < anchorChar;
+          differs = true;
+          break;
+        }
+      }
+      if ((!differs && current.length < anchor.length) || currentComesFirst) {
+        metadata.anchorClass = i;
+      }
+    }
+  }
+
+  return true;
+}
+
+bool CssParser::storeSelectorRule(const std::string_view selector, const CssStyle& style,
+                                  const uint32_t sourceOrder) {
+  SelectorMetadata metadata;
+  if (!parseSelectorMetadata(selector, metadata)) return false;
+  if (ruleCount() >= MAX_RULES) return false;
+
+  if (!metadata.isCompound()) {
+    rulesBySelector_.emplace(std::string(selector), StoredRule{style, sourceOrder});
+    return true;
+  }
+
+  const SelectorPart anchorPart = metadata.classes[metadata.anchorClass];
+  const std::string_view anchor = selector.substr(anchorPart.offset, anchorPart.length);
+  if (compoundRulesByAnchor_.count(anchor) >= MAX_COMPOUND_CANDIDATES_PER_ANCHOR) {
+    LOG_DBG("CSS", "Compound selector bucket full for class, skipping");
+    return false;
+  }
+
+  CompoundRule rule{style, sourceOrder, std::string(selector), metadata};
+  compoundRulesByAnchor_.emplace(std::string(anchor), std::move(rule));
+  return true;
+}
+
 // Property value interpreters
 
 CssTextAlign CssParser::interpretAlignment(std::string_view val) {
@@ -468,7 +573,7 @@ void CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const 
   }
 
   // Check if we've reached the rule limit before processing
-  if (rulesBySelector_.size() >= MAX_RULES) {
+  if (ruleCount() >= MAX_RULES) {
     LOG_DBG("CSS", "Reached max rules limit (%zu), stopping CSS parsing", MAX_RULES);
     return;
   }
@@ -502,17 +607,8 @@ void CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const 
         constexpr std::string_view kUnsupportedSelectorChars = "+>[:~* ";
         if (sel.find_first_of(kUnsupportedSelectorChars) != std::string_view::npos) return;
 
-        // At most one ID separator is supported, and both sides must be non-empty
-        // unless this is the normal `#id` form. This keeps malformed selectors out
-        // of the cache without allocating a normalized copy.
-        const size_t hash = sel.find('#');
-        if (hash != std::string_view::npos &&
-            (hash + 1 >= sel.size() || sel.find('#', hash + 1) != std::string_view::npos)) {
-          return;
-        }
-
         // Skip if this would exceed the rule limit
-        if (rulesBySelector_.size() >= MAX_RULES) {
+        if (ruleCount() >= MAX_RULES) {
           LOG_DBG("CSS", "Reached max rules limit, stopping selector processing");
           limitReached = true;
           return;
@@ -521,7 +617,7 @@ void CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const 
         // Retain repeated selector blocks separately. This preserves the source
         // order of each declaration block, including when different properties
         // of one selector were declared in different blocks.
-        rulesBySelector_.emplace(std::string(sel), StoredRule{style, sourceOrder});
+        storeSelectorRule(sel, style, sourceOrder);
       });
 }
 
@@ -695,7 +791,7 @@ CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view clas
   // Cascade only the rules found by the existing direct lookups. The source
   // order is tracked per property because repeated selector blocks can merge
   // different properties at different positions in the stylesheet.
-  auto applyRule = [&](const StoredRule& rule, const uint8_t specificity) {
+  auto applyRule = [&](const auto& rule, const uint8_t specificity) {
     auto applyProperty = [&](const uint8_t slot, const bool defined, const auto& assign) {
       if (!defined) return;
       if (specificity < propertySpecificities[slot] ||
@@ -797,17 +893,66 @@ CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view clas
     }
   };
 
-  // Preserve Nooir's existing specificity categories. Source order is only
-  // compared when two matched selectors have the same category.
+  const auto equalsAscii = [](const std::string_view left, const std::string_view right) {
+    if (left.size() != right.size()) return false;
+    for (size_t i = 0; i < left.size(); ++i) {
+      if (asciiToLower(left[i]) != asciiToLower(right[i])) return false;
+    }
+    return true;
+  };
+  const auto containsClassToken = [&](const std::string_view requiredClass) {
+    bool found = false;
+    forEachDelimitedToken(classAttr, isCssWhitespace, [&](const std::string_view token) {
+      if (equalsAscii(token, requiredClass)) found = true;
+    });
+    return found;
+  };
+  const auto matchesCompound = [&](const CompoundRule& rule) {
+    const SelectorMetadata& metadata = rule.metadata;
+    const std::string_view selector = rule.selector;
+    if (metadata.hasTag &&
+        !equalsAscii(tagName, selector.substr(metadata.tag.offset, metadata.tag.length))) {
+      return false;
+    }
+    if (metadata.hasId && !equalsAscii(idAttr, selector.substr(metadata.id.offset, metadata.id.length))) {
+      return false;
+    }
+    for (uint8_t i = 0; i < metadata.classCount; ++i) {
+      if (!containsClassToken(selector.substr(metadata.classes[i].offset, metadata.classes[i].length))) return false;
+    }
+    return true;
+  };
+  const auto applyCompoundMatches = [&]() {
+    if (compoundRulesByAnchor_.empty()) return;
+
+    size_t inspectedClasses = 0;
+    forEachDelimitedToken(classAttr, isCssWhitespace, [&](const std::string_view classToken) {
+      if (inspectedClasses >= MAX_ELEMENT_CLASSES_FOR_COMPOUNDS) return;
+      ++inspectedClasses;
+
+      const auto candidates = compoundRulesByAnchor_.equal_range(classToken);
+      for (auto it = candidates.first; it != candidates.second; ++it) {
+        if (!matchesCompound(it->second)) continue;
+        const SelectorMetadata& metadata = it->second.metadata;
+        const uint8_t specificity = static_cast<uint8_t>((metadata.hasId ? 16 : 0) +
+                                                          (metadata.classCount * 2) + (metadata.hasTag ? 1 : 0));
+        applyRule(it->second, specificity);
+      }
+    });
+  };
+
+  // Encode the bounded specificity tuple (ID, class count, tag) so that IDs
+  // dominate multi-class selectors, and class count dominates tag presence.
   applyMatches(tagName, 1);
   forEachDelimitedToken(classAttr, isCssWhitespace,
                         [&](std::string_view cls) { applyMatches(CompositeKey{".", cls}, 2); });
   forEachDelimitedToken(classAttr, isCssWhitespace,
                         [&](std::string_view cls) { applyMatches(CompositeKey{tagName, ".", cls}, 3); });
   if (!idAttr.empty()) {
-    applyMatches(CompositeKey{"#", idAttr}, 4);
-    applyMatches(CompositeKey{tagName, "#", idAttr}, 5);
+    applyMatches(CompositeKey{"#", idAttr}, 16);
+    applyMatches(CompositeKey{tagName, "#", idAttr}, 17);
   }
+  applyCompoundMatches();
 
   return result;
 }
@@ -863,7 +1008,7 @@ bool CssParser::saveToCache() const {
     return false;
   }
 
-  const auto ruleCount = static_cast<uint16_t>(rulesBySelector_.size());
+  const auto ruleCount = static_cast<uint16_t>(this->ruleCount());
   bool candidateReady = false;
   {
     HalFile file;
@@ -881,20 +1026,21 @@ bool CssParser::saveToCache() const {
     // Write rule count
     writeOk = writeOk && writeBytes(&ruleCount, sizeof(ruleCount));
 
-    // Write each rule: selector string + CssStyle fields
-    for (const auto& pair : rulesBySelector_) {
-      if (!writeOk) break;
+    // Write each rule: selector string + CssStyle fields. Compound metadata is
+    // reconstructed from the selector string after loading, so the cache
+    // payload remains compact while the version bump protects old semantics.
+    auto writeRule = [&](const std::string_view selector, const CssStyle& style, const uint32_t sourceOrder) {
+      if (!writeOk) return;
 
       // Write selector string (length-prefixed)
-      const auto selectorLen = static_cast<uint16_t>(pair.first.size());
+      const auto selectorLen = static_cast<uint16_t>(selector.size());
       writeOk = writeBytes(&selectorLen, sizeof(selectorLen));
-      writeOk = writeOk && writeBytes(pair.first.data(), selectorLen);
+      writeOk = writeOk && writeBytes(selector.data(), selectorLen);
 
       // Persist the declaration block's source order before its style fields.
-      writeOk = writeOk && writeBytes(&pair.second.sourceOrder, sizeof(pair.second.sourceOrder));
+      writeOk = writeOk && writeBytes(&sourceOrder, sizeof(sourceOrder));
 
       // Write CssStyle fields (all are POD types)
-      const CssStyle& style = pair.second.style;
       writeOk = writeOk && writeByte(static_cast<uint8_t>(style.textAlign));
       writeOk = writeOk && writeByte(static_cast<uint8_t>(style.fontStyle));
       writeOk = writeOk && writeByte(static_cast<uint8_t>(style.fontWeight));
@@ -946,6 +1092,13 @@ bool CssParser::saveToCache() const {
       if (style.defined.fontSize) definedBits |= 1 << 18;
       if (style.defined.lineHeight) definedBits |= 1 << 19;
       writeOk = writeOk && writeBytes(&definedBits, sizeof(definedBits));
+    };
+
+    for (const auto& pair : rulesBySelector_) {
+      writeRule(pair.first, pair.second.style, pair.second.sourceOrder);
+    }
+    for (const auto& pair : compoundRulesByAnchor_) {
+      writeRule(pair.second.selector, pair.second.style, pair.second.sourceOrder);
     }
 
     file.flush();
@@ -1041,6 +1194,7 @@ bool CssParser::loadFromCache() {
 
   // Size the bucket array up front to avoid incremental rehashes while loading rules.
   rulesBySelector_.reserve(ruleCount);
+  compoundRulesByAnchor_.reserve(ruleCount);
 
   auto hasRemainingBytes = [&file](const size_t neededBytes) -> bool {
     return static_cast<size_t>(file.available()) >= neededBytes;
@@ -1188,7 +1342,12 @@ bool CssParser::loadFromCache() {
     style.defined.fontSize = (definedBits & 1 << 18) != 0;
     style.defined.lineHeight = (definedBits & 1 << 19) != 0;
 
-    rulesBySelector_.emplace(std::move(selector), StoredRule{style, sourceOrder});
+    if (!storeSelectorRule(selector, style, sourceOrder)) {
+      LOG_DBG("CSS", "Invalid or unsupported selector in CSS cache");
+      rulesBySelector_.clear();
+      compoundRulesByAnchor_.clear();
+      return false;
+    }
     if (sourceOrder != UINT32_MAX && nextSourceOrder_ <= sourceOrder) {
       nextSourceOrder_ = sourceOrder + 1;
     }
