@@ -408,3 +408,23 @@ No physical X3 support claim may be made from simulator results alone.
   ownership/recovery design are proven.
 - Quick Actions, X4 Classic/X4 Pro work, PDF, FB2 and Bluetooth production
   integration.
+
+## RC1 checkpoint - 2026-09-28
+
+The recovered 1.6.3 candidate has completed its final micro-audit and is frozen
+for physical X4 validation. See [`HANDOFF.md`](../HANDOFF.md) for the complete
+feature matrix, provenance, compatibility invariants, deferred boundaries,
+physical test plan, and final artifact hashes.
+
+Status: **FULL RECOVERY COMPLETE / FINAL MICRO-AUDIT PASS / SOURCE FROZEN FOR
+PHYSICAL X4 VALIDATION**.
+
+The frozen RC1 includes the recovered A2 font lifecycle, B queued page turns,
+Unlimited Recent, two-row Spine, Book Info/Synopsis, web pagination with legacy
+`/api/library` compatibility, Interface Font, E1-E4 polish, UI Scale,
+four-slot Quick Actions configuration/persistence, and shared Whole/one/two
+decimal progress sanitization. Focused tests: **40/40 PASS**.
+
+BLE remains experimental-only. Editable rating, production BLE, diagnostic
+experiments, PDF, major CBZ redesign, X4 Pro, broad FreeInk changes,
+`JD_FASTDECODE=1`, and other deferred research items remain outside RC1.

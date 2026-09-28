@@ -114,6 +114,8 @@ void EpubReaderChapterSelectionActivity::render(RenderLock&&) {
 
   const int contentTop = screen.y + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int contentHeight = screen.height - contentTop - metrics.verticalSpacing;
+  renderer.drawLine(screen.x + 12, contentTop - metrics.verticalSpacing / 2,
+                    screen.x + screen.width - 12, contentTop - metrics.verticalSpacing / 2);
 
   const int totalItems = getTotalItems();
   GUI.drawList(renderer, Rect{screen.x, contentTop, screen.width, contentHeight}, totalItems, selectorIndex,

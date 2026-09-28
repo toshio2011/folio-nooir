@@ -167,7 +167,8 @@ class OptionPopup {
 
     const int optionCount = static_cast<int>(ownedStrings.size());
     const int listHeight = rowHeight * optionCount + itemSpacing * (optionCount - 1);
-    const int dialogW = std::min((maxTextWidth + innerPadding * 2 + selectionHPadding * 2) * 12 / 10,
+    constexpr int selectionCheckWidth = 14;
+    const int dialogW = std::min((maxTextWidth + innerPadding * 2 + selectionHPadding * 2 + selectionCheckWidth) * 12 / 10,
                                  pageWidth - metrics.optionPopupDialogSideMargin * 2);
     const int contentHeight = titleLineHeight + metrics.optionPopupTitleGap + listHeight;
     const int dialogH = contentHeight + innerPadding * 2;

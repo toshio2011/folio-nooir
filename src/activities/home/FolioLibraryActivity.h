@@ -164,4 +164,7 @@ class FolioLibraryActivity final : public Activity {
   // full speed and prevent the global sleep timer from firing while it runs.
   bool skipLoopDelay() override { return retrievingAllBooks || recursiveSearchActive || retrievingMetadata; }
   bool preventAutoSleep() override { return retrievingAllBooks || recursiveSearchActive || retrievingMetadata; }
+  bool bluetoothResourceSensitive() const override {
+    return retrievingAllBooks || recursiveSearchActive || retrievingMetadata;
+  }
 };

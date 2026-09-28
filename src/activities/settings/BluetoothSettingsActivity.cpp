@@ -1,9 +1,11 @@
 #include "BluetoothSettingsActivity.h"
 
 #include <BleKeyboardHost.h>
+#include <BoardConfig.h>
 #include <GfxRenderer.h>
 
 #include <cstdio>
+#include <cstring>
 
 #include "BleButtonMapActivity.h"
 #include "BleInput.h"
@@ -38,13 +40,18 @@ void BluetoothSettingsActivity::setBanner(const char* text) {
 
 void BluetoothSettingsActivity::rebuildMenuRows() {
   menuRows.clear();
-  menuRows.reserve(8);
+  menuRows.reserve(9);
   menuRows.push_back({Action::ToggleBt, StrId::STR_BLUETOOTH});
   if (SETTINGS.bluetoothEnabled) {
     menuRows.push_back({Action::Scan, StrId::STR_BT_SCAN_PAIR});
     if (BleHid.isConnected()) menuRows.push_back({Action::Disconnect, StrId::STR_BT_DISCONNECT});
     menuRows.push_back({Action::PairedDevices, StrId::STR_BT_PAIRED_DEVICES});
     menuRows.push_back({Action::MapButtons, StrId::STR_BT_MAP_BUTTONS});
+#if FREEINK_CAP_BLE_HID_HOST
+    // Keep the diagnostic entry English-only for now so this BLE experiment
+    // does not require regenerating every language resource.
+    menuRows.push_back({Action::Diagnostics, StrId::STR_BLUETOOTH});
+#endif
     menuRows.push_back({Action::PresetFree2, StrId::STR_BT_PRESET_FREE2});
     menuRows.push_back({Action::PresetFree3, StrId::STR_BT_PRESET_FREE3});
     menuRows.push_back({Action::ClearMap, StrId::STR_BT_CLEAR_MAP});
@@ -62,6 +69,9 @@ void BluetoothSettingsActivity::applyPreset(bool free3) {
     SETTINGS.bleKeyMap[slot].keyKind = 0;  // SpecialKey
     SETTINGS.bleKeyMap[slot].keyValue = static_cast<uint8_t>(key);
     SETTINGS.bleKeyMap[slot].button = static_cast<uint8_t>(button);
+    SETTINGS.bleKeyMap[slot].signatureCount = 1;
+    SETTINGS.bleKeyMap[slot].signature[0] =
+        static_cast<uint16_t>(static_cast<uint8_t>(key)) | (static_cast<uint16_t>(0) << 8);
   };
   set(0, freeink::SpecialKey::PageDown, Btn::PageForward);
   set(1, freeink::SpecialKey::PageUp, Btn::PageBack);
@@ -81,6 +91,25 @@ void BluetoothSettingsActivity::startScanView() {
   view = View::Scan;
   scanIndex = 0;
   awaitingConnect = false;
+  pairedScanActive = false;
+  connectOrigin = ConnectOrigin::None;
+  BleHid.startScan(kScanMs);
+  requestUpdate();
+}
+
+void BluetoothSettingsActivity::beginPairedConnect() {
+  if (pairedIndex >= BleHid.pairedCount()) return;
+  const auto& paired = BleHid.paired(static_cast<uint8_t>(pairedIndex));
+  strncpy(pairedTargetAddr, paired.addr, sizeof(pairedTargetAddr) - 1);
+  pairedTargetAddr[sizeof(pairedTargetAddr) - 1] = '\0';
+  strncpy(pairedTargetName, paired.name, sizeof(pairedTargetName) - 1);
+  pairedTargetName[sizeof(pairedTargetName) - 1] = '\0';
+  bleinput::recordDiagnosticEvent("bond_found addr=%.17s name=%.24s type=%u", pairedTargetAddr,
+                                  pairedTargetName, static_cast<unsigned>(paired.addrType));
+  awaitingConnect = true;
+  pairedScanActive = true;
+  connectOrigin = ConnectOrigin::PairedScan;
+  setBanner(tr(STR_SCANNING));
   BleHid.startScan(kScanMs);
   requestUpdate();
 }
@@ -107,6 +136,7 @@ void BluetoothSettingsActivity::handleMenuConfirm() {
       startScanView();
       break;
     case Action::Disconnect:
+      bleinput::suppressNextDisconnectNotice();
       BleHid.disconnect();
       setBanner(tr(STR_BT_NOT_CONNECTED));
       rebuildMenuRows();
@@ -115,6 +145,10 @@ void BluetoothSettingsActivity::handleMenuConfirm() {
     case Action::PairedDevices:
       view = View::Paired;
       pairedIndex = 0;
+      requestUpdate();
+      break;
+    case Action::Diagnostics:
+      view = View::Diagnostics;
       requestUpdate();
       break;
     case Action::MapButtons:
@@ -153,6 +187,39 @@ void BluetoothSettingsActivity::loop() {
 
   // Watch for an async connect result (from either the scan list or the paired list).
   if (awaitingConnect) {
+    if (pairedScanActive && !BleHid.isConnected()) {
+      if (BleHid.isScanning()) {
+        int match = -1;
+        for (int i = 0; i < BleHid.deviceCount(); ++i) {
+          const auto& device = BleHid.device(static_cast<uint8_t>(i));
+          const bool addressMatch = pairedTargetAddr[0] != '\0' && strcmp(device.addr, pairedTargetAddr) == 0;
+          const bool nameMatch = pairedTargetName[0] != '\0' && strcmp(device.name, pairedTargetName) == 0;
+          if (addressMatch || nameMatch) {
+            match = i;
+            break;
+          }
+        }
+        if (match >= 0) {
+          char address[18];
+          strncpy(address, BleHid.device(static_cast<uint8_t>(match)).addr, sizeof(address) - 1);
+          address[sizeof(address) - 1] = '\0';
+          BleHid.stopScan();
+          pairedScanActive = false;
+          bleinput::recordDiagnosticEvent("reconnect_start scan addr=%.17s", address);
+          setBanner(tr(STR_CONNECTING));
+          BleHid.connect(address);
+        }
+      } else if (!BleHid.isConnecting()) {
+        // Static-address devices may not be visible in the bounded scan. Give
+        // the stored identity one final direct attempt, preserving old-device
+        // compatibility without an unbounded retry or implicit re-pair.
+        pairedScanActive = false;
+        connectOrigin = ConnectOrigin::PairedDirect;
+        bleinput::recordDiagnosticEvent("reconnect_start direct addr=%.17s", pairedTargetAddr);
+        setBanner(tr(STR_CONNECTING));
+        BleHid.connect(pairedTargetAddr);
+      }
+    }
     char reason[48];
     if (BleHid.isConnected()) {
       awaitingConnect = false;
@@ -162,9 +229,15 @@ void BluetoothSettingsActivity::loop() {
       char buf[64];
       snprintf(buf, sizeof(buf), tr(STR_BT_CONNECTED_TO), BleHid.connectedName());
       setBanner(buf);
+      if (connectOrigin == ConnectOrigin::PairedScan || connectOrigin == ConnectOrigin::PairedDirect)
+        bleinput::recordDiagnosticEvent("reconnect_success name=%.28s", BleHid.connectedName());
+      connectOrigin = ConnectOrigin::None;
       requestUpdate();
     } else if (BleHid.takeConnectFailure(reason, sizeof(reason))) {
       awaitingConnect = false;
+      if (connectOrigin == ConnectOrigin::PairedScan || connectOrigin == ConnectOrigin::PairedDirect)
+        bleinput::recordDiagnosticEvent("reconnect_fail reason=%.36s", reason);
+      connectOrigin = ConnectOrigin::None;
       setBanner(reason);
       requestUpdate();
     }
@@ -184,9 +257,16 @@ void BluetoothSettingsActivity::loop() {
   }
 
   // Navigation within the active list.
+#if FREEINK_CAP_BLE_HID_HOST
+  const int count = view == View::Menu        ? static_cast<int>(menuRows.size())
+                    : view == View::Scan      ? BleHid.deviceCount()
+                    : view == View::Paired    ? BleHid.pairedCount()
+                                              : bleinput::diagnosticCount();
+#else
   const int count = view == View::Menu      ? static_cast<int>(menuRows.size())
                     : view == View::Scan    ? BleHid.deviceCount()
                                             : BleHid.pairedCount();
+#endif
   int* idx = view == View::Menu ? &menuIndex : view == View::Scan ? &scanIndex : &pairedIndex;
   buttonNavigator.onNext([this, count, idx] {
     if (count > 0) *idx = ButtonNavigator::nextIndex(*idx, count);
@@ -199,10 +279,21 @@ void BluetoothSettingsActivity::loop() {
 
   // Paired view: tap Confirm to connect, hold Confirm to forget. Uses release for
   // connect so a hold can fire forget without also connecting on the same press.
+#if FREEINK_CAP_BLE_HID_HOST
+  if (view == View::Diagnostics) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+      bleinput::clearDiagnostics();
+      requestUpdate();
+    }
+    return;
+  }
+#endif
+
   if (view == View::Paired) {
     if (mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
       if (!pairedActionTaken && mappedInput.getHeldTime() >= kForgetHoldMs && pairedIndex < BleHid.pairedCount()) {
         const auto& p = BleHid.paired(static_cast<uint8_t>(pairedIndex));
+        bleinput::suppressNextDisconnectNotice();
         BleHid.forget(p.addr);
         if (pairedIndex > 0) pairedIndex--;
         setBanner(tr(STR_FORGET_BUTTON));
@@ -212,11 +303,7 @@ void BluetoothSettingsActivity::loop() {
       }
     } else if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
       if (!pairedActionTaken && !awaitingConnect && pairedIndex < BleHid.pairedCount()) {
-        const auto& p = BleHid.paired(static_cast<uint8_t>(pairedIndex));
-        awaitingConnect = true;
-        setBanner(tr(STR_CONNECTING));
-        BleHid.connect(p.addr);
-        requestUpdate();
+        beginPairedConnect();
       }
       pairedActionTaken = false;
     }
@@ -231,6 +318,9 @@ void BluetoothSettingsActivity::loop() {
         if (BleHid.isScanning()) BleHid.stopScan();
         const auto& d = BleHid.device(static_cast<uint8_t>(scanIndex));
         awaitingConnect = true;
+        connectOrigin = ConnectOrigin::Scan;
+        bleinput::recordDiagnosticEvent("pair_start addr=%.17s name=%.24s type=%u", d.addr, d.name,
+                                        static_cast<unsigned>(d.addrType));
         setBanner(tr(STR_CONNECTING));
         BleHid.connect(d.addr);
         requestUpdate();
@@ -252,7 +342,7 @@ std::string BluetoothSettingsActivity::deviceLabel(int index) const {
 std::string BluetoothSettingsActivity::pairedLabel(int index) const {
   if (index >= BleHid.pairedCount()) return "";
   const auto& p = BleHid.paired(static_cast<uint8_t>(index));
-  return std::string(p.name);
+  return p.name[0] ? std::string(p.name) : std::string(p.addr);
 }
 
 void BluetoothSettingsActivity::render(RenderLock&&) {
@@ -277,7 +367,12 @@ void BluetoothSettingsActivity::render(RenderLock&&) {
   if (view == View::Menu) {
     GUI.drawList(
         renderer, listRect, static_cast<int>(menuRows.size()), menuIndex,
-        [this](int i) { return std::string(I18N.get(menuRows[i].label)); }, nullptr, nullptr,
+        [this](int i) {
+#if FREEINK_CAP_BLE_HID_HOST
+          if (menuRows[i].action == Action::Diagnostics) return std::string("Input Diagnostics");
+#endif
+          return std::string(I18N.get(menuRows[i].label));
+        }, nullptr, nullptr,
         [this](int i) -> std::string {
           if (menuRows[i].action == Action::ToggleBt) return SETTINGS.bluetoothEnabled ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
           return "";
@@ -293,7 +388,7 @@ void BluetoothSettingsActivity::render(RenderLock&&) {
           renderer, listRect, count, scanIndex, [this](int i) { return deviceLabel(i); }, nullptr, nullptr, nullptr,
           false);
     }
-  } else {  // Paired
+  } else if (view == View::Paired) {
     const int count = BleHid.pairedCount();
     if (count == 0) {
       GUI.drawHelpText(renderer, Rect{0, topOffset + metrics.verticalSpacing, pageWidth, 24}, tr(STR_BT_NO_PAIRED));
@@ -303,6 +398,27 @@ void BluetoothSettingsActivity::render(RenderLock&&) {
           false);
     }
   }
+#if FREEINK_CAP_BLE_HID_HOST
+  else {  // Diagnostics
+    const uint8_t count = bleinput::diagnosticCount();
+    if (count == 0) {
+      GUI.drawHelpText(renderer, Rect{0, topOffset + metrics.verticalSpacing, pageWidth, 24},
+                       "No BLE diagnostic events");
+    } else {
+      const int lineHeight = 22;
+      const int maxRows = contentHeight / lineHeight > 0 ? contentHeight / lineHeight : 1;
+      for (int row = 0; row < maxRows && row < count; ++row) {
+        bleinput::DiagnosticRecord record;
+        char line[72];
+        if (!bleinput::diagnosticAtNewest(static_cast<uint8_t>(row), record)) break;
+        bleinput::formatDiagnostic(record, line, sizeof(line));
+        renderer.drawText(UI_10_FONT_ID, 8, topOffset + row * lineHeight, line);
+      }
+      GUI.drawHelpText(renderer, Rect{0, pageHeight - metrics.buttonHintsHeight - 22, pageWidth, 20},
+                       "Confirm: clear diagnostics");
+    }
+  }
+#endif
 
   // Transient banner above the hints.
   if (!banner.empty()) {
@@ -316,7 +432,13 @@ void BluetoothSettingsActivity::render(RenderLock&&) {
   }
 
   // Button hints differ by view (Menu selects; Scan and Paired both connect).
+#if FREEINK_CAP_BLE_HID_HOST
+  const char* confirm = view == View::Menu        ? tr(STR_SELECT)
+                       : view == View::Diagnostics ? tr(STR_CLEAR_BUTTON)
+                                                   : tr(STR_CONNECT);
+#else
   const char* confirm = view == View::Menu ? tr(STR_SELECT) : tr(STR_CONNECT);
+#endif
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirm, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 

@@ -98,6 +98,23 @@ What this means in practice:
   CJK fallback and the UI again shows boxes for CJK — pick a CJK SD font to
   restore it.
 
+## Optional Interface Font
+
+Folio Nooir also exposes **Settings > Display > Interface Font**. This is
+separate from the reader font: it changes menus, library labels, statistics,
+reader chrome, and other built-in UI text only. EPUB content, dictionary
+typography, CSS font selection, and Arabic/Quran reader fonts keep their
+existing selections.
+
+Only families with matching 8 pt, 10 pt, and 12 pt `.cpfont` files are offered,
+so screen geometry stays stable. The selected family is stored by its name,
+not by its discovery-list position. The built-in Ubuntu/Noto Sans interface
+font remains the fallback at all times. Interface files are discovered from
+the existing registry and loaded incrementally after input handling; boot,
+sleep, crash, OTA, and SD-recovery/update screens do not depend on the SD
+font. If the card, family, or any required file is missing or invalid, Nooir
+keeps the built-in interface immediately.
+
 ## Available Pre-Built Fonts
 
 The current list of pre-built fonts is maintained in the

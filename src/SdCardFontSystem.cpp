@@ -3,6 +3,8 @@
 #include <GfxRenderer.h>
 #include <Logging.h>
 
+#include <cstring>
+
 #include "CrossPointSettings.h"
 #include "fontIds.h"
 
@@ -70,6 +72,7 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
   if (registryWasDirty) {
     LOG_DBG("SDFS", "Registry dirty — re-discovering fonts");
     registry_.discover();
+    uiReloadRequested_.store(true, std::memory_order_release);
   }
 
   const char* wantedFamily = SETTINGS.sdFontFamilyName;
@@ -124,6 +127,140 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
   }
 }
 
+void SdCardFontSystem::ensureUiLoaded(GfxRenderer& renderer) {
+  const bool registryWasDirty = registryDirty_.exchange(false, std::memory_order_acquire);
+  if (registryWasDirty) {
+    LOG_DBG("SDFS", "UI registry dirty — re-discovering fonts");
+    registry_.discover();
+  }
+  const bool registryChanged = registryWasDirty || uiReloadRequested_.exchange(false, std::memory_order_acquire);
+
+  const char* wantedFamily = SETTINGS.uiFontFamilyName;
+  const std::string currentFamily = uiManager_.currentFamilyName();
+
+  if (uiLoadInProgress_ && !registryChanged && uiLoadingFamily_ == wantedFamily) return;
+  if (uiLoadInProgress_) {
+    renderer.clearUiFontOverrides();
+    uiManager_.unloadAll(renderer, false);
+    uiLoadInProgress_ = false;
+    uiLoadingFamily_.clear();
+    uiLoadingStep_ = 0;
+  }
+
+  if (wantedFamily[0] == '\0') {
+    if (!currentFamily.empty()) {
+      renderer.clearUiFontOverrides();
+      uiManager_.unloadAll(renderer, false);
+    }
+    uiAttemptedFamily_.clear();
+    return;
+  }
+
+  if (!registryChanged && currentFamily == wantedFamily && !currentFamily.empty()) return;
+  if (!registryChanged && uiAttemptedFamily_ == wantedFamily) return;
+
+  renderer.clearUiFontOverrides();
+  if (!currentFamily.empty()) uiManager_.unloadAll(renderer, false);
+  uiAttemptedFamily_ = wantedFamily;
+
+  if (wantedFamily[0] == '\0') return;
+
+  const auto* family = registry_.findFamily(wantedFamily);
+  if (!family || !family->hasInterfaceSizes()) {
+    LOG_DBG("SDFS", "Interface font unavailable: %s (using built-in UI)", wantedFamily);
+    return;
+  }
+
+  if (!uiManager_.beginFamilyUiSizes(*family, renderer)) {
+    LOG_ERR("SDFS", "Failed to start interface font: %s (using built-in UI)", wantedFamily);
+    return;
+  }
+
+  uiLoadingFamily_ = wantedFamily;
+  uiLoadingStep_ = 0;
+  uiLoadInProgress_ = true;
+  LOG_DBG("SDFS", "Starting interface font load: %s", wantedFamily);
+}
+
+bool SdCardFontSystem::progressUiLoad(GfxRenderer& renderer) {
+  if (!uiLoadInProgress_) return false;
+
+  const auto* family = registry_.findFamily(uiLoadingFamily_);
+  static constexpr uint8_t kUiPointSizes[] = {8, 10, 12};
+  if (!family || uiLoadingStep_ >= sizeof(kUiPointSizes) / sizeof(kUiPointSizes[0]) ||
+      !uiManager_.loadFamilyUiSize(*family, renderer, kUiPointSizes[uiLoadingStep_])) {
+    renderer.clearUiFontOverrides();
+    uiManager_.unloadAll(renderer, false);
+    LOG_ERR("SDFS", "Interface font step failed: %s (using built-in UI)", uiLoadingFamily_.c_str());
+    uiAttemptedFamily_ = uiLoadingFamily_;
+    uiLoadingFamily_.clear();
+    uiLoadingStep_ = 0;
+    uiLoadInProgress_ = false;
+    return true;
+  }
+  ++uiLoadingStep_;
+  if (uiLoadingStep_ < sizeof(kUiPointSizes) / sizeof(kUiPointSizes[0])) return false;
+
+  const int ui8 = uiManager_.getFontIdForPointSize(8);
+  const int ui10 = uiManager_.getFontIdForPointSize(10);
+  const int ui12 = uiManager_.getFontIdForPointSize(12);
+  if (ui8 == 0 || ui10 == 0 || ui12 == 0) {
+    renderer.clearUiFontOverrides();
+    uiManager_.unloadAll(renderer, false);
+    LOG_ERR("SDFS", "Interface font sizes incomplete: %s (using built-in UI)", uiLoadingFamily_.c_str());
+    uiAttemptedFamily_ = uiLoadingFamily_;
+    uiLoadingFamily_.clear();
+    uiLoadingStep_ = 0;
+    uiLoadInProgress_ = false;
+    return true;
+  }
+
+  // Do not activate a family that cannot render the basic Latin UI alphabet.
+  // Arabic and other script gaps still use the existing built-in fallback
+  // mapping below; a family with no common UI glyphs is simply incompatible.
+  const int uiIds[] = {ui8, ui10, ui12};
+  static constexpr uint32_t kUiCoverageProbes[] = {' ', '0', 'A', 'a'};
+  for (const int id : uiIds) {
+    const auto fontIt = renderer.getFontMap().find(id);
+    if (fontIt == renderer.getFontMap().end()) {
+      renderer.clearUiFontOverrides();
+      uiManager_.unloadAll(renderer, false);
+      LOG_DBG("SDFS", "Interface font registration incomplete: %s (using built-in UI)",
+              uiLoadingFamily_.c_str());
+      uiAttemptedFamily_ = uiLoadingFamily_;
+      uiLoadingFamily_.clear();
+      uiLoadingStep_ = 0;
+      uiLoadInProgress_ = false;
+      return true;
+    }
+    for (const uint32_t cp : kUiCoverageProbes) {
+      if (!fontIt->second.hasCodepoint(cp)) {
+        renderer.clearUiFontOverrides();
+        uiManager_.unloadAll(renderer, false);
+        LOG_DBG("SDFS", "Interface font lacks basic UI coverage: %s (using built-in UI)",
+                uiLoadingFamily_.c_str());
+        uiAttemptedFamily_ = uiLoadingFamily_;
+        uiLoadingFamily_.clear();
+        uiLoadingStep_ = 0;
+        uiLoadInProgress_ = false;
+        return true;
+      }
+    }
+  }
+
+  // Built-in UI IDs are the Arabic fallback, so a custom family that lacks a
+  // UI Arabic codepoint cannot break localized navigation or menus.
+  renderer.setUiFontOverride(SMALL_FONT_ID, ui8, SMALL_FONT_ID);
+  renderer.setUiFontOverride(UI_10_FONT_ID, ui10, UI_10_FONT_ID);
+  renderer.setUiFontOverride(UI_12_FONT_ID, ui12, UI_12_FONT_ID);
+  LOG_DBG("SDFS", "Loaded interface font family: %s", uiLoadingFamily_.c_str());
+  uiAttemptedFamily_ = uiLoadingFamily_;
+  uiLoadingFamily_.clear();
+  uiLoadingStep_ = 0;
+  uiLoadInProgress_ = false;
+  return true;
+}
+
 void SdCardFontSystem::setupUiFallbacks(GfxRenderer& renderer) {
   const std::string& familyName = manager_.currentFamilyName();
   if (familyName.empty()) return;  // no SD family loaded — nothing to fall back to
@@ -159,6 +296,58 @@ void SdCardFontSystem::setupUiFallbacks(GfxRenderer& renderer) {
     }
   }
 }
+
+void SdCardFontSystem::releaseUiFallbackCaches() {
+#if NOOIR_SD_FONT_DIAGNOSTICS
+  diagnosticReaderSession_ = true;
+  diagnosticReaderFirstRender_ = false;
+  diagnosticHomeReturn_ = false;
+  manager_.logMemoryStats("reader_before_ui_release");
+#endif
+
+  manager_.releaseUiFallbackCaches();
+
+#if NOOIR_SD_FONT_DIAGNOSTICS
+  manager_.logMemoryStats("reader_after_ui_release");
+#endif
+}
+
+#if NOOIR_SD_FONT_DIAGNOSTICS
+void SdCardFontSystem::diagnosticCheckpoint(const char* stage) {
+  if (!stage) return;
+
+  if (strcmp(stage, "home_rendered") == 0) {
+    if (!diagnosticHomeRendered_) {
+      manager_.logMemoryStats(stage);
+      diagnosticHomeRendered_ = true;
+    }
+    if (diagnosticReaderSession_ && !diagnosticHomeReturn_) {
+      manager_.logMemoryStats("home_return");
+      diagnosticHomeReturn_ = true;
+      diagnosticReaderSession_ = false;
+    }
+    return;
+  }
+
+  if (strcmp(stage, "library_rendered") == 0) {
+    if (!diagnosticLibraryRendered_) {
+      manager_.logMemoryStats(stage);
+      diagnosticLibraryRendered_ = true;
+    }
+    return;
+  }
+
+  if (strcmp(stage, "reader_first_render") == 0) {
+    if (!diagnosticReaderFirstRender_) {
+      manager_.logMemoryStats(stage);
+      diagnosticReaderFirstRender_ = true;
+    }
+    return;
+  }
+
+  manager_.logMemoryStats(stage);
+}
+#endif
 
 int SdCardFontSystem::resolveFontId(const char* familyName, uint8_t /*fontSizeEnum*/) const {
   // The manager loads exactly one size (closest to SETTINGS.fontSize), so the

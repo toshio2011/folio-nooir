@@ -8,6 +8,7 @@
 #include "activities/Activity.h"
 #include "components/OptionPopup.h"
 #include "util/ButtonNavigator.h"
+#include "util/QuickActions.h"
 
 class EpubReaderMenuActivity final : public Activity {
  public:
@@ -28,13 +29,14 @@ class EpubReaderMenuActivity final : public Activity {
     DELETE_CACHE,
     DICTIONARY,
     CLIP_TEXT,
-    CLIPPINGS
+    CLIPPINGS,
+    QUICK_ACTIONS
   };
 
   explicit EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title,
                                   const int currentPage, const int totalPages, const int bookProgressPercent,
                                   const uint8_t currentOrientation, const bool hasFootnotes, bool hasBookmarks,
-                                  bool hasClippings);
+                                  bool hasClippings, QuickActions::Context quickActionContext);
 
   void onEnter() override;
   void onExit() override;
@@ -64,6 +66,9 @@ class EpubReaderMenuActivity final : public Activity {
   std::string title = "Reader Menu";
   uint8_t pendingOrientation = 0;
   uint8_t selectedPageTurnOption = 0;
+  QuickActions::Context quickActionContext;
+  std::array<QuickActions::ActionId, QuickActions::SLOT_COUNT> quickActionIds{};
+  bool quickActionPopup = false;
   const std::vector<StrId> orientationLabels = {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_INVERTED,
                                                 StrId::STR_LANDSCAPE_CCW};
   const std::vector<const char*> pageTurnLabels = {I18N.get(StrId::STR_STATE_OFF), "1", "3", "6", "12"};

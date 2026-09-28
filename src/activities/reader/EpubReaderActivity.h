@@ -3,11 +3,13 @@
 #include <Epub/FootnoteEntry.h>
 #include <Epub/Section.h>
 
+#include <atomic>
 #include <optional>
 
 #include "BookmarkEntry.h"
 #include "ClippingEntry.h"
 #include "EndOfBookOptions.h"
+#include "EpubPageTurnQueue.h"
 #include "StablePageCache.h"
 #include "EpubReaderMenuActivity.h"
 #include "ProgressMapper.h"
@@ -21,6 +23,13 @@ class EpubReaderActivity final : public Activity {
   // remain unchanged.
   std::optional<ProgressChangeResult> initialBookmark;
   std::unique_ptr<Section> section = nullptr;
+  // Manual turns observed while the render task owns RenderLock. This stays
+  // independent of EPUB page/cache state and is cleared by non-page reader
+  // navigation such as menus, jumps, and exit.
+  EpubPageTurnQueue pendingPageTurns;
+  // Set by an intermediate render so a reversal that cancels the last queued
+  // turn still gets one normal-quality repaint of the current page.
+  std::atomic<bool> qualityRecoveryPending{false};
   // Optional font-independent page map. It is built only when the user selects
   // Stable Pages; Current Pages never touches this cache or changes behavior.
   StablePageCache::Index stablePageIndex;
@@ -220,12 +229,14 @@ class EpubReaderActivity final : public Activity {
   void refreshAfterReaderSettings();
   void openDictionaryWordSelect();
   void requestExitToHome(HomeMenuItem item = HomeMenuItem::NONE);
+  void executeQuickAction(int action);
   // Returns true if sync acted (launched, or surfaced a save error); false if it was a no-op
   // because no KOReader credentials are stored.
   bool launchKOReaderSync();
   void applyOrientation(uint8_t orientation);
   void toggleAutoPageTurn(uint8_t selectedPageTurnOption);
   void pageTurn(bool isForwardTurn);
+  bool processPendingPageTurn();
   void loadCachedBookmarks();
   void loadCachedClippings();
   void addBookmark();
@@ -258,6 +269,7 @@ class EpubReaderActivity final : public Activity {
   // speed would only burn battery; the paused gate still retries every loop pass).
   bool skipLoopDelay() override { return section && section->isBuilding() && !buildHeapPaused; }
   bool isReaderActivity() const override { return true; }
+  bool bluetoothResourceSensitive() const override { return !section || section->isBuilding(); }
   ScreenshotInfo getScreenshotInfo() const override;
   CrossPointPosition getCurrentPosition() const;
 };

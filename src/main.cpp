@@ -47,7 +47,7 @@ MappedInputManager mappedInputManager(gpio, renderer);
 ActivityManager activityManager(renderer, mappedInputManager);
 FontDecompressor fontDecompressor;
 SdCardFontSystem sdFontSystem;
-FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts());
+FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts(), &renderer);
 static unsigned long allowSleepAt = 0;
 
 // Fonts
@@ -277,6 +277,9 @@ void setupDisplayAndFonts(bool seamless = false) {
   sdFontSystem.begin(renderer);
 
   EpubDiagnostics::phaseRecord("boot_fonts_ready");
+#if NOOIR_SD_FONT_DIAGNOSTICS
+  sdFontSystem.diagnosticCheckpoint("boot_fonts_ready");
+#endif
   LOG_DBG("MAIN", "Fonts setup");
 }
 
@@ -509,7 +512,8 @@ void setup() {
 void updateBluetoothLifecycle() {
 #if FREEINK_CAP_BLE_HID_HOST
   const bool wanted =
-      SETTINGS.bluetoothEnabled && activityManager.bluetoothShouldBeActive() && WiFi.getMode() == WIFI_MODE_NULL;
+      SETTINGS.bluetoothEnabled && activityManager.bluetoothShouldBeActive() &&
+      !activityManager.bluetoothResourceSensitive() && WiFi.getMode() == WIFI_MODE_NULL;
   if (wanted && !BleHid.isRunning()) {
     bleinput::ensureStarted();
   } else if (!wanted && BleHid.isRunning()) {
@@ -530,6 +534,16 @@ void loop() {
   gpio.update();
   updateBluetoothLifecycle();
   BleHid.poll();
+#if FREEINK_CAP_BLE_HID_HOST
+  bleinput::pollLifecycle();
+  char bleNotification[64];
+  if (bleinput::takeNotification(bleNotification, sizeof(bleNotification))) {
+    activityManager.postBluetoothNotification(bleNotification);
+  }
+#endif
+#if NOOIR_BLE_DIAGNOSTICS
+  bleinput::setActivityContext(activityManager.currentActivityName());
+#endif
   mappedInputManager.pollBle();
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
 

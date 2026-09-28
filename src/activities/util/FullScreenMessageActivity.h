@@ -21,4 +21,5 @@ class FullScreenMessageActivity final : public Activity {
         style(style),
         refreshMode(refreshMode) {}
   void onEnter() override;
+  bool acceptsBluetoothInput() const override { return false; }
 };

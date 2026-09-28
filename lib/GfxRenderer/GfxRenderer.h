@@ -92,6 +92,21 @@ class GfxRenderer {
   // app-level SD font setup when an SD family is loaded. See resolveTextFontId().
   std::map<int, int> fallbackFontMap_;
 
+  // Built-in UI ID -> lazily loaded SD interface-font ID. Kept separate from
+  // reader/CJK fallback mapping so reader typography is unaffected.
+  std::map<int, int> uiFontOverrideMap_;
+  struct UiPreparedText {
+    uint32_t hash = 0;
+    int fontId = 0;
+    uint8_t styleMask = 0;
+  };
+  // Small preparation-key cache only; this does not retain rendered strings
+  // or glyph bitmaps.
+  static constexpr uint8_t UI_PREPARED_TEXT_CAP = 24;
+  mutable UiPreparedText uiPreparedText_[UI_PREPARED_TEXT_CAP] = {};
+  mutable uint8_t uiPreparedTextCount_ = 0;
+  mutable uint8_t uiPreparedTextNext_ = 0;
+
   // Arabic reader fallback map. Unlike the CJK UI fallback above, this is
   // resolved per codepoint so Latin and Arabic can share one text run.
   std::map<int, int> arabicFallbackFontMap_;
@@ -109,6 +124,7 @@ class GfxRenderer {
   bool hasArabicFallbackCandidate(int fontId, const char* text, EpdFontFamily::Style style) const;
   int getRenderedTextAdvanceX(int fontId, const char* renderedText, EpdFontFamily::Style style) const;
   int scaleUiFontId(int fontId) const;
+  void prepareUiTextIfNeeded(int fontId, const char* text, EpdFontFamily::Style style) const;
 
   void renderChar(const EpdFontFamily& fontFamily, uint32_t cp, int* x, int* y, bool pixelState,
                   EpdFontFamily::Style style) const;
@@ -155,10 +171,30 @@ class GfxRenderer {
   void clearSdCardFonts() { sdCardFonts_.clear(); }
   const std::map<int, SdCardFont*>& getSdCardFonts() const { return sdCardFonts_; }
   bool isSdCardFont(int fontId) const { return sdCardFonts_.count(fontId) > 0; }
+  bool isUiFontOverride(int fontId) const {
+    for (const auto& entry : uiFontOverrideMap_) {
+      if (entry.second == fontId) return true;
+    }
+    return false;
+  }
   // Register/clear size-matched CJK UI fallbacks (see fallbackFontMap_).
   // setFallbackFont maps a primary UI font id to an SD font id of the same size.
   void setFallbackFont(int primaryFontId, int fallbackFontId) { fallbackFontMap_[primaryFontId] = fallbackFontId; }
   void clearFallbackFonts() { fallbackFontMap_.clear(); }
+  void setUiFontOverride(int builtinFontId, int sdFontId, int arabicFallbackFontId = 0) {
+    uiFontOverrideMap_[builtinFontId] = sdFontId;
+    if (arabicFallbackFontId != 0) arabicFallbackFontMap_[sdFontId] = arabicFallbackFontId;
+  }
+  void clearUiFontOverrides() {
+    for (const auto& entry : uiFontOverrideMap_) arabicFallbackFontMap_.erase(entry.second);
+    uiFontOverrideMap_.clear();
+    uiPreparedTextCount_ = 0;
+    uiPreparedTextNext_ = 0;
+  }
+  void clearUiTextPreparation() const {
+    uiPreparedTextCount_ = 0;
+    uiPreparedTextNext_ = 0;
+  }
   // Register a glyph-level Arabic fallback for one primary reader font.
   void setArabicFallbackFont(int primaryFontId, int fallbackFontId) {
     arabicFallbackFontMap_[primaryFontId] = fallbackFontId;

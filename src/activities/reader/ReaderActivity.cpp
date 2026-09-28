@@ -8,6 +8,7 @@
 #include <optional>
 
 #include "CrossPointSettings.h"
+#include "BleInput.h"
 #include "Cbz.h"
 #include "Epub.h"
 #include "CbzReaderActivity.h"
@@ -201,8 +202,18 @@ void ReaderActivity::onEnter() {
   // A format may need to parse an archive, build a spine, or extract an
   // index before its reader can render. Acknowledge the open immediately so a
   // second button press cannot be mistaken for a dropped input.
+  // Do not carry the optional BLE controller into the synchronous open path.
+  // The lifecycle will bring it back after the concrete reader is ready.
+  if (BleHid.isRunning()) bleinput::stop();
   showOpeningBookFeedback(renderer, initialBookPath);
-  sdFontSystem.ensureLoaded(renderer);
+  // SD-font registration and cache release mutate renderer-owned maps and
+  // font objects. Keep the transition serialized with the render task, while
+  // leaving the selected reader-size font warm for the heavy open path.
+  {
+    RenderLock lock(*this);
+    sdFontSystem.ensureLoaded(renderer);
+    sdFontSystem.releaseUiFallbackCaches();
+  }
 
   currentBookPath = initialBookPath;
   logCbzPath("reader-on-enter", initialBookPath);

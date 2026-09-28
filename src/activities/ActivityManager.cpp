@@ -4,8 +4,11 @@
 #include <HalPowerManager.h>
 
 #include <algorithm>
+#include <cstring>
 
 #include "OpdsServerStore.h"
+#include "BleInput.h"
+#include "SdCardFontSystem.h"
 #include "components/UITheme.h"
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
@@ -67,6 +70,15 @@ void ActivityManager::renderTaskLoop() {
       // changing UI Scale cannot alter the bookshelf presentation.
       renderer.setUiScaleTextEnabled(true);
       currentActivity->render(std::move(lock));
+#if NOOIR_SD_FONT_DIAGNOSTICS
+      if (currentActivity->isReaderActivity()) {
+        sdFontSystem.diagnosticCheckpoint("reader_first_render");
+      } else if (currentActivity->isHomeActivity() || currentActivity->name == "RecentBooks") {
+        sdFontSystem.diagnosticCheckpoint("home_rendered");
+      } else if (currentActivity->name == "FolioLibrary") {
+        sdFontSystem.diagnosticCheckpoint("library_rendered");
+      }
+#endif
 #if NOOIR_EPUB_DIAGNOSTICS
       if (!lifecycleFirstRenderRecorded) {
         lifecycleFirstRenderRecorded = true;
@@ -82,6 +94,19 @@ void ActivityManager::renderTaskLoop() {
         lifecycleFirstUsableRecorded = true;
         EpubDiagnostics::phaseRecord("lifecycle_first_usable", currentActivity->isReaderActivity() ? 2 : 1);
       }
+#endif
+#if FREEINK_CAP_BLE_HID_HOST
+      char bluetoothNotification[sizeof(pendingBluetoothNotification)] = {};
+      bool showBluetoothNotification = false;
+      taskENTER_CRITICAL(&activityManagerSpinlock);
+      if (hasBluetoothNotification) {
+        strncpy(bluetoothNotification, pendingBluetoothNotification, sizeof(bluetoothNotification) - 1);
+        pendingBluetoothNotification[0] = '\0';
+        hasBluetoothNotification = false;
+        showBluetoothNotification = true;
+      }
+      taskEXIT_CRITICAL(&activityManagerSpinlock);
+      if (showBluetoothNotification) GUI.drawPopup(renderer, bluetoothNotification, true);
 #endif
     }
     // Notify any task blocked in requestUpdateAndWait() that the render is done.
@@ -196,6 +221,16 @@ void ActivityManager::loop() {
       currentActivity = std::move(pendingActivity);
 
       lock.unlock();  // onEnter may acquire its own lock
+#if FREEINK_CAP_BLE_HID_HOST
+      // Stop BLE before entering resource-sensitive activities.  The main-loop
+      // lifecycle gate runs before ActivityManager::loop(), so without this
+      // boundary a Recent -> EPUB transition can begin its allocations while
+      // the NimBLE heap is still resident for one full loop iteration.
+      if (currentActivity->bluetoothResourceSensitive() && BleHid.isRunning()) {
+        bleinput::recordDiagnosticEvent("resource_stop activity=%.20s", currentActivity->name.c_str());
+        bleinput::stop();
+      }
+#endif
       currentActivity->onEnter();
 #if NOOIR_EPUB_DIAGNOSTICS
       if (!lifecycleHomeConstructionRecorded &&
@@ -207,6 +242,19 @@ void ActivityManager::loop() {
 
       // onEnter may request another pending action, we will handle it in the next loop iteration
       continue;
+    }
+  }
+
+  // Keep optional interface-font I/O out of the render task and out of the
+  // input path above. One bounded .cpfont metadata file is processed per main
+  // loop pass; built-in UI remains active until all three sizes finish.
+  if (currentActivity) {
+    const bool sdIndependentScreen = currentActivity->name == "Boot" || currentActivity->name == "Sleep" ||
+                                     currentActivity->name == "Crash" || currentActivity->name == "OtaUpdate" ||
+                                     currentActivity->name == "SdFirmwareUpdate" || currentActivity->name == "FontDownload";
+    if (!sdIndependentScreen) {
+      sdFontSystem.ensureUiLoaded(renderer);
+      if (sdFontSystem.progressUiLoad(renderer)) requestUpdate();
     }
   }
 
@@ -237,6 +285,12 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
   } else {
     // No current activity, safe to launch immediately
     currentActivity = std::move(newActivity);
+#if FREEINK_CAP_BLE_HID_HOST
+    if (currentActivity->bluetoothResourceSensitive() && BleHid.isRunning()) {
+      bleinput::recordDiagnosticEvent("resource_stop activity=%.20s", currentActivity->name.c_str());
+      bleinput::stop();
+    }
+#endif
     currentActivity->onEnter();
 #if NOOIR_EPUB_DIAGNOSTICS
     if (!lifecycleHomeConstructionRecorded &&
@@ -367,12 +421,30 @@ bool ActivityManager::isReaderActivity() const {
          (currentActivity && currentActivity->isReaderActivity());
 }
 
+const char* ActivityManager::currentActivityName() const {
+  return currentActivity ? currentActivity->name.c_str() : "none";
+}
+
 bool ActivityManager::bluetoothShouldBeActive() const {
-  const auto wantsBluetooth = [](const auto& activity) {
-    return activity && (activity->isReaderActivity() || activity->keepsBluetoothAlive());
-  };
-  return std::any_of(stackActivities.begin(), stackActivities.end(), wantsBluetooth) ||
-         wantsBluetooth(currentActivity);
+  return currentActivity && currentActivity->acceptsBluetoothInput();
+}
+
+bool ActivityManager::bluetoothResourceSensitive() const {
+  return currentActivity && currentActivity->bluetoothResourceSensitive();
+}
+
+void ActivityManager::postBluetoothNotification(const char* message) {
+#if FREEINK_CAP_BLE_HID_HOST
+  if (!message || !message[0]) return;
+  taskENTER_CRITICAL(&activityManagerSpinlock);
+  strncpy(pendingBluetoothNotification, message, sizeof(pendingBluetoothNotification) - 1);
+  pendingBluetoothNotification[sizeof(pendingBluetoothNotification) - 1] = '\0';
+  hasBluetoothNotification = true;
+  taskEXIT_CRITICAL(&activityManagerSpinlock);
+  requestUpdate();
+#else
+  (void)message;
+#endif
 }
 
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }

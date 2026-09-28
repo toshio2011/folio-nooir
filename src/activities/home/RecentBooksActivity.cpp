@@ -88,31 +88,12 @@ SpineShelfPlanner::Rect spineShelfBounds(const int pageWidth, const FolioShelfLa
                                  usableBookHeight + SpineShelfPlanner::SHELF_BOTTOM_GAP};
 }
 
-void populateSpineBooks(const std::vector<RecentBook>& recentBooks, const uint8_t* visibleBookIndexes,
-                        const uint8_t visibleBookCount, SpineShelfPlanner::Book* output) {
-  if (output == nullptr) return;
-  for (size_t i = 0; i < SpineShelfPlanner::MAX_BOOKS; ++i) output[i] = {};
-  for (size_t i = 0; i < std::min<size_t>(visibleBookCount, SpineShelfPlanner::MAX_BOOKS); ++i) {
-    const RecentBook& book = recentBooks[visibleBookIndexes[i]];
-    output[i] = SpineShelfPlanner::Book{book.path.c_str(), book.title.c_str(), book.progressPercent,
-                                        book.author.c_str()};
-  }
-}
-
-size_t moveSpinePage(const std::vector<RecentBook>& recentBooks, const uint8_t* visibleBookIndexes,
-                     const uint8_t visibleBookCount, const size_t selectorIndex, const FolioShelfLayout& layout,
-                     const int pageWidth, const bool next) {
-  SpineShelfPlanner::Book books[SpineShelfPlanner::MAX_BOOKS]{};
-  populateSpineBooks(recentBooks, visibleBookIndexes, visibleBookCount, books);
-  const SpineShelfPlanner::Rect bounds = spineShelfBounds(pageWidth, layout);
-  const SpineShelfPlanner::Page page =
-      SpineShelfPlanner::pageForSelection(books, visibleBookCount, selectorIndex, bounds);
-  if (page.pageCount <= 1) {
-    return next ? static_cast<size_t>(ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), visibleBookCount))
-                : static_cast<size_t>(ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), visibleBookCount));
-  }
-  return next ? SpineShelfPlanner::nextPageStart(books, visibleBookCount, selectorIndex, bounds)
-              : SpineShelfPlanner::previousPageStart(books, visibleBookCount, selectorIndex, bounds);
+SpineShelfPlanner::Rect twoRowSpineBounds(const int pageWidth, const FolioShelfLayout& layout) {
+  // The two-row option uses the same featured/statistics boundaries as the
+  // existing Spine, but gives the planner the complete bounded shelf region.
+  const int top = layout.gridTop + 4;
+  const int height = std::max(1, layout.gridHeight - 4 - SpineShelfPlanner::TWO_ROW_BOTTOM_GAP);
+  return SpineShelfPlanner::Rect{layout.gridGap, top, std::max(1, pageWidth - layout.gridGap * 2), height};
 }
 
 void drawSpinePlant(const GfxRenderer& renderer, const SpineShelfPlanner::Rect& rect) {
@@ -206,11 +187,81 @@ void drawSpineBookDetails(const GfxRenderer& renderer, const SpineShelfPlanner::
   }
 }
 
-void drawSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::Page& page,
-                    const SpineShelfPlanner::Book* books, const size_t selectedIndex,
-                    const SpineShelfPlanner::Rect& bounds) {
-  if (books == nullptr) return;
-  const auto shelf = SpineShelfPlanner::shelfRect(page, bounds);
+void drawSpineBook(const GfxRenderer& renderer, const SpineShelfPlanner::Book& book,
+                   const SpineShelfPlanner::Rect& rect, const bool selected) {
+  char title[40];
+  char author[32];
+  const bool titleReady = SpineShelfPlanner::makeBookTitle(title, sizeof(title), book, rect);
+  const int titleFontId = titleReady ? spineFontIdForText(renderer, title) : SMALL_FONT_ID;
+  const bool titleSupported = titleReady && spineTextSupported(renderer, title, titleFontId, EpdFontFamily::BOLD);
+  const bool authorReady = SpineShelfPlanner::makeAuthor(author, sizeof(author), book.author, rect);
+  const int authorFontId = authorReady ? spineFontIdForText(renderer, author) : SMALL_FONT_ID;
+  const bool authorSupported = authorReady && spineTextSupported(renderer, author, authorFontId,
+                                                                  EpdFontFamily::REGULAR);
+  std::string titleVisual;
+  std::string authorVisual;
+  const char* titleRenderText = title;
+  const char* authorRenderText = author;
+  bool titleRenderReady = titleSupported;
+  bool authorRenderReady = authorSupported;
+  if (titleRenderReady && utf8ContainsRtlScript(title)) {
+    titleRenderReady = prepareSpineVisualText(title, titleVisual);
+    if (titleRenderReady) titleRenderText = titleVisual.c_str();
+  }
+  if (authorRenderReady && utf8ContainsRtlScript(author)) {
+    authorRenderReady = prepareSpineVisualText(author, authorVisual);
+    if (authorRenderReady) authorRenderText = authorVisual.c_str();
+  }
+
+  const auto tone = SpineShelfPlanner::toneFor(book);
+  const bool darkFill = tone == SpineShelfPlanner::SpineTone::DarkGray;
+  const Color fillColor = darkFill ? Color::DarkGray
+                                   : (tone == SpineShelfPlanner::SpineTone::LightGray ? Color::LightGray : Color::White);
+  // Existing Nooir UI uses DarkGray with normal black text. Keep that proven
+  // contrast treatment here; do not introduce an inverted-text path.
+  constexpr bool blackDetailsAndText = true;
+  renderer.fillRectDither(rect.x, rect.y, rect.width, rect.height, fillColor);
+  renderer.drawRect(rect.x, rect.y, rect.width, rect.height, selected ? 2 : 1, true);
+  if (selected && rect.width > 10 && rect.height > 10) {
+    renderer.drawRect(rect.x + 3, rect.y + 3, rect.width - 6, rect.height - 6, true);
+  }
+  drawSpineBookDetails(renderer, rect, SpineShelfPlanner::styleFor(book), blackDetailsAndText);
+
+  if (book.progressPercent > 0 && book.progressPercent < 100) {
+    const int progressWidth = std::max(2, (rect.width - 8) * book.progressPercent / 100);
+    renderer.fillRect(rect.x + 4, rect.y + rect.height - 5, progressWidth, 2, blackDetailsAndText);
+  }
+
+  const int titleLength = titleSupported ? renderer.getTextWidth(titleFontId, title, EpdFontFamily::BOLD) : 0;
+  const int authorLength = authorSupported ? renderer.getTextWidth(authorFontId, author) : 0;
+  const bool drawTitle = titleRenderReady && titleLength > 0;
+  const bool drawAuthor = authorRenderReady && authorLength > 0;
+  constexpr int textInset = 10;
+  constexpr int titleAuthorGap = 14;
+  const int authorBudget = std::min(28, std::max(18, rect.height / 6));
+  const bool drawBoth = drawTitle && drawAuthor && authorLength <= authorBudget &&
+                        titleLength + titleAuthorGap + authorLength <= rect.height - textInset * 2;
+  if (drawBoth) {
+    const int textTop = rect.y + (rect.height - titleLength - titleAuthorGap - authorLength) / 2;
+    renderer.drawTextRotated90CW(titleFontId, rect.x + rect.width / 2, textTop + titleLength, titleRenderText,
+                                 blackDetailsAndText, EpdFontFamily::BOLD);
+    if (SpineShelfPlanner::styleFor(book) == SpineShelfPlanner::SpineStyle::InsetDivider) {
+      renderer.drawLine(rect.x + 7, textTop + titleLength + titleAuthorGap / 2,
+                        rect.x + rect.width - 8, textTop + titleLength + titleAuthorGap / 2,
+                        blackDetailsAndText);
+    }
+    renderer.drawTextRotated90CW(authorFontId, rect.x + rect.width / 2,
+                                 textTop + titleLength + titleAuthorGap + authorLength, authorRenderText,
+                                 blackDetailsAndText);
+  } else if (drawTitle && titleLength <= rect.height - textInset * 2) {
+    const int titleY = rect.y + (rect.height + titleLength) / 2;
+    renderer.drawTextRotated90CW(titleFontId, rect.x + rect.width / 2, titleY, titleRenderText,
+                                 blackDetailsAndText, EpdFontFamily::BOLD);
+  }
+}
+
+void drawSpineShelfFurniture(const GfxRenderer& renderer, const SpineShelfPlanner::Rect& shelf,
+                             const SpineShelfPlanner::Rect& bounds, const bool drawSupports) {
   const int shelfRight = shelf.x + shelf.width - 1;
   const int shelfBottom = shelf.y + shelf.height - 1;
   renderer.fillRectDither(shelf.x, shelf.y, shelf.width, shelf.height, Color::DarkGray);
@@ -230,7 +281,7 @@ void drawSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::Page& 
   const int supportTop = shelfBottom + 1;
   const int supportBottom = std::min(bounds.y + bounds.height - 1,
                                      supportTop + SpineShelfPlanner::SHELF_SUPPORT_HEIGHT);
-  if (supportBottom >= supportTop + 8 && shelf.width >= 120) {
+  if (drawSupports && supportBottom >= supportTop + 8 && shelf.width >= 120) {
     const int leftSupportX = shelf.x + shelf.width / 5;
     const int rightSupportX = shelf.x + shelf.width - shelf.width / 5;
     constexpr int supportWidth = 8;
@@ -244,90 +295,50 @@ void drawSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::Page& 
       renderer.drawLine(supportLeft, supportBottom, supportLeft + supportWidth - 1, supportBottom, 2, true);
     }
   }
+}
+
+void drawSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::Page& page,
+                    const SpineShelfPlanner::Book* books, const size_t selectedIndex,
+                    const SpineShelfPlanner::Rect& bounds) {
+  if (books == nullptr) return;
+  const auto shelf = SpineShelfPlanner::shelfRect(page, bounds);
+  drawSpineShelfFurniture(renderer, shelf, bounds, true);
   if (page.plant.visible) drawSpinePlant(renderer, page.plant.rect);
 
   for (size_t slotIndex = 0; slotIndex < page.itemCount; ++slotIndex) {
     const auto& slot = page.slots[slotIndex];
-    const auto& rect = slot.rect;
-    const bool selected = slot.itemIndex == selectedIndex;
-    char title[40];
-    char author[32];
-    const bool titleReady = SpineShelfPlanner::makeBookTitle(title, sizeof(title), books[slot.itemIndex], rect);
-    const int titleFontId = titleReady ? spineFontIdForText(renderer, title) : SMALL_FONT_ID;
-    const bool titleSupported = titleReady && spineTextSupported(renderer, title, titleFontId, EpdFontFamily::BOLD);
-    const bool authorReady = SpineShelfPlanner::makeAuthor(author, sizeof(author), books[slot.itemIndex].author, rect);
-    const int authorFontId = authorReady ? spineFontIdForText(renderer, author) : SMALL_FONT_ID;
-    const bool authorSupported = authorReady && spineTextSupported(renderer, author, authorFontId,
-                                                                    EpdFontFamily::REGULAR);
-    std::string titleVisual;
-    std::string authorVisual;
-    const char* titleRenderText = title;
-    const char* authorRenderText = author;
-    bool titleRenderReady = titleSupported;
-    bool authorRenderReady = authorSupported;
-    if (titleRenderReady && utf8ContainsRtlScript(title)) {
-      titleRenderReady = prepareSpineVisualText(title, titleVisual);
-      if (titleRenderReady) titleRenderText = titleVisual.c_str();
-    }
-    if (authorRenderReady && utf8ContainsRtlScript(author)) {
-      authorRenderReady = prepareSpineVisualText(author, authorVisual);
-      if (authorRenderReady) authorRenderText = authorVisual.c_str();
-    }
-    const auto tone = SpineShelfPlanner::toneFor(books[slot.itemIndex]);
-    const bool darkFill = tone == SpineShelfPlanner::SpineTone::DarkGray;
-    const Color fillColor = darkFill
-                                ? Color::DarkGray
-                                : (tone == SpineShelfPlanner::SpineTone::LightGray ? Color::LightGray : Color::White);
-    // Existing Nooir UI uses DarkGray with normal black text (for example,
-    // the statistics calendar). Keep that proven contrast treatment here;
-    // do not introduce a separate inverted-text path for the shelf.
-    constexpr bool blackDetailsAndText = true;
-    renderer.fillRectDither(rect.x, rect.y, rect.width, rect.height, fillColor);
-    renderer.drawRect(rect.x, rect.y, rect.width, rect.height, selected ? 2 : 1, true);
-    if (selected && rect.width > 10 && rect.height > 10) {
-      renderer.drawRect(rect.x + 3, rect.y + 3, rect.width - 6, rect.height - 6, true);
-    }
-    drawSpineBookDetails(renderer, rect, SpineShelfPlanner::styleFor(books[slot.itemIndex]), blackDetailsAndText);
+    if (slot.itemIndex < page.firstIndex || slot.itemIndex - page.firstIndex >= SpineShelfPlanner::MAX_BOOKS) continue;
+    const size_t localIndex = slot.itemIndex - page.firstIndex;
+    drawSpineBook(renderer, books[localIndex], slot.rect, slot.itemIndex == selectedIndex);
+  }
+}
 
-    if (books[slot.itemIndex].progressPercent > 0 && books[slot.itemIndex].progressPercent < 100) {
-      const int progressWidth = std::max(2, (rect.width - 8) * books[slot.itemIndex].progressPercent / 100);
-      renderer.fillRect(rect.x + 4, rect.y + rect.height - 5, progressWidth, 2, blackDetailsAndText);
-    }
+void drawTwoRowSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::TwoRowPage& page,
+                          const SpineShelfPlanner::Book* books, const size_t selectedIndex,
+                          const SpineShelfPlanner::Rect& bounds) {
+  if (books == nullptr) return;
+  for (size_t row = 0; row < 2; ++row) {
+    const auto shelf = SpineShelfPlanner::twoRowShelfRect(page, bounds, row);
+    if (shelf.width <= 0 || shelf.height <= 0) continue;
+    // The upper row has only a narrow inter-row gap, so its plank keeps the
+    // original spine treatment but omits long supports that could touch the
+    // books below. The lower shelf has the full braced treatment.
+    drawSpineShelfFurniture(renderer, shelf, bounds, row == 1);
+    if (page.plants[row].visible) drawSpinePlant(renderer, page.plants[row].rect);
+  }
 
-    const int titleLength = titleSupported ? renderer.getTextWidth(titleFontId, title, EpdFontFamily::BOLD) : 0;
-    const int authorLength = authorSupported ? renderer.getTextWidth(authorFontId, author) : 0;
-    const bool drawTitle = titleRenderReady && titleLength > 0;
-    const bool drawAuthor = authorRenderReady && authorLength > 0;
-    constexpr int textInset = 10;
-    constexpr int titleAuthorGap = 14;
-    const int authorBudget = std::min(28, std::max(18, rect.height / 6));
-    const bool drawBoth = drawTitle && drawAuthor && authorLength <= authorBudget &&
-                          titleLength + titleAuthorGap + authorLength <= rect.height - textInset * 2;
-    if (drawBoth) {
-      const int textTop = rect.y + (rect.height - titleLength - titleAuthorGap - authorLength) / 2;
-      renderer.drawTextRotated90CW(titleFontId, rect.x + rect.width / 2, textTop + titleLength, titleRenderText,
-                                   blackDetailsAndText,
-                                   EpdFontFamily::BOLD);
-      if (SpineShelfPlanner::styleFor(books[slot.itemIndex]) == SpineShelfPlanner::SpineStyle::InsetDivider) {
-        renderer.drawLine(rect.x + 7, textTop + titleLength + titleAuthorGap / 2,
-                          rect.x + rect.width - 8, textTop + titleLength + titleAuthorGap / 2,
-                          blackDetailsAndText);
-      }
-      renderer.drawTextRotated90CW(authorFontId, rect.x + rect.width / 2,
-                                   textTop + titleLength + titleAuthorGap + authorLength, authorRenderText,
-                                   blackDetailsAndText);
-    } else if (drawTitle && titleLength <= rect.height - textInset * 2) {
-      const int titleY = rect.y + (rect.height + titleLength) / 2;
-      renderer.drawTextRotated90CW(titleFontId, rect.x + rect.width / 2, titleY, titleRenderText,
-                                   blackDetailsAndText,
-                                   EpdFontFamily::BOLD);
-    }
+  for (size_t slotIndex = 0; slotIndex < page.itemCount; ++slotIndex) {
+    const auto& slot = page.slots[slotIndex];
+    if (slot.itemIndex < page.firstIndex || slot.itemIndex - page.firstIndex >= SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY) continue;
+    const size_t localIndex = slot.itemIndex - page.firstIndex;
+    drawSpineBook(renderer, books[localIndex], slot.rect, slot.itemIndex == selectedIndex);
   }
 }
 }  // namespace
 
 void RecentBooksActivity::loadRecentBooks() {
   recentBooks = RECENT_BOOKS.getBooks();
+  invalidateSpinePageWindow();
   invalidateCarouselHqProbes();
 }
 
@@ -439,9 +450,11 @@ void RecentBooksActivity::prepareCarouselSourceFrame(
   for (size_t slotIndex = 0; slotIndex < stackSlots.size(); ++slotIndex) {
     const auto& stackSlot = stackSlots[slotIndex];
     if (!stackSlot.valid || stackSlot.itemIndex >= visibleBookCount) continue;
+    const size_t recentIndex = recentIndexForVisibleIndex(stackSlot.itemIndex);
+    if (recentIndex == SIZE_MAX) continue;
 
     auto& planned = frame.slots[slotIndex];
-    const RecentBook& book = recentBooks[visibleBookIndexes[stackSlot.itemIndex]];
+    const RecentBook& book = recentBooks[recentIndex];
     planned.valid = true;
     planned.fallbackPath = UITheme::getCoverThumbPath(book.coverBmpPath, FolioNooirTheme::COVER_HEIGHT);
 
@@ -475,8 +488,8 @@ void RecentBooksActivity::prepareCarouselSourceFrame(
       if (!available && hq) {
         // The current render path marks an unavailable HQ file and then uses
         // the normal thumbnail without retrying it on later frames.
-        const RecentBook& book = recentBooks[visibleBookIndexes[stackSlots[slotIndex].itemIndex]];
-        carouselHqProbe(book).unavailable = true;
+        const size_t recentIndex = recentIndexForVisibleIndex(stackSlots[slotIndex].itemIndex);
+        if (recentIndex != SIZE_MAX) carouselHqProbe(recentBooks[recentIndex]).unavailable = true;
       }
       return available;
     };
@@ -523,13 +536,19 @@ RecentBooksActivity::CarouselHqProbe& RecentBooksActivity::carouselHqProbe(const
 }
 
 bool RecentBooksActivity::hasMissingRecentCache() const {
+  // Keep the one-time bootstrap bounded now that Recent history is not capped.
+  // Later pages remain usable through their lightweight metadata/placeholders
+  // and can still be refreshed explicitly for the selected book.
+  constexpr size_t BOOTSTRAP_WINDOW = SpineShelfPlanner::MAX_BOOKS;
+  size_t scanned = 0;
   for (const auto& book : recentBooks) {
+    if (scanned++ >= BOOTSTRAP_WINDOW) break;
     if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path) &&
         !FsHelpers::hasCbzExtension(book.path)) continue;
     // RecentBook can survive a firmware update/cache deletion, so a non-empty
     // title alone does not prove that the lightweight cache still exists.
-    // Probe only the at-most-ten Recent entries during the one-time bootstrap;
-    // normal visits never run this path.
+    // Probe only the bounded first page during the one-time bootstrap; normal
+    // visits never run this path.
     if (book.title.empty()) return true;
 
     if (FsHelpers::hasEpubExtension(book.path)) {
@@ -548,13 +567,10 @@ bool RecentBooksActivity::hasMissingRecentCache() const {
 
 void RecentBooksActivity::rebuildVisibleBooks() {
   visibleBookCount = 0;
-  for (size_t i = 0; i < recentBooks.size() && visibleBookCount < sizeof(visibleBookIndexes); ++i) {
-    if (isClippingsExport(recentBooks[i].path)) continue;
-    const BookState* state = BOOK_STATES.find(recentBooks[i].path);
-    const bool finished = state ? state->status == BookStatus::Finished : recentBooks[i].progressPercent >= 100;
-    const bool show = activeTab == 0 || (activeTab == 1 && !finished) || (activeTab == 2 && finished);
-    if (show) visibleBookIndexes[visibleBookCount++] = static_cast<uint8_t>(i);
+  for (const auto& book : recentBooks) {
+    if (isVisibleRecentBook(book)) ++visibleBookCount;
   }
+  invalidateSpinePageWindow();
   if (visibleBookCount == 0) {
     selectorIndex = 0;
   } else if (selectorIndex >= visibleBookCount) {
@@ -562,8 +578,168 @@ void RecentBooksActivity::rebuildVisibleBooks() {
   }
 }
 
+bool RecentBooksActivity::isVisibleRecentBook(const RecentBook& book) const {
+  if (isClippingsExport(book.path)) return false;
+  const BookState* state = BOOK_STATES.find(book.path);
+  const bool finished = state ? state->status == BookStatus::Finished : book.progressPercent >= 100;
+  return activeTab == 0 || (activeTab == 1 && !finished) || (activeTab == 2 && finished);
+}
+
+size_t RecentBooksActivity::recentIndexForVisibleIndex(const size_t visibleIndex) const {
+  size_t visible = 0;
+  for (size_t index = 0; index < recentBooks.size(); ++index) {
+    if (!isVisibleRecentBook(recentBooks[index])) continue;
+    if (visible++ == visibleIndex) return index;
+  }
+  return SIZE_MAX;
+}
+
+const RecentBooksActivity::SpinePageWindow& RecentBooksActivity::spinePageForSelection(
+    const SpineShelfPlanner::Rect& bounds) {
+  const auto& cached = spinePageWindow;
+  if (cached.valid && cached.bounds.x == bounds.x && cached.bounds.y == bounds.y &&
+      cached.bounds.width == bounds.width && cached.bounds.height == bounds.height &&
+      cached.page.itemCount > 0 && selectorIndex >= cached.page.firstIndex &&
+      selectorIndex < cached.page.firstIndex + cached.page.itemCount) {
+    return cached;
+  }
+
+  spinePageWindow = {};
+  spinePageWindow.bounds = bounds;
+  size_t rawStart = 0;
+  size_t visibleStart = 0;
+  size_t previousPageStart = 0;
+  size_t pageNumber = 0;
+  bool found = false;
+
+  while (visibleStart < visibleBookCount && rawStart < recentBooks.size()) {
+    std::array<SpineShelfPlanner::Book, SpineShelfPlanner::MAX_BOOKS> candidateBooks{};
+    std::array<size_t, SpineShelfPlanner::MAX_BOOKS> candidateIndexes{};
+    size_t candidateCount = 0;
+    for (size_t raw = rawStart; raw < recentBooks.size() && candidateCount < candidateBooks.size(); ++raw) {
+      if (!isVisibleRecentBook(recentBooks[raw])) continue;
+      const auto& book = recentBooks[raw];
+      candidateIndexes[candidateCount] = raw;
+      candidateBooks[candidateCount++] =
+          SpineShelfPlanner::Book{book.path.c_str(), book.title.c_str(), book.progressPercent, book.author.c_str()};
+    }
+    if (candidateCount == 0) break;
+
+    const SpineShelfPlanner::Page candidate =
+        SpineShelfPlanner::pageForSelection(candidateBooks.data(), candidateCount, 0, bounds);
+    if (candidate.itemCount == 0) break;
+    ++pageNumber;
+    const size_t pageEnd = visibleStart + candidate.itemCount;
+    if (!found && selectorIndex >= visibleStart && selectorIndex < pageEnd) {
+      spinePageWindow.page = candidate;
+      spinePageWindow.page.firstIndex = visibleStart;
+      spinePageWindow.pageNumber = pageNumber;
+      spinePageWindow.previousPageStart = pageNumber > 1 ? previousPageStart : 0;
+      for (size_t i = 0; i < candidateCount; ++i) {
+        spinePageWindow.books[i] = candidateBooks[i];
+      }
+      for (size_t i = 0; i < spinePageWindow.page.itemCount; ++i) {
+        spinePageWindow.page.slots[i].itemIndex += visibleStart;
+      }
+      spinePageWindow.nextPageStart = pageEnd < visibleBookCount ? pageEnd : 0;
+      found = true;
+    }
+
+    rawStart = candidateIndexes[candidate.itemCount - 1] + 1;
+    previousPageStart = visibleStart;
+    visibleStart = pageEnd;
+  }
+
+  spinePageWindow.pageCount = pageNumber;
+  spinePageWindow.valid = true;
+  return spinePageWindow;
+}
+
+const RecentBooksActivity::TwoRowSpinePageWindow& RecentBooksActivity::twoRowSpinePageForSelection(
+    const SpineShelfPlanner::Rect& bounds) {
+  const auto& cached = twoRowSpinePageWindow;
+  if (cached.valid && cached.bounds.x == bounds.x && cached.bounds.y == bounds.y &&
+      cached.bounds.width == bounds.width && cached.bounds.height == bounds.height &&
+      cached.page.itemCount > 0 && selectorIndex >= cached.page.firstIndex &&
+      selectorIndex < cached.page.firstIndex + cached.page.itemCount) {
+    return cached;
+  }
+
+  twoRowSpinePageWindow = {};
+  twoRowSpinePageWindow.bounds = bounds;
+  size_t rawStart = 0;
+  size_t visibleStart = 0;
+  size_t previousPageStart = 0;
+  size_t pageNumber = 0;
+  bool found = false;
+
+  while (visibleStart < visibleBookCount && rawStart < recentBooks.size()) {
+    std::array<SpineShelfPlanner::Book, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> candidateBooks{};
+    std::array<size_t, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> candidateIndexes{};
+    size_t candidateCount = 0;
+    for (size_t raw = rawStart; raw < recentBooks.size() && candidateCount < candidateBooks.size(); ++raw) {
+      if (!isVisibleRecentBook(recentBooks[raw])) continue;
+      const auto& book = recentBooks[raw];
+      candidateIndexes[candidateCount] = raw;
+      candidateBooks[candidateCount++] =
+          SpineShelfPlanner::Book{book.path.c_str(), book.title.c_str(), book.progressPercent, book.author.c_str()};
+    }
+    if (candidateCount == 0) break;
+
+    const SpineShelfPlanner::TwoRowPage candidate =
+        SpineShelfPlanner::twoRowPageForSelection(candidateBooks.data(), candidateCount, 0, bounds);
+    if (candidate.itemCount == 0) break;
+    ++pageNumber;
+    const size_t pageEnd = visibleStart + candidate.itemCount;
+    if (!found && selectorIndex >= visibleStart && selectorIndex < pageEnd) {
+      twoRowSpinePageWindow.page = candidate;
+      twoRowSpinePageWindow.page.firstIndex = visibleStart;
+      twoRowSpinePageWindow.pageNumber = pageNumber;
+      twoRowSpinePageWindow.previousPageStart = pageNumber > 1 ? previousPageStart : 0;
+      for (size_t i = 0; i < candidateCount; ++i) {
+        twoRowSpinePageWindow.books[i] = candidateBooks[i];
+      }
+      for (size_t i = 0; i < twoRowSpinePageWindow.page.itemCount; ++i) {
+        twoRowSpinePageWindow.page.slots[i].itemIndex += visibleStart;
+      }
+      twoRowSpinePageWindow.nextPageStart = pageEnd < visibleBookCount ? pageEnd : 0;
+      found = true;
+    }
+
+    rawStart = candidateIndexes[candidate.itemCount - 1] + 1;
+    previousPageStart = visibleStart;
+    visibleStart = pageEnd;
+  }
+
+  twoRowSpinePageWindow.pageCount = pageNumber;
+  twoRowSpinePageWindow.valid = true;
+  return twoRowSpinePageWindow;
+}
+
+size_t RecentBooksActivity::moveSpinePage(const FolioShelfLayout& layout, const bool next) {
+  const auto bounds = spineShelfBounds(renderer.getScreenWidth(), layout);
+  const auto& page = spinePageForSelection(bounds);
+  if (page.pageCount <= 1) {
+    return next ? static_cast<size_t>(ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), visibleBookCount))
+                : static_cast<size_t>(ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), visibleBookCount));
+  }
+  return next ? page.nextPageStart : page.previousPageStart;
+}
+
+size_t RecentBooksActivity::moveTwoRowSpinePage(const FolioShelfLayout& layout, const bool next) {
+  const auto bounds = twoRowSpineBounds(renderer.getScreenWidth(), layout);
+  const auto& page = twoRowSpinePageForSelection(bounds);
+  if (page.pageCount <= 1) {
+    return next ? static_cast<size_t>(ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), visibleBookCount))
+                : static_cast<size_t>(ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), visibleBookCount));
+  }
+  return next ? page.nextPageStart : page.previousPageStart;
+}
+
 size_t RecentBooksActivity::selectedRecentIndex() const {
-  return visibleBookCount == 0 ? 0 : visibleBookIndexes[selectorIndex];
+  if (visibleBookCount == 0) return 0;
+  const size_t index = recentIndexForVisibleIndex(std::min(selectorIndex, visibleBookCount - 1));
+  return index == SIZE_MAX ? 0 : index;
 }
 
 uint8_t RecentBooksActivity::activeBookLayout() const {
@@ -592,6 +768,11 @@ bool RecentBooksActivity::usesSpineLayout() const {
          activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_SPINE;
 }
 
+bool RecentBooksActivity::usesTwoRowSpineLayout() const {
+  return SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR &&
+         activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_TWO_ROW_SPINE;
+}
+
 bool RecentBooksActivity::usesThreeCoverGrid() const {
   return SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR &&
          activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_THREE_COVERS;
@@ -605,6 +786,7 @@ bool RecentBooksActivity::usesFourByTwoGrid() const {
 int RecentBooksActivity::activePageItems() const {
   if (usesThreeCoverGrid()) return 3;
   if (usesCarouselLayout()) return 1;
+  if (usesTwoRowSpineLayout()) return static_cast<int>(SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY);
   return BOOKS_PER_PAGE;
 }
 
@@ -707,7 +889,10 @@ void RecentBooksActivity::generateNextCover() {
   // source cover or generates a missing thumbnail.
   const bool forceRebuild = coverGenerationRequested && !recentCacheWarmupActive;
   const bool metadataOnly = forceRebuild || recentCacheWarmupActive;
-  while (nextCoverToGenerate < recentBooks.size()) {
+  const size_t scanLimit = recentCacheWarmupActive
+                               ? std::min(recentBooks.size(), SpineShelfPlanner::MAX_BOOKS)
+                               : recentBooks.size();
+  while (nextCoverToGenerate < scanLimit) {
     RecentBook& book = recentBooks[nextCoverToGenerate++];
     if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path) &&
         !FsHelpers::hasCbzExtension(book.path)) continue;
@@ -929,29 +1114,14 @@ void RecentBooksActivity::startCarouselHqPreparation() {
   // An explicit preparation pass is also the invalidation boundary for files
   // created or replaced since the last Carousel frame.
   invalidateCarouselHqProbes();
-  carouselHqQueue.clear();
-  carouselHqQueueIndex = 0;
-  carouselHqPreparationActive = false;
+  carouselHqScanIndex = 0;
+  carouselHqCurrentIndex = SIZE_MAX;
+  carouselHqPreparedCount = 0;
+  carouselHqPreparationActive = !recentBooks.empty();
   carouselHqPopupRendered = false;
   carouselHqCompletionPopupPending = false;
 
-  std::vector<std::string> seenPaths;
-  seenPaths.reserve(recentBooks.size());
-  for (size_t index = 0; index < recentBooks.size(); ++index) {
-    const RecentBook& book = recentBooks[index];
-    if (book.coverBmpPath.empty() || RecentBooksStore::isMissing(book)) continue;
-    if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path) &&
-        !FsHelpers::hasCbzExtension(book.path)) {
-      continue;
-    }
-    if (std::find(seenPaths.begin(), seenPaths.end(), book.path) != seenPaths.end()) continue;
-    seenPaths.push_back(book.path);
-
-    const std::string hqPath = UITheme::getCoverThumbPath(book.coverBmpPath, CAROUSEL_HQ_COVER_HEIGHT);
-    if (!isValidBookThumbnail(hqPath)) carouselHqQueue.push_back(index);
-  }
-
-  if (carouselHqQueue.empty()) {
+  if (recentBooks.empty()) {
     LOG_DBG("SHELF", "Carousel HQ preparation found no missing covers");
     // This menu action is confirmed on press, while normal book opening is
     // handled on the matching release. Consume that release and show a
@@ -969,27 +1139,47 @@ void RecentBooksActivity::startCarouselHqPreparation() {
 
 void RecentBooksActivity::prepareNextCarouselCover() {
   if (!carouselHqPreparationActive) return;
-  if (carouselHqQueueIndex >= carouselHqQueue.size()) {
-    carouselHqPreparationActive = false;
-    carouselHqPopupRendered = false;
-    carouselHqQueue.clear();
-    requestUpdate(true);
-    return;
-  }
   if (!carouselHqPopupRendered) return;
 
   carouselHqPopupRendered = false;
+
+  // Keep SD probing incremental. This bounds the work performed by one loop
+  // iteration on X3 while retaining the existing one-cover-at-a-time decode.
+  constexpr size_t SCAN_BUDGET = 12;
+  size_t scanned = 0;
+  while (carouselHqCurrentIndex == SIZE_MAX && carouselHqScanIndex < recentBooks.size() &&
+         scanned++ < SCAN_BUDGET) {
+    const size_t index = carouselHqScanIndex++;
+    const RecentBook& book = recentBooks[index];
+    if (book.coverBmpPath.empty() || RecentBooksStore::isMissing(book)) continue;
+    if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path) &&
+        !FsHelpers::hasCbzExtension(book.path)) {
+      continue;
+    }
+
+    // RecentBooksStore keeps one entry per path during normal updates, so no
+    // per-session deduplication vector is needed here.
+    const std::string hqPath = UITheme::getCoverThumbPath(book.coverBmpPath, CAROUSEL_HQ_COVER_HEIGHT);
+    if (!isValidBookThumbnail(hqPath)) carouselHqCurrentIndex = index;
+  }
+
+  if (carouselHqCurrentIndex == SIZE_MAX) {
+    if (carouselHqScanIndex < recentBooks.size()) {
+      requestUpdate(true);
+      return;
+    }
+    carouselHqPreparationActive = false;
+    requestUpdate(true);
+    return;
+  }
+
   requestUpdateAndWait();
-  const RecentBook& book = recentBooks[carouselHqQueue[carouselHqQueueIndex]];
+  const RecentBook& book = recentBooks[carouselHqCurrentIndex];
   const bool success = generateCarouselHqThumbnail(book, true);
   if (!success) LOG_DBG("SHELF", "Carousel HQ fallback remains available: %s", book.path.c_str());
   invalidateCarouselHqProbes();
-  ++carouselHqQueueIndex;
-  if (carouselHqQueueIndex >= carouselHqQueue.size()) {
-    carouselHqPreparationActive = false;
-    carouselHqPopupRendered = false;
-    carouselHqQueue.clear();
-  }
+  carouselHqCurrentIndex = SIZE_MAX;
+  ++carouselHqPreparedCount;
   requestUpdate(true);
 }
 
@@ -1096,7 +1286,8 @@ void RecentBooksActivity::showBookActions() {
     if (action == 8) {
       startActivityForResult(
           std::make_unique<SynopsisActivity>(renderer, mappedInput, selected.title, selected.author, selected.synopsis,
-                                             selected.path),
+                                             selected.path, selected.coverBmpPath, selected.progressPercent,
+                                             selected.readingSeconds, selected.readingSessions),
           nullptr);
       return;
     }
@@ -1149,8 +1340,9 @@ void RecentBooksActivity::onEnter() {
   retrievingBookCacheProgress = 0;
   retrievingBookCacheIndex = SIZE_MAX;
   retrievingBookCachePopupRendered = false;
-  carouselHqQueue.clear();
-  carouselHqQueueIndex = 0;
+  carouselHqScanIndex = 0;
+  carouselHqCurrentIndex = SIZE_MAX;
+  carouselHqPreparedCount = 0;
   carouselHqPreparationActive = false;
   carouselHqPopupRendered = false;
   carouselHqCompletionPopupPending = false;
@@ -1204,6 +1396,7 @@ void RecentBooksActivity::loop() {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const bool carouselTheme = usesCarouselLayout();
   const bool spineLayout = usesSpineLayout();
+  const bool twoRowSpineLayout = usesTwoRowSpineLayout();
   const bool standaloneCarousel = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::CAROUSEL;
   const bool snapshotLayout = usesFourByTwoGrid();
   const bool threeCoverGrid = usesThreeCoverGrid();
@@ -1318,8 +1511,9 @@ void RecentBooksActivity::loop() {
   if (carouselHqPreparationActive && mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     carouselHqPreparationActive = false;
     carouselHqPopupRendered = false;
-    carouselHqQueue.clear();
-    carouselHqQueueIndex = 0;
+    carouselHqScanIndex = 0;
+    carouselHqCurrentIndex = SIZE_MAX;
+    carouselHqPreparedCount = 0;
     requestUpdate(true);
     return;
   }
@@ -1465,18 +1659,17 @@ void RecentBooksActivity::loop() {
       const auto& rect = stackSlot.rect;
       if (mappedInput.wasTapInRect(rect.x, rect.y, rect.width, rect.height)) {
         selectorIndex = stackSlot.itemIndex;
-        const std::string& path = recentBooks[visibleBookIndexes[selectorIndex]].path;
-        logCbzPath("recent-book-selection", path);
-        onSelectBook(path);
+        const size_t recentIndex = recentIndexForVisibleIndex(selectorIndex);
+        if (recentIndex == SIZE_MAX) return;
+        logCbzPath("recent-book-selection", recentBooks[recentIndex].path);
+        onSelectBook(recentBooks[recentIndex].path);
         return;
       }
     }
   } else if (spineLayout) {
-    SpineShelfPlanner::Book spineBooks[SpineShelfPlanner::MAX_BOOKS]{};
-    populateSpineBooks(recentBooks, visibleBookIndexes, visibleBookCount, spineBooks);
     const SpineShelfPlanner::Rect spineBounds = spineShelfBounds(renderer.getScreenWidth(), layout);
-    const SpineShelfPlanner::Page page = SpineShelfPlanner::pageForSelection(
-        spineBooks, visibleBookCount, selectorIndex, spineBounds);
+    const auto& spineWindow = spinePageForSelection(spineBounds);
+    const auto& page = spineWindow.page;
     if (mappedInput.wasScreenTouchDown(touchX, touchY)) {
       if (touchY >= metrics.topPadding && touchY < layout.contentTop) {
         const uint8_t touchedTab =
@@ -1513,9 +1706,57 @@ void RecentBooksActivity::loop() {
       const auto& rect = page.slots[slotIndex].rect;
       if (mappedInput.wasTapInRect(rect.x, rect.y, rect.width, rect.height)) {
         selectorIndex = page.slots[slotIndex].itemIndex;
-        const std::string& path = recentBooks[visibleBookIndexes[selectorIndex]].path;
-        logCbzPath("recent-book-selection", path);
-        onSelectBook(path);
+        const size_t recentIndex = recentIndexForVisibleIndex(selectorIndex);
+        if (recentIndex == SIZE_MAX) return;
+        logCbzPath("recent-book-selection", recentBooks[recentIndex].path);
+        onSelectBook(recentBooks[recentIndex].path);
+        return;
+      }
+    }
+  } else if (twoRowSpineLayout) {
+    const SpineShelfPlanner::Rect bounds = twoRowSpineBounds(renderer.getScreenWidth(), layout);
+    const auto& spineWindow = twoRowSpinePageForSelection(bounds);
+    const auto& page = spineWindow.page;
+    if (mappedInput.wasScreenTouchDown(touchX, touchY)) {
+      if (touchY >= metrics.topPadding && touchY < layout.contentTop) {
+        const uint8_t touchedTab =
+            static_cast<uint8_t>(std::min(2, std::max(0, touchX * 3 / renderer.getScreenWidth())));
+        if (touchedTab == 0) {
+          activityManager.goToFileBrowser("/");
+          return;
+        }
+        activeTab = touchedTab;
+        selectorIndex = 0;
+        rebuildVisibleBooks();
+        snapshotRestored = false;
+        snapshotPageStart = SIZE_MAX;
+        snapshotSelectorIndex = SIZE_MAX;
+        lastRenderedSelectorIndex = SIZE_MAX;
+        lastRenderedPageStart = SIZE_MAX;
+        overlayFrameShown = false;
+        initialRenderPending = true;
+        requestUpdate();
+        return;
+      }
+      for (size_t slotIndex = 0; slotIndex < page.itemCount; ++slotIndex) {
+        if (page.slots[slotIndex].rect.contains(touchX, touchY)) {
+          const size_t index = page.slots[slotIndex].itemIndex;
+          if (selectorIndex != index) {
+            selectorIndex = index;
+            requestUpdate();
+          }
+          return;
+        }
+      }
+    }
+    for (size_t slotIndex = 0; slotIndex < page.itemCount; ++slotIndex) {
+      const auto& rect = page.slots[slotIndex].rect;
+      if (mappedInput.wasTapInRect(rect.x, rect.y, rect.width, rect.height)) {
+        selectorIndex = page.slots[slotIndex].itemIndex;
+        const size_t recentIndex = recentIndexForVisibleIndex(selectorIndex);
+        if (recentIndex == SIZE_MAX) return;
+        logCbzPath("recent-book-selection", recentBooks[recentIndex].path);
+        onSelectBook(recentBooks[recentIndex].path);
         return;
       }
     }
@@ -1569,9 +1810,10 @@ void RecentBooksActivity::loop() {
       const int cardY = gridTop + (slot / columns) * cardHeight;
       if (mappedInput.wasTapInRect(cardX, cardY, cardWidth, cardHeight)) {
         selectorIndex = index;
-        const std::string& path = recentBooks[visibleBookIndexes[index]].path;
-        logCbzPath("recent-book-selection", path);
-        onSelectBook(path);
+        const size_t recentIndex = recentIndexForVisibleIndex(index);
+        if (recentIndex == SIZE_MAX) return;
+        logCbzPath("recent-book-selection", recentBooks[recentIndex].path);
+        onSelectBook(recentBooks[recentIndex].path);
         return;
       }
     }
@@ -1590,9 +1832,10 @@ void RecentBooksActivity::loop() {
     selectorIndex = carouselTheme
                         ? ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize)
                         : (spineLayout
-                               ? moveSpinePage(recentBooks, visibleBookIndexes, visibleBookCount, selectorIndex,
-                                               layout, renderer.getScreenWidth(), true)
-                               : ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems));
+                                ? moveSpinePage(layout, true)
+                               : (twoRowSpineLayout
+                                      ? moveTwoRowSpinePage(layout, true)
+                               : ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems)));
     requestUpdate();
     return;
   }
@@ -1600,9 +1843,10 @@ void RecentBooksActivity::loop() {
     selectorIndex = carouselTheme
                         ? ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize)
                         : (spineLayout
-                               ? moveSpinePage(recentBooks, visibleBookIndexes, visibleBookCount, selectorIndex,
-                                               layout, renderer.getScreenWidth(), false)
-                               : ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems));
+                                ? moveSpinePage(layout, false)
+                               : (twoRowSpineLayout
+                                      ? moveTwoRowSpinePage(layout, false)
+                               : ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems)));
     requestUpdate();
     return;
   }
@@ -1617,23 +1861,25 @@ void RecentBooksActivity::loop() {
     requestUpdate();
   });
 
-  buttonNavigator.onNextContinuous([this, listSize, pageItems, carouselTheme, spineLayout, layout] {
+  buttonNavigator.onNextContinuous([this, listSize, pageItems, carouselTheme, spineLayout, twoRowSpineLayout, layout] {
     selectorIndex = carouselTheme
                         ? ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize)
                         : (spineLayout
-                               ? moveSpinePage(recentBooks, visibleBookIndexes, visibleBookCount, selectorIndex,
-                                               layout, renderer.getScreenWidth(), true)
-                               : ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems));
+                                ? moveSpinePage(layout, true)
+                               : (twoRowSpineLayout
+                                      ? moveTwoRowSpinePage(layout, true)
+                               : ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems)));
     requestUpdate();
   });
 
-  buttonNavigator.onPreviousContinuous([this, listSize, pageItems, carouselTheme, spineLayout, layout] {
+  buttonNavigator.onPreviousContinuous([this, listSize, pageItems, carouselTheme, spineLayout, twoRowSpineLayout, layout] {
     selectorIndex = carouselTheme
                         ? ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize)
                         : (spineLayout
-                               ? moveSpinePage(recentBooks, visibleBookIndexes, visibleBookCount, selectorIndex,
-                                               layout, renderer.getScreenWidth(), false)
-                               : ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems));
+                                ? moveSpinePage(layout, false)
+                               : (twoRowSpineLayout
+                                      ? moveTwoRowSpinePage(layout, false)
+                               : ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems)));
     requestUpdate();
   });
 
@@ -1911,7 +2157,9 @@ void RecentBooksActivity::renderCarousel(const bool threeCover) {
     for (size_t slotIndex = 0; slotIndex < stackSlots.size(); ++slotIndex) {
       const auto& stackSlot = stackSlots[slotIndex];
       if (!stackSlot.valid) continue;
-      const RecentBook& book = recentBooks[visibleBookIndexes[stackSlot.itemIndex]];
+      const size_t recentIndex = recentIndexForVisibleIndex(stackSlot.itemIndex);
+      if (recentIndex == SIZE_MAX) continue;
+      const RecentBook& book = recentBooks[recentIndex];
       const auto& rect = stackSlot.rect;
       drawCover(book, stackSlot, slotIndex);
       folioPresentation.drawCoverProgressBadge(renderer, rect.x, rect.y, rect.width, rect.height,
@@ -1972,7 +2220,7 @@ void RecentBooksActivity::renderCarousel(const bool threeCover) {
                                                 ? book.dailyReadingSeconds
                                                 : 0);
     middleSeconds += std::min(seconds, UINT32_MAX - middleSeconds);
-    if (book.progressPercent >= 100) ++finishedCount;
+    if (book.progressPercent >= 100 && finishedCount < UINT16_MAX) ++finishedCount;
   }
   const uint32_t lastMinutes = recentBooks.empty() ? 0 : (recentBooks.front().lastSessionSeconds + 30) / 60;
   folioPresentation.drawShelfStats(renderer, folioLayout, lastMinutes, (middleSeconds + 30) / 60, finishedCount,
@@ -1987,12 +2235,12 @@ void RecentBooksActivity::renderCarousel(const bool threeCover) {
     return;
   }
   if (carouselHqPreparationActive) {
-    const int progress = carouselHqQueue.empty()
+    const size_t total = recentBooks.size();
+    const int progress = total == 0
                              ? 100
-                             : static_cast<int>((carouselHqQueueIndex * 100) / carouselHqQueue.size());
+                             : std::min(99, static_cast<int>((carouselHqScanIndex * 100) / total));
     const std::string message = std::string(tr(STR_PREPARE_CAROUSEL_COVERS)) + "\n" +
-                                std::to_string(carouselHqQueueIndex) + " / " +
-                                std::to_string(carouselHqQueue.size());
+                                std::to_string(carouselHqPreparedCount) + " / " + std::to_string(total);
     const Rect popup = GUI.drawPopup(renderer, message.c_str(), true);
     GUI.fillPopupProgress(renderer, popup, progress);
     const auto cancelLabels = mappedInput.mapLabels(tr(STR_CANCEL), "", "", "");
@@ -2143,7 +2391,9 @@ void RecentBooksActivity::renderFolioCarouselShelf(const int shelfTop, const int
   for (size_t slotIndex = 0; slotIndex < stackSlots.size(); ++slotIndex) {
     const auto& stackSlot = stackSlots[slotIndex];
     if (!stackSlot.valid) continue;
-    const RecentBook& book = recentBooks[visibleBookIndexes[stackSlot.itemIndex]];
+    const size_t recentIndex = recentIndexForVisibleIndex(stackSlot.itemIndex);
+    if (recentIndex == SIZE_MAX) continue;
+    const RecentBook& book = recentBooks[recentIndex];
     drawCover(book, stackSlot, slotIndex);
     folioPresentation.drawCoverProgressBadge(renderer, stackSlot.rect.x, stackSlot.rect.y,
                                              stackSlot.rect.width, stackSlot.rect.height, book.progressPercent);
@@ -2179,6 +2429,7 @@ void RecentBooksActivity::render(RenderLock&&) {
 
   const bool threeCoverGrid = usesThreeCoverGrid();
   const bool spineLayout = usesSpineLayout();
+  const bool twoRowSpineLayout = usesTwoRowSpineLayout();
   const bool snapshotLayout = usesFourByTwoGrid();
   // Grid3 can reuse the current in-memory frame on the same page, but it does
   // not participate in the persisted 4x2 snapshot file or its focus outline.
@@ -2314,14 +2565,14 @@ void RecentBooksActivity::render(RenderLock&&) {
                                                   ? book.dailyReadingSeconds
                                                   : 0);
       middleSeconds += std::min(seconds, UINT32_MAX - middleSeconds);
-      if (book.progressPercent >= 100) ++finishedCount;
+      if (book.progressPercent >= 100 && finishedCount < UINT16_MAX) ++finishedCount;
     }
     const uint32_t lastMinutes = recentBooks.empty() ? 0 : (recentBooks.front().lastSessionSeconds + 30) / 60;
     folioTheme.drawShelfStats(renderer, layout, lastMinutes, (middleSeconds + 30) / 60, finishedCount, accumulated);
   };
   if (visibleBookCount == 0) {
     renderer.fillRect(0, contentTop, pageWidth, contentHeight, false);
-    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, tr(STR_NO_RECENT_BOOKS));
+    renderer.drawCenteredText(UI_10_FONT_ID, contentTop + detailHeight / 2, tr(STR_NO_RECENT_BOOKS), true);
   } else {
     auto drawCover = [this](const RecentBook& book, int x, int y, int maxWidth, int maxHeight, bool drawBitmap,
                             bool preferCarouselHq) {
@@ -2408,6 +2659,8 @@ void RecentBooksActivity::render(RenderLock&&) {
     lastFeaturedCoverPath = selected.coverBmpPath;
     const int detailX = detailPadding * 2 + detailCoverWidth;
     const int detailWidth = pageWidth - detailX - detailPadding;
+    renderer.drawLine(detailX - detailPadding / 2, contentTop + 10, detailX - detailPadding / 2,
+                      contentTop + detailHeight - 10);
     const int badgeWidth = folioTheme.featuredFormatBadgeWidth(renderer, selected.path.c_str());
     const int badgeGap = badgeWidth > 0 ? 8 : 0;
     const int titleWidthLimit = std::max(1, detailWidth - badgeWidth - badgeGap);
@@ -2453,13 +2706,16 @@ void RecentBooksActivity::render(RenderLock&&) {
                                activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_THREE_COVER_CAROUSEL);
     } else if (spineLayout) {
       renderer.fillRect(0, layout.gridTop, pageWidth, layout.gridHeight, false);
-      SpineShelfPlanner::Book spineBooks[SpineShelfPlanner::MAX_BOOKS]{};
-      populateSpineBooks(recentBooks, visibleBookIndexes, visibleBookCount, spineBooks);
       const SpineShelfPlanner::Rect bounds = spineShelfBounds(pageWidth, layout);
-      const SpineShelfPlanner::Page page = SpineShelfPlanner::pageForSelection(
-          spineBooks, visibleBookCount, selectorIndex, bounds);
-      drawSpineShelf(renderer, page, spineBooks, selectorIndex, bounds);
-      folioTheme.drawPageIndicator(renderer, layout, page.pageNumber, page.pageCount);
+      const auto& spineWindow = spinePageForSelection(bounds);
+      drawSpineShelf(renderer, spineWindow.page, spineWindow.books.data(), selectorIndex, bounds);
+      folioTheme.drawPageIndicator(renderer, layout, spineWindow.pageNumber, spineWindow.pageCount);
+    } else if (twoRowSpineLayout) {
+      renderer.fillRect(0, layout.gridTop, pageWidth, layout.gridHeight, false);
+      const SpineShelfPlanner::Rect bounds = twoRowSpineBounds(pageWidth, layout);
+      const auto& spineWindow = twoRowSpinePageForSelection(bounds);
+      drawTwoRowSpineShelf(renderer, spineWindow.page, spineWindow.books.data(), selectorIndex, bounds);
+      folioTheme.drawPageIndicator(renderer, layout, spineWindow.pageNumber, spineWindow.pageCount);
     } else {
       const int columns = threeCoverGrid ? 3 : layout.columns;
       const int gap = threeCoverGrid ? 10 : layout.gridGap;
@@ -2472,7 +2728,9 @@ void RecentBooksActivity::render(RenderLock&&) {
       for (int slot = 0; slot < gridPageItems; ++slot) {
         const size_t index = pageStart + static_cast<size_t>(slot);
         if (index >= visibleBookCount) break;
-        const RecentBook& book = recentBooks[visibleBookIndexes[index]];
+        const size_t recentIndex = recentIndexForVisibleIndex(index);
+        if (recentIndex == SIZE_MAX) continue;
+        const RecentBook& book = recentBooks[recentIndex];
         const int x = gap + (slot % columns) * (cardWidth + gap);
         const int y = threeCoverGrid
                           ? gridTop + std::max(0, (gridHeight - std::min(gridHeight - 20, cardWidth * 3 / 2)) / 2)

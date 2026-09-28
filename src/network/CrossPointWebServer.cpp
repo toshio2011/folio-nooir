@@ -412,15 +412,36 @@ void CrossPointWebServer::handleLibrary() const {
 }
 
 void CrossPointWebServer::handleLibraryData() const {
+  constexpr int WEB_LIBRARY_PAGE_SIZE = 10;
+  const bool paginatedRequest = server->hasArg("offset") || server->hasArg("limit");
+  int offset = 0;
+  if (paginatedRequest && server->hasArg("offset")) {
+    offset = std::max(0, static_cast<int>(server->arg("offset").toInt()));
+  }
+  int limit = WEB_LIBRARY_PAGE_SIZE;
+  if (paginatedRequest && server->hasArg("limit")) {
+    limit = std::clamp(static_cast<int>(server->arg("limit").toInt()), 1, WEB_LIBRARY_PAGE_SIZE);
+  }
+
   server->setContentLength(CONTENT_LENGTH_UNKNOWN);
   server->send(200, "application/json", "");
   server->sendContent("{\"books\":[");
   bool first = true;
-  int index = 0;
+  size_t visibleIndex = 0;
+  size_t emitted = 0;
+  bool hasMore = false;
   for (const auto& book : RECENT_BOOKS.getBooks()) {
     if (RecentBooksStore::isMissing(book)) continue;
+    if (visibleIndex < static_cast<size_t>(offset)) {
+      ++visibleIndex;
+      continue;
+    }
+    if (paginatedRequest && emitted >= static_cast<size_t>(limit)) {
+      hasMore = true;
+      break;
+    }
     JsonDocument doc;
-    doc["index"] = index++;
+    doc["index"] = static_cast<uint32_t>(visibleIndex);
     doc["title"] = book.title;
     doc["author"] = book.author;
     doc["progress"] = book.progressPercent;
@@ -440,8 +461,19 @@ void CrossPointWebServer::handleLibraryData() const {
     if (!first) server->sendContent(",");
     first = false;
     server->sendContent(row);
+    ++visibleIndex;
+    ++emitted;
   }
-  server->sendContent("]}");
+  char footer[128];
+  if (paginatedRequest) {
+    snprintf(footer, sizeof(footer), "],\"offset\":%d,\"limit\":%d,\"hasMore\":%s}", offset, limit,
+             hasMore ? "true" : "false");
+  } else {
+    // Preserve the pre-pagination contract for legacy callers that do not
+    // provide query parameters: return the complete library response.
+    snprintf(footer, sizeof(footer), "]}");
+  }
+  server->sendContent(footer);
   server->sendContent("");
 }
 

@@ -20,6 +20,9 @@ struct SdCardFontFamilyInfo {
   const SdCardFontFileInfo* findFile(uint8_t size, uint8_t style = 0) const;
   const SdCardFontFileInfo* findClosestReaderSize(uint8_t fontSizeEnum, uint8_t style = 0) const;
   bool hasSize(uint8_t size) const;
+  // Interface-font families must provide the three built-in UI sizes so every
+  // UI font ID can be mapped without scaling or changing screen geometry.
+  bool hasInterfaceSizes() const { return hasSize(8) && hasSize(10) && hasSize(12); }
   std::vector<uint8_t> availableSizes() const;
 };
 

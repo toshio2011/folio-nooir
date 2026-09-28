@@ -5,6 +5,8 @@
 
 #include <cstdint>
 
+#include "util/QuickActions.h"
+
 class CrossPointSettings : public PersistableStore<CrossPointSettings> {
  private:
   // Private constructor for singleton
@@ -58,6 +60,12 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     PROGRESS_BAR_NORMAL = 1,
     PROGRESS_BAR_THICK = 2,
     STATUS_BAR_PROGRESS_BAR_THICKNESS_COUNT
+  };
+  enum STATUS_BAR_PERCENTAGE_FORMAT {
+    PERCENTAGE_WHOLE = 0,
+    PERCENTAGE_ONE_DECIMAL = 1,
+    PERCENTAGE_TWO_DECIMALS = 2,
+    STATUS_BAR_PERCENTAGE_FORMAT_COUNT
   };
   enum STATUS_BAR_TITLE { BOOK_TITLE = 0, CHAPTER_TITLE = 1, HIDE_TITLE = 2, STATUS_BAR_TITLE_COUNT };
   enum XTC_STATUS_BAR_MODE {
@@ -242,6 +250,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     FOLIO_LAYOUT_THREE_COVER_CAROUSEL = 2,
     FOLIO_LAYOUT_FIVE_COVER_CAROUSEL = 3,
     FOLIO_LAYOUT_SPINE = 4,
+    FOLIO_LAYOUT_TWO_ROW_SPINE = 5,
     FOLIO_BOOK_LAYOUT_COUNT
   };
 
@@ -284,6 +293,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Status bar settings
   uint8_t statusBarChapterPageCount = 1;
   uint8_t statusBarBookProgressPercentage = 1;
+  // 0 preserves the established whole-percent display; 1/2 add decimal precision.
+  uint8_t statusBarPercentageFormat = PERCENTAGE_WHOLE;
   uint8_t statusBarProgressBar = HIDE_PROGRESS;
   uint8_t statusBarProgressBarThickness = PROGRESS_BAR_NORMAL;
   uint8_t statusBarTitle = CHAPTER_TITLE;
@@ -344,10 +355,16 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Headroom for several buttons plus optional presets and rolling-code remotes
   // (some buttons emit more than one code). Each entry is 3 bytes.
   static constexpr uint8_t BLE_MAP_CAPACITY = 10;
+  static constexpr uint8_t BLE_SIGNATURE_MAX_EVENTS = 8;
   struct BleKeyMapEntry {
     uint8_t keyKind = 0xFF;   // 0 = SpecialKey, 1 = HID usage code; 0xFF = empty slot
     uint8_t keyValue = 0;     // (uint8_t)freeink::SpecialKey, or the raw HID usage id
     uint8_t button = 0xFF;    // (uint8_t)MappedInputManager::Button; 0xFF = unassigned
+    // Optional bounded decoded-event signature. signatureCount == 0 retains
+    // the legacy single-event representation; the first event is duplicated
+    // in keyKind/keyValue for old web/settings readers.
+    uint8_t signatureCount = 0;
+    uint16_t signature[BLE_SIGNATURE_MAX_EVENTS] = {};
   };
   BleKeyMapEntry bleKeyMap[BLE_MAP_CAPACITY] = {};
   // Reader font settings
@@ -402,6 +419,15 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // UI text scale. Folio Nooir keeps its shelf text and geometry fixed so the
   // featured book and Recent/Finished/library grid remain stable.
   uint8_t uiScalePercent = 100;
+  // Optional interface font family. Empty keeps the built-in UI font. The
+  // stable family name is persisted instead of an SD discovery-list index.
+  char uiFontFamilyName[32] = "";
+  // Four reader-menu Quick Action slots. Missing keys retain these defaults
+  // for older settings files.
+  uint8_t quickActionSlot1 = static_cast<uint8_t>(QuickActions::ActionId::ToggleBookmark);
+  uint8_t quickActionSlot2 = static_cast<uint8_t>(QuickActions::ActionId::Lookup);
+  uint8_t quickActionSlot3 = static_cast<uint8_t>(QuickActions::ActionId::ToggleDarkMode);
+  uint8_t quickActionSlot4 = static_cast<uint8_t>(QuickActions::ActionId::RefreshScreen);
   // Sunlight fading compensation
   uint8_t fadingFix = 0;
   // Power button return from footnotes (1 = enabled, 0 = disabled)
@@ -473,6 +499,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   struct StatusBarSpec {
     bool showChapterPageCount = false;
     bool showBookProgressPercent = false;
+    uint8_t percentageFormat = PERCENTAGE_WHOLE;  // STATUS_BAR_PERCENTAGE_FORMAT
     uint8_t titleMode = HIDE_TITLE;  // STATUS_BAR_TITLE
     bool showBattery = false;
     bool showBatteryPercent = false;

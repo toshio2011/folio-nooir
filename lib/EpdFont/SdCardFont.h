@@ -8,6 +8,10 @@
 #include "EpdFont.h"
 #include "EpdFontData.h"
 
+#ifndef NOOIR_SD_FONT_DIAGNOSTICS
+#define NOOIR_SD_FONT_DIAGNOSTICS 0
+#endif
+
 // On-disk binary format version for .cpfont files. Defined as a preprocessor
 // macro (rather than a constexpr) so it can be stringified into the SD-fonts
 // release URL — see FONT_MANIFEST_URL in FontDownloadActivity.h. No integer
@@ -62,6 +66,12 @@ class SdCardFont {
   // Returns true if advance table is populated for at least one style.
   bool hasAdvanceTable() const;
 
+  // Check only RAM-resident mini-font coverage. This never reads the SD card
+  // and lets UI preparation skip a repeated pass after its small text-key
+  // cache has evicted an otherwise resident label.
+  bool hasPreparedGlyphs(const char* utf8Text, uint8_t styleMask = 0x0F,
+                         bool requireBitmaps = true) const;
+
   // Free mini data for all styles and restore stub EpdFontData.
   // Preserves the persistent advance cache so repeated layout passes can reuse
   // previously fetched metrics.
@@ -113,6 +123,29 @@ class SdCardFont {
   void logStats(const char* label = "SDCF");
   void resetStats();
   const Stats& getStats() const { return stats_; }
+
+#if NOOIR_SD_FONT_DIAGNOSTICS
+  // Heap accounting for the diagnostic SD-font profile.  Counts and bytes are
+  // reported separately so a checkpoint can distinguish retained metadata
+  // from rebuildable page arenas without exposing book text.
+  struct MemoryStats {
+    uint32_t coverageIntervals = 0;
+    uint32_t coverageBytes = 0;
+    uint32_t advanceEntries = 0;
+    uint32_t advanceBytes = 0;
+    uint32_t persistentKernBytes = 0;
+    uint32_t persistentLigatureBytes = 0;
+    uint32_t miniIntervalBytes = 0;
+    uint32_t miniGlyphBytes = 0;
+    uint32_t miniBitmapBytes = 0;
+    uint32_t miniKernBytes = 0;
+    uint32_t overflowGlyphs = 0;
+    uint32_t overflowBitmapBytes = 0;
+    uint32_t totalBytes = 0;
+  };
+
+  MemoryStats getMemoryStats() const;
+#endif
 
   // Content hash of the file header + style TOC entries (computed during load).
   // Used to generate deterministic font IDs for section cache invalidation.

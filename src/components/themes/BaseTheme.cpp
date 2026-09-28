@@ -8,6 +8,7 @@
 #include <Logging.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <string>
 
@@ -15,6 +16,7 @@
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "components/icons/bookmark.h"
+#include "components/themes/BookProgressFormatter.h"
 #include "fontIds.h"
 
 // Internal constants
@@ -36,6 +38,10 @@ void drawBookmarkStatusIcon(const GfxRenderer& renderer, const int x, const int 
       renderer.drawPixel(x + col, y + row, (byte & mask) != 0);
     }
   }
+}
+
+void formatBookProgress(char* buffer, const size_t bufferSize, const float progress, const uint8_t format) {
+  BookProgressFormatter::format(buffer, bufferSize, progress, format);
 }
 
 }  // namespace
@@ -269,7 +275,22 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
                          const std::function<std::string(int index)>& rowSubtitle,
                          const std::function<UIIcon(int index)>& rowIcon,
                          const std::function<std::string(int index)>& rowValue, bool highlightValue,
-                         const std::function<bool(int index)>& rowDimmed) const {
+                         const std::function<bool(int index)>& rowDimmed,
+                         const std::function<int(int index)>& rowToggleState,
+                         const std::function<bool(int index)>& rowSubmenu) const {
+  constexpr int toggleWidth = 30;
+  constexpr int toggleHeight = 12;
+  constexpr int adornmentGap = 6;
+  constexpr int submenuWidth = 12;
+  const auto drawToggle = [&renderer](const int x, const int y, const bool on, const bool black) {
+    renderer.drawRect(x, y, toggleWidth, toggleHeight, 1, black);
+    const int knobX = on ? x + toggleWidth - 10 : x + 2;
+    renderer.fillRect(knobX, y + 2, 8, toggleHeight - 4, black);
+  };
+  const auto drawSubmenu = [&renderer](const int x, const int y, const bool black) {
+    renderer.drawLine(x, y, x + 4, y + 4, 1, black);
+    renderer.drawLine(x + 4, y + 4, x, y + 8, 1, black);
+  };
   int rowHeight =
       (rowSubtitle != nullptr) ? BaseMetrics::values.listWithSubtitleRowHeight : BaseMetrics::values.listRowHeight;
   int pageItems = rowHeight > 0 ? std::max(1, rect.height / rowHeight) : 1;
@@ -313,15 +334,23 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
     const int itemY = rect.y + (i % pageItems) * rowHeight;
 
     int rowTextWidth = contentWidth - BaseMetrics::values.contentSidePadding * 2;
+    const int toggleState = rowToggleState ? rowToggleState(i) : -1;
+    const bool hasToggle = toggleState >= 0;
+    const bool hasSubmenu = rowSubmenu && rowSubmenu(i);
+    const int adornmentWidth = (hasToggle ? toggleWidth + adornmentGap : 0) + (hasSubmenu ? submenuWidth : 0);
     std::string valueText;
     if (rowValue != nullptr) {
       valueText = rowValue(i);
       if (!valueText.empty()) {
-        int maxValW = std::max(0, rowTextWidth - 40 - minValueGap);
+        int maxValW = std::max(0, rowTextWidth - adornmentWidth - 40 - minValueGap);
         valueText = renderer.truncatedText(UI_10_FONT_ID, valueText.c_str(), maxValW);
         int valueWidth = renderer.getTextWidth(UI_10_FONT_ID, valueText.c_str()) + minValueGap;
-        rowTextWidth -= valueWidth;
+        rowTextWidth -= valueWidth + adornmentWidth;
+      } else {
+        rowTextWidth -= adornmentWidth;
       }
+    } else {
+      rowTextWidth -= adornmentWidth;
     }
 
     auto itemName = rowTitle(i);
@@ -354,8 +383,20 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
       if (rowSubtitle != nullptr) {
         valueY = itemY + 10;
       }
-      renderer.drawText(UI_10_FONT_ID, rect.x + contentWidth - BaseMetrics::values.contentSidePadding - valueTextWidth,
-                        valueY, valueText.c_str(), i != selectedIndex);
+      int valueRight = rect.x + contentWidth - BaseMetrics::values.contentSidePadding;
+      if (hasSubmenu) valueRight -= submenuWidth;
+      if (hasToggle) valueRight -= toggleWidth + adornmentGap;
+      renderer.drawText(UI_10_FONT_ID, valueRight - valueTextWidth, valueY, valueText.c_str(), i != selectedIndex);
+    }
+
+    const bool valueSelected = i == selectedIndex;
+    int valueRight = rect.x + contentWidth - BaseMetrics::values.contentSidePadding;
+    if (hasSubmenu) {
+      drawSubmenu(valueRight - submenuWidth + 2, itemY + (rowHeight - 9) / 2, !valueSelected);
+      valueRight -= submenuWidth;
+    }
+    if (hasToggle) {
+      drawToggle(valueRight - toggleWidth, itemY + (rowHeight - toggleHeight) / 2, toggleState != 0, !valueSelected);
     }
   }
 }
@@ -837,10 +878,12 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     const char* estimatePrefix = pageCountEstimated ? "~" : "";
 
     if (sb.showBookProgressPercent && sb.showChapterPageCount) {
-      snprintf(progressStr, sizeof(progressStr), "%s%d/%d  %.0f%%", estimatePrefix, currentPage, pageCount,
-               bookProgress);
+      char progressPercent[12];
+      formatBookProgress(progressPercent, sizeof(progressPercent), bookProgress, sb.percentageFormat);
+      snprintf(progressStr, sizeof(progressStr), "%s%d/%d  %s", estimatePrefix, currentPage, pageCount,
+               progressPercent);
     } else if (sb.showBookProgressPercent) {
-      snprintf(progressStr, sizeof(progressStr), "%.0f%%", bookProgress);
+      formatBookProgress(progressStr, sizeof(progressStr), bookProgress, sb.percentageFormat);
     } else {
       snprintf(progressStr, sizeof(progressStr), "%s%d/%d", estimatePrefix, currentPage, pageCount);
     }
@@ -1001,7 +1044,8 @@ void BaseTheme::drawOptionPopup(const GfxRenderer& renderer, const char* title, 
 
   const int optionCount = static_cast<int>(options.size());
   const int listHeight = rowHeight * optionCount + itemSpacing * (optionCount - 1);
-  const int dialogW = std::min((maxTextWidth + innerPadding * 2 + selectionHPadding * 2) * 12 / 10,
+  constexpr int selectionCheckWidth = 14;
+  const int dialogW = std::min((maxTextWidth + innerPadding * 2 + selectionHPadding * 2 + selectionCheckWidth) * 12 / 10,
                                pageWidth - metrics.optionPopupDialogSideMargin * 2);
   const int contentHeight = titleLineHeight + metrics.optionPopupTitleGap + listHeight;
   const int dialogH = contentHeight + innerPadding * 2;
@@ -1067,5 +1111,13 @@ void BaseTheme::drawOptionPopup(const GfxRenderer& renderer, const char* title, 
     // Selected on light bg: text stays dark (invert=true).
     const bool invertText = selected ? metrics.optionPopupSelectionLight : true;
     renderer.drawText(optionFontId, textX, textY, labelText, invertText, optionStyle);
+
+    if (selected) {
+      const int checkX = itemRectX + itemRectW - 9;
+      const int checkY = itemY + rowHeight / 2 - 1;
+      const bool checkBlack = metrics.optionPopupSelectionLight;
+      renderer.drawLine(checkX - 4, checkY, checkX - 1, checkY + 3, 1, checkBlack);
+      renderer.drawLine(checkX - 1, checkY + 3, checkX + 4, checkY - 4, 1, checkBlack);
+    }
   }
 }

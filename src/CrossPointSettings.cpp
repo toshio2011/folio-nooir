@@ -5,6 +5,7 @@
 #include <ObfuscationUtils.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <string>
 
@@ -24,6 +25,37 @@ constexpr size_t OBF_KEY_BUF = 64;
 void copyToField(char* dest, const char* src, const size_t maxLen) {
   strncpy(dest, src, maxLen - 1);
   dest[maxLen - 1] = '\0';
+}
+
+constexpr const char* QUICK_ACTION_KEYS[QuickActions::SLOT_COUNT] = {
+    "quickActionSlot1", "quickActionSlot2", "quickActionSlot3", "quickActionSlot4"};
+
+constexpr std::array<uint8_t, QuickActions::SLOT_COUNT> QUICK_ACTION_DEFAULTS = {
+    static_cast<uint8_t>(QuickActions::ActionId::ToggleBookmark),
+    static_cast<uint8_t>(QuickActions::ActionId::Lookup),
+    static_cast<uint8_t>(QuickActions::ActionId::ToggleDarkMode),
+    static_cast<uint8_t>(QuickActions::ActionId::RefreshScreen),
+};
+
+uint8_t& quickActionField(CrossPointSettings& settings, const size_t slot) {
+  switch (slot) {
+    case 0:
+      return settings.quickActionSlot1;
+    case 1:
+      return settings.quickActionSlot2;
+    case 2:
+      return settings.quickActionSlot3;
+    default:
+      return settings.quickActionSlot4;
+  }
+}
+
+bool actionAlreadyUsed(const std::array<QuickActions::ActionId, QuickActions::SLOT_COUNT>& actions,
+                       const size_t count, const QuickActions::ActionId action) {
+  for (size_t i = 0; i < count; ++i) {
+    if (actions[i] == action) return true;
+  }
+  return false;
 }
 
 }  // namespace
@@ -103,12 +135,19 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
     item["k"] = entry.keyKind;
     item["v"] = entry.keyValue;
     item["b"] = entry.button;
+    if (entry.signatureCount > 1 && entry.signatureCount <= BLE_SIGNATURE_MAX_EVENTS) {
+      JsonArray signature = item["s"].to<JsonArray>();
+      for (uint8_t i = 0; i < entry.signatureCount; ++i) signature.add(entry.signature[i]);
+    }
   }
   // Font family — uses dynamic getter/setter in SettingsList so the generic loop skips it.
   doc["fontFamily"] = fontFamily;
   // SD card font family name — not in SettingsList, save manually
   if (sdFontFamilyName[0] != '\0') {
     doc["sdFontFamilyName"] = sdFontFamilyName;
+  }
+  if (uiFontFamilyName[0] != '\0') {
+    doc["uiFontFamilyName"] = uiFontFamilyName;
   }
   // Dictionary folder name — uses dynamic getter/setter in SettingsList, save manually
   if (dictionaryName[0] != '\0') {
@@ -119,6 +158,10 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["sleepScreen"] = sleepScreen;
   doc["dictionaryFontFamily"] = dictionaryFontFamily;
   doc["dictionaryFontSize"] = dictionaryFontSize;
+  doc["quickActionSlot1"] = quickActionSlot1;
+  doc["quickActionSlot2"] = quickActionSlot2;
+  doc["quickActionSlot3"] = quickActionSlot3;
+  doc["quickActionSlot4"] = quickActionSlot4;
 
   // Language -- managed by LanguageSelectActivity, not in SettingsList.
   // Stored as ISO code string ("EN", "DE", ...) for stability across enum reorders.
@@ -306,6 +349,30 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
       bleKeyMap[slot].keyKind = kind;
       bleKeyMap[slot].keyValue = item["v"] | (uint8_t)0;
       bleKeyMap[slot].button = button;
+      JsonArrayConst signature = item["s"];
+      if (!signature.isNull()) {
+        uint8_t count = 0;
+        bool valid = true;
+        for (JsonVariantConst encoded : signature) {
+          if (count >= BLE_SIGNATURE_MAX_EVENTS) {
+            valid = false;
+            break;
+          }
+          const uint16_t value = encoded | (uint16_t)0xFFFF;
+          if (value == 0xFFFF || (value >> 8) > 1) {
+            valid = false;
+            break;
+          }
+          bleKeyMap[slot].signature[count++] = value;
+        }
+        if (valid && count > 1 && ((bleKeyMap[slot].signature[0] >> 8) == kind) &&
+            ((bleKeyMap[slot].signature[0] & 0xFF) == bleKeyMap[slot].keyValue)) {
+          bleKeyMap[slot].signatureCount = count;
+        } else {
+          bleKeyMap[slot].signatureCount = 0;
+          needsResave = true;
+        }
+      }
       slot++;
     }
   }
@@ -319,6 +386,7 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   const char* sfn = doc["sdFontFamilyName"] | "";
   strncpy(sdFontFamilyName, sfn, sizeof(sdFontFamilyName) - 1);
   sdFontFamilyName[sizeof(sdFontFamilyName) - 1] = '\0';
+  copyToField(uiFontFamilyName, doc["uiFontFamilyName"] | "", sizeof(uiFontFamilyName));
   if (storedFontFamily == LEGACY_OPENDYSLEXIC && sdFontFamilyName[0] == '\0') {
     fontFamily = NOTOSERIF;
     strncpy(sdFontFamilyName, "OpenDyslexic", sizeof(sdFontFamilyName) - 1);
@@ -332,6 +400,29 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   dictionaryFontFamily = clamp(doc["dictionaryFontFamily"] | static_cast<uint8_t>(DICT_USE_READER),
                                DICT_FONT_FAMILY_COUNT, DICT_USE_READER);
   dictionaryFontSize = clamp(doc["dictionaryFontSize"] | static_cast<uint8_t>(MEDIUM), FONT_SIZE_COUNT, MEDIUM);
+
+  // Quick Actions were added after the existing settings format. Keep the
+  // file version unchanged: absent keys use the designed defaults, while
+  // malformed/duplicate values are normalised to a safe unique slot set.
+  std::array<QuickActions::ActionId, QuickActions::SLOT_COUNT> loadedQuickActions{};
+  for (size_t i = 0; i < QuickActions::SLOT_COUNT; ++i) {
+    const uint16_t raw = doc[QUICK_ACTION_KEYS[i]] | static_cast<uint16_t>(QUICK_ACTION_DEFAULTS[i]);
+    QuickActions::ActionId action = QuickActions::ActionId::None;
+    if (raw <= 0xFF && (raw == static_cast<uint8_t>(QuickActions::ActionId::None) ||
+                        QuickActions::isKnown(static_cast<QuickActions::ActionId>(raw)))) {
+      action = static_cast<QuickActions::ActionId>(raw);
+    } else {
+      action = static_cast<QuickActions::ActionId>(QUICK_ACTION_DEFAULTS[i]);
+      needsResave = true;
+    }
+    if (action != QuickActions::ActionId::None && actionAlreadyUsed(loadedQuickActions, i, action)) {
+      action = QuickActions::ActionId::None;
+      needsResave = true;
+    }
+    loadedQuickActions[i] = action;
+    quickActionField(s, i) = static_cast<uint8_t>(action);
+  }
+  QuickActions::loadSlots(loadedQuickActions);
 
   // Line spacing was historically stored as the enum 0=Tight, 1=Normal,
   // 2=Wide. The public key remains "lineSpacing" for compatibility, while
@@ -365,6 +456,9 @@ CrossPointSettings::StatusBarSpec CrossPointSettings::statusBarSpec() const {
   StatusBarSpec spec;
   spec.showChapterPageCount = statusBarChapterPageCount != 0;
   spec.showBookProgressPercent = statusBarBookProgressPercentage != 0;
+  spec.percentageFormat = statusBarPercentageFormat < STATUS_BAR_PERCENTAGE_FORMAT_COUNT
+                              ? statusBarPercentageFormat
+                              : PERCENTAGE_WHOLE;
   spec.titleMode = statusBarTitle;
   spec.showBattery = statusBarBattery != 0;
   spec.showBatteryPercent = hideBatteryPercentage == HIDE_NEVER;

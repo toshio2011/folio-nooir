@@ -244,7 +244,25 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
                          const std::function<std::string(int index)>& rowSubtitle,
                          const std::function<UIIcon(int index)>& rowIcon,
                          const std::function<std::string(int index)>& rowValue, bool highlightValue,
-                         const std::function<bool(int index)>& rowDimmed) const {
+                         const std::function<bool(int index)>& rowDimmed,
+                         const std::function<int(int index)>& rowToggleState,
+                         const std::function<bool(int index)>& rowSubmenu) const {
+  constexpr int toggleWidth = 30;
+  constexpr int toggleHeight = 12;
+  constexpr int adornmentGap = 6;
+  constexpr int submenuWidth = 12;
+
+  const auto drawToggle = [&renderer](const int x, const int y, const bool on, const bool black) {
+    constexpr int width = 30;
+    constexpr int height = 12;
+    renderer.drawRect(x, y, width, height, 1, black);
+    const int knobX = on ? x + width - 10 : x + 2;
+    renderer.fillRect(knobX, y + 2, 8, height - 4, black);
+  };
+  const auto drawSubmenu = [&renderer](const int x, const int y, const bool black) {
+    renderer.drawLine(x, y, x + 4, y + 4, 1, black);
+    renderer.drawLine(x + 4, y + 4, x, y + 8, 1, black);
+  };
   int rowHeight =
       (rowSubtitle != nullptr) ? LyraMetrics::values.listWithSubtitleRowHeight : LyraMetrics::values.listRowHeight;
   int pageItems = rowHeight > 0 ? std::max(1, rect.height / rowHeight) : 1;
@@ -288,6 +306,10 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
   for (int i = pageStartIndex; i < itemCount && i < pageStartIndex + pageItems; i++) {
     const int itemY = rect.y + (i % pageItems) * rowHeight;
     int rowTextWidth = textWidth;
+    const int toggleState = rowToggleState ? rowToggleState(i) : -1;
+    const bool hasToggle = toggleState >= 0;
+    const bool hasSubmenu = rowSubmenu && rowSubmenu(i);
+    const int adornmentWidth = (hasToggle ? toggleWidth + adornmentGap : 0) + (hasSubmenu ? submenuWidth : 0);
 
     // Draw name
     int valueWidth = 0;
@@ -296,8 +318,9 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
       valueText = rowValue(i);
       valueText = renderer.truncatedText(UI_10_FONT_ID, valueText.c_str(), maxListValueWidth);
       valueWidth = renderer.getTextWidth(UI_10_FONT_ID, valueText.c_str()) + hPaddingInSelection;
-      rowTextWidth -= valueWidth;
     }
+    if (hasToggle || hasSubmenu) valueWidth += adornmentWidth + hPaddingInSelection;
+    rowTextWidth -= valueWidth;
 
     auto itemName = rowTitle(i);
     auto item = renderer.truncatedText(UI_10_FONT_ID, itemName.c_str(), rowTextWidth);
@@ -340,9 +363,34 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
       if (rowSubtitle != nullptr) {
         valueY = itemY + 16;
       }
-      renderer.drawText(UI_10_FONT_ID, rect.x + contentWidth - LyraMetrics::values.contentSidePadding - valueWidth,
-                        valueY, valueText.c_str(), !(i == selectedIndex && highlightValue));
+      const bool valueSelected = i == selectedIndex && highlightValue;
+      int valueRight = rect.x + contentWidth - LyraMetrics::values.contentSidePadding;
+      if (hasSubmenu) {
+        const int arrowX = valueRight - submenuWidth + 2;
+        drawSubmenu(arrowX, itemY + (rowHeight - 9) / 2, !valueSelected);
+        valueRight -= submenuWidth;
+      }
+      if (hasToggle) {
+        const int toggleX = valueRight - toggleWidth;
+        drawToggle(toggleX, itemY + (rowHeight - toggleHeight) / 2, toggleState != 0, !valueSelected);
+        valueRight -= toggleWidth + adornmentGap;
+      }
+      const int valueTextWidth = renderer.getTextWidth(UI_10_FONT_ID, valueText.c_str());
+      renderer.drawText(UI_10_FONT_ID, valueRight - valueTextWidth, valueY, valueText.c_str(), !valueSelected);
+    } else if (hasToggle || hasSubmenu) {
+      const bool valueSelected = i == selectedIndex && highlightValue;
+      int valueRight = rect.x + contentWidth - LyraMetrics::values.contentSidePadding;
+      if (hasSubmenu) {
+        const int arrowX = valueRight - submenuWidth + 2;
+        drawSubmenu(arrowX, itemY + (rowHeight - 9) / 2, !valueSelected);
+        valueRight -= submenuWidth;
+      }
+      if (hasToggle) {
+        drawToggle(valueRight - toggleWidth, itemY + (rowHeight - toggleHeight) / 2, toggleState != 0,
+                   !valueSelected);
+      }
     }
+
   }
 }
 

@@ -309,7 +309,17 @@ void TextSettingsActivity::render(RenderLock&&) {
       GUI.drawList(
           renderer, listRect, LAYOUT_ROWS, selectedItem,
           [](int index) { return std::string(I18N.get(ROW_NAME_IDS[index])); }, nullptr, nullptr,
-          [this](int index) { return layoutValueText(index); }, true);
+          [this](int index) { return layoutValueText(index); }, true, nullptr,
+          [this](const int index) -> int {
+            if (index == static_cast<int>(LayoutRow::ParaSpacing)) return SETTINGS.extraParagraphSpacing ? 1 : 0;
+            if (index == static_cast<int>(LayoutRow::ForceIndents)) return SETTINGS.forceParagraphIndents ? 1 : 0;
+            return -1;
+          },
+          [](const int index) {
+            return index == static_cast<int>(LayoutRow::LineSpacing) ||
+                   index == static_cast<int>(LayoutRow::Alignment) ||
+                   index == static_cast<int>(LayoutRow::ScreenMargin);
+          });
       if (onTabBar)
         confirmLabel = tr(STR_STYLE);
       else  // Extra Paragraph Spacing toggles; the rest open a picker
@@ -328,7 +338,24 @@ void TextSettingsActivity::render(RenderLock&&) {
       GUI.drawList(
           renderer, listRect, STYLE_ROWS, selectedItem,
           [](int index) { return std::string(I18N.get(ROW_NAME_IDS[index])); }, nullptr, nullptr,
-          [this](int index) { return styleValueText(index); }, true);
+          [this](int index) { return styleValueText(index); }, true, nullptr,
+          [this](const int index) -> int {
+            switch (static_cast<StyleRow>(index)) {
+              case StyleRow::FocusReading:
+                return SETTINGS.focusReadingEnabled ? 1 : 0;
+              case StyleRow::GuideDots:
+                return SETTINGS.guideDots ? 1 : 0;
+              case StyleRow::Hyphenation:
+                return SETTINGS.hyphenationEnabled ? 1 : 0;
+              case StyleRow::EmbeddedStyle:
+                return SETTINGS.embeddedStyle ? 1 : 0;
+              case StyleRow::AntiAliasing:
+                return SETTINGS.textAntiAliasing ? 1 : 0;
+              default:
+                return -1;
+            }
+          },
+          [](const int index) { return index == static_cast<int>(StyleRow::HighlightColor); });
       if (onTabBar) {
         confirmLabel = tr(STR_FONT);
       } else {
@@ -357,7 +384,8 @@ void TextSettingsActivity::render(RenderLock&&) {
       GUI.drawList(
           renderer, listRect, CONTROL_ROWS, selectedItem,
           [](int index) { return std::string(I18N.get(CONTROL_ROW_NAME_IDS[index])); }, nullptr, nullptr,
-          [this](int index) { return controlValueText(index); }, true);
+          [this](int index) { return controlValueText(index); }, true, nullptr, nullptr,
+          [](const int) { return true; });
       confirmLabel = onTabBar ? tr(STR_FONT) : tr(STR_SELECT);
       break;
     }

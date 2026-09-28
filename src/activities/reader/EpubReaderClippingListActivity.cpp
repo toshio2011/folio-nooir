@@ -203,6 +203,7 @@ void EpubReaderClippingListActivity::render(RenderLock&&) {
 
   const int top = listTop();
   const int height = listHeight();
+  renderer.drawLine(screen.x + 12, top - 10, screen.x + screen.width - 12, top - 10);
   if (clippings.empty()) {
     renderer.drawCenteredText(UI_12_FONT_ID, renderer.getScreenHeight() / 2, "No clippings", true,
                               EpdFontFamily::REGULAR);

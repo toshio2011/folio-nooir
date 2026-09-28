@@ -46,6 +46,13 @@ class Activity {
   virtual bool isReaderActivity() const { return false; }
   virtual bool isHomeActivity() const { return false; }
   virtual bool keepsBluetoothAlive() const { return false; }
+  // Global BLE input is allowed on ordinary navigable screens. Startup,
+  // sleep, recovery, and update screens opt out explicitly.
+  virtual bool acceptsBluetoothInput() const { return true; }
+  // A memory-sensitive activity can yield the optional BLE controller while it
+  // performs a large build. This is separate from ordinary reader activity so
+  // a connected remote remains usable during normal navigation.
+  virtual bool bluetoothResourceSensitive() const { return false; }
   virtual bool handleHomeGesture() { return false; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
 

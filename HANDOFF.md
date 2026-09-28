@@ -479,3 +479,98 @@ The goal is: **make Nooir look much more like Nooir while keeping it lightweight
 The detailed Bluetooth Remote Input research, HID-capture architecture, firmware comparison notes, memory/power test matrices, evidence gaps, and future implementation sequence are preserved in [`docs/BLE_REMOTE_RESEARCH.md`](docs/BLE_REMOTE_RESEARCH.md). Treat that dossier as research input only; re-audit upstream refs before implementation because BLE stacks and firmware branches may change.
 
 The BLE research is intentionally ecosystem-wide rather than limited to obvious page-turner forks. See [`docs/BLE_ECOSYSTEM_SURVEY.md`](docs/BLE_ECOSYSTEM_SURVEY.md) for the 47-entry catalog screen, additional BLE lineages, transferable memory/power/input patterns, and the expanded future audit queue.
+
+## Folio Nooir 1.6.3 RC1 recovery status
+
+**FULL RECOVERY COMPLETE**
+**FINAL MICRO-AUDIT PASS**
+**SOURCE FROZEN FOR PHYSICAL X4 VALIDATION**
+
+The verified RC1 candidate is the recovery worktree at
+`C:\Users\fatiha\Documents\Codex\folio-nooir-1.6.3-full-recovery`, branch
+`recovery/folio-nooir-1.6.3-full-2`, recovered from baseline
+`b846e1550d18fe4e48014fcfec54b35e9da1ab57`. The broad last-week integration
+evidence remains preserved in the other recovery worktrees; none are to be
+cleaned until physical validation is complete.
+
+### Verified integrated feature matrix
+
+- Baseline EPUB Phase A/B/C and Phase-D resilience.
+- A2 SD-font ownership/lifecycle, UI fallback cache release, and RenderLock
+  protections.
+- B bounded queued EPUB page turns, reversal cancellation, stale-state clears,
+  intermediate rendering, and final-quality queue recovery.
+- Unlimited Recent and geometry-driven two-row Spine layout.
+- Book Info/Synopsis metadata evolution supported by the recovered source.
+- Web library pagination with legacy `/api/library` no-query compatibility.
+- Interface Font with separate UI ownership and A2-safe lifecycle behavior.
+- E1-E4 UI polish across BaseTheme, Lyra, Folio Nooir, and RoundedRaff.
+- UI Scale picker: 80/90/100/110/120 percent.
+- Quick Actions runtime plus four-slot configuration/persistence. Defaults are
+  Bookmark, Dictionary, Dark mode, and Refresh.
+- Status precision in Whole, One decimal, and Two decimal modes with shared
+  progress sanitization; only exact finite completion may display 100 percent.
+- Existing XTC/XTCH/TXT/CBZ, dictionaries/history, clipping, stats/calendar,
+  web functionality, sleep, dark mode, OTA, KOReader Sync, themes,
+  orientation, screenshots, and settings/persistence are preserved.
+
+BLE is **EXPERIMENTAL ONLY**. Normal production firmware keeps BLE disabled;
+the experimental profile remains separately gated. Diagnostic-only A2.1/A2.2,
+A2.4 operation-scope experiments, and bounded SDMEM/EPDMEM/font lifecycle
+instrumentation are not production features.
+
+Focused validation is **40/40 PASS**: 37/37 existing recovery tests and 3/3
+status progress tests. The aggregate host suite still has unrelated legacy
+`NOT_BUILT` and CSS-stub infrastructure limitations; these are not RC1 repair
+failures.
+
+### Compatibility and frozen artifacts
+
+- FreeInk: `958720659ea289ae325e83db20049d0ea844800d` (clean).
+- `JD_FASTDECODE=0`.
+- `SECTION_FILE_VERSION=41`; no persistence/schema bump.
+- Production BLE OFF and production diagnostics OFF.
+
+Production artifact `artifacts/firmware-163-full-final-production.bin`:
+
+- 5,505,104 bytes; SHA-256
+  `97E89AF912528F48EE118BD3957191FFE186619D86BDAD788504D3B32868AA4E`.
+- Static RAM 53,676/327,680; linked flash 5,491,251/6,553,600; margin
+  1,062,349 bytes.
+
+Diagnostic artifact `artifacts/firmware-163-full-final-diag.bin`:
+
+- 5,520,704 bytes; SHA-256
+  `6D02ABDDE9FF4918BCBB44551B0C91D52EC6C522A07318C8BCE5C6E2C3F70857`.
+- Static RAM 53,724/327,680; linked flash 5,506,855/6,553,600; margin
+  1,046,745 bytes.
+- This is the exact first physical old-X4 test target.
+
+Older recovery binaries and hashes are **SUPERSEDED - DO NOT FLASH**. Do not
+test an unhashed or rebuilt binary as RC1; a later rebuild is a different
+artifact and requires a new hash and RC designation.
+
+### Deferred and experimental boundaries
+
+The following are not part of normal 1.6.3 RC1: production BLE, editable Book
+Info rating, A2.1/A2.2 production diagnostics, A2.4 operation-scope diagnostics,
+PDF, major CBZ redesign, X4 Pro support, broad FreeInk upgrades,
+`JD_FASTDECODE=1`, redundant FreeInk exists/open optimization, SecureNet
+timeout adaptation, X3 initial-sync optimization, time-left status, tap-to-hide
+status, stable page-number redesign, and unrelated CrossInk features.
+
+### Physical validation plan
+
+The first target is the **old X4**, using only
+`firmware-163-full-final-diag.bin` with the SHA-256 recorded above. Capture
+cold-boot serial output and observe free heap, minimum heap, largest free block,
+font memory, coverage, advance cache, kern/ligature state, UI fallback memory,
+and reader-font retention.
+
+Validate cold boot/Home, Library, normal and image-heavy EPUBs, rapid forward
+and backward queueing, reversal, final-quality repaint, images/highlights/
+progress, Quick Actions and persistence, status precision, UI Scale, Interface
+Font, Unlimited Recent over ten books, two-row Spine, Book Info, E1-E4
+appearance, web pagination over ten books, orientation, Home return, and
+repeated Home -> Library -> Reader -> Home cycles. Do not perform this testing
+as part of source preparation.

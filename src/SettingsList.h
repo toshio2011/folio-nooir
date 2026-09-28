@@ -96,6 +96,44 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
   return s;
 }
 
+// Interface fonts are independent of reader typography. Offer only complete
+// 8/10/12 pt families so UI geometry and fallback remain size-matched.
+inline SettingInfo buildInterfaceFontSetting(const SdCardFontRegistry* registry) {
+  std::vector<std::string> familyNames;
+  if (registry) {
+    for (const auto& family : registry->getFamilies()) {
+      if (family.hasInterfaceSizes() && family.name.size() < sizeof(SETTINGS.uiFontFamilyName)) {
+        familyNames.push_back(family.name);
+      }
+    }
+  }
+
+  SettingInfo s;
+  s.nameId = StrId::STR_INTERFACE_FONT;
+  s.type = SettingType::ENUM;
+  s.enumStringValues.reserve(familyNames.size() + 1);
+  s.enumStringValues.push_back(I18N.get(StrId::STR_DEFAULT_VALUE));
+  s.enumStringValues.insert(s.enumStringValues.end(), familyNames.begin(), familyNames.end());
+  s.category = StrId::STR_CAT_DISPLAY;
+
+  s.valueGetter = [familyNames]() -> uint8_t {
+    if (SETTINGS.uiFontFamilyName[0] == '\0') return 0;
+    for (size_t i = 0; i < familyNames.size(); ++i) {
+      if (familyNames[i] == SETTINGS.uiFontFamilyName) return static_cast<uint8_t>(i + 1);
+    }
+    return 0;  // Missing family: show the safe built-in fallback.
+  };
+  s.valueSetter = [familyNames](const uint8_t value) {
+    if (value == 0 || value > familyNames.size()) {
+      SETTINGS.uiFontFamilyName[0] = '\0';
+      return;
+    }
+    strncpy(SETTINGS.uiFontFamilyName, familyNames[value - 1].c_str(), sizeof(SETTINGS.uiFontFamilyName) - 1);
+    SETTINGS.uiFontFamilyName[sizeof(SETTINGS.uiFontFamilyName) - 1] = '\0';
+  };
+  return s;
+}
+
 // The dictionary keeps the legacy enum value in settings but exposes only the
 // current choices. A legacy Noto Sans value is displayed as Noto Serif and is
 // replaced only if the user explicitly selects a different option.
@@ -203,17 +241,20 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         SettingInfo::Enum(StrId::STR_RECENT_BOOK_LAYOUT, &CrossPointSettings::recentBookLayout,
                           {StrId::STR_LAYOUT_GRID_4X2, StrId::STR_LAYOUT_3_COVERS,
                            StrId::STR_LAYOUT_3_COVER_CAROUSEL, StrId::STR_LAYOUT_5_COVER_CAROUSEL,
-                           StrId::STR_LAYOUT_SPINE},
+                           StrId::STR_LAYOUT_SPINE, StrId::STR_LAYOUT_TWO_ROW_SPINE},
                           "recentBookLayout", StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_FINISHED_BOOK_LAYOUT, &CrossPointSettings::finishedBookLayout,
                           {StrId::STR_LAYOUT_GRID_4X2, StrId::STR_LAYOUT_3_COVERS,
                            StrId::STR_LAYOUT_3_COVER_CAROUSEL, StrId::STR_LAYOUT_5_COVER_CAROUSEL,
-                           StrId::STR_LAYOUT_SPINE},
+                           StrId::STR_LAYOUT_SPINE, StrId::STR_LAYOUT_TWO_ROW_SPINE},
                           "finishedBookLayout", StrId::STR_CAT_DISPLAY),
         SettingInfo::Value(StrId::STR_UI_SCALE, &CrossPointSettings::uiScalePercent, {80, 120, 10}, "uiScalePercent",
                            StrId::STR_CAT_DISPLAY),
         SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix, "fadingFix",
                             StrId::STR_CAT_DISPLAY),
+        // Replaced per call with the registry-aware interface-font picker.
+        SettingInfo::Enum(StrId::STR_INTERFACE_FONT, nullptr, {StrId::STR_DEFAULT_VALUE}, nullptr,
+                          StrId::STR_CAT_DISPLAY),
 
         // --- Reader ---
         // Built-in font-family entry. Replaced per-call with a registry-aware
@@ -410,6 +451,10 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                             "statusBarChapterPageCount", StrId::STR_CUSTOMISE_STATUS_BAR),
         SettingInfo::Toggle(StrId::STR_BOOK_PROGRESS_PERCENTAGE, &CrossPointSettings::statusBarBookProgressPercentage,
                             "statusBarBookProgressPercentage", StrId::STR_CUSTOMISE_STATUS_BAR),
+        SettingInfo::Enum(StrId::STR_PERCENTAGE_FORMAT, &CrossPointSettings::statusBarPercentageFormat,
+                          {StrId::STR_PERCENTAGE_WHOLE, StrId::STR_PERCENTAGE_ONE_DECIMAL,
+                           StrId::STR_PERCENTAGE_TWO_DECIMALS},
+                          "statusBarPercentageFormat", StrId::STR_CUSTOMISE_STATUS_BAR),
         SettingInfo::Enum(StrId::STR_PROGRESS_BAR, &CrossPointSettings::statusBarProgressBar,
                           {StrId::STR_BOOK, StrId::STR_CHAPTER, StrId::STR_HIDE}, "statusBarProgressBar",
                           StrId::STR_CUSTOMISE_STATUS_BAR),
@@ -556,6 +601,11 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
   {
     auto it = std::find_if(v.begin(), v.end(), [](const SettingInfo& s) { return s.nameId == StrId::STR_FONT_FAMILY; });
     if (it != v.end()) *it = buildFontFamilySetting(registry);
+  }
+  {
+    auto it = std::find_if(v.begin(), v.end(),
+                           [](const SettingInfo& s) { return s.nameId == StrId::STR_INTERFACE_FONT; });
+    if (it != v.end()) *it = buildInterfaceFontSetting(registry);
   }
   {
     auto it = std::find_if(v.begin(), v.end(),

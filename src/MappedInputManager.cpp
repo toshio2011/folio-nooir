@@ -14,6 +14,8 @@ namespace {
 // Cheap page-turner rings often emit several keyboard/consumer usages for one
 // click. Treat codes arriving in this window as one physical-button burst.
 constexpr unsigned long BLE_CAPTURE_QUIET_MS = 220;
+constexpr unsigned long BLE_CAPTURE_MAX_MS = 900;
+constexpr unsigned long BLE_SIGNATURE_TIMEOUT_MS = 700;
 // Also suppress repeats of the same logical action across adjacent HID reports.
 // 280 ms remains responsive for deliberate reading while preventing double turns.
 constexpr unsigned long BLE_ACTION_DEBOUNCE_MS = 280;
@@ -318,6 +320,11 @@ void MappedInputManager::setBleCaptureMode(const bool enabled) {
   bleCaptureMode = enabled;
   bleHasCaptured = false;
   bleCaptureQuietUntil = 0;
+  bleCaptureStartedAt = 0;
+  bleCapturedCount = 0;
+  blePendingMap = -1;
+  blePendingIndex = 0;
+  blePendingLastEvent = 0;
   if (!enabled) return;
   for (uint8_t i = 0; i < kButtonCount; i++) {
     blePressEdge[i] = false;
@@ -326,11 +333,31 @@ void MappedInputManager::setBleCaptureMode(const bool enabled) {
 }
 
 bool MappedInputManager::takeCapturedBleKey(uint8_t& kind, uint8_t& value) {
-  if (!bleHasCaptured || static_cast<int32_t>(millis() - bleCaptureQuietUntil) < 0) return false;
-  kind = bleCapturedKind;
-  value = bleCapturedValue;
+  uint8_t capturedKind = 0xFF;
+  uint8_t capturedValue = 0;
+  uint8_t count = 0;
+  if (!takeCapturedBleSignature(&capturedKind, &capturedValue, 1, count)) return false;
+  kind = capturedKind;
+  value = capturedValue;
+  return count > 0;
+}
+
+bool MappedInputManager::takeCapturedBleSignature(uint8_t* kinds, uint8_t* values, const uint8_t capacity,
+                                                  uint8_t& count) {
+  count = 0;
+  if (!bleHasCaptured || !kinds || !values || capacity == 0) return false;
+  const unsigned long now = millis();
+  if (static_cast<int32_t>(now - bleCaptureQuietUntil) < 0 && now - bleCaptureStartedAt < BLE_CAPTURE_MAX_MS)
+    return false;
+  const uint8_t copied = std::min<uint8_t>(bleCapturedCount, capacity);
+  for (uint8_t i = 0; i < copied; ++i) {
+    kinds[i] = bleCapturedKinds[i];
+    values[i] = bleCapturedValues[i];
+  }
+  count = copied;
   bleHasCaptured = false;
-  return true;
+  bleCapturedCount = 0;
+  return count > 0;
 }
 
 void MappedInputManager::pollBle() {
@@ -344,30 +371,112 @@ void MappedInputManager::pollBle() {
   while (BleHid.popKey(event)) {
     uint8_t kind = 0xFF;
     uint8_t value = 0;
-    if (!bleinput::encodeKey(event, kind, value)) continue;
-    LOG_DBG("BLE", "key code=0x%02X special=%u kind=%u value=0x%02X", event.keycode,
-            static_cast<unsigned>(event.special), kind, value);
+    if (!bleinput::encodeKey(event, kind, value)) {
+#if FREEINK_CAP_BLE_HID_HOST
+      bleinput::recordDecodedKey(event, kind, value, 0xFF, bleinput::InputDisposition::Unusable, false);
+#endif
+      continue;
+    }
+    uint8_t mappedButton = 0xFF;
     if (bleCaptureMode) {
-      // Keep the first usable identity from this physical press and extend the
-      // quiet window for every extra code. The mapper receives one key only.
+      // Capture a bounded decoded signature for one physical press. The quiet
+      // window ends a burst; the hard cap prevents a held/repeating remote from
+      // retaining state or delaying the mapping screen indefinitely.
       if (!bleHasCaptured) {
+        bleCaptureStartedAt = millis();
+        bleCapturedCount = 0;
         bleCapturedKind = kind;
         bleCapturedValue = value;
         bleHasCaptured = true;
       }
+      if (bleCapturedCount < kBleSignatureMaxEvents) {
+        bleCapturedKinds[bleCapturedCount] = kind;
+        bleCapturedValues[bleCapturedCount] = value;
+        ++bleCapturedCount;
+      }
       bleCaptureQuietUntil = millis() + BLE_CAPTURE_QUIET_MS;
+      mappedButton = 0xFE;  // captured by the mapping screen, not dispatched
+#if FREEINK_CAP_BLE_HID_HOST
+      bleinput::recordDecodedKey(event, kind, value, mappedButton, bleinput::InputDisposition::Captured, false);
+#endif
       continue;
     }
-    for (const auto& entry : SETTINGS.bleKeyMap) {
-      if (entry.keyKind != kind || entry.keyValue != value || entry.button >= kButtonCount) continue;
-      const unsigned long now = millis();
-      const unsigned long last = bleLastDispatchAt[entry.button];
-      if (last != 0 && now - last < BLE_ACTION_DEBOUNCE_MS) break;
-      bleLastDispatchAt[entry.button] = now;
-      blePressEdge[entry.button] = true;
+    bool mappingFound = false;
+    bool debounceRejected = false;
+    bool signaturePending = false;
+    const unsigned long now = millis();
+
+    auto entryCount = [](const CrossPointSettings::BleKeyMapEntry& entry) -> uint8_t {
+      return entry.signatureCount > 0 ? entry.signatureCount : 1;
+    };
+    auto entryMatches = [&](const CrossPointSettings::BleKeyMapEntry& entry, const uint8_t index) {
+      if (entry.button >= kButtonCount || index >= entryCount(entry)) return false;
+      if (entry.signatureCount > 0) {
+        const uint16_t encoded = entry.signature[index];
+        return static_cast<uint8_t>(encoded >> 8) == kind && static_cast<uint8_t>(encoded & 0xFF) == value;
+      }
+      return index == 0 && entry.keyKind == kind && entry.keyValue == value;
+    };
+    auto dispatch = [&](const CrossPointSettings::BleKeyMapEntry& entry) {
+      const uint8_t button = entry.button;
+      const unsigned long last = bleLastDispatchAt[button];
+      if (last != 0 && now - last < BLE_ACTION_DEBOUNCE_MS) {
+        debounceRejected = true;
+        return;
+      }
+      bleLastDispatchAt[button] = now;
+      blePressEdge[button] = true;
       bleActivityThisFrame = true;
-      break;
+      mappedButton = button;
+    };
+
+    // Continue a previously recognized multi-event signature first.
+    if (blePendingMap >= 0) {
+      auto& pending = SETTINGS.bleKeyMap[blePendingMap];
+      if (now - blePendingLastEvent <= BLE_SIGNATURE_TIMEOUT_MS && entryMatches(pending, blePendingIndex)) {
+        ++blePendingIndex;
+        blePendingLastEvent = now;
+        mappingFound = true;
+        if (blePendingIndex >= entryCount(pending)) {
+          dispatch(pending);
+          blePendingMap = -1;
+          blePendingIndex = 0;
+        } else {
+          signaturePending = true;
+        }
+      } else {
+        blePendingMap = -1;
+        blePendingIndex = 0;
+      }
     }
+
+    // If no signature was pending, start one from this event or dispatch a
+    // legacy single-event binding immediately.
+    if (blePendingMap < 0 && !mappingFound) {
+      for (uint8_t mapIndex = 0; mapIndex < CrossPointSettings::BLE_MAP_CAPACITY; ++mapIndex) {
+        const auto& entry = SETTINGS.bleKeyMap[mapIndex];
+        if (!entryMatches(entry, 0)) continue;
+        mappingFound = true;
+        if (entryCount(entry) > 1) {
+          blePendingMap = static_cast<int8_t>(mapIndex);
+          blePendingIndex = 1;
+          blePendingLastEvent = now;
+          signaturePending = true;
+        } else {
+          dispatch(entry);
+        }
+        break;
+      }
+    }
+#if FREEINK_CAP_BLE_HID_HOST
+    const auto disposition = mappedButton != 0xFF
+                                 ? bleinput::InputDisposition::Mapped
+                                 : (signaturePending ? bleinput::InputDisposition::Pending
+                                                     : (debounceRejected ? bleinput::InputDisposition::Debounced
+                                                                         : (mappingFound ? bleinput::InputDisposition::Debounced
+                                                                                           : bleinput::InputDisposition::Unmapped)));
+    bleinput::recordDecodedKey(event, kind, value, mappedButton, disposition, mappedButton != 0xFF);
+#endif
   }
 }
 

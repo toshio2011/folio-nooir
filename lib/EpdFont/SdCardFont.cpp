@@ -862,6 +862,47 @@ int SdCardFont::prewarm(const char* utf8Text, uint8_t styleMask, bool metadataOn
   return totalMissed;
 }
 
+bool SdCardFont::hasPreparedGlyphs(const char* utf8Text, const uint8_t styleMask,
+                                   const bool requireBitmaps) const {
+  if (!loaded_ || utf8Text == nullptr) return false;
+  const uint8_t resolvedMask = resolveStyleMask(styleMask);
+  if (resolvedMask == 0) return true;
+
+  auto miniCovers = [&](const PerStyle& style, const uint32_t codepoint) {
+    if (style.miniGlyphCount == 0 || style.miniIntervals == nullptr || style.miniIntervalCount == 0) return false;
+    if (requireBitmaps && style.miniMetadataOnly) return false;
+    for (uint32_t interval = 0; interval < style.miniIntervalCount; ++interval) {
+      const auto& range = style.miniIntervals[interval];
+      if (codepoint < range.first) break;
+      if (codepoint <= range.last) return true;
+    }
+    return false;
+  };
+
+  auto coversAllStyles = [&](const uint32_t codepoint) {
+    for (uint8_t styleIndex = 0; styleIndex < MAX_STYLES; ++styleIndex) {
+      if (!(resolvedMask & (1u << styleIndex))) continue;
+      const auto& style = styles_[styleIndex];
+      if (miniCovers(style, codepoint)) continue;
+      // prewarm() always includes the replacement glyph for codepoints that
+      // are outside the font's global coverage.
+      if (findGlobalGlyphIndex(style, codepoint) < 0) {
+        if (!miniCovers(style, REPLACEMENT_GLYPH)) return false;
+        continue;
+      }
+      return false;
+    }
+    return true;
+  };
+
+  const unsigned char* cursor = reinterpret_cast<const unsigned char*>(utf8Text);
+  while (*cursor != '\0') {
+    const uint32_t codepoint = utf8NextCodepoint(&cursor);
+    if (codepoint == 0 || !coversAllStyles(codepoint)) return false;
+  }
+  return coversAllStyles(REPLACEMENT_GLYPH);
+}
+
 int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint32_t cpCount, bool metadataOnly) {
   auto& s = styles_[styleIdx];
 
@@ -1430,6 +1471,52 @@ void SdCardFont::logStats(const char* label) {
 }
 
 void SdCardFont::resetStats() { stats_ = Stats{}; }
+
+#if NOOIR_SD_FONT_DIAGNOSTICS
+SdCardFont::MemoryStats SdCardFont::getMemoryStats() const {
+  MemoryStats result;
+
+  for (uint8_t i = 0; i < MAX_STYLES; ++i) {
+    const auto& s = styles_[i];
+    if (!s.present) continue;
+
+    if (s.fullIntervals) {
+      result.coverageIntervals += s.header.intervalCount;
+      result.coverageBytes += s.header.intervalCount * sizeof(EpdUnicodeInterval);
+    } else if (s.bmpIntervals) {
+      result.coverageIntervals += s.header.intervalCount;
+      result.coverageBytes += s.header.intervalCount * sizeof(PerStyle::BmpInterval16);
+    }
+
+    result.advanceEntries += advanceTableSize_[i];
+    result.advanceBytes += advanceTableSize_[i] * sizeof(AdvanceEntry);
+
+    if (s.kernLigLoaded) {
+      result.persistentKernBytes +=
+          s.header.kernLeftEntryCount * sizeof(EpdKernClassEntry) +
+          s.header.kernRightEntryCount * sizeof(EpdKernClassEntry);
+      result.persistentLigatureBytes += s.header.ligaturePairCount * sizeof(EpdLigaturePair);
+    }
+
+    result.miniIntervalBytes += s.miniIntervalCapacity * sizeof(EpdUnicodeInterval);
+    result.miniGlyphBytes += s.miniGlyphCapacity * sizeof(EpdGlyph);
+    result.miniBitmapBytes += s.miniBitmapCapacity;
+    result.miniKernBytes += s.miniKernLeftCapacity * sizeof(EpdKernClassEntry) +
+                            s.miniKernRightCapacity * sizeof(EpdKernClassEntry) +
+                            s.miniKernMatrixCapacity * sizeof(int8_t);
+  }
+
+  result.overflowGlyphs = overflowCount_;
+  for (uint32_t i = 0; i < overflowCount_; ++i) {
+    if (overflow_[i].bitmap) result.overflowBitmapBytes += overflow_[i].glyph.dataLength;
+  }
+
+  result.totalBytes = result.coverageBytes + result.advanceBytes + result.persistentKernBytes +
+                      result.persistentLigatureBytes + result.miniIntervalBytes + result.miniGlyphBytes +
+                      result.miniBitmapBytes + result.miniKernBytes + result.overflowBitmapBytes;
+  return result;
+}
+#endif
 
 // --- Public accessors ---
 

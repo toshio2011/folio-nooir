@@ -404,8 +404,10 @@ void ReadingStatsActivity::renderTabs() const {
     const auto style = selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
     const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, label, style);
     renderer.drawText(SMALL_FONT_ID, i * tabWidth + (tabWidth - textWidth) / 2, y, label, true, style);
+    if (i < 3) renderer.drawLine((i + 1) * tabWidth, y + 4, (i + 1) * tabWidth, y + 18);
     if (selected) renderer.drawLine(i * tabWidth + 10, y + 20, (i + 1) * tabWidth - 11, y + 20, 2, true);
   }
+  renderer.drawLine(0, y + 24, width - 1, y + 24);
 }
 
 void ReadingStatsActivity::drawSevenDayChart(const int x, const int y, const int width, const int height) const {

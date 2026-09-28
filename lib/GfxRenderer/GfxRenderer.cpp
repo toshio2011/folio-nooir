@@ -22,7 +22,16 @@
 // project source headers as library dependencies.
 #include "../../src/fontIds.h"
 
+#ifndef NOOIR_INTERFACE_FONT_DIAGNOSTICS
+#define NOOIR_INTERFACE_FONT_DIAGNOSTICS 0
+#endif
+
 namespace {
+#if NOOIR_INTERFACE_FONT_DIAGNOSTICS
+uint8_t interfaceFontPrepDiagnosticRecords = 0;
+uint8_t interfaceFontPrepHitDiagnosticRecords = 0;
+#endif
+
 
 /**
  * Resolves the requested style to the best available style in the given SD card font.
@@ -358,25 +367,112 @@ int GfxRenderer::getRenderedTextAdvanceX(const int fontId, const char* renderedT
 }
 
 int GfxRenderer::scaleUiFontId(const int fontId) const {
-  if (!uiScaleTextEnabled || uiScalePercent == 100) return fontId;
+  if (!uiScaleTextEnabled || uiScalePercent == 100) {
+    const auto it = uiFontOverrideMap_.find(fontId);
+    return it != uiFontOverrideMap_.end() ? it->second : fontId;
+  }
 
   const bool smaller = uiScalePercent < 95;
   const bool larger = uiScalePercent > 105;
-  if (!smaller && !larger) return fontId;
+  if (!smaller && !larger) {
+    const auto it = uiFontOverrideMap_.find(fontId);
+    return it != uiFontOverrideMap_.end() ? it->second : fontId;
+  }
 
+  int scaledFontId = fontId;
   if (fontId == SMALL_FONT_ID) {
-    return smaller ? SMALL_FONT_ID : UI_10_FONT_ID;
-  }
-  if (fontId == UI_10_FONT_ID) {
-    return smaller ? SMALL_FONT_ID : UI_12_FONT_ID;
-  }
-  if (fontId == UI_12_FONT_ID) {
-    if (smaller) return UI_10_FONT_ID;
+    scaledFontId = smaller ? SMALL_FONT_ID : UI_10_FONT_ID;
+  } else if (fontId == UI_10_FONT_ID) {
+    scaledFontId = smaller ? SMALL_FONT_ID : UI_12_FONT_ID;
+  } else if (fontId == UI_12_FONT_ID) {
+    if (smaller) scaledFontId = UI_10_FONT_ID;
     // Use the same-size reader font for the larger UI-scale fallback. Keep a
     // safe fallback for slim builds that omit the larger font bundle.
-    return fontMap.count(NOTOSERIF_14_FONT_ID) ? NOTOSERIF_14_FONT_ID : UI_12_FONT_ID;
+    else scaledFontId = fontMap.count(NOTOSERIF_14_FONT_ID) ? NOTOSERIF_14_FONT_ID : UI_12_FONT_ID;
   }
-  return fontId;
+  auto it = uiFontOverrideMap_.find(scaledFontId);
+  if (it != uiFontOverrideMap_.end()) return it->second;
+  // UI scale's larger UI_12 target is a 14 pt built-in reader font. Keep the
+  // selected interface family rather than silently switching families.
+  it = uiFontOverrideMap_.find(fontId);
+  return it != uiFontOverrideMap_.end() ? it->second : scaledFontId;
+}
+
+void GfxRenderer::prepareUiTextIfNeeded(const int fontId, const char* text,
+                                        const EpdFontFamily::Style style) const {
+  if (text == nullptr || *text == '\0' || !isUiFontOverride(fontId)) return;
+
+  // UI labels are short, but cap hashing so a malformed caller cannot turn
+  // this guard into an unbounded scan. The cache only suppresses repeated
+  // preparation; the SD font's own mini/overflow caches remain authoritative.
+  static constexpr size_t kMaxHashBytes = 128;
+  static constexpr uint32_t kFnvOffset = 2166136261u;
+  static constexpr uint32_t kFnvPrime = 16777619u;
+  uint32_t hash = kFnvOffset;
+  size_t length = 0;
+  for (; text[length] != '\0' && length < kMaxHashBytes; ++length) {
+    hash ^= static_cast<uint8_t>(text[length]);
+    hash *= kFnvPrime;
+  }
+  hash ^= static_cast<uint32_t>(length);
+  hash *= kFnvPrime;
+  const uint8_t styleMask = static_cast<uint8_t>(1U << (static_cast<uint8_t>(style) & 0x03));
+
+  for (uint8_t i = 0; i < uiPreparedTextCount_; ++i) {
+    const auto& entry = uiPreparedText_[i];
+    if (entry.hash == hash && entry.fontId == fontId && entry.styleMask == styleMask) {
+#if NOOIR_INTERFACE_FONT_DIAGNOSTICS
+      if (interfaceFontPrepHitDiagnosticRecords < 48) {
+        LOG_INF("UIFONT", "hit font=%d style=0x%02X hash=%08lX", fontId, styleMask,
+                static_cast<unsigned long>(hash));
+        ++interfaceFontPrepHitDiagnosticRecords;
+      }
+#endif
+      return;
+    }
+  }
+
+  auto fontIt = sdCardFonts_.find(fontId);
+  if (fontIt == sdCardFonts_.end() || fontIt->second == nullptr) return;
+  if (fontIt->second->hasPreparedGlyphs(text, styleMask)) {
+#if NOOIR_INTERFACE_FONT_DIAGNOSTICS
+    if (interfaceFontPrepDiagnosticRecords < 48) {
+      LOG_INF("UIFONT", "cover font=%d style=0x%02X hash=%08lX", fontId, styleMask,
+              static_cast<unsigned long>(hash));
+      ++interfaceFontPrepDiagnosticRecords;
+    }
+#endif
+    if (uiPreparedTextCount_ < UI_PREPARED_TEXT_CAP) {
+      uiPreparedText_[uiPreparedTextCount_++] = {hash, fontId, styleMask};
+    } else {
+      uiPreparedText_[uiPreparedTextNext_] = {hash, fontId, styleMask};
+      uiPreparedTextNext_ = static_cast<uint8_t>((uiPreparedTextNext_ + 1) % UI_PREPARED_TEXT_CAP);
+    }
+    return;
+  }
+  // Prepare only the selected style and only this bounded label. A failed or
+  // partial preparation is still remembered; render-time on-demand loading is
+  // the bounded recovery path and repeated redraws must not retry SD I/O.
+  const unsigned long startedMs = millis();
+  const auto before = fontIt->second->getStats();
+  (void)fontIt->second->prewarm(text, styleMask);
+#if NOOIR_INTERFACE_FONT_DIAGNOSTICS
+  if (interfaceFontPrepDiagnosticRecords < 48) {
+    const auto after = fontIt->second->getStats();
+    LOG_INF("UIFONT", "prep font=%d style=0x%02X ms=%lu sd=%lu seek=%lu glyph=%lu", fontId, styleMask,
+            millis() - startedMs, static_cast<unsigned long>(after.sdReadTimeMs - before.sdReadTimeMs),
+            static_cast<unsigned long>(after.seekCount - before.seekCount),
+            static_cast<unsigned long>(after.uniqueGlyphs - before.uniqueGlyphs));
+    ++interfaceFontPrepDiagnosticRecords;
+  }
+#endif
+
+  if (uiPreparedTextCount_ < UI_PREPARED_TEXT_CAP) {
+    uiPreparedText_[uiPreparedTextCount_++] = {hash, fontId, styleMask};
+  } else {
+    uiPreparedText_[uiPreparedTextNext_] = {hash, fontId, styleMask};
+    uiPreparedTextNext_ = static_cast<uint8_t>((uiPreparedTextNext_ + 1) % UI_PREPARED_TEXT_CAP);
+  }
 }
 
 uint8_t GfxRenderer::getFontPointSize(const int fontId) const {
@@ -879,6 +975,10 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
 
   std::string visual;
   const char* renderedText = resolveVisualText(text, visual, baseDir);
+  // Prepare the bounded UI label before measurement. Without this hook the
+  // first width pass could cause one SD glyph read at a time, before drawText
+  // gets a chance to batch the same label.
+  prepareUiTextIfNeeded(resolvedFontId, renderedText, style);
   if (hasArabicFallbackCandidate(resolvedFontId, renderedText, style)) {
     return getRenderedTextAdvanceX(resolvedFontId, renderedText, style);
   }
@@ -1018,6 +1118,8 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
     }
     return;
   }
+
+  prepareUiTextIfNeeded(resolvedFontId, renderedText, style);
 
   if (mixedArabicFallback) {
     const char* textCursor = renderedText;
@@ -2649,6 +2751,7 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
 
   // Route CJK-bearing strings to the fallback font (see resolveTextFontId).
   const int resolvedFontId = resolveTextFontId(fontId, text, style);
+  prepareUiTextIfNeeded(resolvedFontId, text, style);
   const auto fontIt = fontMap.find(resolvedFontId);
   if (fontIt == fontMap.end()) {
     LOG_ERR("GFX", "Font %d not found", resolvedFontId);

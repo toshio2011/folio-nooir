@@ -295,6 +295,7 @@ void EpubReaderBookmarksActivity::render(RenderLock&&) {
   const int titleX =
       contentX + (contentWidth - renderer.getTextWidth(UI_12_FONT_ID, tr(STR_BOOKMARKS), EpdFontFamily::BOLD)) / 2;
   renderer.drawText(UI_12_FONT_ID, titleX, 15 + contentY, tr(STR_BOOKMARKS), true, EpdFontFamily::BOLD);
+  renderer.drawLine(contentX + 12, listY - 8, contentX + contentWidth - 12, listY - 8);
 
   const auto getBookmarkTitle = [this](int index) {
     return bookmarks.at(confirmingDelete ? selectorIndex : index).bookmark.summary;

@@ -33,6 +33,7 @@ enum class SettingAction {
   ToDoList,
   SettingsProfiles,
   ClearFavoriteSleepImage,
+  QuickActions,
 };
 
 struct SettingInfo {
@@ -183,6 +184,7 @@ class SettingsActivity final : public Activity {
   void enterCategory(int categoryIndex);
   void toggleCurrentSetting();
   void openSleepTimeoutPicker();
+  void openQuickActionsPicker();
   void rebuildSettingsLists();
   void syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged);
 

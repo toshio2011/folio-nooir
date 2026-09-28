@@ -3,6 +3,7 @@
 #include <GfxRenderer.h>
 
 #include <cstdio>
+#include <cstring>
 
 #include "BleInput.h"
 #include "CrossPointSettings.h"
@@ -27,7 +28,7 @@ const uint8_t BleButtonMapActivity::kFunctionCount =
 void BleButtonMapActivity::onEnter() {
   Activity::onEnter();
   step = Step::WaitForKey;
-  capturedKind = 0xFF;
+  capturedCount = 0;
   functionIndex = 0;
   mappedInput.setBleCaptureMode(true);
   requestUpdate();
@@ -38,12 +39,25 @@ void BleButtonMapActivity::onExit() {
   Activity::onExit();
 }
 
-bool BleButtonMapActivity::assignCapturedKey(MappedInputManager::Button button) {
-  if (capturedKind > 1) return false;
+bool BleButtonMapActivity::assignCapturedSignature(MappedInputManager::Button button) {
+  if (capturedCount == 0 || capturedCount > MappedInputManager::kBleSignatureMaxEvents) return false;
   const uint8_t btn = static_cast<uint8_t>(button);
+  auto matches = [&](const CrossPointSettings::BleKeyMapEntry& entry) {
+    const uint8_t count = entry.signatureCount > 0 ? entry.signatureCount : 1;
+    if (count != capturedCount) return false;
+    for (uint8_t i = 0; i < count; ++i) {
+      const uint16_t encoded = entry.signatureCount > 0
+                                   ? entry.signature[i]
+                                   : (static_cast<uint16_t>(entry.keyKind) << 8) | entry.keyValue;
+      if (static_cast<uint8_t>(encoded >> 8) != capturedKinds[i] ||
+          static_cast<uint8_t>(encoded & 0xFF) != capturedValues[i])
+        return false;
+    }
+    return true;
+  };
   // Update an existing binding for this key, if present.
   for (auto& e : SETTINGS.bleKeyMap) {
-    if (e.button != 0xFF && e.keyKind == capturedKind && e.keyValue == capturedValue) {
+    if (e.button != 0xFF && matches(e)) {
       e.button = btn;
       SETTINGS.saveToFile();
       return true;
@@ -52,9 +66,12 @@ bool BleButtonMapActivity::assignCapturedKey(MappedInputManager::Button button) 
   // Otherwise take a free slot.
   for (auto& e : SETTINGS.bleKeyMap) {
     if (e.button == 0xFF || e.keyKind == 0xFF) {
-      e.keyKind = capturedKind;
-      e.keyValue = capturedValue;
+      e.keyKind = capturedKinds[0];
+      e.keyValue = capturedValues[0];
       e.button = btn;
+      e.signatureCount = capturedCount;
+      for (uint8_t i = 0; i < capturedCount; ++i)
+        e.signature[i] = (static_cast<uint16_t>(capturedKinds[i]) << 8) | capturedValues[i];
       SETTINGS.saveToFile();
       return true;
     }
@@ -70,11 +87,10 @@ void BleButtonMapActivity::loop() {
   }
 
   if (step == Step::WaitForKey) {
-    uint8_t kind = 0xFF;
-    uint8_t value = 0;
-    if (mappedInput.takeCapturedBleKey(kind, value)) {
-      capturedKind = kind;
-      capturedValue = value;
+    uint8_t count = 0;
+    if (mappedInput.takeCapturedBleSignature(capturedKinds, capturedValues,
+                                             MappedInputManager::kBleSignatureMaxEvents, count)) {
+      capturedCount = count;
       functionIndex = 0;
       step = Step::SelectFunction;
       requestUpdate();
@@ -93,13 +109,13 @@ void BleButtonMapActivity::loop() {
   });
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    if (!assignCapturedKey(kFunctions[functionIndex].button)) {
+    if (!assignCapturedSignature(kFunctions[functionIndex].button)) {
       // Table full: surface it instead of silently dropping the binding.
       errorUntil = millis() + 2500;
     }
     // Back to capturing so the user can map the next remote button.
     step = Step::WaitForKey;
-    capturedKind = 0xFF;
+    capturedCount = 0;
     requestUpdate();
   }
 }
@@ -124,7 +140,10 @@ void BleButtonMapActivity::render(RenderLock&&) {
     for (const auto& e : SETTINGS.bleKeyMap) {
       if (e.button == 0xFF) continue;
       char keyName[24];
-      bleinput::describeKey(e.keyKind, e.keyValue, keyName, sizeof(keyName));
+      const uint16_t first = e.signatureCount > 0 ? e.signature[0]
+                                                   : (static_cast<uint16_t>(e.keyKind) << 8) | e.keyValue;
+      bleinput::describeKey(static_cast<uint8_t>(first >> 8), static_cast<uint8_t>(first & 0xFF), keyName,
+                            sizeof(keyName));
       const char* fnName = "";
       for (uint8_t i = 0; i < kFunctionCount; i++) {
         if (static_cast<uint8_t>(kFunctions[i].button) == e.button) {
@@ -133,13 +152,23 @@ void BleButtonMapActivity::render(RenderLock&&) {
         }
       }
       char line[64];
-      snprintf(line, sizeof(line), "%s  ->  %s", keyName, fnName);
+      if (e.signatureCount > 1) {
+        snprintf(line, sizeof(line), "%s +%u  ->  %s", keyName,
+                 static_cast<unsigned>(e.signatureCount - 1), fnName);
+      } else {
+        snprintf(line, sizeof(line), "%s  ->  %s", keyName, fnName);
+      }
       GUI.drawHelpText(renderer, Rect{0, topOffset + row * 22, pageWidth, 20}, line);
       row++;
     }
   } else {
-    char captured[24];
-    bleinput::describeKey(capturedKind, capturedValue, captured, sizeof(captured));
+    char captured[48] = {};
+    bleinput::describeKey(capturedKinds[0], capturedValues[0], captured, sizeof(captured));
+    if (capturedCount > 1) {
+      char suffix[16];
+      snprintf(suffix, sizeof(suffix), " +%u", static_cast<unsigned>(capturedCount - 1));
+      strncat(captured, suffix, sizeof(captured) - strlen(captured) - 1);
+    }
     GUI.drawSubHeader(renderer, Rect{0, metrics.topPadding + metrics.headerHeight, pageWidth, metrics.tabBarHeight},
                       captured);
     GUI.drawList(

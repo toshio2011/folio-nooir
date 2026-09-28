@@ -590,3 +590,24 @@ The goal is: **make Nooir look much more like Nooir while keeping it lightweight
 The detailed Bluetooth Remote Input research, HID-capture architecture, firmware comparison notes, memory/power test matrices, evidence gaps, and future implementation sequence are preserved in [`docs/BLE_REMOTE_RESEARCH.md`](docs/BLE_REMOTE_RESEARCH.md). Treat that dossier as research input only; re-audit upstream refs before implementation because BLE stacks and firmware branches may change.
 
 The BLE research is intentionally ecosystem-wide rather than limited to obvious page-turner forks. See [`docs/BLE_ECOSYSTEM_SURVEY.md`](docs/BLE_ECOSYSTEM_SURVEY.md) for the 47-entry catalog screen, additional BLE lineages, transferable memory/power/input patterns, and the expanded future audit queue.
+
+## RC1 frozen recovery checkpoint
+
+The authoritative 1.6.3 RC1 recovery status is recorded in the final section of
+[`HANDOFF.md`](HANDOFF.md). It records **FULL RECOVERY COMPLETE**, **FINAL
+MICRO-AUDIT PASS**, and **SOURCE FROZEN FOR PHYSICAL X4 VALIDATION**.
+
+The frozen candidate is branch `recovery/folio-nooir-1.6.3-full-2` in
+`C:\Users\fatiha\Documents\Codex\folio-nooir-1.6.3-full-recovery`. It includes
+the recovered EPUB/font/memory lifecycle work, queued page turns and
+final-quality recovery, Unlimited Recent, two-row Spine, Book Info/Synopsis,
+web pagination plus legacy API compatibility, Interface Font, E1-E4 polish,
+UI Scale, Quick Actions configuration/persistence, shared status sanitization,
+and preserved baseline formats and services.
+
+RC1 validation is 40/40 focused tests passing. FreeInk remains pinned to
+`958720659ea289ae325e83db20049d0ea844800d`, `JD_FASTDECODE=0`,
+`SECTION_FILE_VERSION=41`, with no persistence bump. BLE is experimental-only
+and disabled in normal production. The exact old-X4 diagnostic target and both
+final artifact hashes are recorded in `HANDOFF.md`; do not substitute an
+unhashed or rebuilt binary.

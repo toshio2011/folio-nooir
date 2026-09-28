@@ -1,6 +1,7 @@
 #include "FontCacheManager.h"
 
 #include <FontDecompressor.h>
+#include <GfxRenderer.h>
 #include <Logging.h>
 #include <SdCardFont.h>
 #include <Utf8.h>
@@ -11,15 +12,19 @@
 #include "../../src/util/EpubDiagnostics.h"
 
 FontCacheManager::FontCacheManager(const std::map<int, EpdFontFamily>& fontMap,
-                                   const std::map<int, SdCardFont*>& sdCardFonts)
-    : fontMap_(fontMap), sdCardFonts_(sdCardFonts) {}
+                                   const std::map<int, SdCardFont*>& sdCardFonts, GfxRenderer* renderer)
+    : fontMap_(fontMap), sdCardFonts_(sdCardFonts), renderer_(renderer) {}
 
 void FontCacheManager::setFontDecompressor(FontDecompressor* d) { fontDecompressor_ = d; }
 
 void FontCacheManager::clearCache() {
   if (fontDecompressor_) fontDecompressor_->clearCache();
   for (auto& [id, font] : sdCardFonts_) {
-    font->clearCache();
+    // Interface-font preparation is intentionally retained across reader and
+    // dictionary prewarm scopes.  These fonts are still bounded by the
+    // existing SD-font mini/overflow cache; clearing them here only forces the
+    // same UI labels to seek the SD card again on the next redraw.
+    if (!(renderer_ && renderer_->isUiFontOverride(id))) font->clearCache();
   }
 }
 
@@ -31,7 +36,7 @@ void FontCacheManager::releaseSdFontCaches() {
   // preserves its advance tables and full coverage/kerning/ligature metadata.
   if (fontDecompressor_) fontDecompressor_->clearCache();
   for (auto& [id, font] : sdCardFonts_) {
-    if (font) font->releaseDisposableCaches();
+    if (font && !(renderer_ && renderer_->isUiFontOverride(id))) font->releaseDisposableCaches();
   }
   EpubDiagnostics::record("sd_font_release_end");
 }

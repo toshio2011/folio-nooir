@@ -239,3 +239,126 @@ TEST(SpineShelfPlanner, PlantPlacementIsDeterministicAndNeverOverlapsBooks) {
     EXPECT_TRUE(separated);
   }
 }
+
+TEST(SpineShelfPlanner, TwoRowShelfIsDeterministicAndUsesTwoRows) {
+  const auto input = books();
+  const Rect bounds{0, 0, 300, 300};
+  const auto first = SpineShelfPlanner::twoRowPageForSelection(input.data(), input.size(), 0, bounds);
+  const auto second = SpineShelfPlanner::twoRowPageForSelection(input.data(), input.size(), 0, bounds);
+  ASSERT_EQ(first.itemCount, 10);
+  ASSERT_EQ(first.itemCount, second.itemCount);
+  const auto topShelf = SpineShelfPlanner::twoRowShelfRect(first, bounds, 0);
+  const auto bottomShelf = SpineShelfPlanner::twoRowShelfRect(first, bounds, 1);
+  bool sawTop = false;
+  bool sawBottom = false;
+  for (size_t i = 0; i < first.itemCount; ++i) {
+    EXPECT_EQ(first.slots[i].rect.x, second.slots[i].rect.x);
+    EXPECT_EQ(first.slots[i].rect.y, second.slots[i].rect.y);
+    EXPECT_TRUE(first.slots[i].rect.contains(first.slots[i].rect.x, first.slots[i].rect.y));
+    if (first.slots[i].rect.y + first.slots[i].rect.height <= topShelf.y) sawTop = true;
+    if (first.slots[i].rect.y + first.slots[i].rect.height <= bottomShelf.y &&
+        first.slots[i].rect.y >= topShelf.y) sawBottom = true;
+  }
+  EXPECT_TRUE(sawTop);
+  EXPECT_TRUE(sawBottom);
+  EXPECT_LT(topShelf.y, bottomShelf.y);
+  EXPECT_EQ(topShelf.height, SpineShelfPlanner::TWO_ROW_SHELF_HEIGHT);
+  EXPECT_EQ(bottomShelf.height, SpineShelfPlanner::TWO_ROW_SHELF_HEIGHT);
+  EXPECT_EQ(topShelf.x, bounds.x);
+  EXPECT_EQ(topShelf.width, bounds.width);
+  EXPECT_EQ(bottomShelf.x, bounds.x);
+  EXPECT_EQ(bottomShelf.width, bounds.width);
+}
+
+TEST(SpineShelfPlanner, TwoRowSpinesStayThinAndInsideTheBoundedShelves) {
+  const auto input = books();
+  const Rect bounds{0, 0, 300, 300};
+  const auto page = SpineShelfPlanner::twoRowPageForSelection(input.data(), input.size(), 0, bounds);
+  ASSERT_EQ(page.itemCount, 10);
+  const auto topShelf = SpineShelfPlanner::twoRowShelfRect(page, bounds, 0);
+  const auto bottomShelf = SpineShelfPlanner::twoRowShelfRect(page, bounds, 1);
+  for (size_t i = 0; i < page.itemCount; ++i) {
+    EXPECT_GE(page.slots[i].rect.width, SpineShelfPlanner::TWO_ROW_MIN_BOOK_WIDTH);
+    EXPECT_LE(page.slots[i].rect.width, SpineShelfPlanner::TWO_ROW_MAX_BOOK_WIDTH);
+    EXPECT_GT(page.slots[i].rect.height, 0);
+    const bool topRow = page.slots[i].rect.y + page.slots[i].rect.height <= topShelf.y;
+    EXPECT_LE(page.slots[i].rect.y + page.slots[i].rect.height, (topRow ? topShelf : bottomShelf).y);
+  }
+  const auto lowerShelf = SpineShelfPlanner::twoRowShelfRect(page, bounds, 1);
+  EXPECT_LE(lowerShelf.y + lowerShelf.height, bounds.y + bounds.height);
+}
+
+TEST(SpineShelfPlanner, TwoRowCentersEachPopulatedRowAndOmitsEmptyShelf) {
+  const auto input = books();
+  const Rect bounds{0, 0, 480, 300};
+  const auto page = SpineShelfPlanner::twoRowPageForSelection(input.data(), 3, 0, bounds);
+  ASSERT_EQ(page.itemCount, 3);
+  const int shelfCenter = bounds.x + bounds.width / 2;
+  size_t topCount = 0;
+  while (topCount < page.itemCount && page.slots[topCount].rect.y + page.slots[topCount].rect.height <=
+                                           SpineShelfPlanner::twoRowShelfRect(page, bounds, 0).y) {
+    ++topCount;
+  }
+  ASSERT_GT(topCount, 0);
+  const int topLeft = page.slots[0].rect.x;
+  const int topRight = page.slots[topCount - 1].rect.x + page.slots[topCount - 1].rect.width;
+  EXPECT_LE(std::abs((topLeft + topRight) / 2 - shelfCenter), 1);
+  const auto topShelf = SpineShelfPlanner::twoRowShelfRect(page, bounds, 0);
+  const auto bottomShelf = SpineShelfPlanner::twoRowShelfRect(page, bounds, 1);
+  EXPECT_EQ(topShelf.width, bounds.width);
+  EXPECT_EQ(bottomShelf.width, 0);
+  EXPECT_EQ(bottomShelf.height, 0);
+}
+
+TEST(SpineShelfPlanner, TwoRowPlantIsDeterministicAndNeverOverlapsBooks) {
+  const auto input = books();
+  const Rect bounds{0, 0, 900, 300};
+  const auto first = SpineShelfPlanner::twoRowPageForSelection(input.data(), input.size(), 0, bounds);
+  const auto second = SpineShelfPlanner::twoRowPageForSelection(input.data(), input.size(), 0, bounds);
+  for (size_t row = 0; row < 2; ++row) {
+    EXPECT_EQ(first.plants[row].visible, second.plants[row].visible);
+    if (!first.plants[row].visible) continue;
+    EXPECT_EQ(first.plants[row].rect.x, second.plants[row].rect.x);
+    for (size_t i = 0; i < first.itemCount; ++i) {
+      const auto& bookRect = first.slots[i].rect;
+      const auto shelf = SpineShelfPlanner::twoRowShelfRect(first, bounds, row);
+      const bool sameRow = first.slots[i].rect.y + first.slots[i].rect.height <= shelf.y;
+      if (!sameRow) continue;
+      const bool separated = first.plants[row].rect.x + first.plants[row].rect.width <= bookRect.x ||
+                             bookRect.x + bookRect.width <= first.plants[row].rect.x;
+      EXPECT_TRUE(separated);
+    }
+  }
+}
+
+TEST(SpineShelfPlanner, TwoRowCapacityComesFromGeometryRatherThanTenBookCap) {
+  // The evolved geometry can legitimately fit twenty books on this shelf.
+  // Use enough books to exercise a real page boundary while still proving
+  // that a page can hold more than the old ten-book limit.
+  std::array<SpineShelfPlanner::Book, 40> input{};
+  for (auto& book : input) book = {"same-width-book", "Title", 0, "Author"};
+
+  const Rect bounds{0, 0, 480, 300};
+  const auto page = SpineShelfPlanner::twoRowPageForSelection(input.data(), input.size(), 0, bounds);
+  EXPECT_GT(page.itemCount, SpineShelfPlanner::MAX_BOOKS);
+  EXPECT_LE(page.itemCount, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY);
+  EXPECT_GT(page.pageCount, 1);
+}
+
+TEST(SpineShelfPlanner, TwoRowShelfPaginatesAndPreservesHitSelection) {
+  const auto input = books();
+  const Rect bounds{0, 0, 180, 260};
+  const auto first = SpineShelfPlanner::twoRowPageForSelection(input.data(), input.size(), 0, bounds);
+  ASSERT_GT(first.itemCount, 0);
+  EXPECT_GT(first.pageCount, 1);
+  const size_t next = SpineShelfPlanner::twoRowNextPageStart(input.data(), input.size(), 0, bounds);
+  ASSERT_GT(next, first.firstIndex);
+  const auto nextPage = SpineShelfPlanner::twoRowPageForSelection(input.data(), input.size(), next, bounds);
+  EXPECT_EQ(nextPage.firstIndex, next);
+  EXPECT_EQ(SpineShelfPlanner::twoRowPreviousPageStart(input.data(), input.size(), next, bounds), 0u);
+  for (size_t i = 0; i < nextPage.itemCount; ++i) {
+    const auto& rect = nextPage.slots[i].rect;
+    EXPECT_TRUE(rect.contains(rect.x, rect.y));
+    EXPECT_FALSE(rect.contains(rect.x + rect.width, rect.y));
+  }
+}

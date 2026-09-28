@@ -35,8 +35,9 @@ class BleButtonMapActivity final : public Activity {
   enum class Step { WaitForKey, SelectFunction };
   Step step = Step::WaitForKey;
 
-  uint8_t capturedKind = 0xFF;
-  uint8_t capturedValue = 0;
+  uint8_t capturedCount = 0;
+  uint8_t capturedKinds[MappedInputManager::kBleSignatureMaxEvents] = {};
+  uint8_t capturedValues[MappedInputManager::kBleSignatureMaxEvents] = {};
   int functionIndex = 0;
 
   // Transient "mapping table full" banner.
@@ -46,5 +47,5 @@ class BleButtonMapActivity final : public Activity {
 
   // Bind the captured key to the chosen logical button in SETTINGS.bleKeyMap and
   // persist. Returns false when the table is full and the key is new.
-  bool assignCapturedKey(MappedInputManager::Button button);
+  bool assignCapturedSignature(MappedInputManager::Button button);
 };

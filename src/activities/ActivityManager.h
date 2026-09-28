@@ -4,6 +4,8 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
+#include <BoardConfig.h>
+
 #include <atomic>
 #include <cassert>
 #include <memory>
@@ -73,6 +75,10 @@ class ActivityManager {
   // interpreted as Home/Back and leave the book.
   bool suppressRestoredReaderInput = false;
   bool sleepRequested = false;
+#if FREEINK_CAP_BLE_HID_HOST
+  char pendingBluetoothNotification[64] = {};
+  bool hasBluetoothNotification = false;
+#endif
 
  public:
   explicit ActivityManager(GfxRenderer& renderer, MappedInputManager& mappedInput)
@@ -120,7 +126,10 @@ class ActivityManager {
   void requestSleep();
   bool consumeSleepRequest();
   bool isReaderActivity() const;
+  const char* currentActivityName() const;
   bool bluetoothShouldBeActive() const;
+  bool bluetoothResourceSensitive() const;
+  void postBluetoothNotification(const char* message);
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;
 
