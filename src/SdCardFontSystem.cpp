@@ -160,7 +160,8 @@ void SdCardFontSystem::ensureUiLoaded(GfxRenderer& renderer) {
   if (!registryChanged && uiAttemptedFamily_ == wantedFamily) return;
 
   renderer.clearUiFontOverrides();
-  if (!currentFamily.empty()) uiManager_.unloadAll(renderer, false);
+  // beginFamilyUiSizes() owns the UI-manager teardown.  Keep the renderer
+  // mappings cleared before it runs, but avoid unloading the same manager twice.
   uiAttemptedFamily_ = wantedFamily;
 
   if (wantedFamily[0] == '\0') return;
