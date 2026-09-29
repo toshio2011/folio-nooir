@@ -53,11 +53,10 @@ class PersistableStoreBase {
   // does not exist (expected on first boot); logs on read/parse failure.
   static bool readDocFromFile(const char* path, JsonDocument& doc);
 
-  // Settings files have no global schema number, so validation deliberately
-  // checks only the stable object shape and the presence of at least one
-  // known settings key.  This keeps older settings files compatible while
-  // rejecting empty/profile/wrong-root JSON before it can replace a useful
-  // recovery candidate.
+  // Settings files have no global schema number.  Validation therefore uses
+  // two long-lived, independent serializer identities rather than requiring
+  // a version-specific complete field set.  Empty/profile/wrong-root JSON and
+  // trivial recognized-key fragments must not replace a useful candidate.
   static bool isSemanticallyValidSettingsDocument(JsonVariantConst doc);
 
  protected:

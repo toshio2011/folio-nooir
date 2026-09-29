@@ -1018,7 +1018,7 @@ void BaseTheme::drawTextField(const GfxRenderer& renderer, Rect rect, const int 
 }
 
 void BaseTheme::drawOptionPopup(const GfxRenderer& renderer, const char* title, const std::vector<std::string>& options,
-                                int selectedIndex) const {
+                                int selectedIndex, int firstVisibleIndex, int visibleCount) const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
@@ -1043,7 +1043,10 @@ void BaseTheme::drawOptionPopup(const GfxRenderer& renderer, const char* title, 
   }
 
   const int optionCount = static_cast<int>(options.size());
-  const int listHeight = rowHeight * optionCount + itemSpacing * (optionCount - 1);
+  if (optionCount <= 0) return;
+  visibleCount = visibleCount <= 0 ? optionCount : std::clamp(visibleCount, 1, optionCount);
+  firstVisibleIndex = std::clamp(firstVisibleIndex, 0, std::max(0, optionCount - visibleCount));
+  const int listHeight = rowHeight * visibleCount + itemSpacing * (visibleCount - 1);
   constexpr int selectionCheckWidth = 14;
   const int dialogW = std::min((maxTextWidth + innerPadding * 2 + selectionHPadding * 2 + selectionCheckWidth) * 12 / 10,
                                pageWidth - metrics.optionPopupDialogSideMargin * 2);
@@ -1080,14 +1083,24 @@ void BaseTheme::drawOptionPopup(const GfxRenderer& renderer, const char* title, 
 
   y += metrics.optionPopupTitleGap;
 
+  const bool hasPrevious = firstVisibleIndex > 0;
+  const bool hasNext = firstVisibleIndex + visibleCount < optionCount;
+  const int arrowX = dialogX + dialogW - innerPadding - renderer.getTextWidth(SMALL_FONT_ID, "^", EpdFontFamily::BOLD);
+  if (hasPrevious)
+    renderer.drawText(SMALL_FONT_ID, arrowX, dialogY + innerPadding, "^", true, EpdFontFamily::BOLD);
+  if (hasNext)
+    renderer.drawText(SMALL_FONT_ID, arrowX, dialogY + dialogH - innerPadding - renderer.getLineHeight(SMALL_FONT_ID), "v",
+                      true, EpdFontFamily::BOLD);
+
   const int itemRectX = dialogX + innerPadding;
   const int itemRectW = dialogW - innerPadding * 2;
   const int selectionRadius = metrics.optionPopupSelectionRadius;
 
-  for (int i = 0; i < optionCount; i++) {
+  for (int i = 0; i < visibleCount; i++) {
+    const int optionIndex = firstVisibleIndex + i;
     const int itemY = y + i * (rowHeight + itemSpacing);
-    const bool selected = (i == selectedIndex);
-    const char* labelText = options[i].c_str();
+    const bool selected = (optionIndex == selectedIndex);
+    const char* labelText = options[optionIndex].c_str();
 
     if (metrics.optionPopupDrawAllRows || selected) {
       Color rowColor;

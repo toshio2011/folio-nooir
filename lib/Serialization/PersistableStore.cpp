@@ -32,21 +32,26 @@ bool PersistableStoreBase::isSemanticallyValidSettingsDocument(JsonVariantConst 
 
   // Profile documents use the same field names as settings but carry this
   // reserved marker.  Never let a profile be mistaken for the main settings
-  // document during recovery.
-  if (!doc["_profileSchema"].isNull()) return false;
+  // document during recovery.  Test key presence rather than value so even a
+  // profile carrying a null marker cannot be accepted as main settings.
+  const JsonObjectConst settings = doc.as<JsonObjectConst>();
+  if (settings["_profileSchema"].is<JsonVariantConst>()) return false;
 
-  // These keys have existed across the RC1 settings history.  Do not require
-  // any one version's complete field set: the purpose is only to distinguish
-  // a real settings object from {}, a profile object, or unrelated JSON.
-  constexpr const char* knownKeys[] = {
-      "sleepScreen",       "uiTheme",          "fontFamily",       "fontSize",          "lineSpacing",
-      "orientation",       "statusBarClock",  "statusBarBattery", "refreshFrequency", "language",
-      "recentBookLayout",  "finishedBookLayout", "uiScalePercent", "quickActionSlot1", "sleepModeLayoutVersion",
-  };
-  for (const char* key : knownKeys) {
-    if (!doc[key].isNull()) return true;
-  }
-  return false;
+  // JSON settings have no global schema number.  Use three independent,
+  // long-lived serializer identities instead of a language field (which was
+  // added later) or an arbitrary recognized-key count:
+  //   * reader: font family + font size;
+  //   * sleep/power: sleep mode + the original or renamed sleep timeout;
+  //   * display: orientation + the long-lived fading-fix setting.
+  // These fields were emitted together by the first JSON serializer and remain
+  // present in current settings.  Requiring all three groups rejects empty and
+  // tiny fragments without requiring recently introduced settings.
+  const bool hasReaderIdentity = settings["fontFamily"].is<uint8_t>() && settings["fontSize"].is<uint8_t>();
+  const bool hasSleepIdentity = settings["sleepScreen"].is<uint8_t>() &&
+                                (settings["sleepTimeout"].is<uint8_t>() ||
+                                 settings["sleepTimeoutMinutes"].is<uint8_t>());
+  const bool hasDisplayIdentity = settings["orientation"].is<uint8_t>() && settings["fadingFix"].is<uint8_t>();
+  return hasReaderIdentity && hasSleepIdentity && hasDisplayIdentity;
 }
 
 bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& doc) {

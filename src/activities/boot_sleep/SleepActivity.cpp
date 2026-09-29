@@ -348,6 +348,12 @@ const char* sleepStatusText(const BookStatus status, const uint8_t progress) {
   return tr(STR_STATS_STATUS_NEW);
 }
 
+void drawSleepMetric(const GfxRenderer& renderer, const int fontId, const int x, const int y, const int width,
+                     const std::string& value, const EpdFontFamily::Style style = EpdFontFamily::BOLD) {
+  const int textWidth = renderer.getTextWidth(fontId, value.c_str(), style);
+  renderer.drawText(fontId, x + std::max(0, (width - textWidth) / 2), y, value.c_str(), true, style);
+}
+
 SleepClippingSnapshot loadSleepClippingSnapshot() {
   SleepClippingSnapshot snapshot;
   std::vector<std::string> candidates;
@@ -1356,13 +1362,11 @@ void SleepActivity::renderReadingCalendarSleepScreen() const {
   StatisticsSnapshot snapshot = StatisticsSnapshot::build(options);
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
-  const int side = std::max(16, pageWidth / 20);
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int side = metrics.contentSidePadding;
 
   preconditionSleepRefresh(renderer);
   renderer.clearScreen();
-
-  renderer.drawCenteredText(UI_12_FONT_ID, 28, tr(STR_READING_CALENDAR_SLEEP), true, EpdFontFamily::BOLD);
-  renderer.drawLine(side, 54, pageWidth - side - 1, 54);
 
   int year = 0;
   int month = 0;
@@ -1374,13 +1378,11 @@ void SleepActivity::renderReadingCalendarSleepScreen() const {
     return;
   }
 
-  char monthText[16];
-  snprintf(monthText, sizeof(monthText), "%04d-%02d", year, month);
-  renderer.drawCenteredText(UI_12_FONT_ID, 78, monthText, true, EpdFontFamily::BOLD);
-
   std::array<ReadingDayStat, 31> monthDays{};
   uint32_t monthMaxSeconds = 0;
   uint32_t monthSeconds = 0;
+  uint32_t monthPages = 0;
+  uint32_t monthSessions = 0;
   uint16_t activeDays = 0;
   for (const auto& entry : snapshot.days) {
     int entryYear = 0;
@@ -1400,22 +1402,44 @@ void SleepActivity::renderReadingCalendarSleepScreen() const {
     ++activeDays;
     monthMaxSeconds = std::max(monthMaxSeconds, day.seconds);
     monthSeconds = std::min(day.seconds, UINT32_MAX - monthSeconds) + monthSeconds;
+    monthPages = std::min(day.pagesTurned, UINT32_MAX - monthPages) + monthPages;
+    monthSessions = std::min<uint32_t>(UINT32_MAX, monthSessions + day.sessions);
   }
 
   static constexpr const char* WEEKDAYS[] = {"M", "T", "W", "T", "F", "S", "S"};
-  const int gridTop = 112;
-  const int gridWidth = pageWidth - side * 2;
-  const int cellWidth = std::max(1, gridWidth / 7);
-  const int footerReserve = 82;
-  const int cellHeight = std::max(22, std::min(52, (pageHeight - gridTop - footerReserve) / 6));
-  for (int col = 0; col < 7; ++col) {
-    const int labelWidth = renderer.getTextWidth(SMALL_FONT_ID, WEEKDAYS[col]);
-    renderer.drawText(SMALL_FONT_ID, side + col * cellWidth + (cellWidth - labelWidth) / 2, gridTop - 24,
-                      WEEKDAYS[col]);
-  }
   const int monthDaysCount = StatisticsDate::daysInMonth(year, month);
   const uint32_t firstDayKey = static_cast<uint32_t>(year * 10000 + month * 100 + 1);
   const int firstWeekdayOfMonth = StatisticsDate::weekdayMondayFirst(firstDayKey);
+  const int gridRows = std::max(1, (firstWeekdayOfMonth + monthDaysCount + 6) / 7);
+  const int gridWidth = pageWidth - side * 2;
+  const int cellWidth = std::max(1, gridWidth / 7);
+  const int monthLineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  const int weekdayLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
+  const int metricValueHeight = renderer.getLineHeight(UI_10_FONT_ID);
+  const int metricLabelHeight = renderer.getLineHeight(SMALL_FONT_ID);
+  constexpr int monthGap = 8;
+  constexpr int weekdayGap = 4;
+  constexpr int footerGap = 14;
+  const int footerHeight = metricValueHeight + 4 + metricLabelHeight;
+  const int fixedHeight = monthLineHeight + monthGap + weekdayLineHeight + weekdayGap + footerGap + 1 + footerHeight;
+  const int maxCellHeight = std::max(16, (pageHeight - 16 - fixedHeight) / gridRows);
+  const int cellHeight = std::min(48, maxCellHeight);
+  const int contentHeight = monthLineHeight + monthGap + weekdayLineHeight + weekdayGap + gridRows * cellHeight +
+                            footerGap + 1 + footerHeight;
+  const int contentTop = std::max(8, (pageHeight - contentHeight) / 2);
+  const int monthY = contentTop;
+  const int weekdayY = monthY + monthLineHeight + monthGap;
+  const int gridTop = weekdayY + weekdayLineHeight + weekdayGap;
+  const int footerTop = gridTop + gridRows * cellHeight + footerGap;
+
+  char monthText[16];
+  snprintf(monthText, sizeof(monthText), "%04d-%02d", year, month);
+  renderer.drawCenteredText(UI_12_FONT_ID, monthY, monthText, true, EpdFontFamily::BOLD);
+  for (int col = 0; col < 7; ++col) {
+    const int labelWidth = renderer.getTextWidth(SMALL_FONT_ID, WEEKDAYS[col]);
+    renderer.drawText(SMALL_FONT_ID, side + col * cellWidth + (cellWidth - labelWidth) / 2, weekdayY,
+                      WEEKDAYS[col]);
+  }
   for (int dayNumber = 1; dayNumber <= monthDaysCount; ++dayNumber) {
     const int slot = firstWeekdayOfMonth + dayNumber - 1;
     const int row = slot / 7;
@@ -1437,17 +1461,142 @@ void SleepActivity::renderReadingCalendarSleepScreen() const {
     renderer.drawText(SMALL_FONT_ID, x + (cellWidth - dayWidth) / 2, y + 6, dayLabel.c_str(), !whiteText,
                       EpdFontFamily::BOLD);
   }
-  const int footerY = std::min(pageHeight - 46, gridTop + cellHeight * 6 + 30);
-  renderer.drawLine(side, footerY - 14, pageWidth - side, footerY - 14);
-  const std::string total = sleepDuration(monthSeconds);
-  renderer.drawText(SMALL_FONT_ID, side, footerY, total.c_str(), true, EpdFontFamily::BOLD);
-  const std::string daysText = std::to_string(activeDays) + " " + tr(STR_STATS_ACTIVE_DAYS);
-  renderer.drawText(SMALL_FONT_ID, pageWidth - side - renderer.getTextWidth(SMALL_FONT_ID, daysText.c_str()), footerY,
-                    daysText.c_str());
+  renderer.drawLine(side, footerTop - 10, pageWidth - side, footerTop - 10);
+  const int metricWidth = std::max(1, gridWidth / 4);
+  const std::string values[] = {sleepDuration(monthSeconds), std::to_string(monthPages),
+                                std::to_string(monthSessions), std::to_string(activeDays)};
+  const char* labels[] = {tr(STR_STATS_READING_TIME), tr(STR_PAGES), tr(STR_SESSIONS), tr(STR_STATS_ACTIVE_DAYS)};
+  for (int i = 0; i < 4; ++i) {
+    const int x = side + i * metricWidth;
+    if (i > 0) renderer.drawLine(x, footerTop, x, footerTop + footerHeight);
+    drawSleepMetric(renderer, UI_10_FONT_ID, x, footerTop, metricWidth, values[i]);
+    const std::string label = renderer.truncatedText(SMALL_FONT_ID, labels[i], metricWidth - 4);
+    drawSleepMetric(renderer, SMALL_FONT_ID, x, footerTop + metricValueHeight + 4, metricWidth, label,
+                    EpdFontFamily::REGULAR);
+  }
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 }
 
 void SleepActivity::renderReadingSummarySleepScreen() const {
+  StatisticsSnapshotOptions options;
+  options.keepDailyHistory = false;
+  options.keepAllBooks = true;
+  options.evaluateAchievements = false;
+  options.selectedBookPath = APP_STATE.openEpubPath;
+  options.maxBooks = 4;
+  StatisticsSnapshot snapshot = StatisticsSnapshot::build(options);
+  StatisticsBookSnapshot* book = nullptr;
+  if (!APP_STATE.openEpubPath.empty()) {
+    book = snapshot.findBook(APP_STATE.openEpubPath);
+    if (!book) book = &snapshot.books[snapshot.ensureFallbackBook(APP_STATE.openEpubPath)];
+  }
+  if (!book && !snapshot.books.empty()) book = &snapshot.books.front();
+  const bool hasCover = book && ensureStatisticsCover(*book);
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int side = metrics.contentSidePadding;
+  const int contentWidth = pageWidth - side * 2;
+
+  int recentCount = 0;
+  for (const auto& item : snapshot.books) {
+    if ((!book || item.path != book->path) && recentCount < 3) ++recentCount;
+  }
+  const int titleLineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  const int smallLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
+  const int heroHeight = book ? std::min(184, std::max(132, pageHeight / 3)) : 94;
+  const int sectionGap = 16;
+  const int recentHeaderHeight = smallLineHeight + 10;
+  const int recentRowHeight = 52;
+  const int emptyRecentHeight = smallLineHeight + 16;
+  const int recentHeight = recentHeaderHeight + (recentCount > 0 ? recentCount * recentRowHeight : emptyRecentHeight);
+  const int contentHeight = heroHeight + sectionGap + recentHeight;
+  const int contentTop = std::max(12, (pageHeight - contentHeight) / 2);
+  const int heroTop = contentTop;
+  const int recentTop = heroTop + heroHeight + sectionGap;
+
+  preconditionSleepRefresh(renderer);
+  renderer.clearScreen();
+
+  const int coverHeight = heroHeight - 12;
+  const int coverWidth = std::min(118, std::max(94, contentWidth / 3));
+  const int coverX = side;
+  const int coverTop = heroTop + 6;
+  bool coverDrawn = false;
+  if (book) {
+    const Rect coverBounds(coverX, coverTop, coverWidth, coverHeight);
+    const std::string coverPath = hasCover ? selectStatisticsCoverPath(*book) : std::string{};
+    const bool usingHq = !coverPath.empty() && coverPath != book->coverPath220;
+    coverDrawn = !coverPath.empty() && drawStatisticsCover(renderer, coverPath, coverBounds);
+    if (!coverDrawn && usingHq) {
+      // Match Carousel's safe fallback if an existing HQ file changes between
+      // selection and drawing; do not generate anything during sleep.
+      coverDrawn = drawStatisticsCover(renderer, book->coverPath220, coverBounds);
+    }
+    if (hasCover && !coverDrawn) book->coverAvailable = false;
+    const int detailX = coverDrawn ? coverX + coverWidth + 16 : side;
+    const int detailWidth = pageWidth - side - detailX;
+    const auto lines = renderer.wrappedText(UI_12_FONT_ID, book->title.c_str(), detailWidth, 2);
+    int textY = heroTop + 8;
+    for (const auto& line : lines) {
+      renderer.drawText(UI_12_FONT_ID, detailX, textY, line.c_str(), true, EpdFontFamily::BOLD);
+      textY += titleLineHeight;
+    }
+    if (!book->author.empty()) {
+      renderer.drawText(SMALL_FONT_ID, detailX, textY + 3,
+                        renderer.truncatedText(SMALL_FONT_ID, book->author.c_str(), detailWidth).c_str());
+      textY += smallLineHeight + 4;
+    }
+    const int progressY = textY + 5;
+    renderer.drawText(UI_10_FONT_ID, detailX, progressY,
+                      (std::to_string(book->progress) + "%  ·  " + sleepStatusText(book->status, book->progress))
+                          .c_str(),
+                      true, EpdFontFamily::BOLD);
+    const int barY = progressY + renderer.getLineHeight(UI_10_FONT_ID) + 5;
+    renderer.drawRect(detailX, barY, detailWidth, 12);
+    if (book->progress > 0) renderer.fillRect(detailX + 2, barY + 2, (detailWidth - 4) * book->progress / 100, 8);
+    const std::string metricsText = sleepDuration(book->readingSeconds) + "  ·  " + std::to_string(book->pages) + " " +
+                                    tr(STR_PAGES) + "  ·  " + std::to_string(book->sessions) + " " +
+                                    tr(STR_SESSION_PLURAL);
+    renderer.drawText(SMALL_FONT_ID, detailX, barY + 22,
+                      renderer.truncatedText(SMALL_FONT_ID, metricsText.c_str(), detailWidth).c_str());
+  } else {
+    renderer.drawCenteredText(UI_12_FONT_ID, heroTop + heroHeight / 2 - titleLineHeight / 2,
+                              tr(STR_STATS_NO_TRACKED_BOOKS), true,
+                              EpdFontFamily::BOLD);
+    renderer.drawCenteredText(SMALL_FONT_ID, heroTop + heroHeight / 2 + smallLineHeight,
+                              tr(STR_STATS_PURE_SUMMARY));
+  }
+
+  renderer.drawLine(side, recentTop - 8, pageWidth - side, recentTop - 8);
+  renderer.drawText(SMALL_FONT_ID, side, recentTop, tr(STR_MENU_RECENT_BOOKS), true, EpdFontFamily::BOLD);
+  if (recentCount == 0) {
+    renderer.drawCenteredText(SMALL_FONT_ID, recentTop + recentHeaderHeight + 2, tr(STR_NO_RECENT_BOOKS));
+  }
+  int row = 0;
+  for (const auto& item : snapshot.books) {
+    if (book && item.path == book->path) continue;
+    if (row >= 3) break;
+    const int y = recentTop + recentHeaderHeight + row * recentRowHeight;
+    const std::string progress = std::to_string(item.progress) + "%";
+    const int progressWidth = renderer.getTextWidth(SMALL_FONT_ID, progress.c_str());
+    const int titleWidth = std::max(1, contentWidth - progressWidth - 20);
+    renderer.drawText(UI_10_FONT_ID, side + 8, y + 4,
+                      renderer.truncatedText(UI_10_FONT_ID, item.title.c_str(), titleWidth).c_str(), true,
+                      EpdFontFamily::REGULAR);
+    renderer.drawText(SMALL_FONT_ID, side + contentWidth - progressWidth, y + 6, progress.c_str());
+    const std::string meta = sleepDuration(item.readingSeconds) + "  ·  " + std::to_string(item.pages) + " " +
+                             tr(STR_PAGES) + "  ·  " + std::to_string(item.sessions) + " " +
+                             tr(STR_SESSION_PLURAL);
+    renderer.drawText(SMALL_FONT_ID, side + 8, y + 25,
+                      renderer.truncatedText(SMALL_FONT_ID, meta.c_str(), contentWidth - 16).c_str());
+    if (row + 1 < recentCount) renderer.drawLine(side + 8, y + recentRowHeight - 4, side + contentWidth, y + recentRowHeight - 4);
+    ++row;
+  }
+  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+}
+
+void SleepActivity::renderMinimalStatsSleepScreen() const {
   StatisticsSnapshotOptions options;
   options.keepDailyHistory = false;
   options.keepAllBooks = false;
@@ -1483,11 +1632,7 @@ void SleepActivity::renderReadingSummarySleepScreen() const {
     const std::string coverPath = hasCover ? selectStatisticsCoverPath(*book) : std::string{};
     const bool usingHq = !coverPath.empty() && coverPath != book->coverPath220;
     coverDrawn = !coverPath.empty() && drawStatisticsCover(renderer, coverPath, coverBounds);
-    if (!coverDrawn && usingHq) {
-      // Match Carousel's safe fallback if an existing HQ file changes between
-      // selection and drawing; do not generate anything during sleep.
-      coverDrawn = drawStatisticsCover(renderer, book->coverPath220, coverBounds);
-    }
+    if (!coverDrawn && usingHq) coverDrawn = drawStatisticsCover(renderer, book->coverPath220, coverBounds);
     if (hasCover && !coverDrawn) book->coverAvailable = false;
     const int detailWidth = pageWidth - side * 2;
     const auto lines = renderer.wrappedText(UI_12_FONT_ID, book->title.c_str(), detailWidth, 2);
@@ -1523,12 +1668,6 @@ void SleepActivity::renderReadingSummarySleepScreen() const {
   renderer.drawImage(MoonIcon, pageWidth - MOONICON_WIDTH - 16, pageHeight - MOONICON_HEIGHT - 12, MOONICON_WIDTH,
                      MOONICON_HEIGHT);
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
-}
-
-void SleepActivity::renderMinimalStatsSleepScreen() const {
-  // Preserve the RC1 mode and presentation; Reading Summary is an additional
-  // named option backed by the same bounded renderer.
-  renderReadingSummarySleepScreen();
 }
 
 void SleepActivity::renderClippingCoverSleepScreen() const {

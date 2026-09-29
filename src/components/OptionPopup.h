@@ -20,7 +20,8 @@ class OptionPopup {
     for (int i = 0; i < optionCount; i++) {
       ownedStrings[i] = I18N.get(optionIds[i]);
     }
-    selectedIndex = currentIndex;
+    selectedIndex = clampIndex(currentIndex, optionCount);
+    firstVisibleIndex = 0;
     onSelectCallback = std::move(onSelect);
     layoutValid = false;
     active = true;
@@ -33,7 +34,8 @@ class OptionPopup {
     for (int i = 0; i < optionCount; i++) {
       ownedStrings[i] = options[i];
     }
-    selectedIndex = currentIndex;
+    selectedIndex = clampIndex(currentIndex, optionCount);
+    firstVisibleIndex = 0;
     onSelectCallback = std::move(onSelect);
     layoutValid = false;
     active = true;
@@ -43,7 +45,8 @@ class OptionPopup {
             std::function<void(int)> onSelect) {
     title = I18N.get(titleId);
     ownedStrings = options;
-    selectedIndex = currentIndex;
+    selectedIndex = clampIndex(currentIndex, static_cast<int>(options.size()));
+    firstVisibleIndex = 0;
     onSelectCallback = std::move(onSelect);
     layoutValid = false;
     active = true;
@@ -53,14 +56,20 @@ class OptionPopup {
     if (!active) return false;
 
     const int count = static_cast<int>(ownedStrings.size());
+    if (count == 0) {
+      active = false;
+      return true;
+    }
     int tx = 0;
     int ty = 0;
     if (input.wasScreenTouchDown(tx, ty)) {
       const auto& hitLayout = getLayout(input.getRenderer());
       for (int i = 0; i < static_cast<int>(hitLayout.options.size()); i++) {
         if (contains(hitLayout.options[i], tx, ty)) {
-          if (selectedIndex != i) {
-            selectedIndex = i;
+          const int optionIndex = hitLayout.firstVisibleIndex + i;
+          if (selectedIndex != optionIndex) {
+            selectedIndex = optionIndex;
+            layoutValid = false;
             requestUpdate();
           }
           break;
@@ -70,9 +79,17 @@ class OptionPopup {
     }
     if (input.wasScreenTapped(tx, ty)) {
       const auto& hitLayout = getLayout(input.getRenderer());
+      if (hitLayout.canScroll && contains(hitLayout.scrollUp, tx, ty)) {
+        pageSelection(-1, input.getRenderer(), requestUpdate);
+        return true;
+      }
+      if (hitLayout.canScroll && contains(hitLayout.scrollDown, tx, ty)) {
+        pageSelection(1, input.getRenderer(), requestUpdate);
+        return true;
+      }
       for (int i = 0; i < static_cast<int>(hitLayout.options.size()); i++) {
         if (contains(hitLayout.options[i], tx, ty)) {
-          selectedIndex = i;
+          selectedIndex = hitLayout.firstVisibleIndex + i;
           active = false;
           if (onSelectCallback) onSelectCallback(selectedIndex);
           requestUpdate();
@@ -86,13 +103,30 @@ class OptionPopup {
       return true;
     }
 
+    const auto swipe = input.wasSwipe();
+    if (swipe != MappedInputManager::SwipeDir::None && !getLayout(input.getRenderer()).canScroll) {
+      // Preserve the pre-scroll behavior for short lists: a swipe is consumed
+      // by the popup but must not change selection when every row is visible.
+      return true;
+    }
+    if (swipe == MappedInputManager::SwipeDir::Up) {
+      pageSelection(1, input.getRenderer(), requestUpdate);
+      return true;
+    }
+    if (swipe == MappedInputManager::SwipeDir::Down) {
+      pageSelection(-1, input.getRenderer(), requestUpdate);
+      return true;
+    }
+
     if (input.wasPressed(MappedInputManager::Button::Up) || input.wasPressed(MappedInputManager::Button::Left)) {
-      selectedIndex = (selectedIndex - 1 + count) % count;
+      selectedIndex = selectedIndex == 0 ? count - 1 : selectedIndex - 1;
+      layoutValid = false;
       requestUpdate();
       return true;
     } else if (input.wasPressed(MappedInputManager::Button::Down) ||
                input.wasPressed(MappedInputManager::Button::Right)) {
       selectedIndex = (selectedIndex + 1) % count;
+      layoutValid = false;
       requestUpdate();
       return true;
     } else if (input.wasPressed(MappedInputManager::Button::Confirm)) {
@@ -119,7 +153,9 @@ class OptionPopup {
 
   void render(const GfxRenderer& renderer) const {
     if (!active) return;
-    GUI.drawOptionPopup(renderer, title.c_str(), ownedStrings, selectedIndex);
+    const auto& popupLayout = getLayout(renderer);
+    GUI.drawOptionPopup(renderer, title.c_str(), ownedStrings, selectedIndex, popupLayout.firstVisibleIndex,
+                        popupLayout.visibleCount);
   }
 
   bool isActive() const { return active; }
@@ -136,7 +172,26 @@ class OptionPopup {
   struct Layout {
     Rect dialog{0, 0, 0, 0};
     std::vector<Rect> options;
+    Rect scrollUp{0, 0, 0, 0};
+    Rect scrollDown{0, 0, 0, 0};
+    int firstVisibleIndex = 0;
+    int visibleCount = 0;
+    bool canScroll = false;
   };
+
+  static int clampIndex(const int index, const int count) {
+    if (count <= 0) return 0;
+    return std::clamp(index, 0, count - 1);
+  }
+
+  void pageSelection(const int direction, const GfxRenderer& renderer, const std::function<void()>& requestUpdate) {
+    const auto& currentLayout = getLayout(renderer);
+    const int count = static_cast<int>(ownedStrings.size());
+    const int step = std::max(1, currentLayout.visibleCount);
+    selectedIndex = std::clamp(selectedIndex + direction * step, 0, count - 1);
+    layoutValid = false;
+    requestUpdate();
+  }
 
   // Text measurement is expensive and wasScreenTouchDown() is level-triggered, so the
   // layout is computed once per show() and cached rather than rebuilt every loop().
@@ -166,7 +221,23 @@ class OptionPopup {
     }
 
     const int optionCount = static_cast<int>(ownedStrings.size());
-    const int listHeight = rowHeight * optionCount + itemSpacing * (optionCount - 1);
+    if (optionCount == 0) {
+      layout = Layout{};
+      layoutValid = true;
+      return layout;
+    }
+    const int verticalMargin = std::max(8, metrics.optionPopupDialogSideMargin);
+    const int maxDialogHeight = std::max(1, pageHeight - verticalMargin * 2);
+    const int fixedHeight = titleLineHeight + metrics.optionPopupTitleGap + innerPadding * 2;
+    const int maxListHeight = std::max(rowHeight, maxDialogHeight - fixedHeight);
+    const int maxVisible = std::max(1, (maxListHeight + itemSpacing) / (rowHeight + itemSpacing));
+    const int visibleCount = std::min(optionCount, maxVisible);
+    const int maxFirst = std::max(0, optionCount - visibleCount);
+    firstVisibleIndex = std::clamp(firstVisibleIndex, 0, maxFirst);
+    if (selectedIndex < firstVisibleIndex) firstVisibleIndex = selectedIndex;
+    if (selectedIndex >= firstVisibleIndex + visibleCount) firstVisibleIndex = selectedIndex - visibleCount + 1;
+    firstVisibleIndex = std::clamp(firstVisibleIndex, 0, maxFirst);
+    const int listHeight = rowHeight * visibleCount + itemSpacing * (visibleCount - 1);
     constexpr int selectionCheckWidth = 14;
     const int dialogW = std::min((maxTextWidth + innerPadding * 2 + selectionHPadding * 2 + selectionCheckWidth) * 12 / 10,
                                  pageWidth - metrics.optionPopupDialogSideMargin * 2);
@@ -179,9 +250,17 @@ class OptionPopup {
     const int firstItemY = dialogY + innerPadding + titleLineHeight + metrics.optionPopupTitleGap;
 
     layout.dialog = Rect{dialogX, dialogY, dialogW, dialogH};
+    layout.firstVisibleIndex = firstVisibleIndex;
+    layout.visibleCount = visibleCount;
+    layout.canScroll = visibleCount < optionCount;
+    const int arrowWidth = 28;
+    layout.scrollUp = Rect{dialogX + dialogW - innerPadding - arrowWidth, dialogY + innerPadding, arrowWidth,
+                           titleLineHeight};
+    layout.scrollDown = Rect{dialogX + dialogW - innerPadding - arrowWidth,
+                             dialogY + dialogH - innerPadding - titleLineHeight, arrowWidth, titleLineHeight};
     layout.options.clear();
-    layout.options.reserve(optionCount);
-    for (int i = 0; i < optionCount; i++) {
+    layout.options.reserve(visibleCount);
+    for (int i = 0; i < visibleCount; i++) {
       layout.options.push_back(Rect{itemRectX, firstItemY + i * (rowHeight + itemSpacing), itemRectW, rowHeight});
     }
     layoutValid = true;
@@ -196,6 +275,7 @@ class OptionPopup {
   std::string title;
   std::vector<std::string> ownedStrings;
   int selectedIndex = 0;
+  mutable int firstVisibleIndex = 0;
   std::function<void(int)> onSelectCallback;
   mutable Layout layout;
   mutable bool layoutValid = false;

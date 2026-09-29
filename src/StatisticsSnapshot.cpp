@@ -92,10 +92,32 @@ StatisticsSnapshot StatisticsSnapshot::build(const StatisticsSnapshotOptions& op
     result.overview.todayPages = READING_STATS.pagesForDate(result.todayDateKey);
   }
 
-  if (options.keepAllBooks) result.books.reserve(BOOK_STATES.getBooks().size() + RECENT_BOOKS.getBooks().size());
+  if (options.keepAllBooks) {
+    const size_t availableBooks = BOOK_STATES.getBooks().size() + RECENT_BOOKS.getBooks().size();
+    result.books.reserve(options.maxBooks == 0 ? availableBooks : std::min(options.maxBooks, availableBooks));
+  }
   uint32_t bookSeconds = 0;
   uint32_t bookSessions = 0;
   uint32_t bookPages = 0;
+  const auto bookOrder = [&](const auto& a, const auto& b) {
+    if (!options.selectedBookPath.empty()) {
+      const bool aSelected = a.path == options.selectedBookPath;
+      const bool bSelected = b.path == options.selectedBookPath;
+      if (aSelected != bSelected) return aSelected;
+    }
+    if (a.lastOpenedDate != b.lastOpenedDate) return a.lastOpenedDate > b.lastOpenedDate;
+    const auto recentRank = [](const std::string& path) {
+      const auto& recents = RECENT_BOOKS.getBooks();
+      const auto it = std::find_if(recents.begin(), recents.end(), [&](const RecentBook& book) {
+        return book.path == path;
+      });
+      return it == recents.end() ? recents.size() : static_cast<size_t>(std::distance(recents.begin(), it));
+    };
+    const size_t aRank = recentRank(a.path);
+    const size_t bRank = recentRank(b.path);
+    if (aRank != bRank) return aRank < bRank;
+    return a.title < b.title;
+  };
   const auto consumeBook = [&](StatisticsBookSnapshot&& book) {
     bookSeconds = saturatedAdd(bookSeconds, book.readingSeconds);
     bookSessions = saturatedAdd(bookSessions, book.sessions);
@@ -105,26 +127,22 @@ StatisticsSnapshot StatisticsSnapshot::build(const StatisticsSnapshotOptions& op
       ++result.overview.booksStarted;
     if ((book.progress >= 100 || book.status == BookStatus::Finished) && result.overview.booksFinished < UINT16_MAX)
       ++result.overview.booksFinished;
-    if (options.keepAllBooks || (!options.selectedBookPath.empty() && book.path == options.selectedBookPath))
+    if (options.keepAllBooks || (!options.selectedBookPath.empty() && book.path == options.selectedBookPath)) {
       result.books.push_back(std::move(book));
+      if (options.keepAllBooks && options.maxBooks > 0 && result.books.size() > options.maxBooks) {
+        std::stable_sort(result.books.begin(), result.books.end(), bookOrder);
+        result.books.resize(options.maxBooks);
+      }
+    }
   };
   for (const auto& state : BOOK_STATES.getBooks()) consumeBook(makeBook(&state, findRecent(state.path), state.path));
   for (const auto& recent : RECENT_BOOKS.getBooks()) {
     if (!BOOK_STATES.find(recent.path)) consumeBook(makeBook(nullptr, &recent, recent.path));
   }
 
-  const auto recentRank = [](const std::string& path) {
-    const auto& recents = RECENT_BOOKS.getBooks();
-    const auto it = std::find_if(recents.begin(), recents.end(), [&](const RecentBook& book) { return book.path == path; });
-    return it == recents.end() ? recents.size() : static_cast<size_t>(std::distance(recents.begin(), it));
-  };
-  std::stable_sort(result.books.begin(), result.books.end(), [&](const auto& a, const auto& b) {
-    if (a.lastOpenedDate != b.lastOpenedDate) return a.lastOpenedDate > b.lastOpenedDate;
-    const size_t aRank = recentRank(a.path);
-    const size_t bRank = recentRank(b.path);
-    if (aRank != bRank) return aRank < bRank;
-    return a.title < b.title;
-  });
+  std::stable_sort(result.books.begin(), result.books.end(), bookOrder);
+  if (options.keepAllBooks && options.maxBooks > 0 && result.books.size() > options.maxBooks)
+    result.books.resize(options.maxBooks);
 
   result.overview.trackedSeconds = std::max(bookSeconds, result.overview.retainedSeconds);
   result.overview.trackedSessions = std::max(bookSessions, result.overview.retainedSessions);
