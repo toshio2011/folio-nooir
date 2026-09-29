@@ -393,6 +393,7 @@ void EpubReaderActivity::onEnter() {
   EpubDiagnostics::Scope diagnostics("reader_enter_start", "reader_enter_end");
   Activity::onEnter();
   mappedInput.setReaderMappingMode(true);
+  firstStableRenderComplete.store(false, std::memory_order_release);
   readingSessionStartedMs = millis();
   loadingUiPending = false;
   loadingUiRenderArmed = false;
@@ -552,6 +553,7 @@ void EpubReaderActivity::requestExitToHome(const HomeMenuItem item) {
 
 void EpubReaderActivity::onExit() {
   Activity::onExit();
+  firstStableRenderComplete.store(false, std::memory_order_release);
   pendingPageTurns.clear();
   qualityRecoveryPending.store(false, std::memory_order_release);
   longOperationIndicator.cancel("reader_exit");
@@ -2093,6 +2095,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     renderer.clearScreen();
     endOfBookOptions.render(renderer, mappedInput);
     renderer.displayBuffer();
+    firstStableRenderComplete.store(true, std::memory_order_release);
     automaticPageTurnActive = false;
     showPendingSyncSaveError();
     return;
@@ -2130,6 +2133,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   const ReaderRenderSpec renderSpec = SETTINGS.readerRenderSpec(viewportWidth, viewportHeight);
 
   if (!section) {
+    // A new section can be opened within the same render task as the previous
+    // page. Do not let the main-loop BLE gate observe the old section's stable
+    // flag while this section is still allocating/building.
+    firstStableRenderComplete.store(false, std::memory_order_release);
     const auto filepath = epub->getSpineItem(currentSpineIndex).href;
     LOG_DBG("ERS", "Loading file: %s, index: %d", filepath.c_str(), currentSpineIndex);
     section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer));
@@ -2380,6 +2387,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_EMPTY_CHAPTER), true, EpdFontFamily::BOLD);
     renderStatusBar();
     renderer.displayBuffer();
+    firstStableRenderComplete.store(true, std::memory_order_release);
     automaticPageTurnActive = false;
     showPendingSyncSaveError();
     longOperation.complete();
@@ -2391,6 +2399,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_OUT_OF_BOUNDS), true, EpdFontFamily::BOLD);
     renderStatusBar();
     renderer.displayBuffer();
+    firstStableRenderComplete.store(true, std::memory_order_release);
     automaticPageTurnActive = false;
     showPendingSyncSaveError();
     longOperation.complete();
@@ -2464,6 +2473,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     GUI.drawPopup(renderer, tr(STR_DICT_NO_DICT_SET));
   }
   longOperation.complete();
+  // Only now has the first usable page completed its full render, refresh,
+  // progress bookkeeping, and cleanup. A completed Section build is
+  // deliberately insufficient because it may still be inside this render task.
+  firstStableRenderComplete.store(true, std::memory_order_release);
 }
 
 bool EpubReaderActivity::applyDeferredReposition() {

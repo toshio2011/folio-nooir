@@ -63,6 +63,7 @@ class BluetoothSettingsActivity final : public Activity {
   // Set when a connect() has been issued and we're waiting for the async result.
   bool awaitingConnect = false;
   bool pairedScanActive = false;
+  bool pairedFallbackAttempted = false;
   ConnectOrigin connectOrigin = ConnectOrigin::None;
   char pairedTargetAddr[18] = {};
   char pairedTargetName[32] = {};

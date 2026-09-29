@@ -34,11 +34,13 @@
 #include "SdCardFontSystem.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
+#include "activities/RenderLock.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "images/LoadingIcon.h"
 #include "util/ButtonNavigator.h"
+#include "util/BleMemoryPolicy.h"
 #include "util/EpubDiagnostics.h"
 #include "util/ScreenshotUtil.h"
 
@@ -511,13 +513,81 @@ void setup() {
 
 void updateBluetoothLifecycle() {
 #if FREEINK_CAP_BLE_HID_HOST
+  static uint32_t nextReaderStartAttemptMs = 0;
+  static uint32_t lastReaderAdmissionLogMs = 0;
+  static bool resourceDeferReported = false;
   const bool wanted =
       SETTINGS.bluetoothEnabled && activityManager.bluetoothShouldBeActive() &&
-      !activityManager.bluetoothResourceSensitive() && WiFi.getMode() == WIFI_MODE_NULL;
+      WiFi.getMode() == WIFI_MODE_NULL;
+  const bool readerContext = activityManager.isReaderActivity();
+  const bool resourceSensitive = activityManager.bluetoothResourceSensitive();
+
+  // The concrete reader publishes this only after its first complete frame.
+  // Section construction alone is not sufficient: it can finish inside the
+  // render task while font/image/grayscale work still owns the heap.
+  if (wanted && resourceSensitive) {
+    nextReaderStartAttemptMs = 0;
+    if (BleHid.isRunning()) {
+      bleinput::recordDiagnosticEvent("ble_suspend reason=reader_startup");
+      bleinput::stop();
+      resourceDeferReported = true;
+    } else if (!resourceDeferReported) {
+      resourceDeferReported = true;
+      LOG_INF("BLELC", "start deferred: reader startup/build heap=%u maxAlloc=%u", ESP.getFreeHeap(),
+              ESP.getMaxAllocHeap());
+      bleinput::recordDiagnosticEvent("ble_suspend reason=reader_startup");
+    }
+    return;
+  }
+
   if (wanted && !BleHid.isRunning()) {
-    bleinput::ensureStarted();
+    resourceDeferReported = false;
+
+    const uint32_t now = millis();
+    if (readerContext && static_cast<int32_t>(now - nextReaderStartAttemptMs) < 0) return;
+
+    // Do not start NimBLE concurrently with the render task's final cleanup or
+    // the next page's allocations. The next main-loop pass retries this bounded
+    // gate; it never blocks or spins in a reconnect loop.
+    if (readerContext && RenderLock::peek()) {
+      nextReaderStartAttemptMs = now + 250;
+      return;
+    }
+
+    if (readerContext &&
+        !bleinput::readerBleStartMemoryAdmitted(static_cast<size_t>(ESP.getFreeHeap()),
+                                                static_cast<size_t>(ESP.getMaxAllocHeap()))) {
+      nextReaderStartAttemptMs = now + 1000;
+      if (now - lastReaderAdmissionLogMs >= 10000) {
+        lastReaderAdmissionLogMs = now;
+        LOG_INF("BLELC", "start deferred: reader admission free=%u maxAlloc=%u floors=%u/%u", ESP.getFreeHeap(),
+                ESP.getMaxAllocHeap(), static_cast<unsigned>(bleinput::kReaderBleStartMinFreeHeap),
+                static_cast<unsigned>(bleinput::kReaderBleStartMinLargestBlock));
+        bleinput::recordDiagnosticEvent("ble_admit result=defer free=%u max=%u", ESP.getFreeHeap(),
+                                        ESP.getMaxAllocHeap());
+      }
+      return;
+    }
+
+    bleinput::recordDiagnosticEvent("ble_admit result=allow free=%u max=%u", ESP.getFreeHeap(),
+                                    ESP.getMaxAllocHeap());
+    const bool started = bleinput::ensureStarted();
+    if (!started) {
+      nextReaderStartAttemptMs = now + 2000;
+      LOG_ERR("BLELC", "start failed free=%u maxAlloc=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      bleinput::recordDiagnosticEvent("ble_resume result=failed");
+      return;
+    }
+    nextReaderStartAttemptMs = 0;
+    bleinput::recordDiagnosticEvent("ble_resume result=started");
   } else if (!wanted && BleHid.isRunning()) {
+    nextReaderStartAttemptMs = 0;
+    resourceDeferReported = false;
     bleinput::stop();
+    bleinput::recordDiagnosticEvent("ble_suspend reason=activity_or_wifi");
+  } else if (!wanted) {
+    nextReaderStartAttemptMs = 0;
+    resourceDeferReported = false;
   }
 #else
   // Folio Nooir reader builds currently keep experimental BLE completely dormant.

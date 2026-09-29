@@ -84,6 +84,10 @@ class EpubReaderActivity final : public Activity {
   int idlePrewarmSpine = -1;
   int idlePrewarmPage = -1;
   unsigned long lastRenderCompleteMs = 0;
+  // Published by the render task only after a complete reader frame has been
+  // rendered/displayed. Section construction alone is not a safe BLE restart
+  // boundary because the render task may still be doing font/image work.
+  std::atomic<bool> firstStableRenderComplete{false};
   bool bookmarkRemoved = false;  // true when last toggle removed (controls popup text)
   std::vector<BookmarkEntry> cachedBookmarks;
   std::vector<ClippingEntry> cachedClippings;
@@ -269,7 +273,9 @@ class EpubReaderActivity final : public Activity {
   // speed would only burn battery; the paused gate still retries every loop pass).
   bool skipLoopDelay() override { return section && section->isBuilding() && !buildHeapPaused; }
   bool isReaderActivity() const override { return true; }
-  bool bluetoothResourceSensitive() const override { return !section || section->isBuilding(); }
+  bool bluetoothResourceSensitive() const override {
+    return !firstStableRenderComplete.load(std::memory_order_acquire) || !section || section->isBuilding();
+  }
   ScreenshotInfo getScreenshotInfo() const override;
   CrossPointPosition getCurrentPosition() const;
 };

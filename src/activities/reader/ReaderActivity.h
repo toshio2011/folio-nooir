@@ -44,4 +44,8 @@ class ReaderActivity final : public Activity {
         initialBookmark(std::move(initialBookmark)) {}
   void onEnter() override;
   bool isReaderActivity() const override { return true; }
+  // ReaderActivity performs synchronous format/container loading before it
+  // hands off to the concrete reader. Keep BLE stopped for that transient
+  // allocation-heavy phase as well as for EPUB's first stable render.
+  bool bluetoothResourceSensitive() const override { return true; }
 };

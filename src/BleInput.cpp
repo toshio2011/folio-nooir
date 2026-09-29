@@ -68,6 +68,14 @@ void serialStateDiagnostic() {
                    BleHid.isRunning() ? 1 : 0, BleHid.isConnected() ? 1 : 0, BleHid.isScanning() ? 1 : 0,
                    BleHid.connectedName(), static_cast<unsigned>(BleHid.deviceCount()));
 }
+
+const char* failureStage(const char* reason) {
+  if (!reason) return "unknown";
+  if (strstr(reason, "Pairing") || strstr(reason, "security")) return "security";
+  if (strstr(reason, "HID") || strstr(reason, "report")) return "hid";
+  if (strstr(reason, "Not a HID")) return "hid";
+  return "link";
+}
 #endif
 
 void sampleHeap() {
@@ -150,7 +158,29 @@ bool ensureStarted() {
                    millis() - startedMs, static_cast<unsigned long>(beforeFree),
                    static_cast<unsigned long>(beforeLargest), static_cast<unsigned long>(ESP.getFreeHeap()),
                    static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+  if (started) {
+    const uint8_t bonds = BleHid.pairedCount();
+    serialDiagnostic("bond n=%u", static_cast<unsigned>(bonds));
+    for (uint8_t i = 0; i < bonds && i < 4; ++i) {
+      const auto& bond = BleHid.paired(i);
+      serialDiagnostic("bond i=%u addr=%.17s type=%u", static_cast<unsigned>(i), bond.addr,
+                       static_cast<unsigned>(bond.addrType));
+    }
+  }
 #endif
+  // The pinned host persists bonds in NVS and already performs bounded
+  // reconnects from poll(). Queue the first known bond immediately after a
+  // fresh begin so a reader/settings lifecycle transition does not add an
+  // unnecessary four-second backoff. The host still owns security, HID
+  // discovery, subscription, timeout and retry behavior.
+  if (started && BleHid.pairedCount() > 0 && !BleHid.isConnected() && !BleHid.isConnecting()) {
+    const auto& bond = BleHid.paired(0);
+    const bool queued = BleHid.connect(bond.addr);
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_DIAGNOSTICS
+    recordDiagnosticEvent("reconnect_start src=begin addr=%.17s type=%u queued=%d", bond.addr,
+                          static_cast<unsigned>(bond.addrType), queued ? 1 : 0);
+#endif
+  }
   return started;
 }
 
@@ -190,20 +220,22 @@ void pollLifecycle() {
   if (!changed && !hasConnectFailure && !deviceListChanged) return;
 
   if (changed) {
+    const bool connectStarted = connecting && (!g_lifecycleKnown || !g_lastConnecting);
     const bool unexpectedDisconnect = g_lifecycleKnown && g_lastConnected && !connected && running &&
                                       !g_suppressNextStopNotice;
     appendRecord(DiagnosticType::State, 0xFF, 0, 0xFF);
 #if NOOIR_BLE_DIAGNOSTICS
     serialStateDiagnostic();
+    if (connectStarted) serialDiagnostic("connect_attempt src=host");
 #endif
     if (unexpectedDisconnect) queueNotification("Bluetooth disconnected");
     if (running && connected && !g_lastConnected) {
-      recordDiagnosticEvent("connect_success name=%.28s", BleHid.connectedName());
+      recordDiagnosticEvent("connect_success secure=1 hid=1 name=%.28s", BleHid.connectedName());
       char message[64];
       snprintf(message, sizeof(message), "Bluetooth connected: %.36s", BleHid.connectedName());
       queueNotification(message);
     }
-    if (g_lastConnected && !connected && running) recordDiagnosticEvent("disconnect running=1");
+    if (g_lastConnected && !connected && running) recordDiagnosticEvent("disconnect reason=unreported");
     g_suppressNextStopNotice = false;
     g_lifecycleKnown = true;
     g_lastRunning = running;
@@ -221,7 +253,9 @@ void pollLifecycle() {
       serialDiagnostic("scan n=0");
     }
   }
-  if (hasConnectFailure) serialDiagnostic("connect_fail %.44s", connectFailure);
+  if (hasConnectFailure) {
+    serialDiagnostic("connect_fail stage=%s %.36s", failureStage(connectFailure), connectFailure);
+  }
 #else
   (void)connectFailure;
 #endif

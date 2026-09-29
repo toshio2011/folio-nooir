@@ -99,6 +99,11 @@ void BluetoothSettingsActivity::startScanView() {
 
 void BluetoothSettingsActivity::beginPairedConnect() {
   if (pairedIndex >= BleHid.pairedCount()) return;
+  if (!BleHid.isRunning() && !bleinput::ensureStarted()) {
+    setBanner(tr(STR_BT_START_FAILED));
+    requestUpdate();
+    return;
+  }
   const auto& paired = BleHid.paired(static_cast<uint8_t>(pairedIndex));
   strncpy(pairedTargetAddr, paired.addr, sizeof(pairedTargetAddr) - 1);
   pairedTargetAddr[sizeof(pairedTargetAddr) - 1] = '\0';
@@ -107,10 +112,22 @@ void BluetoothSettingsActivity::beginPairedConnect() {
   bleinput::recordDiagnosticEvent("bond_found addr=%.17s name=%.24s type=%u", pairedTargetAddr,
                                   pairedTargetName, static_cast<unsigned>(paired.addrType));
   awaitingConnect = true;
-  pairedScanActive = true;
-  connectOrigin = ConnectOrigin::PairedScan;
-  setBanner(tr(STR_SCANNING));
-  BleHid.startScan(kScanMs);
+  pairedScanActive = false;
+  pairedFallbackAttempted = false;
+  connectOrigin = ConnectOrigin::PairedDirect;
+  setBanner(tr(STR_CONNECTING));
+  bleinput::recordDiagnosticEvent("reconnect_start direct addr=%.17s", pairedTargetAddr);
+  // The host already knows the bonded address type. Try that stable identity
+  // first instead of making every manual reconnect depend on a scan response;
+  // if the peripheral is using a rotated/private address, the bounded scan
+  // fallback below can still recover it by address or name.
+  if (!BleHid.connect(pairedTargetAddr) && !BleHid.isConnecting()) {
+    pairedFallbackAttempted = true;
+    pairedScanActive = true;
+    connectOrigin = ConnectOrigin::PairedScan;
+    setBanner(tr(STR_SCANNING));
+    BleHid.startScan(kScanMs);
+  }
   requestUpdate();
 }
 
@@ -210,14 +227,16 @@ void BluetoothSettingsActivity::loop() {
           BleHid.connect(address);
         }
       } else if (!BleHid.isConnecting()) {
-        // Static-address devices may not be visible in the bounded scan. Give
-        // the stored identity one final direct attempt, preserving old-device
-        // compatibility without an unbounded retry or implicit re-pair.
+        // A direct bonded attempt was already made before this scan. Do not
+        // spin between the same stale address and an empty scan; leave one
+        // bounded manual attempt for the user to retry later.
         pairedScanActive = false;
-        connectOrigin = ConnectOrigin::PairedDirect;
-        bleinput::recordDiagnosticEvent("reconnect_start direct addr=%.17s", pairedTargetAddr);
-        setBanner(tr(STR_CONNECTING));
-        BleHid.connect(pairedTargetAddr);
+        if (pairedFallbackAttempted) {
+          awaitingConnect = false;
+          connectOrigin = ConnectOrigin::None;
+          setBanner(tr(STR_BT_NO_DEVICES));
+          requestUpdate();
+        }
       }
     }
     char reason[48];
@@ -234,12 +253,25 @@ void BluetoothSettingsActivity::loop() {
       connectOrigin = ConnectOrigin::None;
       requestUpdate();
     } else if (BleHid.takeConnectFailure(reason, sizeof(reason))) {
-      awaitingConnect = false;
-      if (connectOrigin == ConnectOrigin::PairedScan || connectOrigin == ConnectOrigin::PairedDirect)
-        bleinput::recordDiagnosticEvent("reconnect_fail reason=%.36s", reason);
-      connectOrigin = ConnectOrigin::None;
-      setBanner(reason);
-      requestUpdate();
+      if (connectOrigin == ConnectOrigin::PairedDirect && !pairedFallbackAttempted) {
+        // Direct bonded addresses are the fastest and most reliable path for
+        // normal reconnects. A single scan fallback handles devices that
+        // rotate their resolvable address without re-pairing.
+        pairedFallbackAttempted = true;
+        pairedScanActive = true;
+        connectOrigin = ConnectOrigin::PairedScan;
+        bleinput::recordDiagnosticEvent("reconnect_fallback scan");
+        setBanner(tr(STR_SCANNING));
+        BleHid.startScan(kScanMs);
+        requestUpdate();
+      } else {
+        awaitingConnect = false;
+        if (connectOrigin == ConnectOrigin::PairedScan || connectOrigin == ConnectOrigin::PairedDirect)
+          bleinput::recordDiagnosticEvent("reconnect_fail reason=%.36s", reason);
+        connectOrigin = ConnectOrigin::None;
+        setBanner(reason);
+        requestUpdate();
+      }
     }
   }
 
