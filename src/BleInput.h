@@ -26,6 +26,10 @@
 #define NOOIR_BLE_DIAGNOSTICS 0
 #endif
 
+#ifndef FREEINK_BLE_HID_RAW_DIAGNOSTICS
+#define FREEINK_BLE_HID_RAW_DIAGNOSTICS 0
+#endif
+
 namespace bleinput {
 
 // Advertised central name shown to peripherals during pairing.

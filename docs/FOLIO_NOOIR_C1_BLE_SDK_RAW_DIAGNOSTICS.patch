@@ -1,0 +1,244 @@
+diff --git a/libs/network/BleKeyboardHost/include/BleKeyboardHost.h b/libs/network/BleKeyboardHost/include/BleKeyboardHost.h
+index 00cfbbf..a2a3d01 100644
+--- a/libs/network/BleKeyboardHost/include/BleKeyboardHost.h
++++ b/libs/network/BleKeyboardHost/include/BleKeyboardHost.h
+@@ -23,6 +23,10 @@
+ #include <stddef.h>
+ #include <stdint.h>
+ 
++#ifndef FREEINK_BLE_HID_RAW_DIAGNOSTICS
++#define FREEINK_BLE_HID_RAW_DIAGNOSTICS 0
++#endif
++
+ namespace freeink {
+ 
+ // Non-character keys an editor/UI cares about. Printable keys arrive as `ch`.
+@@ -54,6 +58,35 @@ struct KeyEvent {
+   bool pressed = true;
+ };
+ 
++#if FREEINK_BLE_HID_RAW_DIAGNOSTICS
++// Fixed-size diagnostic snapshot copied at the notification boundary. The
++// payload is intentionally bounded: the Yiser-style reports under study are
++// short, while an explicit truncation bit keeps longer reports honest.
++struct RawReportDiagnostic {
++  static constexpr uint8_t kMaxPayloadBytes = 64;
++
++  uint32_t sequence = 0;
++  uint32_t uptimeMs = 0;
++  uint16_t deltaMs = 0;
++  uint8_t source = 0;       // 1 = Report characteristic, 2 = Boot keyboard characteristic
++  uint8_t reportType = 1;   // subscribed HID input report
++  uint8_t reportId = 0xFF;  // 0xFF = not identifiable from the raw notification
++  uint8_t state = 0;        // decoder-observable flags, assigned after raw copy
++  uint16_t length = 0;      // original payload length, saturated at 65535
++  uint8_t storedLength = 0; // bytes copied into payload[]
++  bool truncated = false;
++  uint8_t payload[kMaxPayloadBytes] = {};
++};
++
++enum RawReportState : uint8_t {
++  RAW_STATE_KEYBOARD_SHAPED = 1 << 0,
++  RAW_STATE_GENERIC_PATH = 1 << 1,
++  RAW_STATE_PRESS_EDGE = 1 << 2,
++  RAW_STATE_RELEASE_EDGE = 1 << 3,
++  RAW_STATE_AXIS_CANDIDATE = 1 << 4,
++};
++#endif
++
+ // A BLE device seen during a scan.
+ struct DiscoveredDevice {
+   char addr[18] = {0};  // "AA:BB:CC:DD:EE:FF"
+@@ -132,11 +165,18 @@ class BleKeyboardHost {
+   // Pop the next key event. Returns false when the queue is empty.
+   bool popKey(KeyEvent& out);
+ 
++#if FREEINK_BLE_HID_RAW_DIAGNOSTICS
++  // Diagnostics-only raw notification queue. It is drained by the Nooir main
++  // loop; normal input decoding and mapping do not consume or depend on it.
++  bool popRawReport(RawReportDiagnostic& out);
++  void clearRawReports();
++#endif
++
+   // --- Internal: called by the NimBLE backend (not for app use). These keep the
+   // public header free of NimBLE types — the .cpp translates BLE objects into
+   // these plain calls. -------------------------------------------------------
+   void onScanResultIngest(const char* addr, const char* name, int rssi, uint8_t type, bool hid, bool connectable);
+-  void onReportIngest(const uint8_t* data, size_t len);
++  void onReportIngest(const uint8_t* data, size_t len, uint8_t source = 0);
+   void onLinkUp(const char* addr, const char* name, uint8_t type);
+   void onLinkDown();
+   void onConnectFailed(const char* reason);
+diff --git a/libs/network/BleKeyboardHost/src/BleKeyboardHost.cpp b/libs/network/BleKeyboardHost/src/BleKeyboardHost.cpp
+index 4e66ec4..b3cf9c5 100644
+--- a/libs/network/BleKeyboardHost/src/BleKeyboardHost.cpp
++++ b/libs/network/BleKeyboardHost/src/BleKeyboardHost.cpp
+@@ -77,6 +77,15 @@ uint8_t g_preferredByteIndex = 0xFF;  // byte the report map suggests holds the
+ uint8_t g_lastGenericCode = 0;        // last non-zero code seen on the generic path
+ volatile uint32_t g_lastReportMs = 0;  // millis() of the last HID notification (stale-release)
+ 
++#if FREEINK_BLE_HID_RAW_DIAGNOSTICS
++constexpr uint8_t kRawReportRingLen = 16;
++RawReportDiagnostic g_rawReports[kRawReportRingLen] = {};
++volatile uint8_t g_rawReportHead = 0;
++volatile uint8_t g_rawReportTail = 0;
++uint32_t g_rawReportSequence = 0;
++uint32_t g_lastRawReportMs = 0;
++#endif
++
+ BleKeyboardHost& self() { return BleKeyboardHost::getInstance(); }
+ 
+ // Scan a HID Report Map descriptor for Usage Page (0x05 nn) items and note whether
+@@ -148,8 +157,12 @@ void printPayloadHex(const NimBLEAdvertisedDevice* dev) {
+ }
+ #endif
+ 
+-void onHidNotify(NimBLERemoteCharacteristic*, uint8_t* data, size_t len, bool) {
+-  self().onReportIngest(data, len);
++void onHidNotify(NimBLERemoteCharacteristic* characteristic, uint8_t* data, size_t len, bool) {
++  uint8_t source = 0;
++  if (characteristic) {
++    source = characteristic->getUUID() == NimBLEUUID(kCharBootKbdInput) ? 2 : 1;
++  }
++  self().onReportIngest(data, len, source);
+ }
+ 
+ bool setupHid(NimBLEClient* client) {
+@@ -650,6 +663,29 @@ bool BleKeyboardHost::popKey(KeyEvent& out) {
+   return got;
+ }
+ 
++#if FREEINK_BLE_HID_RAW_DIAGNOSTICS
++bool BleKeyboardHost::popRawReport(RawReportDiagnostic& out) {
++  bool got = false;
++  portENTER_CRITICAL(&g_mux);
++  if (g_rawReportHead != g_rawReportTail) {
++    out = g_rawReports[g_rawReportTail];
++    g_rawReportTail = static_cast<uint8_t>((g_rawReportTail + 1) % kRawReportRingLen);
++    got = true;
++  }
++  portEXIT_CRITICAL(&g_mux);
++  return got;
++}
++
++void BleKeyboardHost::clearRawReports() {
++  portENTER_CRITICAL(&g_mux);
++  g_rawReportHead = 0;
++  g_rawReportTail = 0;
++  g_rawReportSequence = 0;
++  g_lastRawReportMs = 0;
++  portEXIT_CRITICAL(&g_mux);
++}
++#endif
++
+ void BleKeyboardHost::enqueue(const KeyEvent& ev) {
+   portENTER_CRITICAL(&g_mux);
+   const uint8_t next = static_cast<uint8_t>((ringHead_ + 1) % kKeyQueueLen);
+@@ -678,9 +714,28 @@ void BleKeyboardHost::emitUsage(uint8_t usage, uint8_t mods) {
+ }
+ 
+ // --- Internal hooks from the BLE backend -------------------------------------
+-void BleKeyboardHost::onReportIngest(const uint8_t* data, size_t len) {
++void BleKeyboardHost::onReportIngest(const uint8_t* data, size_t len, const uint8_t source) {
+   if (!data || len == 0) return;
+-  g_lastReportMs = millis();  // freshness for the stale-release timeout in poll()
++  const uint32_t reportMs = millis();
++  g_lastReportMs = reportMs;  // freshness for the stale-release timeout in poll()
++
++#if FREEINK_BLE_HID_RAW_DIAGNOSTICS
++  RawReportDiagnostic raw;
++  raw.sequence = ++g_rawReportSequence;
++  raw.uptimeMs = reportMs;
++  const uint32_t delta = g_lastRawReportMs == 0 ? 0 : reportMs - g_lastRawReportMs;
++  raw.deltaMs = delta > 0xFFFFu ? 0xFFFFu : static_cast<uint16_t>(delta);
++  g_lastRawReportMs = reportMs;
++  raw.source = source;
++  raw.reportType = 1;  // setupHid subscribes only to HID input reports.
++  raw.reportId = source == 1 && len == 9 ? data[0] : 0xFF;
++  raw.length = len > 0xFFFFu ? 0xFFFF : static_cast<uint16_t>(len);
++  raw.storedLength = len > RawReportDiagnostic::kMaxPayloadBytes
++                         ? RawReportDiagnostic::kMaxPayloadBytes
++                         : static_cast<uint8_t>(len);
++  raw.truncated = len > RawReportDiagnostic::kMaxPayloadBytes;
++  memcpy(raw.payload, data, raw.storedLength);
++#endif
+ 
+ #if FREEINK_BLE_HID_REPORT_DEBUG
+   {
+@@ -719,6 +774,9 @@ void BleKeyboardHost::onReportIngest(const uint8_t* data, size_t len) {
+ 
+   bool emittedKb = false;
+   if (keyboardShaped) {
++#if FREEINK_BLE_HID_RAW_DIAGNOSTICS
++    raw.state |= RAW_STATE_KEYBOARD_SHAPED;
++#endif
+     // Emit a press for every key newly present versus the previous report.
+     for (int i = 0; i < 6; ++i) {
+       const uint8_t k = keys[i];
+@@ -741,6 +799,10 @@ void BleKeyboardHost::onReportIngest(const uint8_t* data, size_t len) {
+     for (int i = 0; i < 6; ++i) {
+       if (keys[i] != 0 && keys[i] != 0x01) cur = keys[i];
+     }
++#if FREEINK_BLE_HID_RAW_DIAGNOSTICS
++    if (cur == 0) raw.state |= RAW_STATE_RELEASE_EDGE;
++    if (emittedKb) raw.state |= RAW_STATE_PRESS_EDGE;
++#endif
+     portENTER_CRITICAL(&g_mux);
+     if (cur == 0) {
+       heldUsage_ = 0;
+@@ -762,6 +824,9 @@ void BleKeyboardHost::onReportIngest(const uint8_t* data, size_t len) {
+   // representative code and surface it (edge-detected so one press == one event).
+   const bool tryGeneric = !emittedKb && (g_hasConsumerPage || !g_hasKeyboardPage || n < 7);
+   if (tryGeneric) {
++#if FREEINK_BLE_HID_RAW_DIAGNOSTICS
++    raw.state |= RAW_STATE_GENERIC_PATH;
++#endif
+     size_t codeIdx = 0;
+     const uint8_t code = extractPrimaryCode(p, n, &codeIdx);
+     // Gamepad-style modes keep constant bits in the button byte and only clear
+@@ -775,6 +840,11 @@ void BleKeyboardHost::onReportIngest(const uint8_t* data, size_t len) {
+     // human-separated presses.
+     const bool pressEdge = code != 0 && code != g_lastGenericCode && (code & ~g_lastGenericCode) != 0;
+     const bool releaseEdge = code != 0 && code != g_lastGenericCode && (code & ~g_lastGenericCode) == 0;
++#if FREEINK_BLE_HID_RAW_DIAGNOSTICS
++    if (code == 0 || releaseEdge) raw.state |= RAW_STATE_RELEASE_EDGE;
++    if (pressEdge) raw.state |= RAW_STATE_PRESS_EDGE;
++    if (codeIdx == 0 && n >= 5) raw.state |= RAW_STATE_AXIS_CANDIDATE;
++#endif
+     if (codeIdx == 0 && n >= 5) {
+       // Gamepad/axis-pair mode (ino gamebrick T): byte 0 is a status byte whose
+       // bit0 is "pressed" (0x13 press -> 0x12 release), bytes 1-4 are two 16-bit
+@@ -812,6 +882,19 @@ void BleKeyboardHost::onReportIngest(const uint8_t* data, size_t len) {
+   } else if (emittedKb) {
+     g_lastGenericCode = 0;
+   }
++
++#if FREEINK_BLE_HID_RAW_DIAGNOSTICS
++  portENTER_CRITICAL(&g_mux);
++  const uint8_t next = static_cast<uint8_t>((g_rawReportHead + 1) % kRawReportRingLen);
++  if (next == g_rawReportTail) {
++    // Keep the newest reports; sequence gaps make any overflow visible in the
++    // physical capture without allowing the callback to block or allocate.
++    g_rawReportTail = static_cast<uint8_t>((g_rawReportTail + 1) % kRawReportRingLen);
++  }
++  g_rawReports[g_rawReportHead] = raw;
++  g_rawReportHead = next;
++  portEXIT_CRITICAL(&g_mux);
++#endif
+ }
+ 
+ void BleKeyboardHost::onScanResultIngest(const char* addr, const char* name, int rssi, uint8_t type, bool hid,
+@@ -1055,8 +1138,12 @@ const PairedHidDevice& BleKeyboardHost::paired(uint8_t) const {
+ }
+ void BleKeyboardHost::forget(const char*) {}
+ bool BleKeyboardHost::popKey(KeyEvent&) { return false; }
++#if FREEINK_BLE_HID_RAW_DIAGNOSTICS
++bool BleKeyboardHost::popRawReport(RawReportDiagnostic&) { return false; }
++void BleKeyboardHost::clearRawReports() {}
++#endif
+ void BleKeyboardHost::onScanResultIngest(const char*, const char*, int, uint8_t, bool, bool) {}
+-void BleKeyboardHost::onReportIngest(const uint8_t*, size_t) {}
++void BleKeyboardHost::onReportIngest(const uint8_t*, size_t, uint8_t) {}
+ void BleKeyboardHost::onLinkUp(const char*, const char*, uint8_t) {}
+ void BleKeyboardHost::onLinkDown() {}
+ void BleKeyboardHost::onConnectFailed(const char*) {}

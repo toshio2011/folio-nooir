@@ -76,6 +76,49 @@ const char* failureStage(const char* reason) {
   if (strstr(reason, "Not a HID")) return "hid";
   return "link";
 }
+
+#if FREEINK_BLE_HID_RAW_DIAGNOSTICS
+constexpr uint8_t kRawReportsPerPoll = 4;
+
+char rawSourceName(const uint8_t source) {
+  if (source == 1) return 'R';  // HID Report characteristic (0x2A4D)
+  if (source == 2) return 'B';  // Boot keyboard input characteristic (0x2A22)
+  return '?';
+}
+
+void serialRawReportDiagnostics() {
+  for (uint8_t i = 0; i < kRawReportsPerPoll; ++i) {
+    freeink::RawReportDiagnostic report;
+    if (!BleHid.popRawReport(report)) return;
+
+    // Keep each line comfortably below the logger's bounded line buffer. A
+    // report longer than 20 bytes is continued with the same sequence number.
+    constexpr uint8_t kBytesPerLine = 20;
+    const uint8_t firstBytes = report.storedLength < kBytesPerLine ? report.storedLength : kBytesPerLine;
+    char hex[ kBytesPerLine * 2 + 1 ] = {};
+    for (uint8_t byte = 0; byte < firstBytes; ++byte) {
+      snprintf(hex + byte * 2, sizeof(hex) - byte * 2, "%02X", static_cast<unsigned>(report.payload[byte]));
+    }
+    serialDiagnostic("raw q=%lu t=%lu dt=%u src=%c ty=%u id=%02X len=%u n=%u st=%02X x=%u b=%s",
+                     static_cast<unsigned long>(report.sequence), static_cast<unsigned long>(report.uptimeMs),
+                     static_cast<unsigned>(report.deltaMs), rawSourceName(report.source),
+                     static_cast<unsigned>(report.reportType), static_cast<unsigned>(report.reportId),
+                     static_cast<unsigned>(report.length), static_cast<unsigned>(report.storedLength),
+                     static_cast<unsigned>(report.state), report.truncated ? 1u : 0u, hex);
+
+    for (uint8_t offset = firstBytes; offset < report.storedLength; offset += kBytesPerLine) {
+      const uint8_t bytes = report.storedLength - offset < kBytesPerLine ? report.storedLength - offset : kBytesPerLine;
+      memset(hex, 0, sizeof(hex));
+      for (uint8_t byte = 0; byte < bytes; ++byte) {
+        snprintf(hex + byte * 2, sizeof(hex) - byte * 2, "%02X",
+                 static_cast<unsigned>(report.payload[offset + byte]));
+      }
+      serialDiagnostic("raw+ q=%lu o=%u b=%s", static_cast<unsigned long>(report.sequence),
+                       static_cast<unsigned>(offset), hex);
+    }
+  }
+}
+#endif
 #endif
 
 void sampleHeap() {
@@ -151,6 +194,9 @@ bool ensureStarted() {
   const uint32_t beforeLargest = static_cast<uint32_t>(ESP.getMaxAllocHeap());
   const unsigned long startedMs = millis();
   HalPowerManager::Lock powerLock;
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_DIAGNOSTICS && FREEINK_BLE_HID_RAW_DIAGNOSTICS
+  BleHid.clearRawReports();
+#endif
   const bool started = BleHid.begin(kHostName);
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_DIAGNOSTICS
   g_serialDiagnosticRecords = 0;
@@ -196,6 +242,9 @@ void stop() {
   const unsigned long startedMs = millis();
   HalPowerManager::Lock powerLock;
   BleHid.end();
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_DIAGNOSTICS && FREEINK_BLE_HID_RAW_DIAGNOSTICS
+  BleHid.clearRawReports();
+#endif
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_DIAGNOSTICS
   serialDiagnostic("stop act=%.20s ms=%lu f0=%lu m0=%lu f1=%lu m1=%lu", g_activityName, millis() - startedMs,
                    static_cast<unsigned long>(beforeFree), static_cast<unsigned long>(beforeLargest),
@@ -207,6 +256,9 @@ void stop() {
 void pollLifecycle() {
 #if FREEINK_CAP_BLE_HID_HOST
   sampleHeap();
+#if NOOIR_BLE_DIAGNOSTICS && FREEINK_BLE_HID_RAW_DIAGNOSTICS
+  serialRawReportDiagnostics();
+#endif
   const bool running = BleHid.isRunning();
   const bool connected = BleHid.isConnected();
   const bool connecting = BleHid.isConnecting();
