@@ -4,6 +4,51 @@
 #include <Logging.h>
 #include <ObfuscationUtils.h>
 
+#include <cstring>
+
+namespace {
+
+constexpr const char* SETTINGS_PATH = "/.crosspoint/settings.json";
+
+bool isSettingsPath(const char* path) {
+  return path && strcmp(path, SETTINGS_PATH) == 0;
+}
+
+const char* settingsCandidateName(const size_t index) {
+  switch (index) {
+    case 0:
+      return "main";
+    case 1:
+      return "bak";
+    default:
+      return "tmp";
+  }
+}
+
+}  // namespace
+
+bool PersistableStoreBase::isSemanticallyValidSettingsDocument(JsonVariantConst doc) {
+  if (!doc.is<JsonObjectConst>()) return false;
+
+  // Profile documents use the same field names as settings but carry this
+  // reserved marker.  Never let a profile be mistaken for the main settings
+  // document during recovery.
+  if (!doc["_profileSchema"].isNull()) return false;
+
+  // These keys have existed across the RC1 settings history.  Do not require
+  // any one version's complete field set: the purpose is only to distinguish
+  // a real settings object from {}, a profile object, or unrelated JSON.
+  constexpr const char* knownKeys[] = {
+      "sleepScreen",       "uiTheme",          "fontFamily",       "fontSize",          "lineSpacing",
+      "orientation",       "statusBarClock",  "statusBarBattery", "refreshFrequency", "language",
+      "recentBookLayout",  "finishedBookLayout", "uiScalePercent", "quickActionSlot1", "sleepModeLayoutVersion",
+  };
+  for (const char* key : knownKeys) {
+    if (!doc[key].isNull()) return true;
+  }
+  return false;
+}
+
 bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& doc) {
   Storage.mkdir("/.crosspoint");
   String json;
@@ -22,6 +67,29 @@ bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& 
     LOG_ERR("PERSIST", "Failed to write temporary document %s", tmpPath.c_str());
     Storage.remove(tmpPath.c_str());
     return false;
+  }
+
+  // A successful write call is not enough to prove that the completed
+  // temporary document is readable and meaningful.  Read it back only for
+  // the main settings file: settings saves are explicit and infrequent, and
+  // this closes the exact truncation/garbling window before promotion.
+  if (isSettingsPath(path)) {
+    const String writtenTemp = Storage.readFile(tmpPath.c_str());
+    bool parsed = false;
+    bool valid = false;
+    if (!writtenTemp.isEmpty()) {
+      JsonDocument verified;
+      const auto error = deserializeJson(verified, writtenTemp);
+      parsed = !error;
+      valid = parsed && isSemanticallyValidSettingsDocument(verified.as<JsonVariantConst>());
+    }
+    LOG_INF("PERSIST", "settings_save_phase=temp_validation read=%d parse=%d validation=%d", !writtenTemp.isEmpty(),
+            parsed, valid);
+    if (!valid) {
+      LOG_ERR("PERSIST", "settings_save_phase=temp_validation_failed");
+      Storage.remove(tmpPath.c_str());
+      return false;
+    }
   }
 
   const bool hadOriginal = Storage.exists(path);
@@ -58,34 +126,63 @@ bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& 
 }
 
 bool PersistableStoreBase::readDocFromFile(const char* path, JsonDocument& doc) {
+  const bool settingsPath = isSettingsPath(path);
   const String backupPath = String(path) + ".bak";
   const String tmpPath = String(path) + ".tmp";
   const String candidates[] = {String(path), backupPath, tmpPath};
 
   for (size_t i = 0; i < (sizeof(candidates) / sizeof(candidates[0])); ++i) {
     const String& candidate = candidates[i];
-    if (!Storage.exists(candidate.c_str())) continue;
+    if (!Storage.exists(candidate.c_str())) {
+      if (settingsPath) {
+        LOG_INF("PERSIST", "settings_candidate=%s exists=0 read=0 parse=0 validation=0",
+                settingsCandidateName(i));
+      }
+      continue;
+    }
 
     String json = Storage.readFile(candidate.c_str());
+    bool parsed = false;
+    bool valid = false;
     if (json.isEmpty()) {
       LOG_ERR("PERSIST", "Failed to read %s (empty)", candidate.c_str());
+      if (settingsPath) {
+        LOG_INF("PERSIST", "settings_candidate=%s exists=1 read=0 parse=0 validation=0", settingsCandidateName(i));
+      }
       continue;
     }
 
     doc.clear();
     auto error = deserializeJson(doc, json);
     if (!error) {
+      parsed = true;
+      valid = !settingsPath || isSemanticallyValidSettingsDocument(doc.as<JsonVariantConst>());
+      if (settingsPath) {
+        LOG_INF("PERSIST", "settings_candidate=%s exists=1 read=1 parse=1 validation=%d", settingsCandidateName(i),
+                valid);
+      }
+      if (!valid) {
+        LOG_ERR("PERSIST", "Rejected semantically invalid settings candidate %s", candidate.c_str());
+        doc.clear();
+        continue;
+      }
       if (i == 1) {
         LOG_ERR("PERSIST", "Recovered %s from backup %s", path, candidate.c_str());
       } else if (i == 2) {
         LOG_ERR("PERSIST", "Recovered %s from pending write %s", path, candidate.c_str());
       }
+      if (settingsPath) LOG_INF("PERSIST", "settings_source=%s", settingsCandidateName(i));
       return true;
+    }
+    parsed = false;
+    if (settingsPath) {
+      LOG_INF("PERSIST", "settings_candidate=%s exists=1 read=1 parse=0 validation=0", settingsCandidateName(i));
     }
     LOG_ERR("PERSIST", "JSON parse error in %s: %s", candidate.c_str(), error.c_str());
   }
 
   // Missing documents are normal on first boot; malformed documents are not.
+  if (settingsPath) LOG_ERR("PERSIST", "settings_source=defaults");
   return false;
 }
 

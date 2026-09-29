@@ -1,5 +1,6 @@
 #include "CrossPointSettings.h"
 
+#include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <ObfuscationUtils.h>
@@ -92,6 +93,43 @@ uint8_t CrossPointSettings::sleepTimeoutEnumToMinutes(const uint8_t legacyValue)
   }
 }
 
+bool CrossPointSettings::loadFromFile() {
+  const bool ok = PersistableStore<CrossPointSettings>::loadFromFile();
+  if (ok) {
+    settingsRecoveryRequired = false;
+    return true;
+  }
+
+  // A missing file is the normal first-boot path and must leave defaults
+  // writable.  Existing but unusable candidates require an explicit recovery
+  // action before an ordinary save is allowed to replace them.
+  const bool candidateExists = Storage.exists(getFilePath()) || Storage.exists("/.crosspoint/settings.json.bak") ||
+                               Storage.exists("/.crosspoint/settings.json.tmp");
+  settingsRecoveryRequired = candidateExists;
+  if (candidateExists) {
+    LOG_ERR("CPS", "settings_source=defaults save_guard=1");
+  }
+  return false;
+}
+
+bool CrossPointSettings::saveToFile() const {
+  if (settingsRecoveryRequired) {
+    LOG_ERR("CPS", "settings_save=blocked reason=recovery_required");
+    return false;
+  }
+  return PersistableStore<CrossPointSettings>::saveToFile();
+}
+
+void CrossPointSettings::markSettingsRecoveryRequired() {
+  settingsRecoveryRequired = true;
+  LOG_ERR("CPS", "settings_save=blocked reason=recovery_required");
+}
+
+void CrossPointSettings::acknowledgeSettingsRecovery() {
+  settingsRecoveryRequired = false;
+  LOG_INF("CPS", "settings_recovery=acknowledged");
+}
+
 void CrossPointSettings::toJson(JsonDocument& doc) const {
   const CrossPointSettings& s = *this;
 
@@ -173,6 +211,10 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
 }
 
 bool CrossPointSettings::fromJson(JsonVariantConst doc) {
+  return fromJsonForProfile(doc, false);
+}
+
+bool CrossPointSettings::fromJsonForProfile(JsonVariantConst doc, const bool preserveMissingManualFields) {
   CrossPointSettings& s = *this;
   bool needsResave = false;
   const bool currentSleepModeLayout = (doc["sleepModeLayoutVersion"] | (uint8_t)0) == 1;
@@ -296,22 +338,37 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     needsResave = true;
   }
   // Front button remap — managed by RemapFrontButtons sub-activity, not in SettingsList.
-  frontButtonBack = clamp(doc["frontButtonBack"] | (uint8_t)FRONT_HW_BACK, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_BACK);
+  frontButtonBack = clamp(doc["frontButtonBack"] |
+                              (preserveMissingManualFields ? s.frontButtonBack : (uint8_t)FRONT_HW_BACK),
+                          FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_BACK);
   frontButtonConfirm =
-      clamp(doc["frontButtonConfirm"] | (uint8_t)FRONT_HW_CONFIRM, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_CONFIRM);
-  frontButtonLeft = clamp(doc["frontButtonLeft"] | (uint8_t)FRONT_HW_LEFT, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_LEFT);
-  frontButtonRight =
-      clamp(doc["frontButtonRight"] | (uint8_t)FRONT_HW_RIGHT, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_RIGHT);
+      clamp(doc["frontButtonConfirm"] |
+                (preserveMissingManualFields ? s.frontButtonConfirm : (uint8_t)FRONT_HW_CONFIRM),
+            FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_CONFIRM);
+  frontButtonLeft = clamp(doc["frontButtonLeft"] |
+                              (preserveMissingManualFields ? s.frontButtonLeft : (uint8_t)FRONT_HW_LEFT),
+                          FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_LEFT);
+  frontButtonRight = clamp(doc["frontButtonRight"] |
+                               (preserveMissingManualFields ? s.frontButtonRight : (uint8_t)FRONT_HW_RIGHT),
+                           FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_RIGHT);
   validateFrontButtonMapping(s);
 
   readerFrontButtonBack =
-      clamp(doc["readerFrontButtonBack"] | (uint8_t)FRONT_HW_BACK, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_BACK);
+      clamp(doc["readerFrontButtonBack"] |
+                (preserveMissingManualFields ? s.readerFrontButtonBack : (uint8_t)FRONT_HW_BACK),
+            FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_BACK);
   readerFrontButtonConfirm =
-      clamp(doc["readerFrontButtonConfirm"] | (uint8_t)FRONT_HW_CONFIRM, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_CONFIRM);
+      clamp(doc["readerFrontButtonConfirm"] |
+                (preserveMissingManualFields ? s.readerFrontButtonConfirm : (uint8_t)FRONT_HW_CONFIRM),
+            FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_CONFIRM);
   readerFrontButtonLeft =
-      clamp(doc["readerFrontButtonLeft"] | (uint8_t)FRONT_HW_LEFT, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_LEFT);
+      clamp(doc["readerFrontButtonLeft"] |
+                (preserveMissingManualFields ? s.readerFrontButtonLeft : (uint8_t)FRONT_HW_LEFT),
+            FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_LEFT);
   readerFrontButtonRight =
-      clamp(doc["readerFrontButtonRight"] | (uint8_t)FRONT_HW_RIGHT, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_RIGHT);
+      clamp(doc["readerFrontButtonRight"] |
+                (preserveMissingManualFields ? s.readerFrontButtonRight : (uint8_t)FRONT_HW_RIGHT),
+            FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_RIGHT);
   // Reuse the same duplicate protection for the reader mapping without
   // changing the user's global/home mapping.
   const uint8_t readerMapping[] = {readerFrontButtonBack, readerFrontButtonConfirm, readerFrontButtonLeft,
@@ -333,10 +390,12 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     needsResave = true;
   }
 
-  bluetoothEnabled = clamp(doc["bluetoothEnabled"] | (uint8_t)0, 2, 0);
-  for (auto& entry : bleKeyMap) entry = BleKeyMapEntry{};
+  bluetoothEnabled = clamp(doc["bluetoothEnabled"] |
+                               (preserveMissingManualFields ? s.bluetoothEnabled : (uint8_t)0),
+                           2, 0);
   JsonArrayConst storedBleMap = doc["bleKeyMap"];
   if (!storedBleMap.isNull()) {
+    for (auto& entry : bleKeyMap) entry = BleKeyMapEntry{};
     uint8_t slot = 0;
     for (JsonObjectConst item : storedBleMap) {
       if (slot >= BLE_MAP_CAPACITY) break;
@@ -375,18 +434,28 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
       }
       slot++;
     }
+  } else if (!preserveMissingManualFields) {
+    for (auto& entry : bleKeyMap) entry = BleKeyMapEntry{};
   }
 
   // Font family — uses dynamic getter/setter in SettingsList so the generic loop skips it.
-  const uint8_t storedFontFamily = doc["fontFamily"] | (uint8_t)0;
+  const uint8_t storedFontFamily = doc["fontFamily"] |
+                                   (preserveMissingManualFields ? s.fontFamily : (uint8_t)0);
   // Keep the legacy Noto Sans enum value in storage so rollback to older
   // firmware can restore the user's original preference.
   fontFamily = clamp(storedFontFamily, FONT_FAMILY_COUNT, NOTOSERIF);
-  // SD card font family name — not in SettingsList, load manually
-  const char* sfn = doc["sdFontFamilyName"] | "";
-  strncpy(sdFontFamilyName, sfn, sizeof(sdFontFamilyName) - 1);
-  sdFontFamilyName[sizeof(sdFontFamilyName) - 1] = '\0';
-  copyToField(uiFontFamilyName, doc["uiFontFamilyName"] | "", sizeof(uiFontFamilyName));
+  // SD card/interface font family names — not in SettingsList, load manually.
+  // Older schema-1 profiles may omit these fields; keep the current selection
+  // in that compatibility case.  Current RC1-shaped profiles retain the
+  // original default-on-absence behavior for exact round-trip compatibility.
+  if (!preserveMissingManualFields || !doc["sdFontFamilyName"].isNull()) {
+    const char* sfn = doc["sdFontFamilyName"] | "";
+    strncpy(sdFontFamilyName, sfn, sizeof(sdFontFamilyName) - 1);
+    sdFontFamilyName[sizeof(sdFontFamilyName) - 1] = '\0';
+  }
+  if (!preserveMissingManualFields || !doc["uiFontFamilyName"].isNull()) {
+    copyToField(uiFontFamilyName, doc["uiFontFamilyName"] | "", sizeof(uiFontFamilyName));
+  }
   if (storedFontFamily == LEGACY_OPENDYSLEXIC && sdFontFamilyName[0] == '\0') {
     fontFamily = NOTOSERIF;
     strncpy(sdFontFamilyName, "OpenDyslexic", sizeof(sdFontFamilyName) - 1);
@@ -396,17 +465,26 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     needsResave = true;
   }
   // Dictionary folder name — uses dynamic getter/setter in SettingsList, load manually
-  copyToField(dictionaryName, doc["dictionaryName"] | "", sizeof(dictionaryName));
-  dictionaryFontFamily = clamp(doc["dictionaryFontFamily"] | static_cast<uint8_t>(DICT_USE_READER),
+  if (!preserveMissingManualFields || !doc["dictionaryName"].isNull()) {
+    copyToField(dictionaryName, doc["dictionaryName"] | "", sizeof(dictionaryName));
+  }
+  dictionaryFontFamily = clamp(doc["dictionaryFontFamily"] |
+                                   (preserveMissingManualFields ? s.dictionaryFontFamily
+                                                                 : static_cast<uint8_t>(DICT_USE_READER)),
                                DICT_FONT_FAMILY_COUNT, DICT_USE_READER);
-  dictionaryFontSize = clamp(doc["dictionaryFontSize"] | static_cast<uint8_t>(MEDIUM), FONT_SIZE_COUNT, MEDIUM);
+  dictionaryFontSize = clamp(doc["dictionaryFontSize"] |
+                                 (preserveMissingManualFields ? s.dictionaryFontSize : static_cast<uint8_t>(MEDIUM)),
+                             FONT_SIZE_COUNT, MEDIUM);
 
   // Quick Actions were added after the existing settings format. Keep the
   // file version unchanged: absent keys use the designed defaults, while
   // malformed/duplicate values are normalised to a safe unique slot set.
   std::array<QuickActions::ActionId, QuickActions::SLOT_COUNT> loadedQuickActions{};
   for (size_t i = 0; i < QuickActions::SLOT_COUNT; ++i) {
-    const uint16_t raw = doc[QUICK_ACTION_KEYS[i]] | static_cast<uint16_t>(QUICK_ACTION_DEFAULTS[i]);
+    const uint16_t defaultAction = preserveMissingManualFields
+                                       ? static_cast<uint16_t>(quickActionField(s, i))
+                                       : static_cast<uint16_t>(QUICK_ACTION_DEFAULTS[i]);
+    const uint16_t raw = doc[QUICK_ACTION_KEYS[i]] | defaultAction;
     QuickActions::ActionId action = QuickActions::ActionId::None;
     if (raw <= 0xFF && (raw == static_cast<uint8_t>(QuickActions::ActionId::None) ||
                         QuickActions::isKnown(static_cast<QuickActions::ActionId>(raw)))) {
@@ -427,8 +505,15 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   // Line spacing was historically stored as the enum 0=Tight, 1=Normal,
   // 2=Wide. The public key remains "lineSpacing" for compatibility, while
   // the value is now a precise percentage.
-  const uint16_t storedLineSpacing = doc["lineSpacing"] | static_cast<uint16_t>(LINE_SPACING_DEFAULT_PERCENT);
-  if (storedLineSpacing <= WIDE) {
+  const bool lineSpacingMissing = doc["lineSpacing"].isNull();
+  const uint16_t storedLineSpacing = doc["lineSpacing"] |
+                                     (preserveMissingManualFields && lineSpacingMissing
+                                          ? static_cast<uint16_t>(lineSpacingPercent)
+                                          : static_cast<uint16_t>(LINE_SPACING_DEFAULT_PERCENT));
+  if (preserveMissingManualFields && lineSpacingMissing) {
+    // The precise line-spacing field was introduced after older profiles;
+    // preserve the current percentage when neither representation exists.
+  } else if (storedLineSpacing <= WIDE) {
     static constexpr uint8_t LEGACY_LINE_SPACING[] = {95, 100, 110};
     lineSpacingPercent = LEGACY_LINE_SPACING[storedLineSpacing];
     needsResave = true;

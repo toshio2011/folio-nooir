@@ -12,6 +12,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Private constructor for singleton
   CrossPointSettings() = default;
 
+  // Set only when boot could not load any existing settings candidate.  It is
+  // deliberately not serialized: a failed load must not turn built-in
+  // defaults into a new settings file by accident.
+  bool settingsRecoveryRequired = false;
+
   friend class PersistableStore<CrossPointSettings>;
 
  public:
@@ -531,6 +536,16 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   static const char* getFilePath() { return "/.crosspoint/settings.json"; }
   void toJson(JsonDocument& doc) const;
   bool fromJson(JsonVariantConst doc);
+  bool fromJsonForProfile(JsonVariantConst doc, bool preserveMissingManualFields);
+
+  // Hide the generic CRTP methods so the settings store can guard normal
+  // saves after an unsuccessful boot load while keeping first-boot defaults
+  // writable and allowing an explicit valid profile to resolve recovery.
+  bool loadFromFile();
+  bool saveToFile() const;
+  void markSettingsRecoveryRequired();
+  void acknowledgeSettingsRecovery();
+  bool isSettingsRecoveryRequired() const { return settingsRecoveryRequired; }
 
   static void validateFrontButtonMapping(CrossPointSettings& settings);
   static uint8_t sleepTimeoutEnumToMinutes(uint8_t legacyValue);
