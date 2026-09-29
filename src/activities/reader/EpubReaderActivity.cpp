@@ -26,6 +26,7 @@
 #include "CrossPointState.h"
 #include "ClipSelectionActivity.h"
 #include "DictionaryWordSelectActivity.h"
+#include "BleInput.h"
 #include "EpubReaderBookmarksActivity.h"
 #include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderClippingListActivity.h"
@@ -43,6 +44,9 @@
 #include "ReadingStatsStore.h"
 #include "SdCardFontSystem.h"
 #include "activities/home/ReadingStatsActivity.h"
+#if FREEINK_CAP_BLE_HID_HOST
+#include "activities/settings/BluetoothSettingsActivity.h"
+#endif
 #include "activities/settings/TextSettingsActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -1786,6 +1790,16 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       launchKOReaderSync();
       break;
     }
+#if FREEINK_CAP_BLE_HID_HOST
+    case EpubReaderMenuActivity::MenuAction::BLUETOOTH: {
+      startActivityForResult(std::make_unique<BluetoothSettingsActivity>(renderer, mappedInput),
+                             [this](const ActivityResult&) {
+                               SETTINGS.saveToFile();
+                               requestUpdate();
+                             });
+      break;
+    }
+#endif
     case EpubReaderMenuActivity::MenuAction::BOOKMARKS: {
       startActivityForResult(
           std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, epub, epub->getPath()),

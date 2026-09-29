@@ -4,6 +4,7 @@
 #include <I18n.h>
 
 #include "CrossPointSettings.h"
+#include "BleInput.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -48,9 +49,10 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuI
   items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON});
   items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS});
   items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});
-  // Reuse the existing localized Book Actions label until the settings-owned
-  // Quick Actions label is added to the translation surface.
-  items.push_back({MenuAction::QUICK_ACTIONS, StrId::STR_BOOK_ACTIONS});
+  items.push_back({MenuAction::QUICK_ACTIONS, StrId::STR_QUICK_ACTIONS});
+#if FREEINK_CAP_BLE_HID_HOST
+  items.push_back({MenuAction::BLUETOOTH, StrId::STR_BLUETOOTH});
+#endif
   return items;
 }
 
@@ -136,7 +138,7 @@ void EpubReaderMenuActivity::loop() {
           QuickActions::label(quickActionIds[0]), QuickActions::label(quickActionIds[1]),
           QuickActions::label(quickActionIds[2]), QuickActions::label(quickActionIds[3])};
       quickActionPopup = true;
-      optionPopup.show(tr(STR_BOOK_ACTIONS), labels.data(), static_cast<int>(count), 0, [this](const int index) {
+      optionPopup.show(tr(STR_QUICK_ACTIONS), labels.data(), static_cast<int>(count), 0, [this](const int index) {
         quickActionPopup = false;
         if (index < 0 || index >= static_cast<int>(QuickActions::SLOT_COUNT)) return;
         setResult(MenuResult{static_cast<int>(MenuAction::QUICK_ACTIONS), pendingOrientation,

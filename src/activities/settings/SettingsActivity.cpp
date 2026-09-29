@@ -134,7 +134,7 @@ void SettingsActivity::rebuildSettingsLists() {
   readerSettings.insert(readerSettings.begin() + 3,
                         SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts));
   readerSettings.push_back(SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
-  readerSettings.push_back(SettingInfo::Action(StrId::STR_BOOK_ACTIONS, SettingAction::QuickActions));
+  readerSettings.push_back(SettingInfo::Action(StrId::STR_QUICK_ACTIONS, SettingAction::QuickActions));
 
   // Keep the four tabs as the stable settings categories, but present each
   // category in a predictable, task-oriented order.  This is deliberately a
@@ -683,7 +683,7 @@ void SettingsActivity::openQuickActionsPicker() {
     slotOptions.push_back(std::move(option));
   }
 
-  optionPopup.show(StrId::STR_BOOK_ACTIONS, slotOptions, 0, [this](const int slot) {
+  optionPopup.show(StrId::STR_QUICK_ACTIONS, slotOptions, 0, [this](const int slot) {
     if (slot < 0 || slot >= static_cast<int>(QuickActions::SLOT_COUNT)) return;
 
     std::vector<std::string> actionOptions;
@@ -702,7 +702,7 @@ void SettingsActivity::openQuickActionsPicker() {
       }
     }
 
-    optionPopup.show(StrId::STR_BOOK_ACTIONS, actionOptions, currentIndex,
+    optionPopup.show(StrId::STR_QUICK_ACTIONS, actionOptions, currentIndex,
                      [this, slot](const int actionIndex) {
                        const auto action = actionIndex < static_cast<int>(QuickActions::ACTION_COUNT)
                                                ? QuickActions::CONFIGURABLE_ACTIONS[static_cast<size_t>(actionIndex)]

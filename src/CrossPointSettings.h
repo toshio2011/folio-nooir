@@ -37,6 +37,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     MINIMAL_STATS = 10,
     CLIPPING_COVER = 11,
     TODO_LIST = 12,
+    // RC2 additions. Keep the RC1 values above stable for persisted settings.
+    READING_CALENDAR_SLEEP = 13,
+    READING_SUMMARY_SLEEP = 14,
     SLEEP_SCREEN_MODE_COUNT
   };
   enum TODO_SLEEP_MODE {

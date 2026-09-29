@@ -30,7 +30,8 @@ class EpubReaderMenuActivity final : public Activity {
     DICTIONARY,
     CLIP_TEXT,
     CLIPPINGS,
-    QUICK_ACTIONS
+    QUICK_ACTIONS,
+    BLUETOOTH
   };
 
   explicit EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title,

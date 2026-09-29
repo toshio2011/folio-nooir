@@ -529,6 +529,10 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
           return 10;
         case CrossPointSettings::SLEEP_SCREEN_MODE::TODO_LIST:
           return 11;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::READING_CALENDAR_SLEEP:
+          return 12;
+        case CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP:
+          return 13;
         default:
           return SETTINGS.sleepScreen <= CrossPointSettings::SLEEP_SCREEN_MODE::COVER ? SETTINGS.sleepScreen : 3;
       }
@@ -569,8 +573,14 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
           SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::CLIPPING_COVER;
           break;
         case 11:
-        default:
           SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::TODO_LIST;
+          break;
+        case 12:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::READING_CALENDAR_SLEEP;
+          break;
+        case 13:
+        default:
+          SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP;
           break;
       }
     };
@@ -580,6 +590,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         I18N.get(StrId::STR_PAGE_OVERLAY),
         "Cover + Overlay", "Reading Stats", "Minimal Stats", "Clipping + Cover"};
   v.front().enumStringValues.push_back(I18N.get(StrId::STR_TODO_LIST));
+  v.front().enumStringValues.push_back(I18N.get(StrId::STR_READING_CALENDAR_SLEEP));
+  v.front().enumStringValues.push_back(I18N.get(StrId::STR_READING_SUMMARY_SLEEP));
   }
   if (!BoardConfig::hasTouch()) {
     v.erase(std::remove_if(v.begin(), v.end(),

@@ -13,6 +13,7 @@
 #include <FontCacheManager.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -530,6 +531,10 @@ void SleepActivity::onEnter() {
       return renderClippingCoverSleepScreen();
     case (CrossPointSettings::SLEEP_SCREEN_MODE::TODO_LIST):
       return renderToDoSleepScreen();
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::READING_CALENDAR_SLEEP):
+      return renderReadingCalendarSleepScreen();
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP):
+      return renderReadingSummarySleepScreen();
     default:
       return renderDefaultSleepScreen();
   }
@@ -1343,7 +1348,106 @@ void SleepActivity::renderReadingStatsSleepScreen() const {
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 }
 
-void SleepActivity::renderMinimalStatsSleepScreen() const {
+void SleepActivity::renderReadingCalendarSleepScreen() const {
+  StatisticsSnapshotOptions options;
+  options.keepDailyHistory = true;
+  options.keepAllBooks = false;
+  options.evaluateAchievements = false;
+  StatisticsSnapshot snapshot = StatisticsSnapshot::build(options);
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const int side = std::max(16, pageWidth / 20);
+
+  preconditionSleepRefresh(renderer);
+  renderer.clearScreen();
+
+  renderer.drawCenteredText(UI_12_FONT_ID, 28, tr(STR_READING_CALENDAR_SLEEP), true, EpdFontFamily::BOLD);
+  renderer.drawLine(side, 54, pageWidth - side - 1, 54);
+
+  int year = 0;
+  int month = 0;
+  int today = 0;
+  if (!StatisticsDate::split(snapshot.todayDateKey, year, month, today)) {
+    renderer.drawCenteredText(UI_10_FONT_ID, 120, tr(STR_STATS_CLOCK_UNAVAILABLE), true, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(SMALL_FONT_ID, 158, tr(STR_STATS_NO_DATED_HISTORY));
+    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+    return;
+  }
+
+  char monthText[16];
+  snprintf(monthText, sizeof(monthText), "%04d-%02d", year, month);
+  renderer.drawCenteredText(UI_12_FONT_ID, 78, monthText, true, EpdFontFamily::BOLD);
+
+  std::array<ReadingDayStat, 31> monthDays{};
+  uint32_t monthMaxSeconds = 0;
+  uint32_t monthSeconds = 0;
+  uint16_t activeDays = 0;
+  for (const auto& entry : snapshot.days) {
+    int entryYear = 0;
+    int entryMonth = 0;
+    int entryDay = 0;
+    if (!StatisticsDate::split(entry.dateKey, entryYear, entryMonth, entryDay) || entryYear != year ||
+        entryMonth != month)
+      continue;
+    auto& day = monthDays[static_cast<size_t>(entryDay - 1)];
+    day.dateKey = entry.dateKey;
+    day.seconds = std::min(entry.seconds, UINT32_MAX - day.seconds) + day.seconds;
+    day.sessions = static_cast<uint16_t>(std::min<uint32_t>(UINT16_MAX, day.sessions + entry.sessions));
+    day.pagesTurned = std::min(entry.pagesTurned, UINT32_MAX - day.pagesTurned) + day.pagesTurned;
+  }
+  for (const auto& day : monthDays) {
+    if (day.dateKey == 0) continue;
+    ++activeDays;
+    monthMaxSeconds = std::max(monthMaxSeconds, day.seconds);
+    monthSeconds = std::min(day.seconds, UINT32_MAX - monthSeconds) + monthSeconds;
+  }
+
+  static constexpr const char* WEEKDAYS[] = {"M", "T", "W", "T", "F", "S", "S"};
+  const int gridTop = 112;
+  const int gridWidth = pageWidth - side * 2;
+  const int cellWidth = std::max(1, gridWidth / 7);
+  const int footerReserve = 82;
+  const int cellHeight = std::max(22, std::min(52, (pageHeight - gridTop - footerReserve) / 6));
+  for (int col = 0; col < 7; ++col) {
+    const int labelWidth = renderer.getTextWidth(SMALL_FONT_ID, WEEKDAYS[col]);
+    renderer.drawText(SMALL_FONT_ID, side + col * cellWidth + (cellWidth - labelWidth) / 2, gridTop - 24,
+                      WEEKDAYS[col]);
+  }
+  const int monthDaysCount = StatisticsDate::daysInMonth(year, month);
+  const uint32_t firstDayKey = static_cast<uint32_t>(year * 10000 + month * 100 + 1);
+  const int firstWeekdayOfMonth = StatisticsDate::weekdayMondayFirst(firstDayKey);
+  for (int dayNumber = 1; dayNumber <= monthDaysCount; ++dayNumber) {
+    const int slot = firstWeekdayOfMonth + dayNumber - 1;
+    const int row = slot / 7;
+    const int col = slot % 7;
+    const int x = side + col * cellWidth;
+    const int y = gridTop + row * cellHeight;
+    const auto& day = monthDays[static_cast<size_t>(dayNumber - 1)];
+    bool whiteText = false;
+    if (day.seconds > 0 && monthMaxSeconds > 0) {
+      const uint32_t intensity = static_cast<uint32_t>(static_cast<uint64_t>(day.seconds) * 100UL / monthMaxSeconds);
+      const Color fill = intensity <= 25 ? Color::LightGray : (intensity <= 60 ? Color::DarkGray : Color::Black);
+      renderer.fillRectDither(x + 2, y + 2, cellWidth - 4, cellHeight - 4, fill);
+      whiteText = fill == Color::Black;
+    }
+    const bool isToday = dayNumber == today;
+    if (isToday) renderer.drawRect(x, y, cellWidth, cellHeight, 2, true);
+    const std::string dayLabel = std::to_string(dayNumber);
+    const int dayWidth = renderer.getTextWidth(SMALL_FONT_ID, dayLabel.c_str(), EpdFontFamily::BOLD);
+    renderer.drawText(SMALL_FONT_ID, x + (cellWidth - dayWidth) / 2, y + 6, dayLabel.c_str(), !whiteText,
+                      EpdFontFamily::BOLD);
+  }
+  const int footerY = std::min(pageHeight - 46, gridTop + cellHeight * 6 + 30);
+  renderer.drawLine(side, footerY - 14, pageWidth - side, footerY - 14);
+  const std::string total = sleepDuration(monthSeconds);
+  renderer.drawText(SMALL_FONT_ID, side, footerY, total.c_str(), true, EpdFontFamily::BOLD);
+  const std::string daysText = std::to_string(activeDays) + " " + tr(STR_STATS_ACTIVE_DAYS);
+  renderer.drawText(SMALL_FONT_ID, pageWidth - side - renderer.getTextWidth(SMALL_FONT_ID, daysText.c_str()), footerY,
+                    daysText.c_str());
+  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+}
+
+void SleepActivity::renderReadingSummarySleepScreen() const {
   StatisticsSnapshotOptions options;
   options.keepDailyHistory = false;
   options.keepAllBooks = false;
@@ -1419,6 +1523,12 @@ void SleepActivity::renderMinimalStatsSleepScreen() const {
   renderer.drawImage(MoonIcon, pageWidth - MOONICON_WIDTH - 16, pageHeight - MOONICON_HEIGHT - 12, MOONICON_WIDTH,
                      MOONICON_HEIGHT);
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+}
+
+void SleepActivity::renderMinimalStatsSleepScreen() const {
+  // Preserve the RC1 mode and presentation; Reading Summary is an additional
+  // named option backed by the same bounded renderer.
+  renderReadingSummarySleepScreen();
 }
 
 void SleepActivity::renderClippingCoverSleepScreen() const {
