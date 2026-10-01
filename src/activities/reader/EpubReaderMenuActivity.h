@@ -43,6 +43,9 @@ class EpubReaderMenuActivity final : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
+  // Reader menu navigation is bounded UI-only work; Reader's own state gate
+  // still blocks it while a Section/render is resource-sensitive.
+  bool bluetoothRenderSafe() const override { return true; }
   bool handleHomeGesture() override;
 
  private:

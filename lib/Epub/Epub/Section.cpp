@@ -7,6 +7,8 @@
 #include <Memory.h>
 #include <Serialization.h>
 
+#include <algorithm>
+
 #include "Epub/css/CssParser.h"
 #include "Page.h"
 #include "hyphenation/Hyphenator.h"
@@ -68,6 +70,11 @@ constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(float) +
                                  sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) +
                                  sizeof(uint8_t) + sizeof(bool) + sizeof(bool) + sizeof(uint32_t) + sizeof(uint32_t) +
                                  sizeof(uint32_t) + sizeof(uint32_t);
+
+void logSectionMemory(const char* stage, const int spine, const uint16_t pages = 0) {
+  LOG_INF("SCT", "%s spine=%d pages=%u free=%u largest=%u", stage, spine, static_cast<unsigned>(pages),
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+}
 }  // namespace
 
 // Out-of-line so the unique_ptr<ChapterHtmlSlimParser> in BuildContext can be
@@ -81,7 +88,10 @@ Section::Section(const std::shared_ptr<Epub>& epub, const int spineIndex, GfxRen
 // Suspend any in-progress build so every section.reset() / navigation / sleep path
 // persists the pages already laid out as a partial .bin instead of discarding them
 // (no-op once a build has completed or never started).
-Section::~Section() { suspendBuild(); }
+Section::~Section() {
+  suspendBuild();
+  logSectionMemory("section_destroyed", spineIndex, pageCount);
+}
 
 uint32_t Section::onPageComplete(std::unique_ptr<Page> page) {
   if (!file) {
@@ -147,7 +157,9 @@ void Section::writeSectionFileHeader(const ReaderRenderSpec& spec) {
 
 bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
   EpubDiagnostics::Scope diagnostics("section_cache_load_start", "section_cache_load_end", spineIndex);
+  logSectionMemory("section_deserialize_begin", spineIndex, pageCount);
   if (!Storage.openFileForRead("SCT", filePath, file)) {
+    logSectionMemory("section_deserialize_fail reason=cache_missing_or_open", spineIndex, pageCount);
     return false;
   }
 
@@ -155,6 +167,7 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
     file.close();
     LOG_ERR("SCT", "Deserialization failed: %s", reason);
     clearCache();
+    logSectionMemory("section_deserialize_fail reason=malformed", spineIndex, pageCount);
   };
   if (file.size() < HEADER_SIZE) {
     rejectMalformed("truncated section header");
@@ -174,6 +187,7 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
       file.close();
       LOG_ERR("SCT", "Deserialization failed: Unknown version %u", version);
       clearCache();
+      logSectionMemory("section_deserialize_fail reason=version", spineIndex, pageCount);
       return false;
     }
     filePartial = (version == SECTION_FILE_PARTIAL_VERSION);
@@ -193,6 +207,7 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
       file.close();
       LOG_ERR("SCT", "Deserialization failed: Text-layout contract does not match");
       clearCache();
+      logSectionMemory("section_deserialize_fail reason=text_contract", spineIndex, pageCount);
       return false;
     }
 
@@ -222,15 +237,23 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
       return false;
     }
 
-    if (spec.fontId != fileFontId || spec.lineCompression != fileLineCompression ||
-        spec.extraParagraphSpacing != fileExtraParagraphSpacing || spec.paragraphAlignment != fileParagraphAlignment ||
-        spec.viewportWidth != fileViewportWidth || spec.viewportHeight != fileViewportHeight ||
-        spec.hyphenationEnabled != fileHyphenationEnabled || spec.embeddedStyle != fileEmbeddedStyle ||
-        spec.imageRendering != fileImageRendering || spec.focusReadingEnabled != fileFocusReadingEnabled ||
-        spec.forceParagraphIndents != fileForceParagraphIndents) {
+    uint16_t mismatchMask = 0;
+    if (spec.fontId != fileFontId) mismatchMask |= 1U << 0;
+    if (spec.lineCompression != fileLineCompression) mismatchMask |= 1U << 1;
+    if (spec.extraParagraphSpacing != fileExtraParagraphSpacing) mismatchMask |= 1U << 2;
+    if (spec.paragraphAlignment != fileParagraphAlignment) mismatchMask |= 1U << 3;
+    if (spec.viewportWidth != fileViewportWidth) mismatchMask |= 1U << 4;
+    if (spec.viewportHeight != fileViewportHeight) mismatchMask |= 1U << 5;
+    if (spec.hyphenationEnabled != fileHyphenationEnabled) mismatchMask |= 1U << 6;
+    if (spec.embeddedStyle != fileEmbeddedStyle) mismatchMask |= 1U << 7;
+    if (spec.imageRendering != fileImageRendering) mismatchMask |= 1U << 8;
+    if (spec.focusReadingEnabled != fileFocusReadingEnabled) mismatchMask |= 1U << 9;
+    if (spec.forceParagraphIndents != fileForceParagraphIndents) mismatchMask |= 1U << 10;
+    if (mismatchMask != 0) {
       file.close();
-      LOG_ERR("SCT", "Deserialization failed: Parameters do not match");
+      LOG_ERR("SCT", "Deserialization failed: Parameters do not match mask=0x%03X", mismatchMask);
       clearCache();
+      logSectionMemory("section_deserialize_fail reason=params", spineIndex, pageCount);
       return false;
     }
   }
@@ -279,27 +302,23 @@ bool Section::loadSectionFile(const ReaderRenderSpec& spec) {
   EpubDiagnostics::record("section_cache_load_result", spineIndex, -1, 0, 0, pageCount, cacheBytes,
                           filePartial ? 2 : 1);
   LOG_DBG("SCT", "Deserialization succeeded: %d pages%s", pageCount, filePartial ? " (partial)" : "");
+  logSectionMemory("section_deserialize_complete", spineIndex, pageCount);
   return true;
 }
 
 // Your updated class method (assuming you are using the 'SD' object, which is a wrapper for a specific filesystem)
 bool Section::clearCache() const {
   const std::string tmpBin = binTmpPath();
-  if (Storage.exists(tmpBin.c_str())) {
-    Storage.remove(tmpBin.c_str());
-  }
-  if (!Storage.exists(filePath.c_str())) {
-    LOG_DBG("SCT", "Cache does not exist, no action needed");
-    return true;
-  }
-
-  if (!Storage.remove(filePath.c_str())) {
-    LOG_ERR("SCT", "Failed to clear cache");
-    return false;
-  }
-
-  LOG_DBG("SCT", "Cache cleared successfully");
-  return true;
+  bool ok = true;
+  if (Storage.exists(tmpBin.c_str()) && !Storage.remove(tmpBin.c_str())) ok = false;
+  if (Storage.exists(filePath.c_str()) && !Storage.remove(filePath.c_str())) ok = false;
+  const bool partRemains = Storage.exists(tmpBin.c_str());
+  const bool cacheRemains = Storage.exists(filePath.c_str());
+  ok = ok && !partRemains && !cacheRemains;
+  LOG_INF("SCT", "section_cache_invalidated spine=%d ok=%d bin_remains=%d part_remains=%d free=%u largest=%u",
+          spineIndex, ok ? 1 : 0, cacheRemains ? 1 : 0, partRemains ? 1 : 0,
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  return ok;
 }
 
 bool Section::createSectionFile(const ReaderRenderSpec& spec, const std::function<void()>& popupFn) {
@@ -318,8 +337,10 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
   EpubDiagnostics::Scope diagnostics("section_build_start", "section_build_setup_end", spineIndex);
   if (build_) {
     LOG_ERR("SCT", "startBuild called while a build is already active");
+    logSectionMemory("section_build_fail reason=already_active", spineIndex, builtPageCount_);
     return false;
   }
+  logSectionMemory("section_build_begin", spineIndex, pageCount);
   // Reclaim rebuildable font caches before CSS and layout allocations. Font
   // metadata, coverage and advance state remain resident; only disposable
   // glyph/bitmap/kerning buffers are released.
@@ -402,6 +423,8 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
     if (!streamed) {
       EpubDiagnostics::record("html_cache_inflate", spineIndex, -1, 0, fileSize, 0, fileSize, 0);
       LOG_ERR("SCT", "Failed to stream item contents to temp file after retries");
+      logSectionMemory("section_build_fail reason=html_inflate", spineIndex, builtPageCount_);
+      logSectionMemory("section_transients_released", spineIndex, builtPageCount_);
       return false;
     }
 
@@ -420,6 +443,8 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
 
   if (!Storage.openFileForWrite("SCT", binTmpPath(), file)) {
     if (!reusedHtml) Storage.remove(tmpHtmlPath.c_str());
+    logSectionMemory("section_build_fail reason=section_file_open", spineIndex, builtPageCount_);
+    logSectionMemory("section_transients_released", spineIndex, builtPageCount_);
     return false;
   }
   // Header is written with the incomplete-version sentinel; finalizeBuild() commits it.
@@ -431,6 +456,8 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
     file.close();
     Storage.remove(binTmpPath().c_str());
     if (!reusedHtml) Storage.remove(tmpHtmlPath.c_str());
+    logSectionMemory("section_build_fail reason=context_alloc", spineIndex, builtPageCount_);
+    logSectionMemory("section_transients_released", spineIndex, builtPageCount_);
     return false;
   }
   // htmlCached == "htmlPath is the live cache" (reused, or just promoted). finalizeBuild/abandonBuild
@@ -483,10 +510,12 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
       popupFn, ctxPtr->cssParser, recoverBareAmpersands);
   if (!ctx->parser) {
     LOG_ERR("SCT", "OOM: ChapterHtmlSlimParser");
-    if (ctx->cssParser) ctx->cssParser->clear();
+    if (ctx->cssParser) ctx->cssParser->clearAndReleaseStorage();
     file.close();
     Storage.remove(binTmpPath().c_str());
     if (!reusedHtml) Storage.remove(tmpHtmlPath.c_str());
+    logSectionMemory("section_build_fail reason=parser_alloc", spineIndex, builtPageCount_);
+    logSectionMemory("section_transients_released", spineIndex, builtPageCount_);
     return false;
   }
 
@@ -495,12 +524,14 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
 
   if (!build_->parser->beginParse()) {
     LOG_ERR("SCT", "Failed to begin parse");
+    logSectionMemory("section_build_fail reason=begin_parse", spineIndex, builtPageCount_);
     abandonBuild();
     return false;
   }
   build_->totalBytes = build_->parser->parseTotalBytes();
   EpubDiagnostics::record("section_build_parser_ready", spineIndex, -1, 0, 0, 0, build_->totalBytes,
                           recoverBareAmpersands ? 2 : 1);
+  logSectionMemory("section_build_active", spineIndex, builtPageCount_);
   return true;
 }
 
@@ -510,12 +541,24 @@ bool Section::buildSomeMore(const int maxPages) {
   const auto recordChunk = [this, chunkStartMs, chunkStartPageCount](const int result) {
     const size_t consumed = build_ && build_->parser ? build_->parser->parseBytesConsumed() : 0;
     const size_t total = build_ ? build_->totalBytes : 0;
+    if (result && build_ && total > 0) {
+      const size_t percent = static_cast<size_t>(std::min<uint64_t>(
+          100, static_cast<uint64_t>(consumed) * 100ULL / static_cast<uint64_t>(total)));
+      const uint8_t bucket = static_cast<uint8_t>(percent / 20);
+      if (bucket > build_->lastLoggedProgressBucket) {
+        build_->lastLoggedProgressBucket = bucket;
+        LOG_INF("SCT", "section_build_progress spine=%d percent=%u pages=%u free=%u largest=%u", spineIndex,
+                static_cast<unsigned>(bucket * 20), static_cast<unsigned>(builtPageCount_),
+                static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+      }
+    }
     EpubDiagnostics::record("section_build_chunk", spineIndex, builtPageCount_, millis() - chunkStartMs, 0,
                             builtPageCount_ - chunkStartPageCount, consumed, result);
     EpubDiagnostics::record("section_build_progress", spineIndex, builtPageCount_, 0, 0, consumed, total, result);
   };
   if (!build_ || !build_->parser) {
     LOG_ERR("SCT", "buildSomeMore with no active build");
+    logSectionMemory("section_build_fail reason=missing_context", spineIndex, builtPageCount_);
     return false;
   }
   // Pace on pages laid out by THIS build, not pageCount: during a rebuild over a partial,
@@ -537,6 +580,7 @@ bool Section::buildSomeMore(const int maxPages) {
         continue;
       }
       LOG_ERR("SCT", "Parse error during incremental build");
+      logSectionMemory("section_build_fail reason=parse", spineIndex, builtPageCount_);
       recordChunk(0);
       abandonBuild();
       return false;
@@ -544,6 +588,7 @@ bool Section::buildSomeMore(const int maxPages) {
     if (status == ChapterHtmlSlimParser::ParseStatus::Done) {
       const bool finalized = finalizeBuild();
       recordChunk(finalized ? 1 : 0);
+      if (!finalized) logSectionMemory("section_build_fail reason=finalize", spineIndex, builtPageCount_);
       return finalized;
     }
     // ParseStatus::More: yield once we've laid out the requested number of pages.
@@ -739,7 +784,16 @@ bool Section::finalizeBuild() {
   }
 
   const bool committed = commitBuildFile(SECTION_FILE_VERSION, 0, 0);
-  if (build_->cssParser) build_->cssParser->clear();
+  if (build_->cssParser) {
+    if (committed) {
+      build_->cssParser->clear();
+    } else {
+      LOG_INF("SCT", "section_css_release spine=%d rules=%u buckets=%u", spineIndex,
+              static_cast<unsigned>(build_->cssParser->ruleCount()),
+              static_cast<unsigned>(build_->cssParser->bucketCount()));
+      build_->cssParser->clearAndReleaseStorage();
+    }
+  }
   build_.reset();
   if (!committed) {
     // commitBuildFile removed filePath before the failed swap, so nothing valid remains.
@@ -747,6 +801,8 @@ bool Section::finalizeBuild() {
     partialPageCount_ = 0;
     pageCount = 0;
     builtPageCount_ = 0;
+    logSectionMemory("section_build_fail reason=commit", spineIndex, pageCount);
+    logSectionMemory("section_transients_released", spineIndex, pageCount);
     return false;
   }
   buildComplete_ = true;
@@ -754,11 +810,14 @@ bool Section::finalizeBuild() {
   partialPageCount_ = 0;
   pageCount = builtPageCount_;
   EpubDiagnostics::record("section_build_finalized", spineIndex, pageCount, 0, 0, pageCount, 0, 1);
+  logSectionMemory("section_build_complete", spineIndex, pageCount);
+  logSectionMemory("section_transients_released", spineIndex, pageCount);
   return true;
 }
 
 void Section::suspendBuild() {
   if (!build_) return;
+  logSectionMemory("section_suspend_begin", spineIndex, builtPageCount_);
 
   EpubDiagnostics::Scope diagnostics("section_build_suspend_start", "section_build_suspend_end", spineIndex,
                                      builtPageCount_);
@@ -797,12 +856,22 @@ void Section::suspendBuild() {
   buildComplete_ = false;
   pageCount = partial_ ? partialPageCount_ : 0;
   builtPageCount_ = 0;
+  LOG_INF("SCT", "section_stopped spine=%d persisted=%d pages=%u building=%d free=%u largest=%u",
+          spineIndex, committed ? 1 : 0, static_cast<unsigned>(pageCount), isBuilding() ? 1 : 0,
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  logSectionMemory("section_transients_released", spineIndex, pageCount);
 }
 
 void Section::abandonBuild() {
   if (!build_) return;
+  logSectionMemory("section_abandon_begin", spineIndex, builtPageCount_);
   if (build_->parser) build_->parser->abortParse();
-  if (build_->cssParser) build_->cssParser->clear();
+  if (build_->cssParser) {
+    LOG_INF("SCT", "section_css_release spine=%d rules=%u buckets=%u", spineIndex,
+            static_cast<unsigned>(build_->cssParser->ruleCount()),
+            static_cast<unsigned>(build_->cssParser->bucketCount()));
+    build_->cssParser->clearAndReleaseStorage();
+  }
   if (file) {
     // Explicit close() required before remove (member variable, O_RDWR handle).
     file.close();
@@ -822,6 +891,7 @@ void Section::abandonBuild() {
   partialPageCount_ = 0;
   pageCount = 0;
   builtPageCount_ = 0;
+  logSectionMemory("section_transients_released", spineIndex, pageCount);
 }
 
 std::unique_ptr<Page> Section::loadPageDuringBuild(const int page) {

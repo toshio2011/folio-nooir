@@ -63,7 +63,7 @@ class EpubReaderActivity final : public Activity {
   // Consecutive page-load failures. Each failure drops the section and rebuilds on the next render,
   // which recovers a transiently corrupt cache; capped so a persistently bad page can't spin forever.
   uint8_t pageLoadRetryCount = 0;
-  static constexpr uint8_t MAX_PAGE_LOAD_RETRIES = 3;
+  static constexpr uint8_t MAX_PAGE_LOAD_RETRIES = 1;
   bool skipNextButtonCheck = false;  // Skip button processing for one frame after subactivity exit
   // Keep the button release that closes Reader Options from being interpreted
   // as a Back/Home action by the restored reader.
@@ -113,6 +113,9 @@ class EpubReaderActivity final : public Activity {
   // removeReadBooksFromRecents feature (set at End-of-Book, cleared if paged back in).
   bool recentsEntryRemoved = false;
   unsigned long bookmarkMessageTime = 0UL;
+  enum class SectionFailureKind : uint8_t { None, Index, PageLoad };
+  SectionFailureKind sectionFailureKind = SectionFailureKind::None;
+  int failedSectionSpineIndex = -1;
   // Set when the reader is left at end-of-book and SETTINGS.moveFinishedToReadFolder is on.
   // Consumed in onExit() to relocate the finished book into /Read/.
   bool pendingReadFolderMove = false;
@@ -138,6 +141,15 @@ class EpubReaderActivity final : public Activity {
   // Set when the lazy extension start failed, so loop() doesn't retry (and log) every
   // tick; the blocking extension in render() remains the fallback past the watermark.
   bool partialRebuildStartFailed = false;
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+  // A render request received while the host is being reclaimed is replayed
+  // only after the centralized lifecycle reports NimBLE fully stopped.
+  bool readerRenderWaitingForBleStop = false;
+  // One cache-release attempt per completed Reader render. It is reset by the
+  // render task and consumed only from the idle main-loop boundary.
+  bool readerIdleFontCachesReleased = false;
+  void releaseIdleReaderFontCachesForBluetooth();
+#endif
   // Cold/uncached page requests use a short event-loop phase to show the
   // loading line on the already-presented page before synchronous work starts.
   bool loadingUiPending = false;
@@ -247,6 +259,8 @@ class EpubReaderActivity final : public Activity {
   void openClipSelection();
   void updateBookmarkFlag();
   void prepareStablePages();
+  void failSectionEpisode(SectionFailureKind kind, const char* reason);
+  void reportReaderQuiescent(const char* reason);
 
   // Footnote navigation
   void navigateToHref(const std::string& href, bool savePosition = false);
@@ -274,7 +288,21 @@ class EpubReaderActivity final : public Activity {
   bool skipLoopDelay() override { return section && section->isBuilding() && !buildHeapPaused; }
   bool isReaderActivity() const override { return true; }
   bool bluetoothResourceSensitive() const override {
-    return !firstStableRenderComplete.load(std::memory_order_acquire) || !section || section->isBuilding();
+    const bool terminalFailure = sectionFailureKind != SectionFailureKind::None &&
+                                 failedSectionSpineIndex == currentSpineIndex && !section;
+    if (!terminalFailure &&
+        (!firstStableRenderComplete.load(std::memory_order_acquire) || !section || section->isBuilding()))
+      return true;
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+    if (readerRenderWaitingForBleStop) return true;
+    if (section && section->isPartial() && !partialRebuildStartFailed &&
+        section->currentPage + PARTIAL_REBUILD_START_MARGIN >= static_cast<int>(section->pageCount)) return true;
+#endif
+    if (exitHomePending || pendingPageTurns.hasPending() || qualityRecoveryPending.load(std::memory_order_acquire) ||
+        loadingUiPending || loadingUiRenderArmed) {
+      return true;
+    }
+    return false;
   }
   ScreenshotInfo getScreenshotInfo() const override;
   CrossPointPosition getCurrentPosition() const;

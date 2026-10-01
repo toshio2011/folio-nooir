@@ -166,6 +166,8 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["readerFrontButtonLeft"] = readerFrontButtonLeft;
   doc["readerFrontButtonRight"] = readerFrontButtonRight;
   doc["bluetoothEnabled"] = bluetoothEnabled;
+  doc["bluetoothNoDeviceTimeoutSeconds"] = bluetoothNoDeviceTimeoutSeconds;
+  doc["bleControllerPreset"] = bleControllerPreset;
   JsonArray bleMap = doc["bleKeyMap"].to<JsonArray>();
   for (const auto& entry : bleKeyMap) {
     if (entry.keyKind == 0xFF || entry.button == 0xFF) continue;
@@ -393,6 +395,20 @@ bool CrossPointSettings::fromJsonForProfile(JsonVariantConst doc, const bool pre
   bluetoothEnabled = clamp(doc["bluetoothEnabled"] |
                                (preserveMissingManualFields ? s.bluetoothEnabled : (uint8_t)0),
                            2, 0);
+  const uint16_t storedNoDeviceTimeout =
+      doc["bluetoothNoDeviceTimeoutSeconds"] |
+      (preserveMissingManualFields ? s.bluetoothNoDeviceTimeoutSeconds : BLE_NO_DEVICE_TIMEOUT_DEFAULT_SECONDS);
+  if (storedNoDeviceTimeout == 0 || storedNoDeviceTimeout == 30 || storedNoDeviceTimeout == 60 ||
+      storedNoDeviceTimeout == 90) {
+    bluetoothNoDeviceTimeoutSeconds = storedNoDeviceTimeout;
+  } else {
+    bluetoothNoDeviceTimeoutSeconds = BLE_NO_DEVICE_TIMEOUT_DEFAULT_SECONDS;
+    needsResave = true;
+  }
+  bleControllerPreset = clamp(doc["bleControllerPreset"] |
+                                  (preserveMissingManualFields ? s.bleControllerPreset
+                                                               : BLE_CONTROLLER_PRESET_GENERIC),
+                              BLE_CONTROLLER_PRESET_YISER_J6_RING + 1, BLE_CONTROLLER_PRESET_GENERIC);
   JsonArrayConst storedBleMap = doc["bleKeyMap"];
   if (!storedBleMap.isNull()) {
     for (auto& entry : bleKeyMap) entry = BleKeyMapEntry{};

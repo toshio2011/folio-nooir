@@ -30,6 +30,10 @@
 #define FREEINK_BLE_HID_RAW_DIAGNOSTICS 0
 #endif
 
+#ifndef NOOIR_BLE_READER_COEXISTENCE
+#define NOOIR_BLE_READER_COEXISTENCE 0
+#endif
+
 namespace bleinput {
 
 // Advertised central name shown to peripherals during pairing.
@@ -39,12 +43,29 @@ inline constexpr const char* kHostName = "Folio Nooir";
 // NimBLE init failed. Safe to call repeatedly.
 bool ensureStarted();
 
+// Single application-owned permission predicate for BLE start, reconnect,
+// connect, and scan operations. The generic FreeInk host consults this through
+// its callback without depending on Nooir activity or rendering classes.
+bool connectionAdmissionAllowed();
+
+// Shared Bluetooth preference transition. Disabling synchronously tears down
+// NimBLE; enabling only records intent and lets the centralized lifecycle gate
+// decide when startup is safe.
+void setBluetoothEnabled(bool enabled);
+void toggleBluetooth();
+
 // Drop the active link (e.g. before deep sleep or when the user disables BT).
 void stop();
 
 // Sample the published host state and queue bounded lifecycle telemetry.  This
 // never performs BLE work itself and must be called from the main loop.
 void pollLifecycle();
+
+// Coalesce a meaningful activity/resource transition into one centralized
+// BLE eligibility evaluation. Admission failures wait for the next signal
+// rather than polling/retrying every main-loop pass.
+void requestLifecycleReevaluation();
+bool takeLifecycleReevaluation();
 
 // Consume one non-blocking lifecycle notice. Intentional teardown is silent.
 bool takeNotification(char* out, size_t outLen);

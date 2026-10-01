@@ -81,6 +81,12 @@ class WifiSelectionActivity final : public Activity {
   // request; web/file-transfer activities keep it enabled by default.
   const bool autoSyncClockWeather;
 
+  // A successful network-selection child can transfer the live connection to
+  // a parent that immediately performs network work. Plain Settings only
+  // stores/configures the network and asks the selector to tear WiFi down.
+  const bool retainConnectionOnSuccess;
+  bool preserveWifiOnExit = false;
+
   // Whether we are attempting to auto-connect or auto-scan saved networks.
   bool autoConnecting = false;
 
@@ -126,10 +132,11 @@ class WifiSelectionActivity final : public Activity {
 
  public:
   explicit WifiSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool autoConnect = true,
-                                bool syncClockWeather = true)
+                                bool syncClockWeather = true, bool retainConnectionOnSuccess = true)
       : Activity("WifiSelection", renderer, mappedInput),
         allowAutoConnect(autoConnect),
-        autoSyncClockWeather(syncClockWeather) {}
+        autoSyncClockWeather(syncClockWeather),
+        retainConnectionOnSuccess(retainConnectionOnSuccess) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;

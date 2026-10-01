@@ -80,6 +80,9 @@ class CssParser {
    * Get count of loaded rule sets
    */
   [[nodiscard]] size_t ruleCount() const { return rulesBySelector_.size() + compoundRulesByAnchor_.size(); }
+  [[nodiscard]] size_t bucketCount() const {
+    return rulesBySelector_.bucket_count() + compoundRulesByAnchor_.bucket_count();
+  }
 
   /**
    * Clear all loaded rules
@@ -87,6 +90,17 @@ class CssParser {
   void clear() {
     rulesBySelector_.clear();
     compoundRulesByAnchor_.clear();
+    nextSourceOrder_ = 0;
+  }
+
+  // Failure-only release: keep clear()'s normal reuse behavior for successful
+  // section transitions, but return reconstructible hash buckets when a build
+  // is abandoned and the same EPUB remains open.
+  void clearAndReleaseStorage() {
+    decltype(rulesBySelector_) emptyRules;
+    decltype(compoundRulesByAnchor_) emptyCompoundRules;
+    rulesBySelector_.swap(emptyRules);
+    compoundRulesByAnchor_.swap(emptyCompoundRules);
     nextSourceOrder_ = 0;
   }
 

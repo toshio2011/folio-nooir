@@ -3,6 +3,7 @@
 #include <SdCardFontRegistry.h>
 
 #include <cstdint>
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,8 @@ class TextSettingsActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
   bool handleHomeGesture() override;
+  bool bluetoothResourceSensitive() const override;
+  bool bluetoothRenderSafe() const override;
 
  private:
   // Row indices per tab. enum class (not plain enum) so a LayoutRow can't be
@@ -36,6 +39,7 @@ class TextSettingsActivity final : public Activity {
   enum class LayoutRow { LineSpacing, ParaSpacing, ForceIndents, Alignment, ScreenMargin, Count };
   enum class StyleRow { FocusReading, GuideDots, Hyphenation, EmbeddedStyle, AntiAliasing, HighlightColor, Count };
   enum class ControlRow { FrontLongPress, SideLongPress, MenuLongPress, PowerLongPress, Count };
+  enum class PendingFontOperation : uint8_t { None, Family, Size };
 
   void applyFamily(int listIndex);
   void applySize(int listIndex);
@@ -97,6 +101,10 @@ class TextSettingsActivity final : public Activity {
   int currentSizeIndex_ = 0;
   int currentDictionaryFamilyIndex_ = 0;
   int currentDictionarySizeIndex_ = 0;
+  PendingFontOperation pendingFontOperation_ = PendingFontOperation::None;
+  int pendingFontIndex_ = -1;
+  std::atomic<bool> fontRenderPending_{false};
+  bool fontOperationChanged_ = false;
 
   ThemeMetrics metrics_ = {};
   int afterHeader = 0;

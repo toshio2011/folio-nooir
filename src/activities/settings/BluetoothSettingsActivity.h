@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "activities/Activity.h"
+#include "components/OptionPopup.h"
 #include "util/ButtonNavigator.h"
 
 // Bluetooth page-turner settings. One screen with three views:
@@ -26,6 +27,7 @@ class BluetoothSettingsActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
   bool keepsBluetoothAlive() const override { return true; }
+  bool bluetoothResourceSensitive() const override;
 
  private:
   enum class View { Menu, Scan, Paired, Diagnostics };
@@ -34,6 +36,7 @@ class BluetoothSettingsActivity final : public Activity {
   // Menu row actions.
   enum class Action {
     ToggleBt,
+    NoDeviceTimeout,
     Scan,
     Disconnect,
     MapButtons,
@@ -41,6 +44,7 @@ class BluetoothSettingsActivity final : public Activity {
     Diagnostics,
     PresetFree2,
     PresetFree3,
+    PresetYiser,
     ClearMap
   };
   struct MenuRow {
@@ -55,6 +59,7 @@ class BluetoothSettingsActivity final : public Activity {
   int pairedIndex = 0;
 
   ButtonNavigator buttonNavigator;
+  OptionPopup noDeviceTimeoutPopup;
 
   // Transient status banner (connect result, forget confirmation, etc.).
   std::string banner;
@@ -76,6 +81,7 @@ class BluetoothSettingsActivity final : public Activity {
   void startScanView();
   void beginPairedConnect();
   void applyPreset(bool free3);
+  void applyYiserPreset();
   void setBanner(const char* text);
 
   std::string deviceLabel(int index) const;   // scan list row text

@@ -53,6 +53,10 @@ class Activity {
   // performs a large build. This is separate from ordinary reader activity so
   // a connected remote remains usable during normal navigation.
   virtual bool bluetoothResourceSensitive() const { return false; }
+  // True only for a child screen whose rendering is lightweight while a
+  // Reader remains on the activity stack (e.g. Reader Settings with preview
+  // suspended while BLE owns memory).
+  virtual bool bluetoothRenderSafe() const { return false; }
   virtual bool handleHomeGesture() { return false; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
 

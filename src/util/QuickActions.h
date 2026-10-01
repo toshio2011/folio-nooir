@@ -10,7 +10,7 @@
 namespace QuickActions {
 
 constexpr std::size_t SLOT_COUNT = 4;
-constexpr std::size_t ACTION_COUNT = 11;
+constexpr std::size_t ACTION_COUNT = 12;
 
 enum class ActionId : uint8_t {
   RefreshScreen = 0,
@@ -24,6 +24,7 @@ enum class ActionId : uint8_t {
   Screenshot,
   Home,
   Sleep,
+  ToggleBluetooth,
   None = 0xFF,
 };
 
@@ -45,7 +46,7 @@ inline constexpr std::array<ActionId, SLOT_COUNT> DEFAULT_SLOTS = {
 inline constexpr std::array<ActionId, ACTION_COUNT> CONFIGURABLE_ACTIONS = {
     ActionId::RefreshScreen, ActionId::ToggleDarkMode, ActionId::Lookup,      ActionId::ReadingStats,
     ActionId::ToggleBookmark, ActionId::ReaderOptions, ActionId::Orientation, ActionId::Sync,
-    ActionId::Screenshot,     ActionId::Home,          ActionId::Sleep,
+    ActionId::Screenshot,     ActionId::Home,          ActionId::Sleep, ActionId::ToggleBluetooth,
 };
 
 // Inline storage keeps the registry allocation-free and makes the settings
@@ -70,6 +71,7 @@ inline bool isKnown(ActionId action) {
     case ActionId::Screenshot:
     case ActionId::Home:
     case ActionId::Sleep:
+    case ActionId::ToggleBluetooth:
       return true;
     case ActionId::None:
       return false;
@@ -95,6 +97,7 @@ inline bool isAvailable(const ActionId action, const Context& context) {
     case ActionId::Screenshot:
     case ActionId::Home:
     case ActionId::Sleep:
+    case ActionId::ToggleBluetooth:
       return true;
   }
   return false;

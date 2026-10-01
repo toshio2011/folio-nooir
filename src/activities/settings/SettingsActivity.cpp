@@ -74,6 +74,7 @@ void SettingsActivity::rebuildSettingsLists() {
     if (isFolioLayoutSetting(setting.nameId) && !folioNooir) continue;
     if (isCarouselLayoutSetting(setting.nameId) && !carouselTheme) continue;
     if (setting.category == StrId::STR_CAT_DISPLAY) {
+      if (setting.nameId == StrId::STR_INTERFACE_FONT) continue;
       displaySettings.push_back(setting);
     } else if (setting.category == StrId::STR_CAT_READER) {
       // Settings merged into "Text Settings"
@@ -553,7 +554,8 @@ void SettingsActivity::toggleCurrentSetting() {
         startActivityForResult(std::make_unique<OpdsServerListActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::Network:
-        startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, false), resultHandler);
+        startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, false, true, false),
+                               resultHandler);
         break;
 #if FREEINK_CAP_BLE_HID_HOST
       case SettingAction::Bluetooth:

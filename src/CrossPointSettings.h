@@ -183,6 +183,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     FOOTNOTES = 4,
     BOOKMARK = 5,
     DARK_MODE = 6,
+    TOGGLE_BLUETOOTH = 7,
     SHORT_PWRBTN_COUNT
   };
 
@@ -200,6 +201,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LP_MENU_SLEEP = 6,
     LP_MENU_READING_STATS = 7,
     LP_MENU_SCREENSHOT = 8,
+    LP_MENU_TOGGLE_BLUETOOTH = 9,
     LONG_PRESS_MENU_FUNCTION_COUNT
   };
 
@@ -214,6 +216,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LP_PWR_DICTIONARY = 6,
     LP_PWR_DARK_MODE = 7,
     LP_PWR_KOSYNC = 8,
+    LP_PWR_TOGGLE_BLUETOOTH = 9,
     LONG_PWRBTN_COUNT
   };
 
@@ -236,6 +239,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     SIDE_LONG_CHAPTER_SKIP = 1,
     SIDE_LONG_FONT_SIZE = 2,
     SIDE_LONG_ORIENTATION = 3,
+    SIDE_LONG_TOGGLE_BLUETOOTH = 4,
     SIDE_LONG_PRESS_ACTION_COUNT
   };
 
@@ -357,6 +361,16 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Master on/off for the BLE HID host. Persisted; auto-restored on boot/wake.
   // Managed by BluetoothSettingsActivity and the in-reader "Toggle Bluetooth" menu item.
   uint8_t bluetoothEnabled = 0;
+  // Connection opportunity before Bluetooth is automatically switched off.
+  // Stored as seconds (0=Never; supported values: 30, 60, 90).
+  static constexpr uint16_t BLE_NO_DEVICE_TIMEOUT_DEFAULT_SECONDS = 60;
+  uint16_t bluetoothNoDeviceTimeoutSeconds = BLE_NO_DEVICE_TIMEOUT_DEFAULT_SECONDS;
+  // How the BLE host interprets the connected controller's HID reports. Keep
+  // existing users on the generic decoder unless they explicitly select a
+  // bounded hardware preset.
+  static constexpr uint8_t BLE_CONTROLLER_PRESET_GENERIC = 0;
+  static constexpr uint8_t BLE_CONTROLLER_PRESET_YISER_J6_RING = 1;
+  uint8_t bleControllerPreset = BLE_CONTROLLER_PRESET_GENERIC;
   // Remote-button mapping table: each slot binds a decoded BLE key identity to a
   // logical MappedInputManager::Button. Fixed-capacity POD (no heap), persisted
   // manually in JsonSettingsIO (like the front-button remap). 0xFF = empty/unassigned.

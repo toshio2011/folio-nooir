@@ -18,6 +18,9 @@
 # Folio Nooir
 Latest released version: **v1.6.2**.
 
+Current development candidate: **v1.6.3 RC2.3**. Physical testing is ongoing;
+this is not a final 1.6.3 release.
+
 ## Hardware warning
 
 > **Check your panel before flashing.** Folio Nooir has been physically tested
@@ -34,8 +37,9 @@ Latest released version: **v1.6.2**.
 > revision. Keep a known-good recovery image and test carefully. Physical
 > validation is primarily on the older X4 revision available to the maintainer;
 > older X3 hardware has community success, but X3 panel revisions can differ.
-> X4 Pro/S3 hardware is not supported. Do not replace a working CrossInk or
-> CrossPoint installation without a recovery path.
+> X4 Pro/Classic and other unvalidated hardware variants are not claimed as
+> supported. Do not replace a working CrossInk or CrossPoint installation
+> without a recovery path.
 
 Folio Nooir is an experimental, bookshelf-focused e-reader firmware for Xteink
 devices. It is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader),
@@ -85,6 +89,16 @@ partition layout:
 
 Diagnostic-only build profiles and internal memory traces are not enabled in
 the normal release build and are not ordinary reader features.
+
+## What's being tested for 1.6.3
+
+The current 1.6.3 RC2.3 candidate builds on the bookshelf, reader, dictionary,
+statistics, web, sleep, and update features described below. Physical testing
+is ongoing; this is not the final release. The candidate adds Bluetooth HID
+page-turner support as a beta feature, a shared configurable **Toggle
+Bluetooth** action, and a **Turn off if no device connects** setting with
+Never, 30 sec, 60 sec, and 90 sec choices (60 sec by default). See
+[Bluetooth Page Turner — Beta](#bluetooth-page-turner--beta) before enabling it.
 
 ## Features
 
@@ -194,7 +208,28 @@ Folio Nooir is an interface and feature layer on top of CrossPoint rather than a
   SD-card and web-upload installation remain supported; see
   [SD-card font setup](docs/sd-card-fonts.md).
 - Reader Options can be opened while reading from the reader menu, mapped front button, long-press menu, or configured power-button action.
-- Bluetooth HID/page-turner support is present in the codebase but remains experimental and is not considered stable for release yet.
+- Four configurable Reader Quick Action slots are available, alongside the
+  existing configurable button actions; available actions depend on context.
+
+### Bluetooth Page Turner — Beta
+
+Bluetooth HID page-turner support is available as a **Beta** feature in the
+1.6.3 candidate. The current implementation supports the Yiser J6 Ring preset
+and Generic HID controls; compatibility with other controllers can vary.
+
+Bluetooth is resource-aware: memory-heavy Reader work may stop Bluetooth, and
+the connection lifecycle retries when the device is eligible again. When
+Bluetooth is turned off, Nooir follows its normal non-BLE workflow and does
+not keep the BLE host running. Bluetooth can be toggled from supported
+configurable actions. In Bluetooth Settings, **Turn off if no device connects**
+offers **Never**, **30 sec**, **60 sec**, and **90 sec**; the default is **60
+sec**.
+
+Normal reading and controller input have been exercised on the older X4, but
+large or complex chapters and some radio/sleep transitions remain under
+physical testing. Bluetooth is not claimed to be universally compatible or
+fully stable; keep it disabled if your controller or device behaves
+unexpectedly.
 
 #### Dictionary setup and use
 
@@ -520,8 +555,8 @@ When the device is connected to the same network, the built-in web interface pro
 ### Sleep and display
 
 - Dark, Light, Blank, Custom, Cover, Quick Resume, Page Overlay, Cover +
-  Overlay, Reading Stats, Minimal Stats, Clipping + Cover, and To-Do List sleep
-  modes.
+  Overlay, Reading Stats, Minimal Stats, Clipping + Cover, To-Do List, Reading
+  Calendar, and Reading Summary sleep modes.
 - Custom PNG/BMP sleep images.
 - Random sleep images from `/.sleep/`.
 - Transparent PNG page-overlay sleep mode that keeps the last reader page visible beneath the overlay, rendered with the full four-level grayscale pipeline.
@@ -529,6 +564,8 @@ When the device is connected to the same network, the built-in web interface pro
 - `Reading Stats`, `Minimal Stats`, and `Clipping + Cover` sleep modes.
 - Reading Stats and Minimal Stats use bounded cached-cover layouts; legacy
   full-screen cover modes retain their existing crop/stretch/fit behavior.
+- Reading Calendar and Reading Summary sleep screens reuse bounded existing
+  statistics data and do not scan the library or perform network work.
 - To-Do List sleep mode with Unchecked, Completed, Random, and All task choices; the All mode uses a centered card up to 98% of the display height.
 - Quick Resume and Resume Reader on Wake are separate controls: Quick Resume chooses whether the current page is retained while asleep, while Resume Reader on Wake chooses Reader versus Recent/Library after waking.
 - Ghosting mitigation and clean refreshes when leaving books or entering sleep.
@@ -604,6 +641,6 @@ For a release build, use the `gh_release` environment:
 
 ## Credits and license
 
-Folio Nooir is built on [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), with display and reader foundations from the CrossPoint contributors. It also acknowledges the open-source [CrossInk](https://github.com/uxjulia/CrossInk) project as a reference for compatible Xteink display, sleep-screen, and reader improvements.
+Folio Nooir is built on [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), with display and reader foundations from the CrossPoint contributors. It uses the [FreeInk SDK](https://github.com/toshio2011/freeink-sdk) for device and reader support, and acknowledges the open-source [CrossInk](https://github.com/uxjulia/CrossInk) project as a reference for compatible Xteink display, sleep-screen, and reader improvements.
 
 Licensed under the MIT License.

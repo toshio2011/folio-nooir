@@ -36,6 +36,36 @@
 
 namespace {
 
+enum class OverlayOpenFailure : uint8_t { None, Allocation, Open };
+OverlayOpenFailure overlayOpenFailure = OverlayOpenFailure::None;
+uint8_t sleepAssetLogCount = 0;
+constexpr uint8_t MAX_SLEEP_ASSET_LOGS = 18;
+
+void logSleepAsset(const char* stage, const char* path, const char* reason = nullptr) {
+  if (sleepAssetLogCount >= MAX_SLEEP_ASSET_LOGS) return;
+  LOG_INF("SLP", "%s path=%.96s reason=%s free=%u largest=%u", stage, path ? path : "-",
+          reason ? reason : "none", static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  ++sleepAssetLogCount;
+}
+
+struct SleepRenderCompletion {
+  GfxRenderer& renderer;
+  ~SleepRenderCompletion() {
+    LOG_INF("SLP", "sleep_decode_done free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    EpubDiagnostics::phaseRecord("sleep_decode_done");
+    LOG_INF("SLP", "sleep_refresh_begin stage=final_wait");
+    renderer.waitRefreshComplete();
+    LOG_INF("SLP", "sleep_refresh_complete free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    EpubDiagnostics::phaseRecord("sleep_refresh_complete");
+    LOG_INF("SLP", "sleep_final_cleanup free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    EpubDiagnostics::phaseRecord("sleep_final_cleanup");
+  }
+};
+
 // A page overlay is decoded directly from PNG so transparent pixels leave the
 // reader framebuffer untouched. This is deliberately separate from the normal
 // PNG-to-BMP sleep path, which flattens transparency against white.
@@ -59,7 +89,14 @@ struct OverlayPngContext {
 
 void* overlayPngOpen(const char* filename, int32_t* size) {
   auto* file = new (std::nothrow) HalFile();
-  if (!file || !Storage.openFileForRead("SLP", std::string(filename), *file)) {
+  if (!file) {
+    overlayOpenFailure = OverlayOpenFailure::Allocation;
+    logSleepAsset("sleep_asset_alloc_fail", filename, "file_handle");
+    return nullptr;
+  }
+  if (!Storage.openFileForRead("SLP", std::string(filename), *file)) {
+    overlayOpenFailure = OverlayOpenFailure::Open;
+    logSleepAsset("sleep_asset_open_fail", filename, "storage_open");
     delete file;
     return nullptr;
   }
@@ -478,6 +515,12 @@ void drawClippingSleepCard(GfxRenderer& renderer, const std::string& text, const
 void SleepActivity::onEnter() {
   EpubDiagnostics::Scope diagnostics("sleep_render_start", "sleep_render_end");
   Activity::onEnter();
+  sleepAssetLogCount = 0;
+  SleepRenderCompletion completion{renderer};
+  LOG_INF("SLP", "sleep_asset_selected mode=%u free=%u largest=%u",
+          static_cast<unsigned>(SETTINGS.sleepScreen), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  EpubDiagnostics::phaseRecord("sleep_asset_selected", static_cast<int>(SETTINGS.sleepScreen));
 
   const bool renderQuickResume =
       SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
@@ -510,6 +553,9 @@ void SleepActivity::onEnter() {
   // PNG pixels are composited while transparent pixels leave it untouched.
   if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY && renderOverlaySleepScreen()) {
     return;
+  }
+  if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY) {
+    logSleepAsset("sleep_fallback_selected", "default_sleep_screen", "overlay_candidates_failed");
   }
 
   switch (SETTINGS.sleepScreen) {
@@ -736,15 +782,19 @@ bool SleepActivity::renderOverlaySleepScreen() const {
   if (!APP_STATE.favoriteSleepImagePath.empty() &&
       FsHelpers::hasPngExtension(APP_STATE.favoriteSleepImagePath) &&
       Storage.exists(APP_STATE.favoriteSleepImagePath.c_str())) {
+    logSleepAsset("sleep_asset_candidate", APP_STATE.favoriteSleepImagePath.c_str(), "favorite");
     bool hasTransparency = false;
     if (renderOverlayPngPass(APP_STATE.favoriteSleepImagePath, GfxRenderer::BW, &hasTransparency, false) &&
         hasTransparency) {
       refreshOverlayBase(renderer);
       if (renderOverlayPng(APP_STATE.favoriteSleepImagePath, false)) {
+        logSleepAsset("sleep_asset_selected", APP_STATE.favoriteSleepImagePath.c_str(), "favorite_overlay");
         LOG_DBG("SLP", "Rendering favorite page overlay: %s", APP_STATE.favoriteSleepImagePath.c_str());
         return true;
       }
+      logSleepAsset("sleep_asset_render_fail", APP_STATE.favoriteSleepImagePath.c_str(), "favorite_overlay");
     } else {
+      logSleepAsset("sleep_asset_invalid", APP_STATE.favoriteSleepImagePath.c_str(), "not_transparent_overlay");
       LOG_DBG("SLP", "Favorite sleep image is not a transparent overlay: %s",
               APP_STATE.favoriteSleepImagePath.c_str());
     }
@@ -775,17 +825,26 @@ bool SleepActivity::renderOverlaySleepScreen() const {
     const size_t start = static_cast<size_t>(random(static_cast<long>(pool.size())));
     for (size_t offset = 0; offset < pool.size(); ++offset) {
       const auto& path = pool[(start + offset) % pool.size()];
+      logSleepAsset("sleep_asset_candidate", path.c_str(), "overlay_pool");
       bool hasTransparency = false;
-      if (!renderOverlayPngPass(path, GfxRenderer::BW, &hasTransparency, false) || !hasTransparency) {
+      const bool probed = renderOverlayPngPass(path, GfxRenderer::BW, &hasTransparency, false);
+      if (!probed) {
+        logSleepAsset("sleep_asset_render_fail", path.c_str(), "probe_pass");
+        continue;
+      }
+      if (!hasTransparency) {
+        logSleepAsset("sleep_asset_invalid", path.c_str(), "opaque_no_alpha");
         LOG_DBG("SLP", "Skipping opaque page overlay PNG: %s", path.c_str());
         continue;
       }
       refreshOverlayBase(renderer);
       LOG_DBG("SLP", "Trying transparent page overlay PNG: %s", path.c_str());
       if (renderOverlayPng(path, false)) {
+        logSleepAsset("sleep_asset_selected", path.c_str(), "transparent_overlay");
         LOG_DBG("SLP", "Rendering page overlay: %s", path.c_str());
         return true;
       }
+      logSleepAsset("sleep_asset_render_fail", path.c_str(), "final_overlay_pass");
       LOG_ERR("SLP", "Skipping failed page overlay PNG: %s", path.c_str());
     }
     return false;
@@ -793,6 +852,7 @@ bool SleepActivity::renderOverlaySleepScreen() const {
 
   if (tryCandidates(folderCandidates) || tryCandidates(fallbackCandidates)) return true;
 
+  logSleepAsset("sleep_fallback_selected", "default_sleep_screen", "all_overlay_candidates_failed");
   LOG_ERR("SLP", "All page overlay PNG candidates failed; using default sleep screen");
   return false;
 }
@@ -848,12 +908,20 @@ std::string SleepActivity::findOverlayPngPath() const {
 bool SleepActivity::renderOverlayPngPass(const std::string& path, const GfxRenderer::RenderMode mode,
                                          bool* transparencyDetected, const bool drawPixels) const {
   auto png = makeUniqueNoThrow<PNG>();
-  if (!png) return false;
+  if (!png) {
+    logSleepAsset("sleep_asset_alloc_fail", path.c_str(), "png_decoder");
+    return false;
+  }
 
+  overlayOpenFailure = OverlayOpenFailure::None;
   const int openResult = png->open(path.c_str(), overlayPngOpen, overlayPngClose, overlayPngRead,
                                    overlayPngSeek, overlayPngDraw);
   const ScopedCleanup cleanup{[&png]() { png->close(); }};
-  if (openResult != PNG_SUCCESS) return false;
+  if (openResult != PNG_SUCCESS) {
+    if (overlayOpenFailure == OverlayOpenFailure::None)
+      logSleepAsset("sleep_asset_invalid", path.c_str(), "png_header_or_format");
+    return false;
+  }
 
   const int srcWidth = png->getWidth();
   const int srcHeight = png->getHeight();
@@ -862,6 +930,7 @@ bool SleepActivity::renderOverlayPngPass(const std::string& path, const GfxRende
   if (srcWidth <= 0 || srcHeight <= 0 || png->isInterlaced() ||
       overlayRequiredPngBufferBytes(srcWidth, pixelType, bitsPerSample) > PNG_MAX_BUFFERED_PIXELS ||
       !overlaySupportedBitDepth(pixelType, bitsPerSample)) {
+    logSleepAsset("sleep_asset_dimension_fail", path.c_str(), "unsupported_geometry_or_format");
     LOG_ERR("SLP", "Unsupported page overlay PNG: %s", path.c_str());
     return false;
   }
@@ -896,13 +965,18 @@ bool SleepActivity::renderOverlayPngPass(const std::string& path, const GfxRende
 
   LOG_DBG("SLP", "Overlay PNG %dx%d -> %dx%d (%s)", srcWidth, srcHeight, dstWidth, dstHeight,
           mode == GfxRenderer::BW ? "BW" : (mode == GfxRenderer::GRAYSCALE_LSB ? "LSB" : "MSB"));
-  return png->decode(&context, 0) == PNG_SUCCESS;
+  if (png->decode(&context, 0) != PNG_SUCCESS) {
+    logSleepAsset("sleep_asset_decode_fail", path.c_str(), "png_decode");
+    return false;
+  }
+  return true;
 }
 
 bool SleepActivity::renderOverlayPng(const std::string& path, const bool allowOpaque) const {
   constexpr size_t PNG_DECODER_APPROX_SIZE = 44 * 1024;
   constexpr size_t MIN_FREE_HEAP_FOR_PNG = PNG_DECODER_APPROX_SIZE + 16 * 1024;
   if (ESP.getFreeHeap() < MIN_FREE_HEAP_FOR_PNG) {
+    logSleepAsset("sleep_asset_alloc_fail", path.c_str(), "minimum_heap");
     LOG_ERR("SLP", "Not enough heap for page overlay PNG");
     return false;
   }
@@ -1066,13 +1140,12 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
   }
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 
-  // Follow the reader's anti-aliased render sequence so the cover remains the
-  // BW base while both the cover details and transparent overlay get gray.
-  if (!renderer.storeBwBuffer()) {
-    LOG_ERR("SLP", "Not enough memory for cover overlay grayscale; keeping BW base");
-    renderer.setRenderMode(GfxRenderer::BW);
-    return;
-  }
+  // Follow the same bounded grayscale sequence as the normal sleep-cover
+  // renderer. The displayed BW frame is the base, so there is no need to copy
+  // a full framebuffer into temporary heap storage before the gray passes.
+  // That old copy was the physical X4 fallback point: when its chunks could
+  // not be allocated, the intentionally harsh BW frame remained visible.
+  renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
 
   bitmap.rewindToData();
   renderer.clearScreen(0x00);
@@ -1080,7 +1153,6 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
   renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
   if (!renderOverlayPngPass(selectedPath, GfxRenderer::GRAYSCALE_LSB, nullptr)) {
     renderer.setRenderMode(GfxRenderer::BW);
-    renderer.restoreBwBuffer();
     return;
   }
   renderer.copyGrayscaleLsbBuffers();
@@ -1091,7 +1163,6 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
   renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
   if (!renderOverlayPngPass(selectedPath, GfxRenderer::GRAYSCALE_MSB, nullptr)) {
     renderer.setRenderMode(GfxRenderer::BW);
-    renderer.restoreBwBuffer();
     return;
   }
   renderer.copyGrayscaleMsbBuffers();
@@ -1100,7 +1171,6 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
   renderer.displayGrayBuffer();
   renderer.setFadingFix(SETTINGS.fadingFix);
   renderer.setRenderMode(GfxRenderer::BW);
-  renderer.restoreBwBuffer();
 }
 
 void SleepActivity::renderBitmapSleepScreenWithClipping(const Bitmap& bitmap, const std::string& text,

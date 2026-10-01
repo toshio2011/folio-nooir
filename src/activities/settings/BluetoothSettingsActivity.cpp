@@ -11,6 +11,7 @@
 #include "BleInput.h"
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "activities/ActivityManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -18,7 +19,28 @@ namespace {
 constexpr unsigned long kBannerMs = 2000;
 constexpr uint32_t kScanMs = 8000;
 constexpr unsigned long kForgetHoldMs = 1200;  // hold Confirm this long in the Paired view to forget
+constexpr StrId kNoDeviceTimeoutOptions[] = {StrId::STR_BT_TIMEOUT_NEVER, StrId::STR_BT_TIMEOUT_30_SEC,
+                                              StrId::STR_BT_TIMEOUT_60_SEC, StrId::STR_BT_TIMEOUT_90_SEC};
+constexpr uint16_t kNoDeviceTimeoutSeconds[] = {0, 30, 60, 90};
+
+int noDeviceTimeoutOptionIndex(const uint16_t seconds) {
+  for (int i = 0; i < 4; ++i) {
+    if (kNoDeviceTimeoutSeconds[i] == seconds) return i;
+  }
+  return 2;
+}
+
+const char* noDeviceTimeoutLabel(const uint16_t seconds) {
+  return I18N.get(kNoDeviceTimeoutOptions[noDeviceTimeoutOptionIndex(seconds)]);
+}
 }  // namespace
+
+bool BluetoothSettingsActivity::bluetoothResourceSensitive() const {
+  // This screen is lightweight. ActivityManager separately evaluates the
+  // underlying Reader's live build/render state, and BLE admission still checks
+  // RenderLock, pending render work, WiFi exclusion, and global heap floors.
+  return false;
+}
 
 void BluetoothSettingsActivity::onEnter() {
   Activity::onEnter();
@@ -40,8 +62,9 @@ void BluetoothSettingsActivity::setBanner(const char* text) {
 
 void BluetoothSettingsActivity::rebuildMenuRows() {
   menuRows.clear();
-  menuRows.reserve(9);
+  menuRows.reserve(11);
   menuRows.push_back({Action::ToggleBt, StrId::STR_BLUETOOTH});
+  menuRows.push_back({Action::NoDeviceTimeout, StrId::STR_BT_NO_DEVICE_TIMEOUT});
   if (SETTINGS.bluetoothEnabled) {
     menuRows.push_back({Action::Scan, StrId::STR_BT_SCAN_PAIR});
     if (BleHid.isConnected()) menuRows.push_back({Action::Disconnect, StrId::STR_BT_DISCONNECT});
@@ -54,6 +77,7 @@ void BluetoothSettingsActivity::rebuildMenuRows() {
 #endif
     menuRows.push_back({Action::PresetFree2, StrId::STR_BT_PRESET_FREE2});
     menuRows.push_back({Action::PresetFree3, StrId::STR_BT_PRESET_FREE3});
+    menuRows.push_back({Action::PresetYiser, StrId::STR_BT_PRESET_YISER});
     menuRows.push_back({Action::ClearMap, StrId::STR_BT_CLEAR_MAP});
   }
   if (menuIndex >= static_cast<int>(menuRows.size())) menuIndex = 0;
@@ -64,6 +88,8 @@ void BluetoothSettingsActivity::applyPreset(bool free3) {
   // center key on the 3-button Free3); the user can re-map via "Map Remote
   // Buttons" if their device sends different codes.
   using Btn = MappedInputManager::Button;
+  SETTINGS.bleControllerPreset = CrossPointSettings::BLE_CONTROLLER_PRESET_GENERIC;
+  BleHid.setInputPreset(freeink::InputPreset::GenericHid);
   for (auto& e : SETTINGS.bleKeyMap) e = CrossPointSettings::BleKeyMapEntry{};
   auto set = [&](int slot, freeink::SpecialKey key, Btn button) {
     SETTINGS.bleKeyMap[slot].keyKind = 0;  // SpecialKey
@@ -79,7 +105,34 @@ void BluetoothSettingsActivity::applyPreset(bool free3) {
   SETTINGS.saveToFile();
 }
 
+void BluetoothSettingsActivity::applyYiserPreset() {
+  using Btn = MappedInputManager::Button;
+  SETTINGS.bleControllerPreset = CrossPointSettings::BLE_CONTROLLER_PRESET_YISER_J6_RING;
+  BleHid.setInputPreset(freeink::InputPreset::YiserJ6Ring);
+  for (auto& e : SETTINGS.bleKeyMap) e = CrossPointSettings::BleKeyMapEntry{};
+  auto set = [&](int slot, freeink::SpecialKey key, Btn button) {
+    SETTINGS.bleKeyMap[slot].keyKind = 0;  // normalized SpecialKey
+    SETTINGS.bleKeyMap[slot].keyValue = static_cast<uint8_t>(key);
+    SETTINGS.bleKeyMap[slot].button = static_cast<uint8_t>(button);
+    SETTINGS.bleKeyMap[slot].signatureCount = 1;
+    SETTINGS.bleKeyMap[slot].signature[0] =
+        static_cast<uint16_t>(static_cast<uint8_t>(key));
+  };
+  set(0, freeink::SpecialKey::Up, Btn::Up);
+  set(1, freeink::SpecialKey::Down, Btn::Down);
+  set(2, freeink::SpecialKey::Left, Btn::Left);
+  set(3, freeink::SpecialKey::Right, Btn::Right);
+  set(4, freeink::SpecialKey::Enter, Btn::Confirm);
+  set(5, freeink::SpecialKey::Escape, Btn::Back);
+  SETTINGS.saveToFile();
+}
+
 void BluetoothSettingsActivity::startScanView() {
+  if (!bleinput::connectionAdmissionAllowed()) {
+    setBanner(tr(STR_BT_START_FAILED));
+    requestUpdate();
+    return;
+  }
   if (!BleHid.isRunning() && !bleinput::ensureStarted()) {
     SETTINGS.bluetoothEnabled = 0;
     SETTINGS.saveToFile();
@@ -99,6 +152,11 @@ void BluetoothSettingsActivity::startScanView() {
 
 void BluetoothSettingsActivity::beginPairedConnect() {
   if (pairedIndex >= BleHid.pairedCount()) return;
+  if (!bleinput::connectionAdmissionAllowed()) {
+    setBanner(tr(STR_BT_START_FAILED));
+    requestUpdate();
+    return;
+  }
   if (!BleHid.isRunning() && !bleinput::ensureStarted()) {
     setBanner(tr(STR_BT_START_FAILED));
     requestUpdate();
@@ -136,17 +194,18 @@ void BluetoothSettingsActivity::handleMenuConfirm() {
   const Action action = menuRows[menuIndex].action;
   switch (action) {
     case Action::ToggleBt:
-      SETTINGS.bluetoothEnabled = SETTINGS.bluetoothEnabled ? 0 : 1;
-      if (SETTINGS.bluetoothEnabled) {
-        if (!bleinput::ensureStarted()) {
-          SETTINGS.bluetoothEnabled = 0;
-          setBanner(tr(STR_BT_START_FAILED));
-        }
-      } else {
-        bleinput::stop();
-      }
-      SETTINGS.saveToFile();
+      bleinput::toggleBluetooth();
       rebuildMenuRows();
+      requestUpdate();
+      break;
+    case Action::NoDeviceTimeout:
+      noDeviceTimeoutPopup.show(StrId::STR_BT_NO_DEVICE_TIMEOUT, kNoDeviceTimeoutOptions, 4,
+                                noDeviceTimeoutOptionIndex(SETTINGS.bluetoothNoDeviceTimeoutSeconds),
+                                [this](const int index) {
+                                  if (index < 0 || index >= 4) return;
+                                  SETTINGS.bluetoothNoDeviceTimeoutSeconds = kNoDeviceTimeoutSeconds[index];
+                                  SETTINGS.saveToFile();
+                                });
       requestUpdate();
       break;
     case Action::Scan:
@@ -185,6 +244,11 @@ void BluetoothSettingsActivity::handleMenuConfirm() {
       setBanner(tr(STR_BT_PRESET_FREE3));
       requestUpdate();
       break;
+    case Action::PresetYiser:
+      applyYiserPreset();
+      setBanner(tr(STR_BT_PRESET_YISER));
+      requestUpdate();
+      break;
     case Action::ClearMap:
       for (auto& e : SETTINGS.bleKeyMap) e = CrossPointSettings::BleKeyMapEntry{};
       SETTINGS.saveToFile();
@@ -195,6 +259,8 @@ void BluetoothSettingsActivity::handleMenuConfirm() {
 }
 
 void BluetoothSettingsActivity::loop() {
+  if (noDeviceTimeoutPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
+
   // Clear an expired status banner.
   if (bannerUntil > 0 && static_cast<int32_t>(millis() - bannerUntil) >= 0) {
     banner.clear();
@@ -204,6 +270,15 @@ void BluetoothSettingsActivity::loop() {
 
   // Watch for an async connect result (from either the scan list or the paired list).
   if (awaitingConnect) {
+    if (!bleinput::connectionAdmissionAllowed()) {
+      if (BleHid.isScanning()) BleHid.stopScan();
+      awaitingConnect = false;
+      pairedScanActive = false;
+      connectOrigin = ConnectOrigin::None;
+      setBanner(tr(STR_BT_START_FAILED));
+      requestUpdate();
+      return;
+    }
     if (pairedScanActive && !BleHid.isConnected()) {
       if (BleHid.isScanning()) {
         int match = -1;
@@ -347,6 +422,11 @@ void BluetoothSettingsActivity::loop() {
       handleMenuConfirm();
     } else if (view == View::Scan) {
       if (!awaitingConnect && scanIndex < BleHid.deviceCount()) {
+        if (!bleinput::connectionAdmissionAllowed()) {
+          setBanner(tr(STR_BT_START_FAILED));
+          requestUpdate();
+          return;
+        }
         if (BleHid.isScanning()) BleHid.stopScan();
         const auto& d = BleHid.device(static_cast<uint8_t>(scanIndex));
         awaitingConnect = true;
@@ -378,6 +458,8 @@ std::string BluetoothSettingsActivity::pairedLabel(int index) const {
 }
 
 void BluetoothSettingsActivity::render(RenderLock&&) {
+  if (noDeviceTimeoutPopup.processRender(renderer, mappedInput)) return;
+
   renderer.clearScreen();
 
   const auto& metrics = UITheme::getInstance().getMetrics();
@@ -407,6 +489,8 @@ void BluetoothSettingsActivity::render(RenderLock&&) {
         }, nullptr, nullptr,
         [this](int i) -> std::string {
           if (menuRows[i].action == Action::ToggleBt) return SETTINGS.bluetoothEnabled ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+          if (menuRows[i].action == Action::NoDeviceTimeout)
+            return noDeviceTimeoutLabel(SETTINGS.bluetoothNoDeviceTimeoutSeconds);
           return "";
         },
         true);

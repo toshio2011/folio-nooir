@@ -28,6 +28,8 @@ const char* label(const ActionId action) {
       return I18N.get(StrId::STR_GO_HOME_BUTTON);
     case ActionId::Sleep:
       return I18N.get(StrId::STR_SLEEP);
+    case ActionId::ToggleBluetooth:
+      return I18N.get(StrId::STR_TOGGLE_BLUETOOTH);
     case ActionId::None:
       return "";
   }
