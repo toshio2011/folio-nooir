@@ -101,6 +101,71 @@ Key corrections from the source audit:
 
 While a build-capable Codex/local session is unavailable, continue source/upstream tracing and prepare the exact symbols, callers, guards and candidate commits for later measurement. Do not make speculative production deletions merely to create headroom.
 
+## Authoritative execution queue — reconciled 2026-10-04
+
+This is the single execution order for the remainder of 1.6.3. It reconciles the frozen Nooir phases, the September backlog, the CrossInk 1.6.1 audit, and the BLE research dossier. Detailed evidence stays in those documents; do not create another parallel release plan.
+
+**Already frozen:** Phase A headroom/foundations, Phase B EPUB foundation/performance, and Phase C CSS C1-C4. Reopen them only for a concrete regression or contradictory measurement. For new deltas, reproduce and use the clean 1.6.3 build lineage; the older 1.6.2 figures remain historical reference, not the artifact to compare a new patch against.
+
+### Gate 0 — production headroom
+- Reproduce clean gh_release and preserve ELF/map/bin before new feature work.
+- Continue only evidence-backed flash A/B work from this backlog. Font/hyphenation/resource removal is not assumed production work; preserve Arabic/Quran, boot/recovery and settings fallback.
+- Keep the physical SD/SPI batching benchmark queued because it may affect later catalog/Retrieve All economics.
+- Status bar, catalog and BLE must report incremental linked/padded cost; fitting below the partition boundary alone is not enough.
+
+### Gate 1 — shared memory/headroom foundation
+- Add a small Nooir-owned observational policy: free heap + largest contiguous block snapshots, named stages, bounded diagnostics and explicit optional-work/reclaim tiers.
+- Merge this with the existing font-prewarm/cache-lifetime investigation rather than implementing two policies. Existing font-cache release, framebuffer loan, chunked grayscale preservation, fallible image/parser allocations, dictionary cache release and BLE teardown stay subsystem-owned.
+- Do not copy CrossInk C3 thresholds as constants. Derive X4 values physically and keep X3 conservative.
+- Use the same telemetry vocabulary for EPUB, SD fonts, images, XTC/XTCH, dictionary and CBZ benchmark points. Preserve the XTC reusable-streaming-scratch candidate, but accept it only if measured churn reduction beats retained RAM.
+
+### Gate 2 — bounded correctness/hardening
+1. SD-font space-width fallback if current source still lacks the vetted CrossPoint fix.
+2. CrossInk #748 empty-inline-padding, adapted as transient geometry without a TextBlock/cache migration.
+3. Bounded KOReader progress response using SecureHttpClient streaming; validate the cap and preserve working KOReader interoperability.
+4. Keep already-covered OPF namespace-prefix handling, global settings refresh and cache/CSS hardening frozen.
+5. Older optional UTF-8 keyboard/web/OPDS/Hangul/ETag fixes remain independent candidates; they must not hitchhike in this reader batch.
+
+Then run focused tests, host/simulators and physical X4 reader torture with the new telemetry before expanding user-facing features.
+
+### Gate 3 — configurable Nooir status bar
+- Evolve the existing Nooir bar; do not replace it with CrossInk UI.
+- First bounded UX: top/bottom plus left/center/right composition. Initial fields: title/chapter, progress, chapter page/count, battery and clock where supported.
+- Reading-time estimates follow only after stats-derived estimates are validated.
+- Test XTC/XTCH safe areas, collisions/truncation, grayscale/image redraw, dark mode and settings migration.
+- Live preview is desirable only if measured flash/headroom remains comfortable.
+
+### Gate 4 — lightweight catalog experiment
+- Prototype a transactional Nooir source catalog, not CLX1 parity and not a Library UI replacement.
+- v1 stores path identity/navigation, format including CBZ, file size and reliable modification time. Reuse existing metadata/covers/state.
+- One bounded traversal should reconcile the catalog and feed Retrieve All; only new/modified/missing-cache sources need preparation work. Global Search consumes the same catalog incrementally.
+- No size-only rename migration of reading state.
+- Require interrupted-write/corruption/source-replacement/add-remove/SD-removal tests and 400/1000/2000-book benchmarks.
+- This may slip beyond 1.6.3 without blocking the reader/status-bar release if persistent-format validation is not mature.
+
+### Gate 5 — core freeze
+- Preserve SD/SPI, XTC/XTCH and evidence-triggered image-memory candidates.
+- OPDS/web remains bounded hardening of existing infrastructure, not a release-expansion mandate.
+- Quick Actions remains conditional. CBZ Prepare-for-Nooir remains deferred; only shared memory telemetry is in scope.
+- Run full host suites, simulator_x4/x3, gh_release, migration/cache checks and physical X4 torture. Never infer physical X3 validation from simulator/shared builds.
+- Freeze mature X3/X4 core before unrelated X4 Classic/X4 Pro port work.
+
+### Gate 6 — BLE experimental line
+This gate supplements, and does not replace, docs/BLE_REMOTE_RESEARCH.md.
+- Separate experimental profile; refresh upstream BLE research first.
+- Measure init/scan/connect/connected-idle/report/reconnect/teardown using free heap and largest-block telemetry.
+- Keep HID inspection/descriptor-aware decoding, bounded swipe recognition, normalized Nooir actions, lightweight callbacks, bounded reconnect, bonding, sleep/wake, Wi-Fi coexistence and battery testing from the BLE dossier.
+- Framebuffer loan is not BLE steady-state RAM. Reclaim only proven disposable state or gate optional reader work when measurements justify it.
+- Require long-session/100+ turn and reconnect testing. Existing Reader popup suppression remains experimental.
+- If always-resident BLE harms reader headroom, prefer reader-only/on-demand BLE.
+
+### Deferred unless evidence changes priority
+Full CrossInk table subsystem; CLX1 parity/Library UI; automatic rename-state migration; runtime scalable TTF on original C3 X3/X4; per-book reader settings; seven-slot bar UI if three-position Nooir UI is enough; whole-book CBZ preparation; PDF; FB2; full UI dark mode; Quick Actions without explicit headroom/product approval.
+
+### Evidence contract
+Every accepted source change records its source/rationale, focused regression, production linked/padded delta, static RAM, relevant free-heap/largest-block measurements, migration statement, simulator/shared-X3 validation where applicable, and physical X4 evidence before release. Catalog additionally requires corruption/interruption/source-replacement tests. BLE cannot graduate without physical connected-reader and battery/lifecycle evidence.
+
+
 ## P0 — flash recovery first
 
 Generate a linker/map-level breakdown before adding another large subsystem. Audit:
