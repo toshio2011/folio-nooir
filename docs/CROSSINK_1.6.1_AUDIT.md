@@ -43,10 +43,21 @@ CrossInk/CrossPoint is an upstream idea/fix source, not a merge target. Classify
    - Nooir also explicitly refreshes the live book after in-reader settings: `saveToFile()` -> `refreshAfterReaderSettings()` -> drop live `Section` -> preserve approximate position -> clear stale layout/highlight state -> render using a fresh `ReaderRenderSpec`.
    - Do not introduce per-book settings merely to match CrossInk. Treat that as a separate future product feature with explicit override/reset UX and migration design.
 
-6. LibraryIndex scanning/index storage comparison
-   - Do not replace Nooir Library/Recent/Finished UI.
-   - Study CrossInk LibraryBuilder/LibraryIndexFile/LibraryFormat/LibraryText/LibraryRecentOrder/LibraryFileTypes for large-library scanning, persistence, incremental rebuild, SD-I/O, memory and corruption recovery.
-   - Candidate value is backend mechanics for Nooir's large libraries, not CrossInk's Library screen.
+6. LibraryIndex scanning/index storage comparison — **TAKE/ADAPT architecture, not wholesale port**
+   - CrossInk CLX1 is a persistent SD-backed catalog, not merely a filename cache. One bounded recursive walk streams records to a staging file; it does not retain the whole library as heap strings/objects.
+   - The primary resident sort array is 14 bytes/book. The on-disk format uses fixed 128-byte records plus compact u16 sort permutations and variable blobs. Rebuilds reuse prior EPUB metadata when path, size, modification time, metadata mode, and format conditions still match.
+   - Reconciliation preserves arrival order and recognizes unchanged/added/removed entries; installation is transactional (`.new` / live / `.bak`) with interrupted-install recovery and strict header/offset/file-size validation.
+   - Defensive scanning includes depth capping, duplicate-dirent suppression, unreadable-entry skipping, bounded/fallible allocations, and periodic scheduler yields.
+   - Nooir already solves the **bulk retrieval RAM** problem independently: Retrieve All recursively scans in small batches, streams paths to SD queues, then performs metadata and thumbnail phases without retaining hundreds/thousands of book paths in RAM.
+   - Nooir's normal Folio Library remains directory-centric: the current folder is materialized as `std::vector<std::string>`; Search All Folders performs a fresh recursive traversal and accumulates matching relative paths in RAM. This is the clearest gap a persistent catalog can improve.
+   - Recommended Nooir direction: a **lightweight persistent catalog underneath Folio Library**, preserving the existing bookshelf UI, BookState/Recent semantics, per-book metadata caches, metadata overrides, covers, and Retrieve All pipeline. Do not copy CrossInk's full metadata database by default.
+   - First catalog scope should be identity/navigation data only: full/relative path (or folder+basename), file type including **CBZ** (which CrossInk CLX1 currently does not index), size, modification time where available, and a stable path hash. Optional tiny folded search keys can be evaluated after profiling.
+   - Reuse Nooir's existing per-book metadata caches for title/author/synopsis instead of duplicating rich metadata into the catalog. Persist selected display keys later only if profiling proves per-row metadata-cache opens dominate shelf/search latency.
+   - Global search is the strongest first consumer: query the catalog incrementally/page-wise instead of recursively walking the card and retaining every matching path. Folder browsing can remain direct initially.
+   - Borrow transactional rebuild, strict validation, and metadata-independent reconciliation. Do not blindly inherit CLX1's 4096-record limit, 255-byte folder/name assumptions, five sort permutations, series/genre metadata, author-spelling harmonisation, or arrival-order model unless Nooir UX needs them.
+   - Refresh semantics must be explicit: external SD edits are unknowable while powered off, so mark the catalog dirty on boot and after Nooir file-changing operations; refresh manually/explicitly or incrementally before global-search results are trusted. Catalog refresh must not force full metadata retrieval.
+   - Measure 400, 1000, and 2000 mixed-format books: scan wall time, peak heap/max alloc, index bytes, SD reads/writes, first-result and complete-search latency, and UI responsiveness.
+   - Classification: **worth prototyping for 1.6.3 only as an isolated backend/search enhancement**. Full LibraryIndex parity belongs later.
 
 7. Memory-aware EPUB layout decisions
    - Study pre-allocation memory gates, rich->compact table/layout fallbacks, incremental work, glyph prewarm limits, buffer limits, and graceful degradation.
