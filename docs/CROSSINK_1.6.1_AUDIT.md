@@ -17,18 +17,25 @@ CrossInk/CrossPoint is an upstream idea/fix source, not a merge target. Classify
    - Time-left should preferentially reuse/adapt Nooir reading-statistics data rather than duplicate a second pace subsystem.
    - XTC/XTCH dual-overlay mode needs obscured-content testing before adoption.
 
-2. Unknown XML tag regression fix
-   - Trace exact CrossInk parser change and compare against Nooir's existing malformed-XML recovery/generic block flow.
-   - Add a focused regression fixture before changing source.
+2. Unknown XML namespace-prefix regression — **ALREADY COVERED**
+   - CrossInk issue #790 is specifically OPF elements arriving with prefixes such as `ns0:manifest`, `ns0:spine`, and `ns0:itemref`, causing the parser to miss manifest/spine data and land at End of Book.
+   - Nooir already centralizes local-name matching in `lib/XmlParserUtils/XmlParserUtils.h`: `xmlLocalName()` strips the prefix and `xmlNameIs()` compares the local name. Current `ContentOpfParser` uses this for package/metadata/manifest/spine/item/itemref handling.
+   - No source port required. Retain/add a prefixed-OPF regression fixture when the parser test batch is touched.
 
-3. Empty CSS span / inline spacing behavior
-   - Trace preservation/spacing semantics in CrossInk.
-   - Compare against Nooir Phase C cascade/parser behavior; port only the missing edge case.
-   - Must not reopen frozen selector/cascade work without contradictory fixture evidence.
+3. Empty CSS span / inline spacing behavior — **TAKE/ADAPT candidate**
+   - CrossInk issue #748 preserves inline `padding-left` even when an element contains no text by queuing pixel padding and attaching it to the following real token.
+   - Nooir's current token/layout path has no equivalent queued inline-padding state.
+   - Do not copy CrossInk's per-word representation literally. Nooir's serialized `TextBlock` stores final word X positions, so this can likely remain transient parser/layout state with **no cache-format migration**.
+   - Preferred next step: focused fixture equivalent to `EERO:<span class="spacey"></span>Kappusiwai!`; compare a transient width-offset approach against a synthetic attached spacing token. Preserve BiDi, justification, hyphenation, and Phase-C cascade behavior.
 
-4. KOReader oversized-response handling
-   - Compare authentication/HTTP response handling against Nooir's physically interoperable KOSync baseline.
-   - Take only bounded response/crash handling that preserves existing matching/auth behavior.
+4. KOReader oversized-response handling — **ADAPT, but target progress responses rather than auth**
+   - CrossInk issue #783 hardened authentication by capping the expected-small auth JSON response at 4096 bytes and rejecting oversized, incomplete, or allocation-failed bodies before JSON parsing.
+   - Nooir's current `authenticate()` does not read/parse the auth body; it accepts successful HTTP 2xx, so the exact #783 crash path is already avoided.
+   - The more relevant Nooir risk is `getProgress()`: it currently calls unbounded `http.getString()` before JSON parsing.
+   - FreeInk `SecureHttpClient` already supports streaming `GET(callback)`, 2 KiB delivery chunks, Content-Length inspection, `responseComplete()`, and callback-abort detection. No SDK change is required.
+   - Direction: bound progress response reads locally. Proposed starting cap: **8 KiB** (normal KOSync progress objects are tiny; this leaves ample room for Nooir/CrossPoint rich-position fields while rejecting accidental HTML/proxy/error bodies). Reject known Content-Length above the cap where possible, stop unknown/chunked bodies at the cap, require a complete response, then parse only the bounded buffer.
+   - Add diagnostic classification for empty/blank, HTML, non-JSON, malformed JSON, oversized, incomplete, and allocation-failed responses. Do not log credentials or full server bodies.
+   - Validate 8 KiB against representative reference KOSync and CrossPoint extended responses before freezing the constant.
 
 5. Global/per-book reader-setting application audit
    - Compare precedence, migration, per-book overrides, repagination/cache invalidation, and failure recovery.
