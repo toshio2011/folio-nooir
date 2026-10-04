@@ -59,9 +59,29 @@ CrossInk/CrossPoint is an upstream idea/fix source, not a merge target. Classify
    - Measure 400, 1000, and 2000 mixed-format books: scan wall time, peak heap/max alloc, index bytes, SD reads/writes, first-result and complete-search latency, and UI responsiveness.
    - Classification: **worth prototyping for 1.6.3 only as an isolated backend/search enhancement**. Full LibraryIndex parity belongs later.
 
-7. Memory-aware EPUB layout decisions
-   - Study pre-allocation memory gates, rich->compact table/layout fallbacks, incremental work, glyph prewarm limits, buffer limits, and graceful degradation.
-   - Prefer adapting proven bounded mechanisms into Nooir's existing renderer over replacing Nooir's EPUB architecture.
+7. Memory-aware EPUB layout decisions — **TAKE/ADAPT as a shared headroom policy**
+   - CrossInk centralizes heap admission in `MemoryBudget`: decisions consider both total free heap and the largest contiguous allocation (`maxAllocHeap`). This is more useful than reacting only after `nothrow` fails, especially when BLE/NimBLE reduces or fragments internal heap.
+   - CrossInk uses operation-specific budgets rather than one global "low memory" threshold. Current C3-oriented examples include text-layout floor (~44 KiB free), inline image gates (source-dependent; non-JPEG 72 KiB free / 48 KiB max allocation), rich-table admission (96 KiB free / 56 KiB max allocation), section prewarm (80 KiB free / 24 KiB max allocation), and optional rebuild/prefetch gates. **These numbers are evidence, not Nooir constants**; tune from Nooir X4/X3 diagnostics, especially with BLE enabled.
+   - Graceful fallback order is the valuable design: skip optional whole-section prewarm -> choose smaller HTML stream chunks -> release rebuildable SD-font caches -> avoid/suppress expensive inline-image work -> use lower-memory table models / flatten unsupported tables to readable paragraphs -> finally abort the section build safely if the minimum text-layout floor cannot be maintained.
+   - CrossInk's rich-table path is particularly instructive: rich buffered layout is admitted only with strong headroom; lower-memory compact/streaming paths release row state incrementally; structures that exceed bounded capacities degrade to paragraphs rather than OOM/crash.
+   - Nooir already has several reclaimable-memory mechanisms that fit this model:
+     - `FontCacheManager::releaseSdFontCaches()` drops disposable glyph/decompressor/hot-group state while preserving advance/coverage/kerning/ligature metadata.
+     - `GfxRenderer::FrameBufferLoan` lends the existing ~48 KiB framebuffer allocation in place during memory-hungry build phases, avoiding free/realloc fragmentation.
+     - grayscale BW preservation is already chunked (~8 KiB chunks) instead of requiring one ~48 KiB contiguous allocation.
+     - parser/page/image allocations already use fallible allocation paths and persistent inflated HTML reduces repeated ZIP/inflate pressure.
+     - BLE disable performs full NimBLE teardown specifically to return controller/host RAM to the heap.
+   - The missing piece is policy/orchestration: Nooir mostly notices memory pressure at allocation failure sites. Add a small Nooir-owned budget layer that snapshots `freeHeap` + `maxAllocHeap`, logs stage transitions, admits optional work, and can invoke registered reclaim steps before a mandatory allocation.
+   - Design the policy for **future BLE coexistence**, not as EPUB-only constants. Suggested conceptual API: `MemorySnapshot`, `MemoryRequirement {minFree, minLargest}`, operation IDs (EPUB text start, inflate, image decode, rich table, prewarm, BLE start/reconnect), and a reclaim tier. Keep actual reclaim actions owned by their subsystems.
+   - Reclaim tiers should be explicit:
+     1. **Optional work off**: skip prewarm/prefetch/rich embellishments.
+     2. **Drop rebuildable caches**: SD-font disposable caches and other proven reloadable scratch.
+     3. **Choose low-memory algorithms**: smaller stream chunks, compact/streaming tables, image placeholder/alt-text path.
+     4. **Fail safely**: abort/retry the section or refuse BLE start with a clear diagnostic rather than corrupting reader state.
+   - Do **not** treat the framebuffer loan as a general BLE memory source: it is safe only during controlled non-render build windows and the display cannot render while lent. BLE is long-lived; its steady-state reserve must coexist with the restored framebuffer and normal page-turn rendering.
+   - Likewise, do not automatically purge the live Section/page cache merely to connect BLE. First measure BLE's init/connected-idle largest-block requirement and reclaim only disposable state. If steady-state BLE leaves too little headroom for reliable text layout, prefer disabling expensive reader features while BLE is connected over repeated teardown/reconnect churn.
+   - Instrument before freezing thresholds. Capture `freeHeap` and `maxAllocHeap` at: Reader idle, section build start/end, before/after SD-font release, inflate start, CSS load, table admission/fallback, image decode, page render, BLE init, BLE connected-idle, BLE key event/page turn, and BLE teardown. Compare BLE off/on on old X4; X3 build/simulator guards remain mandatory.
+   - First implementation candidate for 1.6.3: **policy + diagnostics + safe optional-work gates**, then adapt only the cheapest proven fallbacks. Do not port CrossInk's full rich/compact/streaming table subsystem in this release; Nooir already has a bounded readable row renderer, so table sophistication is lower priority than predictable headroom.
+   - Classification: **high-value TAKE/ADAPT**. It improves EPUB resilience now and creates the correct foundation for BLE Reader coexistence later.
 
 8. Tiny parser/cache fixes — **SWEEP COMPLETE for advertised 1.6.1 fixes; continue only when source evidence is specific**
    - The advertised 1.6.1 EPUB/parser correctness fixes are #748 (empty inline CSS spacing) and #790 (prefixed OPF XML names). #790 is already covered; #748 remains the only direct small EPUB behavior gap found in the release fix list.
