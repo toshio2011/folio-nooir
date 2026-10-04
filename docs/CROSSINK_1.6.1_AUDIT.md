@@ -97,6 +97,95 @@ CrossInk/CrossPoint is an upstream idea/fix source, not a merge target. Classify
    - Source-diff inspection also exposed larger defensive work in CrossInk Section/Page/CSS/OPF code (bounds, cache recovery, memory-aware allocation), but these are not tiny isolated 1.6.1 ports. Nooir already independently hardens section/page deserialization, incomplete-build commit semantics, LUT offsets, and cache rebuild behavior. Evaluate the remaining memory/OPF pieces under the dedicated memory-aware and large-library/parser audit items rather than cherry-picking them here.
    - Non-EPUB advertised 1.6.1 fixes (OTA/Wi-Fi crash, Home navigation, carousel loading) are outside this parser/cache batch.
 
+## Proposed 1.6.3 implementation sequence
+
+The audit is now sufficiently complete to stop treating the CrossInk findings as an unordered feature list. Use the following dependency/risk order. RC labels here describe development gates, not promises for public release.
+
+### RC1 foundation — small surface area, high confidence
+
+1. **Memory headroom instrumentation + policy skeleton**
+   - Add Nooir-owned snapshots of free heap and largest contiguous allocation.
+   - Add operation/stage IDs and diagnostics first; do not freeze CrossInk-derived thresholds yet.
+   - Wire only proven reclaim hooks initially (especially disposable SD-font caches) and optional-work admission. Keep framebuffer loan semantics unchanged.
+   - Record BLE-off baseline points now so later BLE-on measurements are directly comparable.
+   - Risk: low if diagnostics/policy are initially observational; flash/log-string growth must be measured.
+   - Dependency: none. This should land first because every later reader/BLE memory decision can use it.
+
+2. **EPUB empty-inline-padding regression (#748 adaptation)**
+   - Implement as transient layout geometry; avoid serialized TextBlock/cache-format changes.
+   - Add focused empty-span fixture plus wrapping/justification/BiDi sanity coverage.
+   - Risk: low-to-medium because inline geometry can affect line breaks; bounded scope and no migration are requirements.
+   - Dependency: none, but measure under the new memory diagnostics.
+
+3. **Bounded KOReader progress response**
+   - Use SecureHttpClient streaming callback and a bounded local body; validate the proposed 8 KiB cap with representative responses before freezing it.
+   - Preserve 204 and empty-object semantics; classify malformed/HTML/oversized/incomplete responses without logging secrets.
+   - Risk: low; isolated network path.
+   - Dependency: none.
+
+4. **Configurable Nooir status bar — first bounded version**
+   - Reuse existing renderer/layout reservation. Start with top/bottom + left/center/right composition rather than CrossInk's full seven visible slots.
+   - Fields first: book/chapter title, progress %, chapter page/count, battery, clock where supported. Add reading-time estimates only after validating the stats-derived estimate UX.
+   - Include a live preview if flash/headroom remains acceptable.
+   - Risk: medium: layout collisions, settings migration, XTC overlays, redraw behavior.
+   - Dependency: memory baseline should already exist so UI/settings additions are measured against a known reader state.
+
+### RC2 candidate — persistent library backend prototype
+
+5. **Lightweight catalog v1 + transactional storage**
+   - Keep format deliberately smaller than CLX1: source identity/navigation + freshness only.
+   - Include EPUB/XTC/XTCH/CBZ as applicable to Nooir.
+   - Transactional stage/live/backup install; strict version/header/offset/file-size validation; interrupted-install recovery.
+   - No series/genre/author harmonisation/multi-sort database.
+   - Risk: medium-high because this creates a new persistent format and must survive power loss/card errors.
+   - Dependency: none on status bar, but isolate from RC1 so failures are attributable.
+
+6. **Catalog -> Retrieve All delta planning**
+   - Fold catalog discovery into the existing bounded Retrieve All scan instead of adding another full traversal.
+   - Queue metadata/thumbnail work for new/modified/missing-cache sources; unchanged sources remain cheap.
+   - Use source fingerprint to invalidate stale lightweight presentation caches when a file is replaced in place.
+   - Do not migrate reading state on size-only rename guesses.
+   - Risk: medium-high; requires extensive mixed-library/card-change testing.
+   - Dependency: catalog v1.
+
+7. **Catalog -> Global Search**
+   - Replace repeated recursive Search All Folders traversal with incremental catalog reads.
+   - Preserve current Folio Library UI and state filters.
+   - Risk: medium; mostly consumer logic after catalog validity is trustworthy.
+   - Dependency: catalog v1.
+
+### RC3 / experimental — BLE coexistence on top of measured headroom
+
+8. **BLE Reader coexistence measurements**
+   - Measure BLE init, connected-idle, key-event/page-turn, reconnect, and teardown against the same free-heap/largest-block instrumentation used by EPUB.
+   - Determine steady-state reserve before enabling additional reclaim behavior.
+   - Existing experimental connected-popup suppression remains experimental until the memory/refresh interaction is proven.
+   - Dependency: memory policy/instrumentation.
+
+9. **BLE-aware admission/reclaim**
+   - Reclaim disposable caches before BLE init only when measurements justify it.
+   - While connected, gate optional EPUB work if required rather than repeatedly tearing BLE down.
+   - Never use the temporary framebuffer loan as BLE steady-state memory.
+   - Refuse/defer BLE cleanly if mandatory reader headroom cannot coexist.
+   - Risk: high; physical X4 testing required. X3 build/simulator success is not physical validation.
+   - Dependency: measured BLE coexistence data.
+
+### Defer beyond 1.6.3 unless measurements force reconsideration
+
+- CrossInk full rich/compact/streaming table subsystem.
+- Full CLX1 metadata/sort feature parity.
+- Automatic rename migration of reading state.
+- Runtime scalable TTF on original C3 X3/X4.
+- CrossInk Library/Cover Grid UI replacement.
+- Per-book reader settings.
+- Quick Actions.
+- Seven-slot status-bar UI if the simpler Nooir composition is sufficient.
+
+### Release gates
+
+For each source change, require: focused functional regression; production X4 build; shared X3 build/simulator where applicable; linked flash + padded firmware delta; static RAM; runtime free heap + largest-block measurements at relevant stages; cache/settings migration statement; and physical X4 smoke test for reader/navigation. Persistent catalog changes additionally require interrupted-write/recovery, source replacement, add/remove, damaged/truncated index, and large mixed-library tests. BLE coexistence cannot graduate from experimental without physical connected-reader testing.
+
+
 ## Explicitly not part of this audit batch
 
 - CrossInk Cover Grid / Library UI replacement.
