@@ -37,9 +37,11 @@ CrossInk/CrossPoint is an upstream idea/fix source, not a merge target. Classify
    - Add diagnostic classification for empty/blank, HTML, non-JSON, malformed JSON, oversized, incomplete, and allocation-failed responses. Do not log credentials or full server bodies.
    - Validate 8 KiB against representative reference KOSync and CrossPoint extended responses before freezing the constant.
 
-5. Global/per-book reader-setting application audit
-   - Compare precedence, migration, per-book overrides, repagination/cache invalidation, and failure recovery.
-   - Fix only demonstrated inconsistencies.
+5. Global/per-book reader-setting application audit — **ALREADY COVERED / NOT APPLICABLE**
+   - CrossInk's 1.6.1 fixes address its two-level model: global defaults plus per-book `reader_settings.bin` overrides. Safe Mode could accidentally persist an override, and global changes could fail to reapply immediately when no genuine override existed.
+   - Nooir currently has no per-book reader-settings store. `TextSettingsActivity` edits the singleton `SETTINGS` directly and persists the same `/.crosspoint/settings.json` whether opened globally or from an EPUB.
+   - Nooir also explicitly refreshes the live book after in-reader settings: `saveToFile()` -> `refreshAfterReaderSettings()` -> drop live `Section` -> preserve approximate position -> clear stale layout/highlight state -> render using a fresh `ReaderRenderSpec`.
+   - Do not introduce per-book settings merely to match CrossInk. Treat that as a separate future product feature with explicit override/reset UX and migration design.
 
 6. LibraryIndex scanning/index storage comparison
    - Do not replace Nooir Library/Recent/Finished UI.
@@ -50,9 +52,12 @@ CrossInk/CrossPoint is an upstream idea/fix source, not a merge target. Classify
    - Study pre-allocation memory gates, rich->compact table/layout fallbacks, incremental work, glyph prewarm limits, buffer limits, and graceful degradation.
    - Prefer adapting proven bounded mechanisms into Nooir's existing renderer over replacing Nooir's EPUB architecture.
 
-8. Tiny parser/cache fixes
-   - Continue auditing 1.6.1 changes for isolated correctness, cache validation, corruption recovery, overflow/bounds, allocation, SD-I/O and page-turn fixes.
-   - Require a Nooir-relevant failure mode or regression fixture; avoid cosmetic churn.
+8. Tiny parser/cache fixes — **SWEEP COMPLETE for advertised 1.6.1 fixes; continue only when source evidence is specific**
+   - The advertised 1.6.1 EPUB/parser correctness fixes are #748 (empty inline CSS spacing) and #790 (prefixed OPF XML names). #790 is already covered; #748 remains the only direct small EPUB behavior gap found in the release fix list.
+   - CrossInk's #748 implementation carries CSS `padding-left` as pixel geometry attached to the following token; it does not inject a literal whitespace character. Its focused test uses `EERO:<span class="spacey"></span>Kappusiwai!` with `padding-left: 2em`.
+   - Nooir adaptation should likewise preserve geometry without changing extracted/source text. Prefer transient layout state because Nooir serializes final word X positions; avoid changing `TextBlock` on-disk format unless a focused test proves transient state cannot handle wrapping/BiDi/justification correctly.
+   - Source-diff inspection also exposed larger defensive work in CrossInk Section/Page/CSS/OPF code (bounds, cache recovery, memory-aware allocation), but these are not tiny isolated 1.6.1 ports. Nooir already independently hardens section/page deserialization, incomplete-build commit semantics, LUT offsets, and cache rebuild behavior. Evaluate the remaining memory/OPF pieces under the dedicated memory-aware and large-library/parser audit items rather than cherry-picking them here.
+   - Non-EPUB advertised 1.6.1 fixes (OTA/Wi-Fi crash, Home navigation, carousel loading) are outside this parser/cache batch.
 
 ## Explicitly not part of this audit batch
 
