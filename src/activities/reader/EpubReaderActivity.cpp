@@ -2170,6 +2170,12 @@ void EpubReaderActivity::releaseIdleReaderFontCachesForBluetooth() {
           section->currentPage, static_cast<unsigned>(freeBefore), static_cast<unsigned>(freeAfter),
           static_cast<unsigned>(largestBefore), static_cast<unsigned>(largestAfter));
   readerIdleFontCachesReleased = true;
+  // The main-loop lifecycle may already have consumed the render-complete
+  // signal against the pre-cleanup heap. Re-evaluate the improved envelope
+  // once, through normal admission, only when this cleanup reclaimed memory.
+  if (freeAfter > freeBefore) {
+    bleinput::requestLifecycleReevaluation();
+  }
 }
 #endif
 
