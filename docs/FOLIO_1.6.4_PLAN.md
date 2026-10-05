@@ -12,9 +12,31 @@ Released 1.6.3 artifact:
 
 ## 1.6.4 priorities
 
-### 1. Wi-Fi -> BLE recovery
+### 1. Wi-Fi stability and teardown
 
-Highest-priority lifecycle debt from 1.6.3.
+Highest-priority lifecycle/regression area from 1.6.3.
+
+#### A. Community-reported X4 Wi-Fi reboot regression
+
+A user testing the released 1.6.3 firmware on an X4 reported a repeatable setup failure: after connecting the device to a Wi-Fi network, the device reboots after a few seconds. The reboot reportedly happens every time they connect, preventing them from keeping the device online long enough to finish setup through Nooir's web interface.
+
+Treat this as a real community report but not yet a root-cause diagnosis. Do not assume it is the same bug as the post-Wi-Fi BLE heap-recovery issue until logs or reproduction prove that.
+
+Reproduction to investigate:
+1. flash/load released 1.6.3 on X4;
+2. connect to a Wi-Fi network;
+3. remain connected for several seconds / attempt to use the web interface;
+4. observe whether the device reboots;
+5. capture serial/reset reason, heap/largest-block history, Wi-Fi/web-server lifecycle, and whether BLE is enabled or connected.
+
+1.6.4 goal:
+- reproduce on physical X4 if possible;
+- obtain serial logs/reset reason from an affected setup;
+- determine whether this is OOM, watchdog, assert/panic, Wi-Fi/web-server lifecycle, BLE/Wi-Fi interaction, or another path;
+- make normal connect-and-use-web-UI setup stable;
+- preserve the Reader-first memory policy rather than masking the fault with retries or lower safety margins.
+
+#### B. Wi-Fi -> BLE heap recovery
 
 Observed on physical X4: after some Wi-Fi selection/connect/cancel/deinit paths, total free heap and largest allocatable block remain below the healthy pre-Wi-Fi state. BLE then correctly stays off because the 1.6.3 admission floors are not met. Sleep/wake restores the healthy baseline.
 
