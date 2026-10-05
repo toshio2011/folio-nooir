@@ -10,6 +10,7 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <WiFi.h>
 #include <esp_system.h>
 
 #include <algorithm>
@@ -54,6 +55,7 @@
 #include "util/BleMemoryPolicy.h"
 #include "util/ClipFile.h"
 #include "util/EpubDiagnostics.h"
+#include "util/MemoryPressureReclaimer.h"
 #include "util/ScreenshotUtil.h"
 
 namespace {
@@ -672,6 +674,30 @@ void EpubReaderActivity::reportReaderQuiescent(const char* reason) {
   LOG_INF("ERS", "reader_quiescent reason=%.20s spine=%d page=%d free=%u largest=%u", reason ? reason : "stable",
           currentSpineIndex, section ? section->currentPage : nextPageNumber,
           static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  if (SETTINGS.bluetoothEnabled) {
+    size_t bookmarkStringCapacity = 0;
+    for (const auto& bookmark : cachedBookmarks) {
+      bookmarkStringCapacity += bookmark.xpath.capacity() + bookmark.summary.capacity();
+    }
+    size_t clippingTextCapacity = 0;
+    for (const auto& clipping : cachedClippings) clippingTextCapacity += clipping.text.capacity();
+    LOG_INF("HEAPSHAPE", "stage=reader_core spine=%d page=%d pages=%u build=%u pending=%u free=%u max=%u min=%u",
+            currentSpineIndex, section ? section->currentPage : nextPageNumber,
+            static_cast<unsigned>(section ? section->pageCount : 0), section && section->isBuilding() ? 1U : 0U,
+            pendingPageTurns.hasPending() ? 1U : 0U, static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()), static_cast<unsigned>(ESP.getMinFreeHeap()));
+    LOG_INF("HEAPSHAPE", "stage=reader_caps_a fn=%u/%u bytes=%u bm=%u/%u bytes=%u",
+            static_cast<unsigned>(currentPageFootnotes.size()), static_cast<unsigned>(currentPageFootnotes.capacity()),
+            static_cast<unsigned>(currentPageFootnotes.capacity() * sizeof(FootnoteEntry)),
+            static_cast<unsigned>(cachedBookmarks.size()), static_cast<unsigned>(cachedBookmarks.capacity()),
+            static_cast<unsigned>(cachedBookmarks.capacity() * sizeof(BookmarkEntry)));
+    LOG_INF("HEAPSHAPE", "stage=reader_caps_b bmchars=%u clip=%u/%u bytes=%u clipchars=%u hibytes=%u",
+            static_cast<unsigned>(bookmarkStringCapacity), static_cast<unsigned>(cachedClippings.size()),
+            static_cast<unsigned>(cachedClippings.capacity()),
+            static_cast<unsigned>(cachedClippings.capacity() * sizeof(ClippingEntry)),
+            static_cast<unsigned>(clippingTextCapacity),
+            static_cast<unsigned>(highlightMatches.capacity() * sizeof(SavedHighlightMatch)));
+  }
   bleinput::requestLifecycleReevaluation();
 }
 
@@ -2133,7 +2159,13 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn) {
 
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
 void EpubReaderActivity::releaseIdleReaderFontCachesForBluetooth() {
-  if (readerIdleFontCachesReleased || !SETTINGS.bluetoothEnabled || BleHid.isRunning() || !epub || !section ||
+  // Wi-Fi excludes BLE centrally; do not spend/rebuild Reader caches for BLE
+  // while that exclusion is active.
+  if (!SETTINGS.bluetoothEnabled || WiFi.getMode() != WIFI_MODE_NULL) {
+    return;
+  }
+
+  if (readerIdleFontCachesReleased || BleHid.isRunning() || !epub || !section ||
       !firstStableRenderComplete.load(std::memory_order_acquire) || section->isBuilding() ||
       exitHomePending || pendingPageTurns.hasPending() || qualityRecoveryPending.load(std::memory_order_acquire) ||
       loadingUiPending || loadingUiRenderArmed || RenderLock::peek() || activityManager.hasPendingRenderWork() ||
@@ -2148,32 +2180,83 @@ void EpubReaderActivity::releaseIdleReaderFontCachesForBluetooth() {
     return;
   }
 
-  auto* fontCache = renderer.getFontCacheManager();
-  if (!fontCache) {
-    readerIdleFontCachesReleased = true;
-    return;
-  }
-
-  // The current Page and image render slot have already been destroyed by
-  // renderContents(). Only use FontCacheManager's established disposable-cache
-  // release: it preserves SD-font coverage/advance/layout metadata and UI
-  // fallback ownership. The next render can repopulate glyphs from the SD card.
+  // Level 1 is the existing Reader-owned disposable-font cleanup. It preserves
+  // layout/navigation state and runs only after the stable page has completed.
   EpubDiagnostics::record("reader_idle_ble_cache_release_before", currentSpineIndex,
                           section->currentPage);
-  fontCache->releaseSdFontCaches();
-  const size_t freeAfter = ESP.getFreeHeap();
-  const size_t largestAfter = ESP.getMaxAllocHeap();
+  {
+    // Serialize the existing release against the render task. The pre-checks
+    // above describe a quiescent point; the mutex closes the race with a newly
+    // queued render before disposable font state is touched.
+    RenderLock cleanupLock;
+    if (auto* fontCache = renderer.getFontCacheManager()) fontCache->releaseSdFontCaches();
+  }
+  size_t freeAfter = ESP.getFreeHeap();
+  size_t largestAfter = ESP.getMaxAllocHeap();
+  LOG_INF("RIDLE", "after_sd_font_cache spine=%d free=%u largest=%u gain=%u", currentSpineIndex,
+          static_cast<unsigned>(freeAfter), static_cast<unsigned>(largestAfter),
+          static_cast<unsigned>(freeAfter > freeBefore ? freeAfter - freeBefore : 0));
   EpubDiagnostics::record("reader_idle_ble_cache_release_after", currentSpineIndex,
                           section->currentPage, 0, freeBefore,
                           freeBefore > freeAfter ? freeBefore - freeAfter : 0, 1);
   LOG_INF("MEM", "reader_idle_cache_release spine=%d page=%d free=%u->%u max=%u->%u", currentSpineIndex,
           section->currentPage, static_cast<unsigned>(freeBefore), static_cast<unsigned>(freeAfter),
           static_cast<unsigned>(largestBefore), static_cast<unsigned>(largestAfter));
+
+  // Only escalate when ordinary Reader cleanup still cannot satisfy the
+  // existing global BLE cold-start floor. The shared pass is one-shot for this
+  // stable render and may drop only reconstructible UI-fallback glyph caches.
+  if (!bleinput::readerBleStartMemoryAdmitted(freeAfter, largestAfter)) {
+    constexpr size_t kBleHeadroomTargetFree = 100 * 1024;
+    constexpr size_t kBleHeadroomTargetLargest = 40 * 1024;
+    const auto reclaim = memorypressure::reclaimForHeadroom(
+        kBleHeadroomTargetFree, kBleHeadroomTargetLargest, "reader_ble_admission",
+        memorypressure::ReclaimLevel::Reconstructible);
+    freeAfter = reclaim.freeAfter;
+    largestAfter = reclaim.largestAfter;
+
+    // CssParser is used by ChapterHtmlSlimParser only while a Section is
+    // being parsed. Once this Section is complete, Page::deserialize/render
+    // uses serialized style data and does not consult the parser. Release its
+    // empty hash-map buckets once per Section, only while BLE admission is
+    // still blocked and the existing quiescent checks above hold.
+    if (!bleinput::readerBleStartMemoryAdmitted(freeAfter, largestAfter) &&
+        !readerCssCapacityReleaseAttemptedForSection && epub) {
+      readerCssCapacityReleaseAttemptedForSection = true;
+      auto* cssParser = epub->getCssParser();
+      if (cssParser) {
+        const size_t cssFreeBefore = ESP.getFreeHeap();
+        const size_t cssLargestBefore = ESP.getMaxAllocHeap();
+        const size_t cssRulesBefore = cssParser->ruleCount();
+        const size_t cssBucketsBefore = cssParser->bucketCount();
+        LOG_INF("CSSMEM", "before rules=%u buckets=%u free=%u largest=%u", static_cast<unsigned>(cssRulesBefore),
+                static_cast<unsigned>(cssBucketsBefore), static_cast<unsigned>(cssFreeBefore),
+                static_cast<unsigned>(cssLargestBefore));
+        bool released = false;
+        {
+          RenderLock cssLock;
+          released = epub->releaseCssParserRetainedStorage();
+        }
+        const size_t cssFreeAfter = ESP.getFreeHeap();
+        const size_t cssLargestAfter = ESP.getMaxAllocHeap();
+        const size_t cssBucketsAfter = cssParser->bucketCount();
+        LOG_INF("CSSMEM", "after released=%u rules=%u buckets=%u freed=%u largest_gain=%u free=%u largest=%u",
+                released ? 1U : 0U, static_cast<unsigned>(cssParser->ruleCount()),
+                static_cast<unsigned>(cssBucketsAfter),
+                static_cast<unsigned>(cssFreeAfter > cssFreeBefore ? cssFreeAfter - cssFreeBefore : 0),
+                static_cast<unsigned>(cssLargestAfter > cssLargestBefore ? cssLargestAfter - cssLargestBefore : 0),
+                static_cast<unsigned>(cssFreeAfter), static_cast<unsigned>(cssLargestAfter));
+        freeAfter = cssFreeAfter;
+        largestAfter = cssLargestAfter;
+      }
+    }
+  }
+
   readerIdleFontCachesReleased = true;
   // The main-loop lifecycle may already have consumed the render-complete
-  // signal against the pre-cleanup heap. Re-evaluate the improved envelope
-  // once, through normal admission, only when this cleanup reclaimed memory.
-  if (freeAfter > freeBefore) {
+  // signal against the pre-cleanup heap. Re-evaluate once, through normal
+  // admission, only when either relevant memory measure improved.
+  if (freeAfter > freeBefore || largestAfter > largestBefore) {
     bleinput::requestLifecycleReevaluation();
   }
 }
@@ -2334,6 +2417,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     const auto filepath = epub->getSpineItem(currentSpineIndex).href;
     LOG_DBG("ERS", "Loading file: %s, index: %d", filepath.c_str(), currentSpineIndex);
     section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer));
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+    readerCssCapacityReleaseAttemptedForSection = false;
+#endif
     // Fresh section, fresh chance: a failed lazy extension start in a previous
     // section must not suppress watermark-triggered rebuilds for this one.
     partialRebuildStartFailed = false;

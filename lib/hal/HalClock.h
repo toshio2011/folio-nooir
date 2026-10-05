@@ -57,5 +57,5 @@ class HalClock {
   //
   // Debouncing (skip if already synced once) is enforced by the caller, not here,
   // so the HAL stays free of any app-layer settings dependency.
-  bool syncFromNTP();
+  bool syncFromNTP(bool stopServiceAfterSync = false);
 };

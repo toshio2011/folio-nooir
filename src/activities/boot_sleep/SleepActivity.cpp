@@ -1754,77 +1754,129 @@ void SleepActivity::renderClippingCoverSleepScreen() const {
 
 void SleepActivity::renderToDoSleepScreen() const {
   const auto& all = TODO_STORE.getItems();
-  std::vector<const ToDoItem*> visible;
+  // ToDoStore bounds the persisted list at 128 items. Keep sleep rendering
+  // bounded and allocation-free instead of building/sorting a temporary vector.
+  constexpr size_t MAX_TODO_ITEMS = 128;
+  std::array<const ToDoItem*, MAX_TODO_ITEMS> visible{};
+  size_t visibleCount = 0;
+  int openCount = 0;
+  int completedCount = 0;
   for (const auto& item : all) {
+    if (item.completed) ++completedCount;
+    else ++openCount;
     const bool include = SETTINGS.todoSleepMode == CrossPointSettings::TODO_COMPLETED
                              ? item.completed
                              : SETTINGS.todoSleepMode == CrossPointSettings::TODO_UNCHECKED ? !item.completed : true;
-    if (include) visible.push_back(&item);
+    if (include && visibleCount < visible.size()) visible[visibleCount++] = &item;
   }
-  // Keep the sleep card compact while ensuring important reminders are seen
-  // first. Stable ordering preserves the user's manual order for equal priority.
-  std::stable_sort(visible.begin(), visible.end(), [](const ToDoItem* a, const ToDoItem* b) {
-    return a->priority && !b->priority;
-  });
+
   preconditionSleepRefresh(renderer);
   renderer.clearScreen();
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
-  const int panelX = 18;
-  const int panelWidth = pageWidth - panelX * 2;
-  const int contentWidth = panelWidth - 44;
+  constexpr int OUTER_MARGIN = 16;
+  const int panelWidth = std::max(1, pageWidth - OUTER_MARGIN * 2);
+  const int panelX = (pageWidth - panelWidth) / 2;
+  const int contentX = panelX + 24;
+  const int contentWidth = std::max(1, panelWidth - 48);
   size_t start = 0;
-  if (SETTINGS.todoSleepMode == CrossPointSettings::TODO_RANDOM && !visible.empty()) {
-    start = static_cast<size_t>(millis() % visible.size());
+  if (SETTINGS.todoSleepMode == CrossPointSettings::TODO_RANDOM && visibleCount > 0) {
+    start = static_cast<size_t>(millis() % visibleCount);
   }
-  // Show the complete list. The panel may use at most 98% of the display;
-  // for longer lists, step down to the small UI font and tighten row spacing
-  // before allowing the card to reach that limit.
-  const size_t rowCount = SETTINGS.todoSleepMode == CrossPointSettings::TODO_RANDOM
-                              ? std::min<size_t>(1, visible.size())
-                              : visible.size();
-  const int maxPanelHeight = std::max(1, pageHeight * 98 / 100);
-  const int headerHeight = 54;
-  const int footerHeight = 18;
-  const int maxRowsHeight = std::max(1, maxPanelHeight - headerHeight - footerHeight - 16);
-  int textFont = UI_10_FONT_ID;
-  int lineHeight = renderer.getLineHeight(textFont) + 12;
-  if (rowCount > 0 && static_cast<uint64_t>(rowCount) * lineHeight > static_cast<uint64_t>(maxRowsHeight)) {
-    textFont = SMALL_FONT_ID;
-    lineHeight = renderer.getLineHeight(textFont) + 6;
-  }
-  if (rowCount > 0 && static_cast<uint64_t>(rowCount) * lineHeight > static_cast<uint64_t>(maxRowsHeight)) {
-    lineHeight = std::max(renderer.getLineHeight(textFont), maxRowsHeight / static_cast<int>(rowCount));
-  }
-  const int desiredPanelHeight = headerHeight + std::max(1, static_cast<int>(rowCount)) * lineHeight + footerHeight + 16;
-  const int panelHeight = std::min(maxPanelHeight, desiredPanelHeight);
-  const int panelY = std::max(4, (pageHeight - panelHeight) / 2);
+  constexpr int HEADER_HEIGHT = 54;
+  constexpr int FOOTER_HEIGHT = 34;
+  constexpr int INNER_VERTICAL_PADDING = 28;
+  constexpr int ROW_GAP = 3;
+  constexpr size_t MAX_VISIBLE_ROWS = 8;
+  const int maxPanelHeight = std::max(1, pageHeight - OUTER_MARGIN * 2);
+  const int rowHeight = std::max(42, renderer.getLineHeight(UI_10_FONT_ID) + 16);
+  const int rowStep = rowHeight + ROW_GAP;
+  const int rowsAvailable = std::max(
+      0, (maxPanelHeight - HEADER_HEIGHT - FOOTER_HEIGHT - INNER_VERTICAL_PADDING + ROW_GAP) / rowStep);
+  const size_t maxRows = std::min(MAX_VISIBLE_ROWS, static_cast<size_t>(rowsAvailable));
+  const size_t wantedRows = SETTINGS.todoSleepMode == CrossPointSettings::TODO_RANDOM
+                                ? std::min<size_t>(1, visibleCount)
+                                : visibleCount;
+  const size_t rowCount = std::min(wantedRows, maxRows);
+  const size_t moreCount = SETTINGS.todoSleepMode == CrossPointSettings::TODO_RANDOM
+                                ? 0
+                                : visibleCount - rowCount;
+  const int rowsHeight = rowCount == 0 ? renderer.getLineHeight(UI_10_FONT_ID) + 12
+                                       : static_cast<int>(rowCount) * rowStep - ROW_GAP;
+  const int panelHeight = std::min(
+      maxPanelHeight, HEADER_HEIGHT + FOOTER_HEIGHT + INNER_VERTICAL_PADDING + rowsHeight);
+  const int panelY = std::max(OUTER_MARGIN, (pageHeight - panelHeight) / 2);
 
-  // Use the same centered, layered card treatment as the clipping sleep
-  // screen. The extra inner border keeps the small list legible on e-ink.
+  // Centered paper-like card: sharp monochrome frame, simple check rows, and
+  // no bitmap assets or additional render buffers.
   renderer.fillRoundedRect(panelX, panelY, panelWidth, panelHeight, 12, Color::White);
   renderer.drawRoundedRect(panelX, panelY, panelWidth, panelHeight, 2, 12, true);
-  renderer.drawRoundedRect(panelX + 8, panelY + 8, panelWidth - 16, panelHeight - 16, 1, 8, true);
-  renderer.drawText(UI_12_FONT_ID, panelX + 22, panelY + 22, "TO-DO LIST", true, EpdFontFamily::BOLD);
-  renderer.drawLine(panelX + 18, panelY + headerHeight, panelX + panelWidth - 18, panelY + headerHeight);
+  renderer.drawText(UI_12_FONT_ID, contentX, panelY + 17, "TO-DO", true, EpdFontFamily::BOLD);
+  char countSummary[32];
+  snprintf(countSummary, sizeof(countSummary), "%d OPEN  /  %d DONE", openCount, completedCount);
+  const int countWidth = renderer.getTextWidth(SMALL_FONT_ID, countSummary);
+  if (countWidth <= contentWidth - renderer.getTextWidth(UI_12_FONT_ID, "TO-DO") - 16) {
+    renderer.drawText(SMALL_FONT_ID, panelX + panelWidth - 24 - countWidth, panelY + 22,
+                      countSummary, true, EpdFontFamily::REGULAR);
+  }
+  renderer.drawLine(contentX, panelY + HEADER_HEIGHT, panelX + panelWidth - 24, panelY + HEADER_HEIGHT);
 
-  if (visible.empty()) {
-    renderer.drawCenteredText(UI_10_FONT_ID, panelY + headerHeight + lineHeight / 2, "NO TASKS YET", true,
+  const int listTop = panelY + HEADER_HEIGHT + 12;
+  if (visibleCount == 0) {
+    const int emptyY = listTop + rowsHeight / 2;
+    renderer.drawCenteredText(UI_10_FONT_ID, emptyY - 8, all.empty() ? "ALL CLEAR" : "NOTHING TO SHOW", true,
                               EpdFontFamily::BOLD);
+    if (all.empty()) {
+      renderer.drawCenteredText(SMALL_FONT_ID, emptyY + 18, "Nothing on your list.");
+    } else if (SETTINGS.todoSleepMode == CrossPointSettings::TODO_UNCHECKED) {
+      renderer.drawCenteredText(SMALL_FONT_ID, emptyY + 18, "No open tasks.");
+    } else {
+      renderer.drawCenteredText(SMALL_FONT_ID, emptyY + 18, "No completed tasks.");
+    }
   } else {
     for (size_t row = 0; row < rowCount; ++row) {
-      const ToDoItem& item = *visible[(start + row) % visible.size()];
-      const std::string text = std::string(item.priority ? "! " : "  ") + (item.completed ? "[x] " : "[ ] ") + item.text;
-      const std::string clipped = renderer.truncatedText(textFont, text.c_str(), contentWidth);
-      const int textY = panelY + headerHeight + 12 + static_cast<int>(row) * lineHeight;
-      renderer.drawText(textFont, panelX + 22, textY, clipped.c_str(), true,
-                        item.completed ? EpdFontFamily::REGULAR : EpdFontFamily::BOLD);
-      if (row + 1 < rowCount)
-        renderer.drawLine(panelX + 18, textY + lineHeight - 7, panelX + panelWidth - 18, textY + lineHeight - 7);
+      const ToDoItem& item = *visible[(start + row) % visibleCount];
+      const int rowY = listTop + static_cast<int>(row) * rowStep;
+      const int checkX = contentX;
+      const int checkY = rowY + (rowHeight - 18) / 2;
+      renderer.drawRoundedRect(checkX, checkY, 18, 18, 1, 3, true);
+      if (item.completed) {
+        renderer.drawLine(checkX + 4, checkY + 9, checkX + 7, checkY + 12, 2, true);
+        renderer.drawLine(checkX + 7, checkY + 12, checkX + 14, checkY + 5, 2, true);
+      }
+      const int priorityWidth = item.priority ? 18 : 0;
+      const int textX = checkX + 30;
+      const int textWidth = std::max(1, panelX + panelWidth - 24 - priorityWidth - textX);
+      const EpdFontFamily::Style textStyle = item.completed ? EpdFontFamily::REGULAR : EpdFontFamily::BOLD;
+      const char* displayText = item.text.c_str();
+      std::string clipped;
+      if (renderer.getTextWidth(UI_10_FONT_ID, displayText, textStyle) > textWidth) {
+        clipped = renderer.truncatedText(UI_10_FONT_ID, displayText, textWidth, textStyle);
+        displayText = clipped.c_str();
+      }
+      const int textY = rowY + (rowHeight - renderer.getLineHeight(UI_10_FONT_ID)) / 2;
+      renderer.drawText(UI_10_FONT_ID, textX, textY, displayText, true, textStyle);
+      if (item.priority) {
+        const int markX = panelX + panelWidth - 34;
+        const int markY = rowY + (rowHeight - renderer.getLineHeight(SMALL_FONT_ID)) / 2 - 1;
+        renderer.drawText(SMALL_FONT_ID, markX, markY, "!", true, EpdFontFamily::BOLD);
+      }
+      if (row + 1 < rowCount) {
+        const int separatorY = rowY + rowHeight + ROW_GAP / 2;
+        renderer.drawLine(contentX, separatorY, panelX + panelWidth - 24, separatorY);
+      }
     }
   }
-  renderer.drawCenteredText(SMALL_FONT_ID, panelY + panelHeight - 22, "FOLIO NOOIR", true,
-                            EpdFontFamily::BOLD);
+
+  if (moreCount > 0) {
+    char moreText[24];
+    snprintf(moreText, sizeof(moreText), "+ %u MORE", static_cast<unsigned>(moreCount));
+    renderer.drawText(SMALL_FONT_ID, contentX, panelY + panelHeight - 25, moreText, true,
+                      EpdFontFamily::BOLD);
+  } else {
+    renderer.drawText(SMALL_FONT_ID, contentX, panelY + panelHeight - 25, "FOLIO NOOIR", true,
+                      EpdFontFamily::BOLD);
+  }
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 }
 

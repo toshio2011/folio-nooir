@@ -21,6 +21,12 @@ Latest released version: **v1.6.2**.
 Current development candidate: **v1.6.3 RC2.3**. Physical testing is ongoing;
 this is not a final 1.6.3 release.
 
+The RC2.3 normal `gh_release` candidate includes Bluetooth HID remote support
+(Yiser and Generic HID), bonded reconnect, Reader-safe handoff, a shared
+Toggle Bluetooth action, and the configurable no-device turn-off window.
+Physical validation is ongoing on the older X4; this feature set is not a
+claim of final release readiness or physical X3 validation.
+
 ## Hardware warning
 
 > **Check your panel before flashing.** Folio Nooir has been physically tested

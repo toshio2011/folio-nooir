@@ -1,5 +1,12 @@
 # Future CBZ/Manga Plan
 
+> **Status note — 2026-10-05:** This is still a deferred CBZ/Manga planning
+> document. It is not the current release-status source; Folio Nooir is now
+> validating 1.6.3 RC2.3 on the older X4, with production BLE enabled in the
+> normal `gh_release`. No new CBZ reader or CBZ architecture change is part of
+> the RC2.3 BLE/memory work. The historical 1.6.1 planning references below
+> remain dated context.
+
 **Status:** deferred future work; planning only. This document does not
 describe currently implemented 1.6.1 functionality. No new CBZ/Manga reader,
 preparation, cache, storage, or performance implementation has started.

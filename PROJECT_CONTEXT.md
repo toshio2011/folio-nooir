@@ -1,5 +1,31 @@
 # Folio Nooir Project Context
 
+## Current status — 2026-10-05
+
+The current development candidate is **1.6.3 RC2.3**, not a final release.
+BLE HID central support is enabled in the normal `gh_release` firmware; Yiser
+and Generic HID use the shared Nooir input/action path. The shared Toggle
+Bluetooth action and no-device auto-off setting (Never / 30 / 60 / 90 seconds,
+60-second default) are integrated. No separate user BLE binary is intended.
+
+Physical X4 testing has confirmed normal UI BLE use, Yiser Confirm, ordinary
+Reader HID handoff/reconnect, sleep BLE teardown, and normal Reader exit
+cleanup. Large Section indexing now completes normally while BLE remains off;
+the build/parser transients release and BLE is re-evaluated after the existing
+post-render disposable font-cache release. The monster-spine log reached
+98,040 free bytes after that release (cold floor 98,304), so no additional
+release is claimed yet. Manual Wi-Fi/Clock/Weather sync has a separate
+unresolved low-memory / fragmentation result. Current source adds one-shot
+SNTP teardown plus bounded memory checkpoints for physical follow-up; this is
+not yet physically validated. The clean production build is 61,420 B static
+RAM, 5,773,059 B linked flash, and a 5,787,216-byte binary with SHA-256
+`5728CD61D4A6655CE3D578B4ED61D13F42FAACE2EA1AA4FB3806C82FB30FEE79`.
+See [`HANDOFF.md`](HANDOFF.md) for the current gate and concrete log values.
+
+The detailed historical 1.6.1/1.6.2 and RC1 notes below remain useful as dated
+records, but statements about BLE being absent or experimental-only describe
+those earlier checkpoints, not current RC2.3.
+
 ## Project goal
 
 Folio Nooir is a bookshelf-focused firmware fork of CrossPoint Reader for
@@ -390,7 +416,14 @@ Audit CrossPoint and InkPointX OPDS for saved servers, search, pagination, authe
 
 PDF remains unimplemented. Compare InkPointX fixed-layout/raster/zoom with CrossPDF-style text/reflow and SD-prepared caches. For Nooir's novel use case investigate reflow/one-time SD preparation first so the existing reading experience can be reused. Keep fixed-layout raster PDF separate. Do not promise scanned/image-heavy or arbitrary PDF compatibility. Measure parser/raster flash cost, preparation peak heap/largest block, cache size, latency, and failure behavior.
 
-### 8. Bluetooth remote input / BLE — research first, experimental implementation only
+### 8. Bluetooth remote input / BLE — historical pre-RC2.3 plan (superseded)
+
+The research-first/experimental-only policy in the following paragraphs
+records the pre-RC2.3 planning state. It is superseded by the current status
+block at the top of this document: RC2.3 now includes BLE in normal
+`gh_release` and is in physical X4 validation. Keep the historical source
+research as context; do not treat its old proposed implementation steps as
+the current action plan.
 
 Do not treat this merely as "Bluetooth page turner support" and do not merge a full BLE stack into normal Nooir before flash/memory headroom exists. First perform a comparative BLE/HID audit across relevant XTEINK firmware implementations (including CrossLink, the Chinese X3/CrossLink lineage where source can be obtained, CrossInk, CrossPoint/current BLE work, CrumBLE/community implementations, and other working X3/X4 BLE firmware). Record the exact stack/library and build configuration used, supported HID report types, pairing/bonding, reconnect behavior, sleep/wake lifecycle, failure recovery, and how each implementation hands input to its UI.
 
@@ -402,13 +435,17 @@ Battery/power study must include radio duty cycle, scanning policy and timeout, 
 
 Prototype BLE only in an isolated experimental profile/branch after Phase A establishes comfortable headroom. Compare at minimum: no-BLE baseline, BLE compiled but disabled, enabled/disconnected, scanning, connected-idle, active remote input, repeated reconnect, reader page turns, dictionary/menu use, EPUB/CBZ/XTC activity, Wi-Fi interaction, and sleep/wake. Validate button responsiveness and lost/duplicate/repeated events. X3 remains the shared resource budget; physical X3 support is not claimed without hardware evidence. The eventual goal is a small, robust **Bluetooth Remote Input** subsystem that understands the remote faithfully, maps inputs flexibly to existing Nooir actions, reconnects reliably, and has measured/acceptable flash, memory, and battery cost.
 
-### 9. Quick Actions / UI Dark Mode
+### 9. Quick Actions / UI Dark Mode — historical pre-RC1 plan
+
+The Quick Actions deferral below predates their integrated RC1 implementation
+and is retained only as historical planning context. Current Quick Actions
+and their persisted configuration are part of the 1.6.3 baseline.
 
 Quick Actions remain a good isolated candidate after flash/memory work: preserve the audited CrossInk model of one configurable trigger, five persisted actions, shared popup, context filtering, and existing Nooir dispatch. Full UI/System Dark Mode remains a larger separate project; Reader Dark Mode already exists.
 
 ### 10. 1.6.3 sequencing and evidence rules
 
-Recommended order: **flash map/recovery -> EPUB/font/image/memory upstream delta -> SD/SPI benchmark -> small safe fixes -> Quick Actions if headroom allows -> FB2 prototype -> OPDS -> PDF experiment -> Bluetooth experiment**. This is planning, not authorization to implement all of it in 1.6.3. Every upstream adaptation must record source commit/PR, why Nooir needs it, whether Nooir already has an equivalent, measured flash impact, RAM/largest-block effect where relevant, regression risk, and affected X3/X4/shared tests. Never trade recovery safety, cache compatibility, Arabic/Quran behavior, or physical X4 stability merely to match upstream.
+Historical pre-RC2.3 order: **flash map/recovery -> EPUB/font/image/memory upstream delta -> SD/SPI benchmark -> small safe fixes -> Quick Actions -> FB2 prototype -> OPDS -> PDF experiment -> Bluetooth experiment**. The sequence predates the RC1/RC2.3 integrations and is not today's release plan. Every future upstream adaptation still needs an exact source reference, demonstrated Nooir gap, measured flash impact, RAM/largest-block evidence where relevant, regression risk, and affected X3/X4/shared tests. Never trade recovery safety, cache compatibility, Arabic/Quran behavior, or physical X4 stability merely to match upstream.
 
 ## AUDITED / PLANNED / FUTURE FEATURES
 
@@ -611,3 +648,164 @@ RC1 validation is 40/40 focused tests passing. FreeInk remains pinned to
 and disabled in normal production. The exact old-X4 diagnostic target and both
 final artifact hashes are recorded in `HANDOFF.md`; do not substitute an
 unhashed or rebuilt binary.
+
+## RC2.3 current working-tree follow-up
+
+The current RC2.3 work preserves the existing bounded Reader idle cleanup and
+adds two separate BLE-OFF-safe pressure opportunities, both BLE-ON-only:
+
+1. At a real stable spine transition only, if the existing Reader font/shared
+   cleanup still leaves cold BLE admission blocked, release only the
+   reconstructible current-page clipping-match vector capacity. Do not
+   time-slice normal Section indexing.
+2. After RecentBooks has completed its first render and reaches a quiescent
+   idle loop, if BLE is stopped and the normal global admission floor fails,
+   release its reconstructible Carousel source cache and optionally run the
+   shared UI-fallback cache helper once. Keep its active RecentBook data copy,
+   displayed frame, and persistent thumbnails.
+
+The October 2026 X4 serial log shows repeated ~6.5–7.0 KB free-heap reduction
+between `reader_exit stage=activity_destroyed` and stable RecentBooks, with
+largest-block values unchanged in those runs. It shows ~9.1–9.7 KB recovered
+at `sleep_quiesce_complete`; source order proves that checkpoint follows
+outgoing activity destruction, not a safe in-place RecentBooks cache purge.
+The logged `section_stopped` suffix is generic and is not evidence of a
+Section being active when sleeping from RecentBooks. See the RC2.3 addendum in
+`HANDOFF.md` for exact readings and test procedure. No memory amount is claimed
+for the new RecentBooks candidate until measured on hardware.
+
+### Later X4 heap-shape correction — 2026-10-05
+
+The subsequent full serial log measured the proposed RecentBooks Carousel
+candidate at `sources=0 path_capacity=0`, with `freed=0 largest_gain=0`; the
+shared UI-fallback candidate also returned zero. The BLE-specific
+RecentBooks idle reclaim hook has therefore been removed. The active shelf
+model remains intact. A bounded, Bluetooth-on entry diagnostic now reports
+its vector storage and aggregate string capacities; these capacities are
+estimates, not exact heap bytes.
+
+The later chapter sequence reached 99,420 / 65,524 after spine 27,
+98,432 / 63,476 after spine 28, and 98,336 / 65,524 after spine 29. Spine 30
+completed its Section build at 98,144 / 36,852; stable-render cleanup moved
+free heap from 87,872 to 98,192 but left the largest block at 36,852. The
+shared fallback and chapter `highlightMatches` candidate each freed zero in
+that sample. The total-free drift and largest-block collapse are distinct
+observations; the precise allocation responsible for the latter remains
+unknown.
+
+Each of spines 28–30 reports one cache-parameter mismatch (`mask=0x040`),
+cache invalidation with no `.bin` or `.part` remaining, then a fresh build.
+Source identifies this bit as the hyphenation-enabled parameter, and the
+failed load occurs before page-LUT allocation. Successful Section finalization
+destroys its parser/LUT/build strings; the Epub-owned CSS parser clears rule
+nodes but keeps hash buckets. Bounded `[HEAPSHAPE]` diagnostics have been added
+around those releases and at Reader quiescence to measure, not presume, any
+retained contribution. `BleInput::stop()` also records post-`BleHid.end()`
+heap only when a running host was actually torn down, completing the missing
+before/after-deinit measurement without changing lifecycle behavior.
+
+Reader destruction recovered to 100,232 / 36,852 before RecentBooks entered
+around 93.7 KB; the sleep checkpoint later rose from 93,656 to 102,776 while
+the largest block stayed 36,852. Since sleep begins after outgoing activity
+destruction, this is not evidence for purging the active RecentBooks model.
+Wake reconstructs a fresh 104,372 / 65,524 heap shape. Do not lower the
+98,304 / 36,864 admission floors or add another reclaim candidate without
+source-visible ownership and physical measurements. See the superseding
+serial excerpts and next-test plan in `HANDOFF.md`.
+
+Latest X4 follow-up (spines 31–33): Section post-context/Reader-idle free was
+98,300/98,348, 98,276/98,324, and 98,196/98,244 respectively; largest blocks
+were 59,380, 59,380, and 61,428. Spine 33 therefore missed the unchanged free
+floor by 60 bytes with a healthy largest block. This is not evidence of a
+fragmentation-only failure or a leak; the 24/80-byte deltas may be legitimate
+chapter/allocator variation. The previous diagnostic records were truncated,
+so they are now short `section_core_a`, `section_core_b`, `section_caps`,
+`reader_core`, `reader_caps_a`, and `reader_caps_b` lines.
+
+Source audit: Section parser/LUT/path state is owned by `BuildContext` and
+released at successful finalization; built Page objects are serialized from
+temporary unique pointers. `Epub` retains its shared `CssParser` across
+sections; successful `clear()` drops rule nodes but retains hash buckets for
+reuse. The old capture lost the bucket/capacity tail to serial interleaving,
+so CSS capacity is a measurable possibility, not a proven cause. Reader
+bookmark vector stayed at 0/16 (960 bytes), and page-highlight scratch was
+zero in the failing cases. The chapter-only `page_highlight_matches` reclaim
+and its transition latches are removed; the render matcher/cache itself is
+unchanged. General Reader reclaim/rearm and all BLE floors remain unchanged.
+
+BLE stop samples now show free heap restored by about 65 KB immediately, with
+largest-block recovery incomplete until after Reader render completes. Source
+deletes the client and synchronously deinitializes NimBLE; no retained Nooir
+client/worker is identified. RecentBooks model diagnostics show 17 books,
+2,516 vector bytes and 3,434 string-capacity characters, supporting legitimate
+active shelf ownership but not an exact allocator-byte attribution. The same
+capture independently shows Wi-Fi deinit at 81,912/42,996 after starting near
+100,248/65,524; keep that Wi-Fi issue separate and unchanged. See HANDOFF for
+quoted log lines and the next physical measurements.
+
+### CSS retained capacity and same-chapter page variation — 2026-10-05
+
+Fresh spine 34 and 35 both report `lut=32 path=209 css=71 buckets=142>142`,
+but settle at 98,384 and 98,288 bytes free respectively with a healthy
+65,524-byte largest block. Cached spine 33 reaches about 99,500/65,524.
+Spine 13 pages 0–2 settle at 98,388/55,284 while page 3 settles at
+98,080/55,284. These observations do not prove a leak; they show normal
+Reader baseline variation close to the unchanged 98,304/36,864 BLE floor.
+
+CssParser is used only by ChapterHtmlSlimParser while parsing a Section.
+Serialized Page rendering and Reader features do not consult it after
+finalization. Successful `clear()` retains empty unordered-map buckets for
+reuse, so a new pressure-only, one-attempt-per-spine release is source-safe
+when the parser is empty and the Reader is quiescent. Expected raw bucket
+pointer storage is roughly 568 bytes for 142 total buckets or 776 bytes for
+194 on the 32-bit ESP32 target, plus allocator overhead; physical `CSSMEM` output is required before
+crediting it as a useful margin owner. The new path is not active with
+Bluetooth off and never starts BLE directly.
+
+`RIDLE`/`CSSMEM` diagnostics were added around existing cleanup only. The
+latest gh_release rebuild passed through the existing Python 3.12 PlatformIO
+runtime at 60,980 RAM, 5,774,705 flash, 5,788,848-byte image, hash
+`B85FE478B0B0F0563AE33FE635A6FFD70F15E4955115050B344109B2F57D6C9B`.
+The clean target was not run because the preserved worktree safety guard
+rejects cleaning. Wi-Fi, BLE floors/lifecycle, and To-Do work remain separate.
+
+### Allocator-reported largest block and CSS physical closure — 2026-10-05
+
+`gh_release` uses `CONFIG_HEAP_POISONING_LIGHT`. ESP-IDF's largest-free-block
+API reports usable allocation payload after subtracting poison metadata: on
+the 32-bit target, 8 bytes of header plus a 4-byte tail. Thus a 36,864-byte
+logical contiguous region appears as `maxAlloc=36,852`; this is exact API
+accounting, not evidence of a 12-byte fragmented remainder. `BleMemoryPolicy`
+keeps the 36 KiB logical region floor and compile-time translates it to
+36,852 under poisoning (36,864 without). The global 96 KiB total-free floor
+is unchanged. No NimBLE allocation near 36 KiB was identified; current host
+stack is 5,120 bytes and the largest obvious fixed pool payload is about
+7.5 KiB. The remaining contiguous reserve is a conservative fragmentation /
+future-pressure policy, not an SDK initialization minimum.
+
+X4 confirmed the empty CSS bucket release returns +808 bytes for 194 buckets
+and +616 bytes for 142; largest block is unchanged. CSS is not consulted after
+Section finalization, and later parses repopulate the parser normally. The
+one-shot is latched per Section object and reset only on new Section creation,
+not per page or per spine index. This preserves reuse and avoids repeated
+same-Section churn.
+
+An unchanged-source no-clean rebuild reproduced 60,980 static RAM bytes and
+5,774,705 flash bytes. The earlier 61,420-byte report cannot be attributed:
+its matching map/ELF/config is absent. Runtime total-heap samples differ by
+432 bytes (243,252 vs. 242,820), also without evidence sufficient to name a
+cause. Treat the historical delta as unresolved rather than assigning it to
+the current CSS or Wi-Fi changes. Wi-Fi memory loss remains a separate issue.
+
+The final pass added only a `WiFi.getMode() == WIFI_MODE_NULL` prerequisite to
+the BLE-specific Reader reclaim path. When Wi-Fi is active, the path now does
+no font/shared/CSS reclaim because BLE is centrally excluded; Wi-Fi itself is
+untouched. Two subsequent no-source builds agreed on 60,980 B RAM, 5,774,729 B
+flash, and linker section sizes, but hashes differed while producing equal
+5,788,880-byte images (`98167649...` then `A843B52D...`). The HTML generator
+uses `gzip.compress()` with the default time metadata and regenerates headers
+included by `CrossPointWebServer.cpp`; this explains likely byte drift, though
+the overwritten first image prevents a direct binary diff. Current `.pio` and
+copied artifact hashes match (`A843B52D976B547FA8E60ECC5DC544F826F7A7725AFEDE3FEE6245ACE06E3FA8`).
+The older 61,420/242,820 state is still not explained. Do not mark release
+ready on current repeatability alone.

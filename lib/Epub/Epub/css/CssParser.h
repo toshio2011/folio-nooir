@@ -104,6 +104,15 @@ class CssParser {
     nextSourceOrder_ = 0;
   }
 
+  // Pressure-only release for a completed Section. The parser must be empty:
+  // serialized Page objects carry the resolved styles, while a live parser is
+  // still needed by ChapterHtmlSlimParser during a build.
+  bool releaseRetainedStorageIfEmpty() {
+    if (!empty()) return false;
+    clearAndReleaseStorage();
+    return true;
+  }
+
   /**
    * Check if CSS rules cache file exists
    */

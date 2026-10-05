@@ -11,7 +11,6 @@
 #include <FsHelpers.h>
 #include <Utf8.h>
 #include <Xtc.h>
-
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -27,6 +26,7 @@
 #include "activities/home/ToDoListActivity.h"
 #include "activities/reader/EpubReaderBookmarksActivity.h"
 #include "activities/reader/EpubReaderClippingListActivity.h"
+#include "activities/RenderLock.h"
 #include "util/BookCacheUtils.h"
 #include "util/SynopsisPreview.h"
 #include "util/EpubDiagnostics.h"
@@ -1331,6 +1331,20 @@ void RecentBooksActivity::onEnter() {
   // Load data
   loadRecentBooks();
   rebuildVisibleBooks();
+#if FREEINK_CAP_BLE_HID_HOST
+  if (SETTINGS.bluetoothEnabled) {
+    size_t stringCapacityChars = 0;
+    for (const auto& book : recentBooks) {
+      stringCapacityChars += book.path.capacity() + book.title.capacity() + book.author.capacity() +
+                             book.coverBmpPath.capacity() + book.synopsis.capacity();
+    }
+    LOG_INF("HEAPSHAPE", "stage=recentbooks books=%u vec=%u strchars=%u free=%u max=%u",
+            static_cast<unsigned>(recentBooks.size()),
+            static_cast<unsigned>(recentBooks.capacity() * sizeof(RecentBook)),
+            static_cast<unsigned>(stringCapacityChars), static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  }
+#endif
 
   selectorIndex = 0;
   nextCoverToGenerate = 0;

@@ -391,7 +391,8 @@ bool ensureStarted() {
 // allocate even after the user turns Bluetooth off.
 void stop() {
 #if FREEINK_CAP_BLE_HID_HOST
-  if (BleHid.isRunning()) g_suppressNextStopNotice = true;
+  const bool wasRunning = BleHid.isRunning();
+  if (wasRunning) g_suppressNextStopNotice = true;
 #endif
   resetNoDeviceWindow();
   const uint32_t beforeFree = static_cast<uint32_t>(ESP.getFreeHeap());
@@ -399,6 +400,14 @@ void stop() {
   const unsigned long startedMs = millis();
   HalPowerManager::Lock powerLock;
   BleHid.end();
+#if FREEINK_CAP_BLE_HID_HOST
+  if (wasRunning) {
+    LOG_INF("HEAPSHAPE", "stage=ble_stop free=%u->%u largest=%u->%u min_free=%u",
+            static_cast<unsigned>(beforeFree), static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(beforeLargest), static_cast<unsigned>(ESP.getMaxAllocHeap()),
+            static_cast<unsigned>(ESP.getMinFreeHeap()));
+  }
+#endif
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_DIAGNOSTICS && FREEINK_BLE_HID_RAW_DIAGNOSTICS
   BleHid.clearRawReports();
 #endif

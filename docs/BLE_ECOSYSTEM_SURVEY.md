@@ -1,5 +1,12 @@
 # XTEINK BLE / Input / Resource Ecosystem Survey
 
+> **Status correction — 2026-10-05:** This survey records historical ecosystem
+> reconnaissance. It predates RC2.3's normal-production BLE HID central
+> implementation. Current RC2.3 `gh_release` includes Yiser and Generic HID,
+> bonded reconnect, a centralized resource lifecycle, and Reader stop-before-
+> render handoff; old-X4 physical validation continues. The survey remains a
+> research reference, not a mandate for another broad research pass.
+
 Status: **broad ecosystem reconnaissance; implementation reference, not implementation authorization**  
 Survey date: 2026-09-20  
 Companion deep-dive: [BLE_REMOTE_RESEARCH.md](BLE_REMOTE_RESEARCH.md)

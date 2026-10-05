@@ -771,6 +771,8 @@ bool Section::commitBuildFile(const uint8_t version, const uint32_t bytesConsume
 
 bool Section::finalizeBuild() {
   EpubDiagnostics::Scope diagnostics("section_build_finalize_start", "section_build_finalize_end", spineIndex);
+  const size_t freeAtFinalizeStart = ESP.getFreeHeap();
+  const size_t largestAtFinalizeStart = ESP.getMaxAllocHeap();
   // Flush the trailing page (emits the last page via the completePageFn into the LUT).
   build_->parser->finishParse();
 
@@ -784,6 +786,14 @@ bool Section::finalizeBuild() {
   }
 
   const bool committed = commitBuildFile(SECTION_FILE_VERSION, 0, 0);
+  const size_t freeBeforeCssClear = ESP.getFreeHeap();
+  const size_t largestBeforeCssClear = ESP.getMaxAllocHeap();
+  const size_t lutCapacityBytes = build_->lut.capacity() * sizeof(PageLutEntry);
+  const size_t buildStringCapacity = build_->parsePath.capacity() + build_->contentBase.capacity() +
+                                     build_->imageBasePath.capacity() + build_->htmlPath.capacity() +
+                                     build_->tmpHtmlPath.capacity();
+  const size_t cssRulesBeforeClear = build_->cssParser ? build_->cssParser->ruleCount() : 0;
+  const size_t cssBucketsBeforeClear = build_->cssParser ? build_->cssParser->bucketCount() : 0;
   if (build_->cssParser) {
     if (committed) {
       build_->cssParser->clear();
@@ -794,7 +804,22 @@ bool Section::finalizeBuild() {
       build_->cssParser->clearAndReleaseStorage();
     }
   }
+  const size_t freeAfterCssClear = ESP.getFreeHeap();
+  const size_t largestAfterCssClear = ESP.getMaxAllocHeap();
+  const size_t cssBucketsAfterClear = build_->cssParser ? build_->cssParser->bucketCount() : 0;
   build_.reset();
+  LOG_INF("HEAPSHAPE", "stage=section_core_a spine=%d pages=%u free=%u/%u/%u/%u", spineIndex,
+          static_cast<unsigned>(builtPageCount_), static_cast<unsigned>(freeAtFinalizeStart),
+          static_cast<unsigned>(freeBeforeCssClear), static_cast<unsigned>(freeAfterCssClear),
+          static_cast<unsigned>(ESP.getFreeHeap()));
+  LOG_INF("HEAPSHAPE", "stage=section_core_b spine=%d largest=%u/%u/%u/%u min=%u", spineIndex,
+          static_cast<unsigned>(largestAtFinalizeStart), static_cast<unsigned>(largestBeforeCssClear),
+          static_cast<unsigned>(largestAfterCssClear), static_cast<unsigned>(ESP.getMaxAllocHeap()),
+          static_cast<unsigned>(ESP.getMinFreeHeap()));
+  LOG_INF("HEAPSHAPE", "stage=section_caps spine=%d lut=%u path=%u css=%u buckets=%u>%u", spineIndex,
+          static_cast<unsigned>(lutCapacityBytes), static_cast<unsigned>(buildStringCapacity),
+          static_cast<unsigned>(cssRulesBeforeClear), static_cast<unsigned>(cssBucketsBeforeClear),
+          static_cast<unsigned>(cssBucketsAfterClear));
   if (!committed) {
     // commitBuildFile removed filePath before the failed swap, so nothing valid remains.
     partial_ = false;

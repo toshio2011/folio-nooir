@@ -148,6 +148,9 @@ class EpubReaderActivity final : public Activity {
   // One cache-release attempt per completed Reader render. It is reset by the
   // render task and consumed only from the idle main-loop boundary.
   bool readerIdleFontCachesReleased = false;
+  // CSS capacity is released at most once for a given Section. A later page
+  // in the same Section must not repeatedly free/rebuild the shared parser.
+  bool readerCssCapacityReleaseAttemptedForSection = false;
   void releaseIdleReaderFontCachesForBluetooth();
 #endif
   // Cold/uncached page requests use a short event-loop phase to show the

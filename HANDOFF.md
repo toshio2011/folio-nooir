@@ -1,5 +1,40 @@
 # Folio Nooir Handoff
 
+## Current development status — 2026-10-05
+
+The active line is **Folio Nooir 1.6.3 RC2.3**, still in old-X4 physical
+validation; it is not a final release. The normal `gh_release` build includes
+BLE HID central support (Yiser and Generic HID), shared Toggle Bluetooth,
+bonded reconnect, and the bounded no-device auto-off option. There is no
+separate user-facing BLE firmware. The current cold-start admission remains
+98,304 free bytes / 36,864 largest block. Reader rendering and Section
+indexing stop BLE first; indexing finishes normally before BLE is reconsidered.
+The physically proven Reader idle-cache rearm request is checkpointed locally
+at `a174f2045c7b9eda557ef2cddfc1cc9af825b63f`.
+
+Recent X4 evidence: ordinary Reader HID handoff/reconnect, Yiser Confirm,
+Generic HID, sleep teardown, Reader exit cleanup, and full large-Section
+completion have passed. A large uncached spine released its builder/parser
+state on completion; the established disposable SD-font-cache release then
+raised free heap to 98,040 bytes, 264 bytes below cold admission, so no further
+cache purge or Section time-slicing is accepted without a measured safe
+benefit. A separate one-shot Clock/Weather sync left only about 82–84 KB free
+and a 29,684-byte largest block; this remains an unresolved BLE recovery
+issue. Current source stops SNTP after its one-shot sync and emits bounded
+`NETMEM` checkpoints; this source change still needs physical confirmation.
+The latest clean `gh_release` build completed at 61,420/327,680 B RAM and
+5,773,815/6,553,600 B flash (779,785 B margin). The 5,787,968-byte image at
+`artifacts/firmware.bin` hashes to
+`339A9C339E13D0962ED71DABDB885F66A715C4D37EE9AB81F683D521CA1BA00E` and
+matches `.pio/build/gh_release/firmware.bin` byte-for-byte. Relative to the
+diagnostic-build comparison point for the spine 31–33 logging pass, RAM is
+unchanged, linked flash is down 1,188 bytes, and the padded image is down
+1,184 bytes.
+
+Treat dated RC1/RC2 planning text below as historical unless this section or a
+newer dated checkpoint says otherwise. Preserve the untracked generated
+`sdkconfig.gh_release` and the intentional FreeInk child checkout state.
+
 Read [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) for the complete project
 history, decisions, and feature inventory.
 
@@ -574,3 +609,433 @@ Font, Unlimited Recent over ten books, two-row Spine, Book Info, E1-E4
 appearance, web pagination over ten books, orientation, Home return, and
 repeated Home -> Library -> Reader -> Home cycles. Do not perform this testing
 as part of source preparation.
+
+## RC2.3 resource-reclaim addendum — 2026-10-05
+
+This addendum records the current working-tree work; it does not rewrite the
+historical RC1 freeze above. BLE admission remains globally gated at
+98,304 / 36,864. The new pressure paths do not start BLE directly and do not
+run with Bluetooth disabled.
+
+The physical X4 log shows three distinct boundaries:
+
+- Ordinary Reader page idle continues to use the existing one-render Reader
+  disposable-font cleanup. At the large spine-9 build, the Section completed
+  naturally (`section_build_complete ... free=90612 largest=55284`), then the
+  existing Reader cleanup raised free heap to 101,444 before normal BLE
+  admission and reconnect. No repeated Section suspend/resume is introduced.
+- A true stable chapter transition may make one additional BLE-only attempt
+  to release the current-page `highlightMatches` vector capacity. It is
+  derived from the serialized page and clipping records, and can be recomputed
+  on a future render. The Section, current page, annotation records, and cache
+  format remain intact. The attempt is gated on Bluetooth ON, memory still
+  below normal admission after existing cleanup, quiescent rendering, and
+  Wi-Fi off.
+- After Reader destruction, RecentBooks first constructs and renders normally.
+  Only at a stable idle loop, with Bluetooth ON and normal admission blocked,
+  one bounded attempt releases reconstructible Carousel source handles/header
+  objects/path capacity and then invokes the shared reconstructible-cache
+  helper if still needed. The visible framebuffer, RecentBook model copy,
+  global recent store, and SD thumbnail files are retained. Any measured
+  improvement requests one ordinary lifecycle reevaluation; admission remains
+  authoritative.
+
+The attached X4 log repeatedly shows Reader destruction around 100,296–103,248
+bytes free followed by RecentBooks around 93,544–96,692, while the largest
+block remains unchanged within each run. It also shows the shared UI fallback
+candidate returning zero in Reader, so its benefit in RecentBooks is not
+assumed. Sleep-quiesce recovers about 9.1–9.7 KB in RecentBooks cases, but
+ActivityManager logs this after it calls the outgoing activity's `onExit()`
+and destroys that activity, before entering Sleep. That recovered RecentBooks
+model memory is not safe to take while the shelf remains active. See the
+physical X4 checklist below for separate ordinary-page, chapter-transition,
+RecentBooks-idle, and sleep cases; record actual candidate bytes rather than
+assuming either reclaim meets the BLE floor.
+
+For this follow-up X4 run, explicitly record these separate cases:
+
+1. With Bluetooth ON, turn one ordinary Reader page. Confirm the existing
+   light cleanup runs after render, and that no chapter-only reclaim runs.
+2. Turn across a real chapter boundary. Let Section indexing finish naturally;
+   record `section_build_complete`, the normal Reader cleanup, any single
+   `[CHMEM]` / `reader_page_highlight_matches` attempt, and the subsequent BLE
+   admission result. Do not interrupt indexing to make BLE return sooner.
+3. Exit Reader. Wait for RecentBooks' first full render and stable idle. Record
+   `[MEMP] recentbooks_idle before`, `reclaim item=carousel_source_cache`,
+   any shared `recentbooks_idle_ble` helper result, and one normal admission
+   result. Verify there was no reclaim before the RecentBooks frame completed.
+4. Repeat the RecentBooks and chapter cases with Bluetooth OFF; there must be
+   no BLE-specific reclaim log or cache release.
+5. Sleep from stable RecentBooks and compare `sleep_quiesce_begin` with
+   `sleep_quiesce_complete`. Treat the recovery as outgoing-activity teardown,
+   not as evidence that active RecentBooks may discard its book list.
+
+Representative exact serial evidence (timestamps are device uptime):
+
+```text
+[48329] [INF] [MEM] reader_exit stage=activity_destroyed free=103248 max=45044
+[48388] [INF] [BLEMEM] stage=before_cold_admission activity=RecentBooks free=96768 largest=45044 floors=98304/36864
+[50571] [INF] [MEM] activity=RecentBooks free=96692 total=243252 minFree=28328 largest=45044 bleRunning=0 bleConnected=0
+[60746] [INF] [MEM] activity=RecentBooks free=96692 total=243252 minFree=28328 largest=45044 bleRunning=0 bleConnected=0
+
+[157129] [INF] [MEM] reader_exit stage=activity_destroyed free=100572 max=45044
+[157188] [INF] [BLEMEM] stage=before_cold_admission activity=RecentBooks free=94080 largest=45044 floors=98304/36864
+[168927] [INF] [MEM] activity=RecentBooks free=94004 total=243252 minFree=29240 largest=45044 bleRunning=0 bleConnected=0
+[174072] [INF] [BLEMEM] stage=before_cold_admission activity=RecentBooks free=93544 largest=45044 floors=98304/36864
+
+[630559] [INF] [MEM] reader_exit stage=activity_destroyed free=100296 max=49140
+[630620] [INF] [BLEMEM] stage=before_cold_admission activity=RecentBooks free=93812 largest=49140 floors=98304/36864
+[631446] [INF] [BLEMEM] stage=before_cold_admission activity=RecentBooks free=93736 largest=49140 floors=98304/36864
+[634299] [INF] [MEM] activity=RecentBooks free=93736 total=243252 minFree=24356 largest=49140 bleRunning=0 bleConnected=0
+```
+
+The spine-10 case below is the observed chapter-complete-but-still-blocked
+pattern; this pre-patch firmware did not yet emit `[CHMEM]`:
+
+```text
+[594199] [INF] [SCT] section_build_complete spine=10 pages=1 free=98380 largest=55284
+[595610] [INF] [ERS] reader_quiescent reason=render_complete spine=10 page=0 free=94016 largest=55284
+[595650] [INF] [MEM] reader_idle_cache_release spine=10 page=0 free=94016->97824 max=55284->55284
+[595651] [INF] [MEMP] reclaim level=2 item=sd_ui_fallback_glyph_caches freed=0 largest_gain=0 free=97824 largest=55284
+[595651] [INF] [MEMP] stop result=no_gain free=97824 largest=55284
+[613596] [INF] [BLEMEM] stage=admission_deferred reason=resource activity=EpubReader sensitive=1 render=1 reader=1 free=98112 largest=55284
+[614163] [INF] [SCT] section_deserialize_begin spine=11 pages=0 free=97864 largest=55284
+```
+
+This misses the 98,304-byte free floor by 480 bytes after the light cleanup;
+largest-block fragmentation is not the blocker in this particular sample.
+The new chapter candidate is a bounded attempt, not a guarantee that every
+chapter will have enough clipping scratch to recover the deficit.
+
+The large spine-9 build is the contrasting successful natural-completion
+case:
+
+```text
+[33910] [INF] [SCT] section_build_complete spine=9 pages=39 free=90612 largest=55284
+[33911] [INF] [SCT] section_transients_released spine=9 pages=39 free=90612 largest=55284
+[33911] [INF] [ERS] reader_quiescent reason=section_complete spine=9 page=0 free=90612 largest=55284
+[33991] [INF] [MEM] reader_idle_cache_release spine=9 page=0 free=90612->101444 max=55284->55284
+[34062] [INF] [BLEMEM] stage=cold_admission result=allow activity=EpubReader free=101444 largest=55284
+[36422] [INF] [BLEMEM] stage=connected_idle free=32448 largest=29684
+```
+
+The log contains the same zero-gain shared UI-fallback result on ordinary
+Reader pages as well, for example:
+
+```text
+[116928] [INF] [MEMP] request reason=reader_ble_admission target=102400/40960 free=95692 largest=32756
+[116928] [INF] [MEMP] reclaim level=2 item=sd_ui_fallback_glyph_caches freed=0 largest_gain=0 free=95692 largest=32756
+[116928] [INF] [MEMP] stop result=no_gain free=95692 largest=32756
+[380503] [INF] [MEMP] request reason=reader_ble_admission target=102400/40960 free=95692 largest=32756
+[380503] [INF] [MEMP] reclaim level=2 item=sd_ui_fallback_glyph_caches freed=0 largest_gain=0 free=95692 largest=32756
+[380503] [INF] [MEMP] stop result=no_gain free=95692 largest=32756
+[414088] [INF] [MEMP] request reason=reader_ble_admission target=102400/40960 free=95692 largest=32756
+[414088] [INF] [MEMP] reclaim level=2 item=sd_ui_fallback_glyph_caches freed=0 largest_gain=0 free=95692 largest=32756
+[414088] [INF] [MEMP] stop result=no_gain free=95692 largest=32756
+```
+
+For RecentBooks sleep, the activity-destruction recovery is visible before
+SleepActivity rendering; the subsequent overlay probe consumes temporary
+memory and final cleanup returns nearly to the quiesce checkpoint:
+
+```text
+[195278] [INF] [SLEEP] sleep_quiesce_begin free=93544 largest=45044
+[195280] [INF] [SLEEP] sleep_quiesce_complete section_stopped free=103116 largest=45044
+[195892] [INF] [SLP] sleep_asset_candidate path=/sleep/20260427_205949_0000.png reason=overlay_pool free=101844 largest=45044
+[199497] [INF] [SLP] sleep_final_cleanup free=103040 largest=45044
+[199497] [INF] [SLEEP] sleep_screen_ready free=103040 largest=45044
+
+[640857] [INF] [SLEEP] sleep_quiesce_begin free=93736 largest=49140
+[640859] [INF] [SLEEP] sleep_quiesce_complete section_stopped free=102840 largest=53236
+[645074] [INF] [SLP] sleep_final_cleanup free=102764 largest=53236
+[645075] [INF] [SLEEP] sleep_screen_ready free=102764 largest=53236
+
+[5226] [INF] [BLEMEM] stage=before_cold_admission activity=RecentBooks free=104880 largest=65524 floors=98304/36864
+[5228] [INF] [BLEMEM] stage=cold_admission result=allow activity=RecentBooks free=104880 largest=65524
+[BLEMEM] stage=pre_init free=104880 largest=65524
+[BLEMEM] stage=connected_idle free=35452 largest=32756
+[7315] [INF] [BLEMEM] stage=connected_idle free=35452 largest=32756
+```
+
+## Superseding X4 heap-shape follow-up — 2026-10-05
+
+The later full serial capture supersedes the earlier RecentBooks-cache
+recommendation above. Keep the active shelf model and do not retry that reclaim:
+the measured source cache was empty and both cleanup candidates returned zero.
+
+Reader chapter checkpoints after ordinary idle cleanup were:
+
+```text
+[111060] [INF] [BLEMEM] stage=before_cold_admission activity=EpubReader free=99420 largest=65524 floors=98304/36864
+[146676] [INF] [BLEMEM] stage=before_cold_admission activity=EpubReader free=98432 largest=63476 floors=98304/36864
+[166944] [INF] [BLEMEM] stage=before_cold_admission activity=EpubReader free=98336 largest=65524 floors=98304/36864
+[187784] [INF] [SCT] section_build_complete spine=30 pages=5 free=98144 largest=36852
+[189373] [INF] [ERS] reader_quiescent reason=render_complete spine=30 page=0 free=87872 largest=36852
+[189420] [INF] [MEM] reader_idle_cache_release spine=30 page=0 free=87872->98192 max=36852->36852
+[189421] [INF] [MEMP] reclaim level=2 item=sd_ui_fallback_glyph_caches freed=0 largest_gain=0 free=98192 largest=36852
+[189421] [INF] [MEMP] transition fromSpine=29 toSpine=30 bleEnabled=1 free=98192 largest=36852
+[189422] [INF] [MEMP] reclaim item=reader_page_highlight_matches released=0 capacity=0 freed=0 largest_gain=0 free=98192 largest=36852
+```
+
+For spine 30, the post-render cache release recovered 10,320 bytes of total
+free heap, bringing it back to within 48 bytes of `section_build_complete`,
+but did not change the 36,852-byte largest block. That largest block is
+12 bytes below the unchanged 36,864 hard floor. The sharp largest-block drop
+occurs during the Section build/finalization episode; the serial log does not
+identify which allocation placement causes it. The preceding chapter
+checkpoints show a smaller total-free drift (99,420 -> 98,432 -> 98,336 ->
+98,192) separate from that largest-block collapse.
+
+The cache error is also not a repeated retry of one bad file. Spines 28, 29,
+and 30 each report `Parameters do not match mask=0x040`, then
+`section_cache_invalidated ... bin_remains=0 part_remains=0`, followed by one
+fresh `section_build_begin`. The mask is the hyphenation-enabled header
+parameter. Invalidation occurs before page LUT/deserialized-page state is
+allocated.
+
+Reader exit and RecentBooks evidence:
+
+```text
+[222424] [INF] [MEM] reader_exit stage=activity_destroyed free=100232 max=36852
+[222483] [INF] [BLEMEM] stage=before_cold_admission activity=RecentBooks free=93732 largest=36852 floors=98304/36864
+[222539] [INF] [MEM] activity=RecentBooks free=93564 total=242820 minFree=6784 largest=36852 bleRunning=0 bleConnected=0
+[223259] [INF] [BLEMEM] stage=before_cold_admission activity=RecentBooks free=93656 largest=36852 floors=98304/36864
+[223261] [INF] [MEMP] recentbooks_idle before free=93656 largest=36852 sources=0 path_capacity=0
+[223262] [INF] [MEMP] recentbooks_idle reclaim item=carousel_source_cache freed=0 largest_gain=0 free=93656 largest=36852
+[223262] [INF] [MEMP] reclaim level=2 item=sd_ui_fallback_glyph_caches freed=0 largest_gain=0 free=93656 largest=36852
+[248870] [INF] [SLEEP] sleep_quiesce_complete section_stopped free=102776 largest=36852
+```
+
+RecentBooks owns a value-copy of the persisted `RecentBook` records while it
+is active; each record contains five strings. The new one-shot
+`recentbooks_model` diagnostic reports vector storage and string capacities
+when Bluetooth is on, but string capacities are not an exact heap-byte count
+(small-string storage and allocator overhead vary). The carousel cache is a
+separate six-entry render-source LRU; the failing capture had zero entries.
+The sleep checkpoint follows outgoing activity destruction, so its +9,120
+bytes do not prove an active-shelf reclaim is safe. After wake, a fresh heap
+layout reaches 104,372 free / 65,524 largest.
+
+The three repeated `mask=0x040` failures are each invalidated and rebuilt
+once; no same-episode failed-cache retry loop is evidenced. `Section` destroys
+its parser, LUT and build strings on successful finalization. Its
+Epub-owned `CssParser` calls `clear()` on success, which removes rule nodes
+but retains hash buckets; size and cross-spine effect are not yet known. New
+bounded `[HEAPSHAPE]` lines report builder LUT/string capacities, CSS rule and
+bucket counts, heap/largest block around builder destruction, Reader-owned
+clipping/bookmark/footnote capacities at quiescence, and RecentBooks model
+capacity. `BleInput::stop()` also records one post-`BleHid.end()` checkpoint
+only when the host was actually running, allowing the next capture to compare
+pre-stop and post-deinit heap shape. These are measurement only; no CSS or
+Reader cache lifetime was changed.
+
+The chapter `highlightMatches` candidate remains a conditional, recomputable
+scratch release for a page that actually has clipping matches; it measured
+capacity zero in this spine-30 failure and is not credited with helping this
+case. The RecentBooks Carousel reclaim hook was removed because its source
+cache and shared fallback reclaim both measured zero in the tested shelf
+state. The cache itself and active RecentBooks data are unchanged.
+
+The reported static-RAM change from 60,980 to 61,420 bytes (+440) cannot be
+attributed exactly: the 60,980-byte build's matching map/ELF is unavailable.
+The current map accounts for 61,417 bytes before final alignment. The removed
+RecentBooks hook had only an activity-instance flag and no global/static
+storage, so it cannot explain a 440-byte `.data`/`.bss` delta. Do not infer
+the missing symbols from the similar ~432-byte runtime total-heap difference.
+
+For the next X4 run, retain the existing admission floors and capture:
+
+1. `[HEAPSHAPE] stage=section_finalize` on spines 29 and 30, comparing
+   finalize-start, pre-CSS-clear, post-CSS-clear, and post-build-context free
+   heap/largest block, LUT capacity, path-string capacity, CSS rules/buckets.
+2. `[HEAPSHAPE] stage=reader_quiescent` at the stable page on both spines,
+   including clipping/highlight/bookmark/footnote vector capacities.
+3. `[HEAPSHAPE] stage=recentbooks_model` on return to the shelf, then compare
+   with the normal periodic `activity=RecentBooks` readings after the first
+   render. Confirm there is no `recentbooks_idle` reclaim attempt.
+4. Compare each `[HEAPSHAPE] stage=ble_stop` before/after pair with the next
+   `before_begin` checkpoint. The stop line is emitted only for a running host.
+5. Compare `sleep_quiesce_begin`, activity destruction, and
+   `sleep_quiesce_complete`; then compare the fresh-wake baseline.
+
+Do not lower 98,304 / 36,864, alter NimBLE lifecycle, purge active shelf data,
+or change successful CSS bucket retention until those measurements identify
+an owner. BLE may remain off when admission fails; Nooir correctness and
+reader responsiveness take priority.
+
+## Superseding X4 run: spines 31–33 and compact heap-shape logging
+
+The 2026-10-05 follow-up has a different failure shape from the earlier spine
+30 run. All three chapters retained a large healthy block; spine 33 missed
+only the 98,304-byte free floor by 60 bytes:
+
+| Spine | Pages | Section post-context free / largest | Reader-idle free / largest |
+|---|---:|---:|---:|
+| 31 | 5 | 98,300 / 59,380 | 98,348 / 59,380 |
+| 32 | 2 | 98,276 / 59,380 | 98,324 / 59,380 |
+| 33 | 6 | 98,196 / 61,428 | 98,244 / 61,428 |
+
+The post-context free differences are 24 bytes and 80 bytes. The largest
+block actually rises by 2,048 bytes at spine 33, so this run does not support
+a fragmentation-only explanation or a leak diagnosis. The old one-line
+capacity diagnostics were cut off by adjacent serial output. They have been
+split into short records: `section_core_a` (free values in order start,
+pre-CSS, post-CSS, post-context), `section_core_b` (largest values in that
+same order plus minimum), and `section_caps` (LUT bytes, path-string capacity,
+CSS rules and bucket counts). Reader capacities are now split into
+`reader_core`, `reader_caps_a`, and `reader_caps_b`.
+
+Source ownership narrows the candidates. `Section::BuildContext` owns the
+parser, LUT vector and build path strings and is destroyed by `build_.reset()`
+on successful finalization. Each built `Page` is serialized from a temporary
+`unique_ptr` and is not retained as an in-memory page list. The `Epub` object,
+however, owns one `CssParser` across Section changes; successful Section
+finalization calls `CssParser::clear()`, which clears rule nodes but keeps
+unordered-map buckets for reuse. Its measured bucket counts were truncated in
+this capture, so its contribution to the 24/80-byte differences is unknown.
+Reader bookmark storage was consistently `0/16` entries / 960 bytes; the
+tested highlight scratch capacity was zero. No monotonically growing Reader
+container is proven by the available output. Treat the small differences as
+chapter/allocator variation unless the compact follow-up measurements show
+otherwise; do not release CSS buckets or lower admission floors on this
+evidence.
+
+The chapter-only `page_highlight_matches` pressure reclaim and its five
+transition-latch fields have been removed. It measured capacity/release/free
+gain zero in repeated cases, and keeping its high-water vector capacity is the
+normal fast path. The actual highlight matcher/cache remains unchanged and
+continues serving clipping rendering. The ordinary shared Reader pressure
+reclaim and post-cleanup lifecycle reevaluation remain intact.
+
+The new post-`BleHid.end()` samples show substantial recovery without proving
+a NimBLE leak: e.g. connected idle `31,344 / 28,660` became
+`96,744 / 36,852`; on later turns `28,596 / 25,588` became
+`93,736 / 32,756`. After the Reader render completed, the largest block rose
+to `65,524` (or `59,380`/`61,428` in the measured chapter cases). Source
+explicitly cancels a connect, deletes the disconnected client, and calls
+`NimBLEDevice::deinit(true)`. No Nooir client/worker is intentionally retained
+after end; the remaining free-heap delta is not enough to identify a live
+NimBLE allocation, and the later block coalescing occurs after render work.
+
+RecentBooks reports 17 books, 2,516 bytes of vector payload and 3,434 summed
+string-capacity characters, with free heap moving from 100,276 at Reader
+destruction to 93,844 at model construction. This supports the active shelf
+copy as the main cost, though string capacity is not exact allocated heap
+(small-string storage and allocator overhead apply). No RecentBooks reclaim
+was added. The same log separately shows Wi-Fi selection moving from
+100,248 / 65,524 to `wifi_deinit_done` at 81,912 / 42,996 and shelf idle near
+85–94 KB; this remains a separate Wi-Fi investigation and was not changed.
+
+Next physical run: use the short Section/Reader records on spines 31–33 and
+compare `css_buckets` and LUT/path capacities; retain the exact BLE-stop to
+post-render sequence; keep Bluetooth ON for the memory samples. Do not flash
+or treat this diagnostic build as a fix until those fields identify an owner.
+
+## CSS capacity / same-Section page variation pass — 2026-10-05
+
+The newer X4 evidence changes the immediate question. Cached spine 33 settles
+around 99,500 / 65,524, while fresh spine 34 settles at 98,384 / 65,524 and
+fresh spine 35 at 98,288 / 65,524. Fresh spines 34 and 35 report identical
+Section capacities (`lut=32 path=209 css=71 buckets=142>142`), so the 96-byte
+difference is not explained by those exposed capacities. In the same active
+spine 13, pages 0–2 settled at 98,388 / 55,284 and page 3 at 98,080 / 55,284;
+the unchanged largest block shows that the 308-byte change is page/runtime
+state or allocator variation, not a largest-block collapse. No leak is proven.
+
+Source tracing proves `CssParser::resolveStyle()` is called only from
+`ChapterHtmlSlimParser` during Section parsing. A completed Section serializes
+resolved styles into `Page`; page deserialization/rendering, clipping,
+highlighting, images, footnotes, and settings have no CssParser call site.
+Successful Section finalization clears the parser maps but intentionally keeps
+their unordered-map buckets. The new `releaseRetainedStorageIfEmpty()` path
+therefore releases only empty parser buckets and refuses to act while rules
+remain. On the 32-bit ESP32 target, raw bucket-pointer capacity is
+approximately 568 bytes for 142 total buckets or 776 bytes for 194 total
+buckets, before allocator overhead; exact recovery must be measured on X4.
+
+The release is pressure-only: Bluetooth must be enabled, the Reader must be
+quiescent with no build/render/pending turn, normal BLE admission must still
+fail after existing Reader/shared cleanup, and the current Section is allowed
+one attempt. It does not start BLE directly; any improved heap requests the
+existing lifecycle reevaluation. A per-spine latch prevents page-to-page CSS
+free/rebuild churn. Compact `RIDLE` and `CSSMEM` records now separate SD-font
+cleanup from CSS-capacity recovery.
+
+The normal PlatformIO Python 3.12 runtime rebuilt `gh_release` successfully;
+the preserved clean target was not run because the worktree safety guard
+rejects cleaning. Result: 60,980/327,680 B RAM, 5,774,705/6,553,600 B flash,
+778,895 B margin, 5,788,848-byte firmware, SHA-256
+`B85FE478B0B0F0563AE33FE635A6FFD70F15E4955115050B344109B2F57D6C9B`.
+The artifact and `.pio` image match. No floor, Wi-Fi, BLE lifecycle, or
+persisted format change was made.
+
+Next X4 run: compare `CSSMEM before/after` on a fresh Section with 142/194
+buckets; compare `RIDLE after_sd_font_cache`, shared MEMP, and CSSMEM on spine
+13 pages 2 and 3. Verify rendered styles and next-page behavior after a CSS
+release, and confirm no repeated CSSMEM attempt within the same spine.
+
+## Allocator boundary and final CSS evidence — 2026-10-05
+
+The physical `maxAlloc=36,852` result is not a 12-byte fragmentation loss.
+This `gh_release` sdkconfig enables ESP-IDF light heap poisoning. On the
+32-bit target, each candidate allocation carries an 8-byte poison header
+(`uint32_t` canary plus `size_t` requested size) and a 4-byte tail canary.
+`heap_caps_get_largest_free_block()` reports the largest user payload after
+subtracting those 12 bytes. Accordingly, a raw 36,864-byte free region is
+reported as 36,852 bytes. The policy keeps its 36 KiB *logical region*
+reserve and translates it to the configured API value at compile time:
+36,852 with poisoning, 36,864 without. The separate cold-start total-free
+floor remains 96 KiB (98,304 bytes). This is a measurement-semantics
+correction, not a reduction in the logical region reserve.
+
+The 36 KiB bound was not selected as a NimBLE single-allocation requirement.
+The original lifecycle rationale was to retain contiguous capacity against
+fragmentation and later Reader pressure; startup measurements also showed
+large aggregate BLE residency. Current configuration evidence shows a
+5,120-byte NimBLE host stack and fixed packet pools, with the largest obvious
+pool allocation around 7.5 KiB payload before allocator bookkeeping. No
+identified Nooir/NimBLE allocation requires one 36 KiB block. Exact runtime
+largest-allocation demand was not measured; therefore retain the logical
+36 KiB reserve and only account for the proven poisoning subtraction.
+
+The completed CSS pressure path is now backed by physical results, replacing
+the earlier estimate-only conclusion above. With an empty parser, releasing
+retained buckets changed 194 buckets to the empty-map baseline and recovered
+808 total-free bytes; the 142-bucket case recovered 616 bytes. Largest-block
+readings did not improve. Later Section parsing correctly repopulated maps
+(for example, 71 rules / 142 buckets), and rendered pages remained normal.
+The latch is once per actual Section instance, reset only when a new Section
+is constructed—not once per spine number—so revisiting the same spine after a
+new Section can make one fresh attempt without page-to-page churn. This is a
+small proven reclaim, not enough to explain or guarantee BLE admission by
+itself. It stays Bluetooth-on, quiescent, and pressure-only.
+
+A same-source, no-clean repeat build before this final code adjustment
+reproduced 60,980 bytes of static RAM (`.dram0.data` 20,089 + `.noinit` 3 +
+`.dram0.bss` 40,888) and 5,774,705 bytes of flash use. The older reported
+61,420-byte build has no matching map/ELF/config snapshot in the preserved
+worktrees, so its 440-byte difference cannot be attributed to symbols or
+source. Reported total-heap values differ by 432 bytes (243,252 vs. 242,820),
+with the remaining difference likewise unproven. Do not infer a leak or a
+specific code owner from those numbers; keep the historical comparison open
+until its exact build evidence is available. Wi-Fi deinit memory loss remains
+a separate unresolved physical issue and was not changed here.
+
+Final closure follow-up: the pressure cleanup now also returns immediately
+while `WiFi.getMode() != WIFI_MODE_NULL`. This mirrors BLE's existing Wi-Fi
+exclusion and prevents releasing Reader/font/CSS caches for a BLE start that
+cannot currently be admitted; it does not start, stop, or otherwise alter
+Wi-Fi. Two final no-source-change `gh_release` builds both reported 60,980 B
+RAM, 5,774,729 B flash, and identical `.dram0.data/.noinit/.dram0.bss`
+sizes. Their 5,788,880-byte images had different SHA-256 values:
+`98167649F2DC0FC7E619612437254D3CE92BF3472B958008FA252945104D0F14` then
+`A843B52D976B547FA8E60ECC5DC544F826F7A7725AFEDE3FEE6245ACE06E3FA8`.
+The generated gzip headers are a supported source of this byte variation:
+`scripts/build_html.py` calls `gzip.compress()` without a fixed `mtime`, and
+the regenerated arrays are compiled into `CrossPointWebServer.cpp`. The first
+binary was overwritten by the repeat, so the exact byte diff was not retained;
+the hash variance is explained at source level but not byte-for-byte isolated.
+The current `.pio` image and `artifacts/firmware.bin` are identical at the
+second hash. The historical 61,420/242,820 build remains unattributable and
+therefore the release gate remains open despite current-state RAM metric
+reproducibility.

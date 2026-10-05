@@ -22,7 +22,7 @@ struct ClockWeatherSyncResult {
 // turned off after the activity returns (device settings action).
 class ClockWeatherSyncService final {
  public:
-  static ClockWeatherSyncResult sync(bool syncClock, bool syncWeather);
+  static ClockWeatherSyncResult sync(bool syncClock, bool syncWeather, bool stopNtpAfterSync = false);
   static ClockWeatherSyncResult syncDueOnWifiConnection();
   static bool resolveLocation(const std::string& query, ClockWeatherLocation& result);
   static int32_t locationOffsetSeconds();

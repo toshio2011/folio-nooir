@@ -1,5 +1,15 @@
 # BLE Remote Input Research
 
+> **Status correction — 2026-10-05:** This is a dated pre-implementation
+> research dossier, not the current Nooir BLE implementation status. RC2.3
+> now enables BLE HID central support in normal `gh_release`, with Yiser and
+> Generic HID, bonded reconnect, centralized memory admission, Reader
+> stop-before-render handoff, Section-indexing-first re-arm, Toggle Bluetooth,
+> and bounded no-device auto-off. Old-X4 physical validation is ongoing; no
+> final 1.6.3 release or X3 physical claim is made. The historical research
+> observations below remain useful context and are not an instruction to
+> re-run the broad source-research project.
+
 Status: **research dossier / future implementation reference**  
 Date captured: 2026-09-19  
 Scope: XTEINK X3/X4-class resource-constrained firmware; Nooir implementation is **not authorized by this document**.
