@@ -4,274 +4,223 @@ Status: active post-1.6.3 work.
 
 ## Release state
 
-Folio Nooir 1.6.3 is released and closed. Do not reopen 1.6.3 for normal feature work. All work below belongs to 1.6.4 or later unless a critical regression requires a separate hotfix.
+Folio Nooir 1.6.3 is released and closed. All normal work below belongs to 1.6.4 or later.
 
 Released 1.6.3 artifact:
 - firmware.bin size: 5,788,880 bytes
 - SHA-256: A843B52D976B547FA8E60ECC5DC544F826F7A7725AFEDE3FEE6245ACE06E3FA8
 
-## 1.6.4 priority order
+## Simple order of work
 
-1. File Transfer/web runtime reboot regression.
-2. Post-Wi-Fi BLE heap/largest-block recovery.
-3. Deterministic release builds.
-4. EPUB fidelity: small caps, chapter headings/hgroup, verse/letters, lightweight tables.
-5. EPUB regression/torture coverage and parser/cache hardening.
-6. Bluetooth controller/mapping polish after lifecycle stability.
-7. CBZ performance work.
-8. Physical X3 validation.
-9. X4 Pro / X4 Classic investigation later.
-10. Diagnostics cleanup after lifecycle fixes are proven.
+### Now
+1. Fix the 1.6.3 File Transfer reboot.
+2. Fix post-Wi-Fi memory recovery so BLE can return safely without needing sleep/reboot where affordable.
 
-## 1. File Transfer / Wi-Fi stability first
+### After network stability
+3. Make release builds deterministic.
+4. Improve EPUB rendering: small caps, chapter headings/hgroup, verse/letters, lightweight table polish.
+5. Build/expand the EPUB regression set and do fixture-driven parser/cache hardening.
 
-This is the first task for the next physical X4 session. Do not start EPUB fidelity, CBZ, or BLE feature expansion before the repeatable File Transfer reboot is understood.
+### Later in 1.6.4
+6. Improve CBZ performance.
+7. Broaden Bluetooth controller support/mapping UX.
+8. Perform fuller physical X3 validation.
+9. Keep using stock XTEINK/CrossLink only for targeted comparisons.
 
-### A. Released 1.6.3 File Transfer reboot
+### Later beyond that
+- X4 Pro / X4 Classic investigation;
+- PDF / FB2;
+- full system dark UI;
+- advanced browser-grade EPUB layout features.
 
-A community user testing released 1.6.3 on X4 reported that after joining Wi-Fi from File Transfer, the device reboots after a few seconds. The web interface never becomes usable. The current local symptom should be treated the same way: this is a general File Transfer startup/runtime regression, not a Settings-page-only problem.
+## 1. File Transfer reboot — first task
 
-### Current investigation findings
+Released 1.6.3 can reboot a few seconds after joining Wi-Fi from File Transfer. The web interface never becomes practically usable. Treat this as a general File Transfer startup/runtime regression, not a Settings-page-only problem.
 
-Comparison with working 1.6.2 narrows the regression surface:
+### What comparison with 1.6.2 tells us
 
-- the core File Transfer activity/web-server architecture was already present in 1.6.2;
-- the normal startup sequence is still essentially connect network -> mDNS -> `CrossPointWebServer` -> HTTP/WebDAV/WebSocket/UDP;
-- the rich Nooir route set and web-management feature set were already present in 1.6.2, so route count alone is not the new regression delta;
-- automatic Clock/Weather sync on successful Wi-Fi connection also existed in 1.6.2;
-- the web Settings HTML is not the primary explanation because the whole browser session is unusable before individual pages can meaningfully load;
-- 1.6.3 adds BLE/NimBLE to the normal release plus coexistence/lifecycle and memory-diagnostic work, changing the runtime/heap shape even when BLE is expected to stop for networking;
-- `CrossPointWebServerActivity` is marked Bluetooth-resource-sensitive and ActivityManager asks BLE to stop before entering it, but hardware evidence is still needed to prove the BLE host has fully released its memory before Wi-Fi/server allocations begin;
-- `WifiSelectionActivity` keeps the working 1.6.2 connection flow but adds explicit retain/deinit ownership and diagnostics around selection exit;
-- File Transfer still performs `silentRestart()` on exit once Wi-Fi has been activated. A graceful server-start failure can therefore appear as a clean mysterious reboot, while panic/OOM/watchdog/brownout remain possible alternatives.
+- 1.6.2 and 1.6.3 use the same pioarduino ESP32 platform/core package, so this is not a framework-version upgrade regression.
+- The core File Transfer/web-server architecture already worked in 1.6.2.
+- The rich HTTP route set, WebDAV, WebSocket, UDP discovery, mDNS flow, and automatic Clock/Weather sync also existed in the working release.
+- File Transfer still intentionally `silentRestart()`s after a network session, so a graceful startup failure can masquerade as a mysterious reboot.
+- 1.6.3's major release-runtime delta is compiled-in NimBLE/BLE plus its coexistence lifecycle and associated memory budget.
 
-### Leading hypothesis
+### Strong source-backed lead: boot-time BLE memory reservation
 
-The most plausible regression class is currently:
+Arduino-ESP32 releases reserved Bluetooth controller memory at boot when no Bluetooth library reports itself in use. Its own Bluetooth shim documents the returned amount as roughly 36 KB.
 
-> 1.6.3 reaches the old File Transfer/web-server startup with a different memory/runtime shape, and some stage now crosses a heap/largest-block/reset threshold.
+NimBLE-Arduino marks Bluetooth as in use before `app_main()`, so merely linking NimBLE prevents that boot-time release. Therefore:
 
-This is not yet a diagnosis. Do not remove web features or lower BLE safety floors until serial evidence identifies the failing stage.
+- 1.6.2 `gh_release`, which does not link NimBLE, can give the unused controller reservation back to the general heap at boot;
+- 1.6.3 `gh_release`, which links NimBLE so Bluetooth can be started later, intentionally keeps that memory available to Bluetooth for the whole boot.
 
-### Next physical X4 session — exact order
+This is true even if the user's Bluetooth setting is OFF and the BLE host has never been started.
 
-1. Start with released 1.6.3.
-2. Enter File Transfer and record free heap + largest block before network work.
-3. Verify BLE stop is not merely requested but actually complete before Wi-Fi starts.
-4. Reproduce **Join Network -> connect -> leave it alone** with serial attached.
-5. If useful, test **Create Hotspot** as a control path to separate STA-specific work from common server startup.
-6. If practical, repeat the same File Transfer flow on 1.6.2 on the same X4/network and compare memory/reset behavior at matching stages.
-7. Use one bounded diagnostic build with INFO checkpoints at:
-   - `FILEXFER enter`;
-   - BLE stop requested;
-   - BLE fully stopped / post-stop heap;
-   - Wi-Fi scan begin/end;
-   - Wi-Fi connect begin/success;
-   - before/after automatic Clock/Weather sync;
-   - WifiSelection child exit/destroy;
-   - before/after mDNS;
-   - before `CrossPointWebServer` construction;
-   - after Arduino `WebServer` allocation;
-   - after route registration;
-   - after WebDAV registration;
-   - after HTTP begin;
-   - after WebSocket construction/begin;
-   - after UDP discovery begin;
-   - `SERVER_RUNNING`;
-   - File Transfer exit reason before any `silentRestart()`.
-8. Record boot/reset reason so the next boot can distinguish intentional silent restart, panic/assert, watchdog, brownout, or other reset.
-9. Fix only the proven failing stage and physically retest normal joined-network File Transfer.
+Nooir's `bleinput::stop()` and FreeInk's `BleKeyboardHost::end()` still correctly tear down active NimBLE runtime state with `NimBLEDevice::deinit(true)`. That does not reverse the earlier boot decision to preserve reusable BT controller memory for future BLE starts.
 
-### Candidate fixes after evidence
+This is now the leading explanation for why an otherwise familiar File Transfer path may have lost enough heap/largest-block headroom to fail in 1.6.3. It still needs physical A/B proof.
 
-Depending on the log:
+### Best experimental fix to test
 
-- ensure BLE and other disposable state are fully reclaimed before network startup;
-- reduce a proven peak allocation or defer only the specific optional server component causing the cliff;
-- fix any lifecycle race between WifiSelection destruction and server startup;
-- adopt cleaner CrossLink-style teardown ordering where it directly helps;
-- reconsider forced `silentRestart()` only after normal teardown is proven safe;
-- preserve the full web UI whenever possible.
+File Transfer does not need Bluetooth and already ends with a reboot, so test a network-session-only irreversible BT memory release:
 
-Do not add restart loops, retry storms, global purges, or floor bypasses.
+1. Wait until the user chooses Join Network or Create Hotspot.
+2. Fully stop/deinit BLE.
+3. Verify the Bluetooth controller is idle.
+4. Release the BLE/controller memory for the remainder of that boot.
+5. Log free heap + largest block before/after.
+6. Start Wi-Fi and the web server normally.
+7. On File Transfer exit, restart so Bluetooth capability is restored on the next boot.
 
-### B. Post-Wi-Fi BLE heap recovery
+Because ESP-IDF documents this memory release as irreversible until reboot, track a `btMemoryReleasedForNetwork` flag and force restart on any exit after the release, including partial/failed network startup.
 
-This is the second network task after File Transfer itself is stable.
+Do not release this memory merely on entering File Transfer, because the user can still back out before selecting a network mode.
 
-Physical X4 evidence from the cancel/deinit path showed approximately:
+Test this on a separate branch before considering it for production.
 
-- after BLE stop / before Wi-Fi: ~96.5 KiB free;
-- while Wi-Fi connection work was active: ~48.9 KiB free at the captured low point;
-- after `WIFI_OFF` / selection teardown: ~84-85 KiB free;
-- BLE correctly remained below admission floors;
-- sleep/wake restored the healthy baseline.
+### Parallel Codex jobs for the next work session
 
-Do not call the retained footprint a leak until repeated-session testing distinguishes one-time network residency from cumulative loss.
+Use separate branches/worktrees to avoid overlapping edits.
 
-Repeated-cycle interpretation after File Transfer is fixed:
+**Job A — diagnostic build**
+- reset reason + Nooir silent-restart flag;
+- File Transfer enter;
+- BLE stop begin/end/duration;
+- BT controller state;
+- heap/largest before and after BLE stop;
+- Wi-Fi scan/connect begin/success;
+- before/after Clock/Weather sync;
+- WifiSelection exit/destroy;
+- mDNS;
+- WebServer allocation;
+- route registration;
+- WebDAV;
+- HTTP begin;
+- WebSocket;
+- UDP;
+- `SERVER_RUNNING`;
+- File Transfer exit reason.
 
-- ~96 -> ~84 -> ~84 -> ~84 KiB: likely one-time networking residency;
-- ~96 -> ~84 -> ~72 -> ~60 KiB: cumulative leak;
-- large first drop + small later drops: residency plus smaller leak/fragmentation.
+**Job B — File-Transfer-only BT-memory-release experiment**
+- implement the guarded release described above;
+- measure actual reclaimed heap/largest block on X4;
+- ensure BLE cannot be rearmed before the required restart.
 
-Goal:
-- identify retained allocations/fragmentation;
-- recover enough healthy post-Wi-Fi heap/largest block for BLE to return when safely affordable;
-- preserve Reader priority and existing BLE floors.
+**Job C — BLE-off 1.6.3 A/B control**
+- build the same 1.6.3 source with release BLE/NimBLE compiled out;
+- compare boot/home heap, largest block, and File Transfer behavior;
+- diagnostic only: do not treat this as a proposal to remove Bluetooth.
 
-## 2. Reference-firmware audit: stock XTEINK and CrossLink
+**Optional Job D — deterministic builds**
+- make generated gzip/HTML output deterministic (`mtime=0` where appropriate);
+- build twice from identical sources and require identical firmware hashes.
 
-Use other firmware as evidence/design references, not as a feature shopping list.
+Do not start EPUB feature implementation in parallel with the blocker investigation; keep physical testing focused.
 
-### Stock XTEINK X4
+### Other suspects tonight's audit moved down the list
 
-Public source code was not found during the audit. Official documentation and public firmware/update behavior can still be used for comparison.
+- broad Settings-page/API bug;
+- Arduino/core version mismatch;
+- auto Clock/Weather being a brand-new behavior;
+- obvious BLE re-arm during active File Transfer;
+- custom interface-font loading on default settings.
 
-Useful references:
-- Hotspot-first local browser transfer at `192.168.3.3`;
-- Bluetooth scanning/connection stability behavior;
-- EPUB punctuation, English word spacing, paragraph indentation, and line-break behavior;
-- JPG refresh/display performance;
-- book-vs-chapter progress display;
-- explicit index rebuild workflow;
-- external-font performance tradeoffs.
+Keep these available if the physical logs contradict the leading memory-budget hypothesis.
 
-### CrossLink
+## 2. Post-Wi-Fi BLE recovery
 
-CrossLink is MIT-licensed and can be used as an implementation reference with attribution/license preservation where code is reused.
+Separate from the reboot bug.
 
-High-value comparisons:
-- File Transfer startup/shutdown ordering and memory behavior;
-- clean stop order: web server -> mDNS/DNS -> disconnect -> `WiFi.mode(WIFI_OFF)`;
-- leaner web-server footprint as a baseline, but not as proof that Nooir must remove routes;
-- table/image/kerning EPUB fixtures;
-- small parser/layout fixes only when a real Nooir fixture proves value.
+Physical X4 evidence already showed roughly:
+- ~96.5 KiB free after BLE stop / before Wi-Fi;
+- ~48.9 KiB at a captured Wi-Fi low point;
+- ~84-85 KiB after Wi-Fi OFF / selection teardown;
+- BLE correctly stays below its admission floors;
+- sleep/wake restores the healthy baseline.
 
-Do not import CrossLink's different partition/install model into Nooir.
+After File Transfer is fixed, run repeated Wi-Fi cycles without reboot:
+- ~96 -> ~84 -> ~84 -> ~84 KiB suggests one-time network residency;
+- ~96 -> ~84 -> ~72 -> ~60 KiB suggests a recurring leak;
+- large first drop + tiny later drops suggests residency plus smaller fragmentation/leak.
 
-## 3. EPUB fidelity — surgical improvements only
+Goal: recover enough healthy heap/largest block for BLE to return when safely affordable without weakening the existing Reader-first BLE floors.
 
-Keep Nooir a fast book renderer, not a browser engine. Every addition must preserve X3/X4 responsiveness, bounded memory use, cache correctness, and readable fallback.
+## 3. Deterministic release builds
 
-Use the Standard Ebooks edition of Theodore Roosevelt's *Through the Brazilian Wilderness* as a permanent real-world regression/reference EPUB.
+- use deterministic gzip timestamps where appropriate;
+- make two clean `gh_release` builds from identical source;
+- require identical firmware hashes.
 
-### A. Small caps
+## 4. EPUB fidelity — surgical only
 
-Investigate `font-variant: small-caps`.
-- prefer bounded, allocation-light text-run handling;
-- no publisher font requirement;
-- measure layout/page-turn cost before keeping it.
+Use Standard Ebooks *Through the Brazilian Wilderness* as a permanent real-world reference.
 
-### B. Chapter heading / `hgroup` fidelity
+### Small caps
+Investigate `font-variant: small-caps` with bounded, allocation-light handling.
 
-Improve common heading structures such as `hgroup` plus chapter subtitle text.
-- investigate narrowly bounded child (`>`) and adjacent sibling (`+`) selector support only where real books need it;
-- avoid a general selector engine.
+### Chapter headings / hgroup
+Improve common book heading structures. Consider narrowly bounded child (`>`) and adjacent-sibling (`+`) selector support only where fixtures prove value.
 
-### C. Verse / letters / block typography
+### Verse / letters
+Improve hanging indents, margins, spacing, alignment, signatures/salutations where the current block model supports them cheaply.
 
-Improve where the current BlockStyle model can support it cheaply:
-- hanging indents;
-- margins;
-- alignment;
-- spacing;
-- signatures/salutations;
-- verse presentation.
+### Tables
+Keep the safe flowing-row fallback. Consider only small readability improvements or lightweight `colspan` awareness.
 
-### D. Tables
+Not planned: full browser CSS, floats, true floated drop caps, publisher `@font-face`, complex table grid geometry, flexbox/grid/multi-column layout.
 
-Keep the current bounded flowing-row renderer as the safe baseline.
-- consider lightweight `colspan` awareness;
-- improve readability/headers where cheap;
-- do not build a browser-style grid engine.
+## 5. EPUB regression / hardening
 
-### Explicit EPUB scope limits
-
-Not planned for 1.6.4:
-- full browser CSS;
-- CSS floats;
-- true floated drop caps;
-- general pseudo-elements;
-- full descendant/child/sibling selector engine;
-- publisher `@font-face`;
-- complex rowspan/colspan geometry;
-- flexbox/grid/multi-column layout.
-
-## 4. EPUB regression/torture set
-
-Create/retain fixtures for:
+Keep/add fixtures for:
 - small caps;
 - chapter headings/hgroup;
-- verse and letters;
-- simple/complex tables;
-- huge images;
+- verse/letters;
+- tables;
+- huge images/JPG-heavy pages;
 - malformed XHTML/entities;
 - empty inline/span spacing;
 - unknown XML tags;
 - RTL/LTR mixtures;
-- cache interruption/recovery;
-- low-memory fallback;
-- punctuation/word spacing/line-break behavior inspired by stock XTEINK notes;
-- JPG-heavy pages;
+- cache interruption/low-memory fallback;
+- stock-XTEINK-inspired punctuation/word-spacing/line-break cases;
 - useful CrossLink table/image/kerning fixtures where provenance/licensing is clear.
 
-## 5. Parser/cache/network hardening
+Carry only fixture-proven parser/cache fixes, including KOReader oversized-response handling where relevant. No broad renderer rewrite.
 
-Evidence-driven only:
-- unknown XML-tag regression behavior;
-- empty CSS span / inline-spacing behavior;
-- KOReader oversized-response handling where relevant;
-- tiny parser/cache fixes that apply cleanly;
-- no broad renderer rewrite.
+## 6. CBZ / manga
 
-## 6. Deterministic release builds
-
-Make generated HTML/gzip assets reproducible.
-- use deterministic gzip timestamps (`mtime=0` where appropriate);
-- run two clean `gh_release` builds from identical sources;
-- require identical firmware hashes.
-
-## 7. Bluetooth Page Turner follow-up
-
-Bluetooth remains Beta.
-
-After network lifecycle stability:
-- broaden controller compatibility;
-- improve mapping/setup UX;
-- consider a bounded raw-HID learner using fixed storage only;
-- improve BLE/Wi-Fi lifecycle feedback;
-- do not weaken Reader-first memory policy.
-
-## 8. CBZ / manga
-
-Still experimental.
-
-Candidate work:
+Still experimental. Later 1.6.4 candidates:
 - high-resolution page performance;
-- first-page/startup latency;
+- faster first page/startup;
 - safer/smarter prefetch;
 - optional web-assisted preprocessing;
-- image quality/performance balance;
-- never steal memory needed for EPUB/Reader stability.
+- quality/performance balance without stealing EPUB/Reader memory.
 
-## 9. Hardware validation
+## 7. Bluetooth follow-up
+
+Bluetooth remains Beta. After lifecycle stability:
+- more controller compatibility;
+- easier mapping/setup;
+- possibly a bounded fixed-storage raw-HID learner;
+- better BLE/Wi-Fi lifecycle feedback.
+
+## 8. Hardware validation
 
 - old X4 remains primary physical target;
-- X3 remains compatibility floor; full physical regression validation is still needed;
-- X4 Pro / X4 Classic remain investigation items, not officially supported targets.
+- X3 remains compatibility floor; full physical regression validation still needed;
+- X4 Pro / X4 Classic remain later investigation targets.
+
+## 9. Reference firmware
+
+Broad audits are already done. Do not repeat them.
+
+Use only targeted references:
+- stock XTEINK: behavioral reference, including hotspot/browser transfer and rendering behavior;
+- CrossLink: MIT-licensed implementation reference for specific lifecycle/server/parser questions.
 
 ## 10. Diagnostics cleanup
 
-Keep allocator/BLE/network forensic diagnostics while 1.6.4 lifecycle work is active. Trim or gate them only after replacement behavior is proven physically.
-
-## Deferred / not implemented
-
-- PDF reading
-- FB2 reading
-- full system-wide dark UI
-- full browser-grade EPUB CSS
-- official X4 Pro / X4 Classic support
+Keep useful allocator/BLE/network diagnostics while 1.6.4 lifecycle work is active. Trim/gate them only after replacement behavior is physically proven.
 
 ## Acceptance rule
 
