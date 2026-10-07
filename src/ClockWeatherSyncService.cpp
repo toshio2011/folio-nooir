@@ -21,6 +21,11 @@
 namespace {
 std::mutex syncMutex;
 
+void logSyncMemory(const char* stage) {
+  LOG_INF("NETMEM", "stage=%s free=%u largest=%u", stage, static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+}
+
 bool parseCoordinate(const char* text, const double minValue, const double maxValue) {
   if (!text || !*text) return false;
   char* end = nullptr;
@@ -79,7 +84,8 @@ uint32_t dateKeyFromIso(const char* iso) {
 }
 }  // namespace
 
-ClockWeatherSyncResult ClockWeatherSyncService::sync(const bool syncClock, const bool syncWeather) {
+ClockWeatherSyncResult ClockWeatherSyncService::sync(const bool syncClock, const bool syncWeather,
+                                                     const bool stopNtpAfterSync) {
   std::lock_guard<std::mutex> lock(syncMutex);
   ClockWeatherSyncResult result;
 
@@ -88,6 +94,7 @@ ClockWeatherSyncResult ClockWeatherSyncService::sync(const bool syncClock, const
     result.failed = true;
     return result;
   }
+  logSyncMemory("sync_begin");
 
   // Fetch weather first. Open-Meteo returns the selected location's current
   // UTC offset, which lets the clock/date timestamp be recorded in that same
@@ -101,12 +108,14 @@ ClockWeatherSyncResult ClockWeatherSyncService::sync(const bool syncClock, const
     } else {
       result.weatherSynced = fetchWeather();
     }
+    logSyncMemory("weather_done");
   }
 
   // HalClock transparently uses the hardware RTC when present and the
   // Wi-Fi-synchronised system clock on X4-class boards without one.
   if (syncClock) {
-    result.clockSynced = halClock.syncFromNTP();
+    result.clockSynced = halClock.syncFromNTP(stopNtpAfterSync);
+    logSyncMemory("clock_done");
     if (result.clockSynced) {
       SETTINGS.clockHasBeenSynced = 1;
       const time_t now = time(nullptr);
@@ -129,9 +138,11 @@ ClockWeatherSyncResult ClockWeatherSyncService::sync(const bool syncClock, const
   if (result.clockSynced || result.weatherSynced) {
     SETTINGS.saveToFile();
     WEATHER_STORE.saveToFile();
+    logSyncMemory("persist_done");
   }
 
   result.failed = !result.clockSynced && !result.weatherSynced && !result.weatherSkippedNoLocation;
+  logSyncMemory("sync_done");
   return result;
 }
 

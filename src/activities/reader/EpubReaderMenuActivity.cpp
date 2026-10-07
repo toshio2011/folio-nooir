@@ -4,6 +4,7 @@
 #include <I18n.h>
 
 #include "CrossPointSettings.h"
+#include "BleInput.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -11,11 +12,13 @@
 EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                const std::string& title, const int currentPage, const int totalPages,
                                                const int bookProgressPercent, const uint8_t currentOrientation,
-                                               const bool hasFootnotes, const bool hasBookmarks, const bool hasClippings)
+                                               const bool hasFootnotes, const bool hasBookmarks, const bool hasClippings,
+                                               QuickActions::Context quickActionContext)
     : Activity("EpubReaderMenu", renderer, mappedInput),
       menuItems(buildMenuItems(hasFootnotes, hasBookmarks, hasClippings)),
       title(title),
       pendingOrientation(currentOrientation),
+      quickActionContext(quickActionContext),
       currentPage(currentPage),
       totalPages(totalPages),
       bookProgressPercent(bookProgressPercent) {}
@@ -46,6 +49,10 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuI
   items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON});
   items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS});
   items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});
+  items.push_back({MenuAction::QUICK_ACTIONS, StrId::STR_QUICK_ACTIONS});
+#if FREEINK_CAP_BLE_HID_HOST
+  items.push_back({MenuAction::BLUETOOTH, StrId::STR_BLUETOOTH});
+#endif
   return items;
 }
 
@@ -75,6 +82,7 @@ void EpubReaderMenuActivity::loop() {
   // the configured size consistently.
   renderer.setUiScaleTextEnabled(true);
   if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) {
+    if (!optionPopup.isActive()) quickActionPopup = false;
     // The popup acts on button press; if that input closed it, the trailing
     // release must be swallowed below (Back would close the menu, Confirm
     // would re-activate the selected item).
@@ -116,6 +124,27 @@ void EpubReaderMenuActivity::loop() {
                          selectedPageTurnOption = idx;
                          requestUpdate();
                        });
+      requestUpdate();
+      return;
+    }
+
+    if (selectedAction == MenuAction::QUICK_ACTIONS) {
+      const auto count = QuickActions::collectAvailable(quickActionContext, quickActionIds);
+      if (count == 0) {
+        requestUpdate();
+        return;
+      }
+      const std::array<const char*, QuickActions::SLOT_COUNT> labels = {
+          QuickActions::label(quickActionIds[0]), QuickActions::label(quickActionIds[1]),
+          QuickActions::label(quickActionIds[2]), QuickActions::label(quickActionIds[3])};
+      quickActionPopup = true;
+      optionPopup.show(tr(STR_QUICK_ACTIONS), labels.data(), static_cast<int>(count), 0, [this](const int index) {
+        quickActionPopup = false;
+        if (index < 0 || index >= static_cast<int>(QuickActions::SLOT_COUNT)) return;
+        setResult(MenuResult{static_cast<int>(MenuAction::QUICK_ACTIONS), pendingOrientation,
+                             selectedPageTurnOption, static_cast<int>(quickActionIds[index])});
+        finish();
+      });
       requestUpdate();
       return;
     }
@@ -211,7 +240,11 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
           return "";
         }
       },
-      true);
+      true, nullptr, nullptr,
+      [this](const int index) {
+        const auto action = menuItems[index].action;
+        return action == MenuAction::ROTATE_SCREEN || action == MenuAction::AUTO_PAGE_TURN;
+      });
 
   // Footer / Hints
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));

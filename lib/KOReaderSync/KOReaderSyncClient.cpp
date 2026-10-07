@@ -2,10 +2,12 @@
 
 #include <ArduinoJson.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <SecureHttpClient.h>
 #include <base64.h>
 
 #include <string>
+#include <cstring>
 
 #include "KOReaderCredentialStore.h"
 
@@ -41,6 +43,7 @@ constexpr char DEVICE_ID[] = "crosspoint-reader";
 // 43 KB largest block; requiring 50 KB contiguous refused syncs that fit.
 constexpr uint32_t MIN_FREE_FOR_TLS = 50000;
 constexpr uint32_t MIN_BLOCK_FOR_TLS = 20000;
+constexpr size_t MAX_PROGRESS_RESPONSE_BYTES = 8 * 1024;
 
 bool isHttpSuccess(const int status) { return status >= 200 && status < 300; }
 
@@ -194,7 +197,31 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
     return NETWORK_ERROR;
   }
   applyAuthHeaders(http);
-  const int httpCode = http.GET();
+  auto responseBuffer = makeUniqueNoThrow<char[]>(MAX_PROGRESS_RESPONSE_BYTES + 1);
+  if (!responseBuffer) {
+    http.end();
+    LOG_ERR("KOSync", "Unable to allocate bounded progress response buffer");
+    return LOW_MEMORY;
+  }
+
+  size_t responseBytes = 0;
+  bool oversized = false;
+  const int httpCode = http.GET([&](const uint8_t* data, const size_t len) {
+    if (http.hasContentLength() && http.getContentLength() > MAX_PROGRESS_RESPONSE_BYTES) {
+      oversized = true;
+      return false;
+    }
+    if (len > MAX_PROGRESS_RESPONSE_BYTES - responseBytes) {
+      oversized = true;
+      return false;
+    }
+    std::memcpy(responseBuffer.get() + responseBytes, data, len);
+    responseBytes += len;
+    return true;
+  });
+  if (http.hasContentLength() && http.getContentLength() > MAX_PROGRESS_RESPONSE_BYTES) oversized = true;
+  const bool responseComplete = http.responseComplete();
+  const bool callbackAborted = http.callbackAborted();
   lastHttpCode = httpCode;
 
   LOG_DBG("KOSync", "Get progress response: %d", httpCode);
@@ -215,20 +242,28 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
   }
 
   if (isHttpSuccess(httpCode)) {
-    const std::string responseBody = http.getString();
     http.end();
 
 #if NOOIR_KOSYNC_FONT_DIAGNOSTICS
-    syncDiagnostic("get_body", httpCode, documentHash.c_str(), responseBody.size());
+    syncDiagnostic("get_body", httpCode, documentHash.c_str(), responseBytes);
 #endif
 
-    if (responseBody.length() == 0) {
+    if (oversized || callbackAborted) {
+      LOG_ERR("KOSync", "Progress response exceeded %u-byte bound", static_cast<unsigned>(MAX_PROGRESS_RESPONSE_BYTES));
+      return JSON_ERROR;
+    }
+    if (!responseComplete) {
+      LOG_ERR("KOSync", "Progress response was incomplete after %u bytes", static_cast<unsigned>(responseBytes));
+      return JSON_ERROR;
+    }
+    if (responseBytes == 0) {
       LOG_ERR("KOSync", "Successful progress response contained no payload");
       return JSON_ERROR;
     }
 
+    responseBuffer[responseBytes] = '\0';
     JsonDocument doc;
-    const DeserializationError error = deserializeJson(doc, responseBody.c_str());
+    const DeserializationError error = deserializeJson(doc, responseBuffer.get(), responseBytes);
 
     if (error) {
       LOG_ERR("KOSync", "JSON parse failed: %s", error.c_str());

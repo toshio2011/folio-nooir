@@ -171,6 +171,124 @@ Page pageAtStart(const Book* books, const size_t bookCount, const size_t start, 
   return result;
 }
 
+struct TwoRowGeometry {
+  int top = 0;
+  int height = 0;
+  int shelfY = 0;
+  int bookTop = 0;
+};
+
+TwoRowGeometry twoRowGeometry(const Rect& bounds, const size_t row) {
+  const int totalHeight = std::max(60, bounds.height);
+  const int rowHeight = std::max(30, (totalHeight - TWO_ROW_ROW_GAP) / 2);
+  const int top = bounds.y + static_cast<int>(row) * (rowHeight + TWO_ROW_ROW_GAP);
+  const int shelfY = top + rowHeight - TWO_ROW_SHELF_HEIGHT;
+  return TwoRowGeometry{top, rowHeight, shelfY, top + 4};
+}
+
+int twoRowBookHeight(const Book& book, const Rect& bounds) {
+  const int rowHeight = twoRowGeometry(bounds, 0).height;
+  const int available = std::max(30, rowHeight - TWO_ROW_SHELF_HEIGHT - 8);
+  if (available <= 48) return available;
+  const int lower = std::max(48, available * 78 / 100);
+  const int upper = std::max(lower, available - 2);
+  const int target = available * 87 / 100;
+  const int variation = std::max(3, available * 5 / 100);
+  const int offset = static_cast<int>((stableHash(book, 17) >> 8) % (variation * 2 + 1)) - variation;
+  return std::clamp(target + offset, lower, upper);
+}
+
+int twoRowBookWidth(const Book& book, const Rect& bounds) {
+  const int available = std::max(1, bounds.width - kShelfInset * 2);
+  const int width = TWO_ROW_MIN_BOOK_WIDTH +
+                    static_cast<int>(stableHash(book, 19) % static_cast<uint32_t>(TWO_ROW_MAX_BOOK_WIDTH -
+                                                                                   TWO_ROW_MIN_BOOK_WIDTH + 1));
+  if (available <= TWO_ROW_MIN_BOOK_WIDTH) return available;
+  return std::min(width, available);
+}
+
+TwoRowPage twoRowPageAtStart(const Book* books, const size_t bookCount, const size_t start, const Rect& bounds) {
+  TwoRowPage result{};
+  const size_t count = bookCount;
+  result.firstIndex = std::min(start, count);
+  if (books == nullptr || count == 0 || start >= count) return result;
+
+  const int left = bounds.x + kShelfInset;
+  const int right = std::max(left + 1, bounds.x + bounds.width - kShelfInset);
+  size_t index = start;
+  for (size_t row = 0; row < 2 && index < count; ++row) {
+    const auto geometry = twoRowGeometry(bounds, row);
+    int cursor = left;
+    const size_t rowSlotStart = result.itemCount;
+    size_t rowCount = 0;
+    while (index < count && result.itemCount < TWO_ROW_SLOT_CAPACITY) {
+      const int remaining = right - cursor;
+      int width = twoRowBookWidth(books[index], bounds);
+      if (rowCount > 0 && width > remaining) break;
+      if (rowCount == 0) width = std::max(1, std::min(width, remaining));
+      if (width <= 0) break;
+      const int height = twoRowBookHeight(books[index], bounds);
+      result.slots[result.itemCount] =
+          Slot{index, Rect{cursor, geometry.shelfY - height, width, height}};
+      ++result.itemCount;
+      ++rowCount;
+      ++index;
+      cursor += width + TWO_ROW_BOOK_GAP;
+    }
+
+    if (rowCount == 0) continue;
+
+    // Match the original Spine's balanced composition on each shelf. The
+    // final rectangles are shared by rendering and hit-testing, so this is a
+    // geometry adjustment rather than a render-only offset.
+    const int groupLeft = result.slots[rowSlotStart].rect.x;
+    const int groupRight = result.slots[result.itemCount - 1].rect.x +
+                           result.slots[result.itemCount - 1].rect.width;
+    const int groupCenter = (groupLeft + groupRight) / 2;
+    const int shelfCenter = (left + right) / 2;
+    const int offset = shelfCenter - groupCenter;
+    for (size_t slot = rowSlotStart; slot < result.itemCount; ++slot) {
+      result.slots[slot].rect.x += offset;
+    }
+
+    // Reuse the original Spine's sparse, deterministic plant idea only when
+    // a side gap is genuinely available. It never displaces a book and stays
+    // inside the same fixed page record.
+    const uint32_t seed = stableHash(books[start + rowSlotStart], row + 29);
+    if ((seed & 0x03u) == 0u) {
+      const int groupLeftAfter = result.slots[rowSlotStart].rect.x;
+      const int groupRightAfter = result.slots[result.itemCount - 1].rect.x +
+                                  result.slots[result.itemCount - 1].rect.width;
+      const int leftGap = groupLeftAfter - left;
+      const int rightGap = right - groupRightAfter;
+      const bool useLeft = leftGap >= rightGap;
+      const int gap = useLeft ? leftGap : rightGap;
+      constexpr int plantWidth = 24;
+      const int plantHeight = std::min(28, std::max(16, geometry.height / 4));
+      const int availablePlantHeight = geometry.shelfY - geometry.bookTop;
+      if (gap >= plantWidth + 8 && availablePlantHeight >= plantHeight) {
+        const int plantX = useLeft ? left + (gap - plantWidth) / 2
+                                    : groupRightAfter + (gap - plantWidth) / 2;
+        result.plants[row] = Plant{true, Rect{plantX, geometry.shelfY - plantHeight, plantWidth, plantHeight}};
+      }
+    }
+  }
+  return result;
+}
+
+size_t twoRowPageCountFor(const Book* books, const size_t bookCount, const Rect& bounds) {
+  const size_t count = bookCount;
+  size_t start = 0;
+  size_t pages = 0;
+  while (start < count && pages < 255) {
+    const TwoRowPage page = twoRowPageAtStart(books, count, start, bounds);
+    if (page.itemCount == 0) break;
+    start += page.itemCount;
+    ++pages;
+  }
+  return pages;
+}
+
 }  // namespace
 
 uint32_t stableHash(const Book& book, const size_t itemIndex) {
@@ -249,6 +367,21 @@ Rect shelfRect(const Page& page, const Rect& bounds) {
   return Rect{left, shelfY, std::max(1, right - left), SHELF_PLANK_HEIGHT};
 }
 
+Rect twoRowShelfRect(const TwoRowPage& page, const Rect& bounds, const size_t row) {
+  const auto geometry = twoRowGeometry(bounds, std::min<size_t>(row, 1));
+  bool found = false;
+  for (size_t index = 0; index < page.itemCount; ++index) {
+    const auto& slot = page.slots[index];
+    if (slot.rect.y < geometry.bookTop || slot.rect.y >= geometry.shelfY) continue;
+    found = true;
+  }
+  if (!found) return Rect{bounds.x, geometry.shelfY, 0, 0};
+  // Each populated row owns the full intended shelf width, like the original
+  // Spine. An empty row has no shelf at all, preventing a detached plank on a
+  // partial final page.
+  return Rect{bounds.x, geometry.shelfY, std::max(1, bounds.width), TWO_ROW_SHELF_HEIGHT};
+}
+
 Page pageForSelection(const Book* books, const size_t bookCount, size_t selectedIndex, const Rect& bounds) {
   Page result{};
   if (books == nullptr || bookCount == 0) return result;
@@ -300,6 +433,64 @@ size_t previousPageStart(const Book* books, const size_t bookCount, const size_t
     if (candidate.itemCount == 0) break;
     previous = start;
     start += candidate.itemCount;
+  }
+  return previous;
+}
+
+TwoRowPage twoRowPageForSelection(const Book* books, const size_t bookCount, size_t selectedIndex,
+                                  const Rect& bounds) {
+  TwoRowPage result{};
+  const size_t count = bookCount;
+  if (books == nullptr || count == 0) return result;
+  selectedIndex = std::min(selectedIndex, count - 1);
+
+  size_t start = 0;
+  size_t pageNumber = 1;
+  while (start < count && pageNumber <= 255) {
+    const TwoRowPage candidate = twoRowPageAtStart(books, count, start, bounds);
+    if (candidate.itemCount == 0) break;
+    if (selectedIndex >= candidate.firstIndex && selectedIndex < candidate.firstIndex + candidate.itemCount) {
+      result = candidate;
+      result.pageNumber = static_cast<uint8_t>(std::min<size_t>(pageNumber, 255));
+      break;
+    }
+    start += candidate.itemCount;
+    ++pageNumber;
+  }
+  result.pageCount = static_cast<uint8_t>(std::min<size_t>(255, twoRowPageCountFor(books, count, bounds)));
+  return result;
+}
+
+size_t twoRowNextPageStart(const Book* books, const size_t bookCount, const size_t selectedIndex,
+                           const Rect& bounds) {
+  const TwoRowPage current = twoRowPageForSelection(books, bookCount, selectedIndex, bounds);
+  if (current.itemCount == 0 || current.pageCount <= 1 || current.pageNumber >= current.pageCount) return 0;
+  return current.firstIndex + current.itemCount;
+}
+
+size_t twoRowPreviousPageStart(const Book* books, const size_t bookCount, const size_t selectedIndex,
+                               const Rect& bounds) {
+  const TwoRowPage current = twoRowPageForSelection(books, bookCount, selectedIndex, bounds);
+  if (current.itemCount == 0 || current.pageCount <= 1) return 0;
+  if (current.firstIndex == 0) {
+    size_t start = 0;
+    size_t last = 0;
+    while (start < bookCount) {
+      const TwoRowPage page = twoRowPageAtStart(books, bookCount, start, bounds);
+      if (page.itemCount == 0) break;
+      last = start;
+      start += page.itemCount;
+    }
+    return last;
+  }
+
+  size_t start = 0;
+  size_t previous = 0;
+  while (start < current.firstIndex) {
+    const TwoRowPage page = twoRowPageAtStart(books, bookCount, start, bounds);
+    if (page.itemCount == 0) break;
+    previous = start;
+    start += page.itemCount;
   }
   return previous;
 }

@@ -34,4 +34,6 @@ class OtaUpdateActivity : public Activity {
   void render(RenderLock&&) override;
   bool preventAutoSleep() override { return state == CHECKING_FOR_UPDATE || state == UPDATE_IN_PROGRESS; }
   bool skipLoopDelay() override { return true; }  // Prevent power-saving mode
+  bool acceptsBluetoothInput() const override { return false; }
+  bool bluetoothResourceSensitive() const override { return true; }
 };

@@ -10,6 +10,7 @@
 
 #include "CrossPointSettings.h"
 #include "ClockWeatherSyncService.h"
+#include "BleInput.h"
 #include "MappedInputManager.h"
 #include "WifiCredentialStore.h"
 #include "activities/util/KeyboardEntryActivity.h"
@@ -18,6 +19,9 @@
 
 void WifiSelectionActivity::onEnter() {
   Activity::onEnter();
+  LOG_INF("WIFI", "wifi_begin activity=selection free=%u largest=%u mode=%d",
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()),
+          static_cast<int>(WiFi.getMode()));
 
   // Load saved WiFi credentials - SD card operations need lock as we use SPI
   // for both
@@ -77,18 +81,29 @@ void WifiSelectionActivity::onEnter() {
 void WifiSelectionActivity::onExit() {
   Activity::onExit();
 
-  LOG_DBG("WIFI", "Free heap at onExit start: %d bytes", ESP.getFreeHeap());
+  const uint32_t freeBefore = ESP.getFreeHeap();
+  const uint32_t largestBefore = ESP.getMaxAllocHeap();
+  LOG_INF("WIFI", "selection_exit stage=before action=%s free=%u largest=%u mode=%d",
+          preserveWifiOnExit ? "transfer" : "deinit", static_cast<unsigned>(freeBefore),
+          static_cast<unsigned>(largestBefore), static_cast<int>(WiFi.getMode()));
 
-  // Stop any ongoing WiFi scan
-  LOG_DBG("WIFI", "Deleting WiFi scan...");
+  // Always release scan-result storage. A successful selection transfers the
+  // connected station to a parent that performs network work immediately;
+  // cancel/failure and plain Settings exits own a temporary session instead.
   WiFi.scanDelete();
-  LOG_DBG("WIFI", "Free heap after scanDelete: %d bytes", ESP.getFreeHeap());
+  if (!preserveWifiOnExit) {
+    // Credentials are stored by WifiCredentialStore. Do not erase the
+    // firmware/network configuration; disconnect and turn off the radio so
+    // the WiFi driver and scan allocations can be reclaimed before BLE rearm.
+    WiFi.disconnect(false, false);
+    const bool wifiStopped = WiFi.mode(WIFI_OFF);
+    LOG_INF("WIFI", "wifi_stop result=%d mode=%d", wifiStopped ? 1 : 0, static_cast<int>(WiFi.getMode()));
+  }
 
-  // Note: We do NOT disconnect WiFi here - the parent activity
-  // (CrossPointWebServerActivity) manages WiFi connection state. We just clean
-  // up the scan and task.
-
-  LOG_DBG("WIFI", "Free heap at onExit end: %d bytes", ESP.getFreeHeap());
+  LOG_INF("WIFI", "wifi_deinit_done action=%s free=%u largest=%u mode=%d",
+          preserveWifiOnExit ? "transfer" : "deinit", static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()), static_cast<int>(WiFi.getMode()));
+  if (!preserveWifiOnExit) bleinput::requestLifecycleReevaluation();
 }
 
 void WifiSelectionActivity::startWifiScan(const bool autoScan) {
@@ -97,6 +112,8 @@ void WifiSelectionActivity::startWifiScan(const bool autoScan) {
   state = WifiSelectionState::SCANNING;
   networks.clear();
   requestUpdate();
+  LOG_INF("WIFI", "wifi_scan_begin auto=%d free=%u largest=%u", autoScan ? 1 : 0,
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
 
   // Set WiFi mode to station
   WiFi.mode(WIFI_STA);
@@ -116,6 +133,9 @@ void WifiSelectionActivity::processWifiScanResults() {
   }
 
   if (scanResult == WIFI_SCAN_FAILED) {
+    LOG_ERR("WIFI", "wifi_scan_fail free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    WiFi.scanDelete();
     networks.clear();
     realNetworkCount = 0;
     appendHiddenNetworkEntry();
@@ -166,6 +186,10 @@ void WifiSelectionActivity::processWifiScanResults() {
 
   realNetworkCount = networks.size();
   appendHiddenNetworkEntry();
+
+  LOG_INF("WIFI", "wifi_scan_complete networks=%u free=%u largest=%u",
+          static_cast<unsigned>(realNetworkCount), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
 
   WiFi.scanDelete();
 
@@ -349,6 +373,8 @@ void WifiSelectionActivity::attemptConnection() {
   connectedIP.clear();
   connectionError.clear();
   requestUpdate();
+  LOG_INF("WIFI", "wifi_connect_begin saved=%d free=%u largest=%u", usedSavedPassword ? 1 : 0,
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
 
   WiFi.persistent(false);  // Credentials are managed by WifiCredentialStore; suppress SDK NVS auto-connect
   WiFi.mode(WIFI_STA);
@@ -386,6 +412,8 @@ void WifiSelectionActivity::checkConnectionStatus() {
     char ipStr[16];
     snprintf(ipStr, sizeof(ipStr), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
     connectedIP = ipStr;
+    LOG_INF("WIFI", "wifi_connect_success free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
     autoConnecting = false;
 
 #if defined(ENABLE_SERIAL_LOG) && LOG_LEVEL >= 2
@@ -429,6 +457,8 @@ void WifiSelectionActivity::checkConnectionStatus() {
   }
 
   if (status == WL_CONNECT_FAILED || status == WL_NO_SSID_AVAIL) {
+    LOG_ERR("WIFI", "wifi_connect_fail status=%d free=%u largest=%u", static_cast<int>(status),
+            static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
     connectionError = tr(STR_ERROR_GENERAL_FAILURE);
     if (status == WL_NO_SSID_AVAIL) {
       connectionError = tr(STR_ERROR_NETWORK_NOT_FOUND);
@@ -445,6 +475,8 @@ void WifiSelectionActivity::checkConnectionStatus() {
   // Check for timeout
   const unsigned long timeoutMs = autoConnecting ? AUTO_CONNECTION_TIMEOUT_MS : CONNECTION_TIMEOUT_MS;
   if (millis() - connectionStartTime > timeoutMs) {
+    LOG_ERR("WIFI", "wifi_connect_fail reason=timeout free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
     WiFi.disconnect();
     connectionError = tr(STR_ERROR_CONNECTION_TIMEOUT);
     if (autoConnecting) {
@@ -1004,6 +1036,9 @@ void WifiSelectionActivity::renderForgetPrompt(const Rect* screen, const ThemeMe
 }
 
 void WifiSelectionActivity::onComplete(const bool connected) {
+  LOG_INF("WIFI", "wifi_%s ssid=%.28s free=%u largest=%u", connected ? "success" : "cancel",
+          selectedSSID.c_str(), static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  preserveWifiOnExit = connected && retainConnectionOnSuccess;
   ActivityResult result;
   result.isCancelled = !connected;
   if (connected) {

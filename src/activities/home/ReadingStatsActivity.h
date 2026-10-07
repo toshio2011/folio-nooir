@@ -14,13 +14,16 @@ class ReadingStatsActivity final : public Activity {
   enum class Tab : uint8_t { Overview, Calendar, Books, Achievements };
 
   ReadingStatsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string bookPath = {},
-                       bool calendarMode = false)
-      : Activity(calendarMode ? "ReadingCalendar" : "ReadingStats", renderer, mappedInput),
-        entryBookPath(std::move(bookPath)), calendarEntry(calendarMode) {}
+                       bool calendarMode = false);
 
+  ~ReadingStatsActivity() override;
   void onEnter() override;
+  void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
+  // Snapshot construction retains per-day and per-book vectors; keep the
+  // optional BLE controller out of this memory-sensitive screen.
+  bool bluetoothResourceSensitive() const override { return true; }
 
  private:
   std::string entryBookPath;

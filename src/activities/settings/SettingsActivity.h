@@ -33,6 +33,7 @@ enum class SettingAction {
   ToDoList,
   SettingsProfiles,
   ClearFavoriteSleepImage,
+  QuickActions,
 };
 
 struct SettingInfo {
@@ -183,14 +184,18 @@ class SettingsActivity final : public Activity {
   void enterCategory(int categoryIndex);
   void toggleCurrentSetting();
   void openSleepTimeoutPicker();
+  void openQuickActionsPicker();
   void rebuildSettingsLists();
   void syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged);
 
  public:
-  explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : Activity("Settings", renderer, mappedInput) {}
+  explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
+  ~SettingsActivity() override;
   void onEnter() override;
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
+  // Settings rebuilds several transient lists and can open heavier child
+  // screens; release the optional BLE controller before those allocations.
+  bool bluetoothResourceSensitive() const override { return true; }
 };

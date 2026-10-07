@@ -61,6 +61,11 @@ struct CssLength {
 // Font style options matching CSS font-style property
 enum class CssFontStyle : uint8_t { Normal = 0, Italic = 1 };
 
+// Publisher small caps are synthesized at render time from the active reader
+// font.  Keeping this as one compact CSS value avoids retaining transformed
+// strings or a second font family.
+enum class CssFontVariant : uint8_t { Normal = 0, SmallCaps = 1 };
+
 // Font weight options - CSS supports 100-900, we simplify to normal/bold
 enum class CssFontWeight : uint8_t { Normal = 0, Bold = 1 };
 
@@ -106,6 +111,7 @@ struct CssPropertyFlags {
   uint16_t verticalAlign : 1;
   uint16_t fontSize : 1;
   uint16_t lineHeight : 1;
+  uint16_t fontVariant : 1;
 
   CssPropertyFlags()
       : textAlign(0),
@@ -127,24 +133,25 @@ struct CssPropertyFlags {
         direction(0),
         verticalAlign(0),
         fontSize(0),
-        lineHeight(0) {}
+        lineHeight(0),
+        fontVariant(0) {}
 
   [[nodiscard]] bool anySet() const {
     return textAlign || fontStyle || fontWeight || textDecoration || textIndent || marginTop || marginBottom ||
            marginLeft || marginRight || paddingTop || paddingBottom || paddingLeft || paddingRight || imageHeight ||
-           imageWidth || display || direction || verticalAlign || fontSize || lineHeight;
+           imageWidth || display || direction || verticalAlign || fontSize || lineHeight || fontVariant;
   }
 
   void clearAll() {
     textAlign = fontStyle = fontWeight = textDecoration = textIndent = 0;
     marginTop = marginBottom = marginLeft = marginRight = 0;
     paddingTop = paddingBottom = paddingLeft = paddingRight = 0;
-    imageHeight = imageWidth = display = direction = verticalAlign = fontSize = lineHeight = 0;
+    imageHeight = imageWidth = display = direction = verticalAlign = fontSize = lineHeight = fontVariant = 0;
   }
 };
 
 // Cache serializes defined flags and per-property importance as uint32_t masks
-// with bit indices 0..19.
+// with bit indices 0..20.
 static_assert(sizeof(CssPropertyFlags) <= sizeof(uint32_t),
               "CssPropertyFlags exceeds 32 bits; update cache read/write in CssParser.cpp");
 
@@ -172,7 +179,8 @@ struct CssPropertyIndex {
   static constexpr uint8_t VerticalAlign = 17;
   static constexpr uint8_t FontSize = 18;
   static constexpr uint8_t LineHeight = 19;
-  static constexpr uint8_t Count = 20;
+  static constexpr uint8_t FontVariant = 20;
+  static constexpr uint8_t Count = 21;
 };
 
 // Represents a collection of CSS style properties
@@ -182,6 +190,7 @@ struct CssStyle {
   CssTextAlign textAlign = CssTextAlign::Left;
   CssFontStyle fontStyle = CssFontStyle::Normal;
   CssFontWeight fontWeight = CssFontWeight::Normal;
+  CssFontVariant fontVariant = CssFontVariant::Normal;
   CssTextDecoration textDecoration = CssTextDecoration::None;
   CssTextDirection direction = CssTextDirection::Ltr;
 
@@ -202,7 +211,7 @@ struct CssStyle {
   CssVerticalAlign verticalAlign = CssVerticalAlign::Baseline;  // vertical-align (super/sub positioning)
 
   CssPropertyFlags defined;  // Tracks which properties were explicitly set
-  uint32_t importantBits = 0;  // Per-property !important flags, slots 0..19
+  uint32_t importantBits = 0;  // Per-property !important flags, slots 0..20
 
   [[nodiscard]] bool isImportant(const uint8_t property) const {
     return property < CssPropertyIndex::Count && (importantBits & (uint32_t{1} << property)) != 0;
@@ -329,6 +338,11 @@ struct CssStyle {
       defined.lineHeight = 1;
       recordImportance(CssPropertyIndex::LineHeight);
     }
+    if (shouldApply(CssPropertyIndex::FontVariant, base.hasFontVariant())) {
+      fontVariant = base.fontVariant;
+      defined.fontVariant = 1;
+      recordImportance(CssPropertyIndex::FontVariant);
+    }
   }
 
   [[nodiscard]] bool hasTextAlign() const { return defined.textAlign; }
@@ -351,11 +365,13 @@ struct CssStyle {
   [[nodiscard]] bool hasVerticalAlign() const { return defined.verticalAlign; }
   [[nodiscard]] bool hasFontSize() const { return defined.fontSize; }
   [[nodiscard]] bool hasLineHeight() const { return defined.lineHeight; }
+  [[nodiscard]] bool hasFontVariant() const { return defined.fontVariant; }
 
   void reset() {
     textAlign = CssTextAlign::Left;
     fontStyle = CssFontStyle::Normal;
     fontWeight = CssFontWeight::Normal;
+    fontVariant = CssFontVariant::Normal;
     textDecoration = CssTextDecoration::None;
     direction = CssTextDirection::Ltr;
     textIndent = CssLength{};

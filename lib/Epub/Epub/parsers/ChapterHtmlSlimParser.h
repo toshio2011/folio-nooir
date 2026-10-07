@@ -9,6 +9,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Epub/FootnoteEntry.h"
@@ -41,6 +42,7 @@ class ChapterHtmlSlimParser {
   char partWordBuffer[MAX_WORD_SIZE + 1] = {};
   int partWordBufferIndex = 0;
   bool nextWordContinues = false;  // true when next flushed word attaches to previous (inline element boundary)
+  uint16_t pendingInlinePaddingLeft = 0;  // transient CSS geometry for the next real inline token
   std::unique_ptr<ParsedText> currentTextBlock = nullptr;
   std::unique_ptr<Page> currentPage = nullptr;
   int16_t currentPageNextY = 0;
@@ -65,6 +67,7 @@ class ChapterHtmlSlimParser {
     int depth = 0;
     bool hasBold = false, bold = false;
     bool hasItalic = false, italic = false;
+    bool hasSmallCaps = false, smallCaps = false;
     bool hasTextDecoration = false;
     CssTextDecoration textDecoration = CssTextDecoration::None;
     bool hasDirection = false;
@@ -93,6 +96,7 @@ class ChapterHtmlSlimParser {
   CssStyle currentCssStyle;
   bool effectiveBold = false;
   bool effectiveItalic = false;
+  bool effectiveSmallCaps = false;
   CssTextDecoration effectiveTextDecoration = CssTextDecoration::None;
   bool effectiveDirectionDefined = false;
   CssTextDirection effectiveDirection = CssTextDirection::Ltr;
@@ -103,11 +107,46 @@ class ChapterHtmlSlimParser {
   int tableDepth = 0;
   int tableRowIndex = 0;
   int tableColIndex = 0;
+  int tableCaptionDepth = -1;
   uint8_t listDepth = 0;
   bool listItemBulletOnly = false;  // true when currentTextBlock has only the <li> bullet
   // Allocation failures are reported back through parseStep() instead of
   // dereferencing a null page/block or continuing with a corrupt partial.
   bool allocationFailed_ = false;
+
+  enum SemanticBlockFlags : uint8_t {
+    SEMANTIC_NONE = 0,
+    SEMANTIC_VERSE = 1 << 0,
+    SEMANTIC_LETTER = 1 << 1,
+    SEMANTIC_RECIPIENT = 1 << 2,
+    SEMANTIC_SALUTATION = 1 << 3,
+    SEMANTIC_VALEDICTION = 1 << 4,
+    SEMANTIC_SIGNATURE = 1 << 5,
+    SEMANTIC_HEADER = 1 << 6,
+  };
+  int verseDepth = -1;
+  int verseSpanBlockDepth = -1;
+  int letterDepth = -1;
+  int fullPageContainerDepth = -1;
+
+  // Fixed-depth selector context: each frame retains only the current element
+  // and its most recent child. This is enough for `>`, `+`, and hgroup > h2 + p
+  // without retaining an XHTML tree or allocating per-element state.
+  struct SelectorIdentity {
+    // These are deliberately shorter than a general XHTML attribute buffer;
+    // selector matching is fail-soft for pathological attributes and the
+    // normal EPUB class/id tokens fit comfortably within these bounds.
+    char tag[16] = {};
+    char classAttr[64] = {};
+    char id[32] = {};
+    bool valid = false;
+  };
+  struct SelectorFrame {
+    SelectorIdentity current;
+    SelectorIdentity lastChild;
+  };
+  static constexpr size_t MAX_SELECTOR_CONTEXT_DEPTH = 8;
+  std::array<SelectorFrame, MAX_SELECTOR_CONTEXT_DEPTH> selectorFrames{};
 
   // Anchor-to-page mapping: tracks which page each HTML id attribute lands on
   int completedPageCount = 0;
@@ -151,6 +190,9 @@ class ChapterHtmlSlimParser {
   void rememberUnresolvedInlineAnchor(const char* id);
   bool isReferencedAnchor(const char* id) const;
   void updateEffectiveInlineStyle();
+  void captureSelectorElement(const char* name, std::string_view classAttr, std::string_view idAttr);
+  void commitSelectorElement(int elementDepth);
+  [[nodiscard]] CssMatchContext selectorMatchContext() const;
   void failAllocation(const char* what);
   void startNewTextBlock(const BlockStyle& blockStyle);
   void consumePendingBlockBoundary();

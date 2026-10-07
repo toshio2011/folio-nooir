@@ -86,3 +86,29 @@ See [SCOPE.md](SCOPE.md) for the full rationale.
 * Phase boundaries are decided by maintainers, not by individual PRs.
 * If a phase needs to be extended or an item carried over, that is documented here with a short note.
 * Proposals for new phases or reordering should go through a Discussion first.
+
+---
+
+## Folio Nooir 1.6.4 release-candidate checkpoint — 2026-10-07
+
+The current `reconstruct/folio-nooir-1.6.4` checkpoint carries the integrated
+P0 Web UI / Transfer ownership and memory fixes, the corrected Reader BLE
+lifecycle, bounded P1 EPUB work, and only the two approved P2 carryovers. The
+full engineering record, preservation boundaries, build measurements, and
+physical-evidence status are in
+[`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md#164-release-candidate-checkpoint--2026-10-07).
+
+The release candidate is version 1.6.4 with a successful build: `firmware.bin`
+is 5,803,184 bytes, the app slot is 5,789,035 / 6,553,600 bytes (88.3%), and
+static RAM is 60,996 / 327,680 bytes (18.6%). Web UI physical validation has
+passed; final BLE physical validation for this exact binary remains the release
+gate.
+
+Near-term order:
+
+1. Validate cached page retention, heavy-section temporary BLE drop/recovery,
+   post-Transfer BLE return, and largest-block behavior on the exact RC.
+2. If no blocker appears, release 1.6.4 quickly without expanding scope.
+3. Keep the remaining safe CrossInk/parser carryovers, regression/torture
+   suite, BLE controller UX/support, deterministic builds, CBZ improvements,
+   formal X3 validation, and later X4 Pro/Classic work for 1.6.5 or later.

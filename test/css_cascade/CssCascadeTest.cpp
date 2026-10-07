@@ -287,6 +287,48 @@ TEST(CssCascadeTest, CompoundSelectorListsAndUnsupportedSyntaxRemainBounded) {
   EXPECT_FALSE(parser->resolveStyle("p", "a b").hasTextAlign());
 }
 
+TEST(CssCascadeTest, BoundedChildAndAdjacentSiblingSelectorsMatchOnlyImmediateContext) {
+  const auto parser = parserFor(
+      "hgroup > h2 { font-weight: bold; } hgroup > h2 + p { font-style: italic; }"
+      " hgroup h2 { text-align: right; }");
+
+  CssMatchContext h2Context;
+  h2Context.parentTag = "hgroup";
+  const auto h2 = parser->resolveStyle("h2", "", {}, h2Context);
+  EXPECT_EQ(h2.fontWeight, CssFontWeight::Bold);
+  EXPECT_FALSE(h2.hasFontStyle());
+
+  CssMatchContext pContext;
+  pContext.parentTag = "hgroup";
+  pContext.previousSiblingTag = "h2";
+  const auto p = parser->resolveStyle("p", "", {}, pContext);
+  EXPECT_EQ(p.fontStyle, CssFontStyle::Italic);
+  EXPECT_FALSE(p.hasTextAlign());
+
+  pContext.previousSiblingTag = "div";
+  EXPECT_FALSE(parser->resolveStyle("p", "", {}, pContext).hasFontStyle());
+}
+
+TEST(CssCascadeTest, ThreePartBoundedSelectorSupportsHgroupHeadingLead) {
+  const auto parser = parserFor("hgroup > h2 + p { text-indent: -1em; }");
+  CssMatchContext context;
+  context.parentTag = "hgroup";
+  context.previousSiblingTag = "h2";
+
+  const auto style = parser->resolveStyle("p", "", {}, context);
+  ASSERT_TRUE(style.hasTextIndent());
+  EXPECT_EQ(style.textIndent.unit, CssUnit::Em);
+  EXPECT_FLOAT_EQ(style.textIndent.value, -1.0f);
+}
+
+TEST(CssCascadeTest, SmallCapsIsACompactCascadedProperty) {
+  const auto parser = parserFor("h1, h2 { font-variant: small-caps; } h2 { font-variant: normal; }");
+
+  EXPECT_EQ(parser->resolveStyle("h1", "").fontVariant, CssFontVariant::SmallCaps);
+  EXPECT_EQ(parser->resolveStyle("h2", "").fontVariant, CssFontVariant::Normal);
+  EXPECT_TRUE(parser->resolveStyle("h2", "").hasFontVariant());
+}
+
 TEST(CssCascadeTest, CompoundDisplayNoneRequiresCompleteMatchAndInlineStillWins) {
   const auto parser = parserFor(".secret.hidden { display: none; } .a.b { text-align: left; }");
 
@@ -310,7 +352,7 @@ TEST(CssCascadeTest, CacheVersionBumpRejectsVersionTwelve) {
   EXPECT_FALSE(Storage.exists("css_cascade_test/css_rules.cache"));
 }
 
-TEST(CssCascadeTest, VersionThirteenCacheRoundTripPreservesCompoundCascadeAndImportance) {
+TEST(CssCascadeTest, VersionFourteenCacheRoundTripPreservesCompoundCascadeAndImportance) {
   resetStorage();
   const std::string css = ".a { font-weight: bold !important; text-align: left; } "
                           ".b { text-align: center !important; } .a.b { text-align: right !important; }";
@@ -325,7 +367,22 @@ TEST(CssCascadeTest, VersionThirteenCacheRoundTripPreservesCompoundCascadeAndImp
   EXPECT_TRUE(reader.resolveStyle("div", "a").isImportant(CssPropertyIndex::FontWeight));
 }
 
-TEST(CssCascadeTest, CacheVersionIsThirteen) { EXPECT_EQ(CssParser::CSS_CACHE_VERSION, 13); }
+TEST(CssCascadeTest, VersionFourteenCacheRoundTripPreservesBoundedRulesAndSmallCaps) {
+  resetStorage();
+  const auto writer = parserFor("hgroup > h2 + p { font-variant: small-caps; }");
+  ASSERT_TRUE(writer->saveToCache());
+
+  CssParser reader("css_cascade_test");
+  ASSERT_TRUE(reader.loadFromCache());
+  CssMatchContext context;
+  context.parentTag = "hgroup";
+  context.previousSiblingTag = "h2";
+  const auto style = reader.resolveStyle("p", "", {}, context);
+  EXPECT_EQ(style.fontVariant, CssFontVariant::SmallCaps);
+  EXPECT_TRUE(style.hasFontVariant());
+}
+
+TEST(CssCascadeTest, CacheVersionIsFourteen) { EXPECT_EQ(CssParser::CSS_CACHE_VERSION, 14); }
 
 TEST(CssCascadeTest, CacheCreationPublishesOnlyCompletedFinalFile) {
   resetStorage();

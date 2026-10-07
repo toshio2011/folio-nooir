@@ -2,10 +2,14 @@
 
 #include <FontCacheManager.h>
 #include <HalPowerManager.h>
+#include <Arduino.h>
 
 #include <algorithm>
+#include <cstring>
 
 #include "OpdsServerStore.h"
+#include "BleInput.h"
+#include "SdCardFontSystem.h"
 #include "components/UITheme.h"
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
@@ -57,6 +61,15 @@ void ActivityManager::renderTaskTrampoline(void* param) {
 void ActivityManager::renderTaskLoop() {
   while (true) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    // Move the notification into the in-flight state while holding the same
+    // spinlock used by lifecycle admission. A new notification cannot be
+    // lost between queued and in-flight, and readers of hasPendingRenderWork()
+    // never observe an unowned render interval.
+    taskENTER_CRITICAL(&activityManagerSpinlock);
+    renderInFlight.store(true, std::memory_order_release);
+    renderQueued.store(false, std::memory_order_release);
+    taskEXIT_CRITICAL(&activityManagerSpinlock);
+
     // Acquire the lock before reading currentActivity to avoid a TOCTOU race
     // where the main task deletes the activity between the null-check and render().
     RenderLock lock;
@@ -67,6 +80,15 @@ void ActivityManager::renderTaskLoop() {
       // changing UI Scale cannot alter the bookshelf presentation.
       renderer.setUiScaleTextEnabled(true);
       currentActivity->render(std::move(lock));
+#if NOOIR_SD_FONT_DIAGNOSTICS
+      if (currentActivity->isReaderActivity()) {
+        sdFontSystem.diagnosticCheckpoint("reader_first_render");
+      } else if (currentActivity->isHomeActivity() || currentActivity->name == "RecentBooks") {
+        sdFontSystem.diagnosticCheckpoint("home_rendered");
+      } else if (currentActivity->name == "FolioLibrary") {
+        sdFontSystem.diagnosticCheckpoint("library_rendered");
+      }
+#endif
 #if NOOIR_EPUB_DIAGNOSTICS
       if (!lifecycleFirstRenderRecorded) {
         lifecycleFirstRenderRecorded = true;
@@ -83,13 +105,28 @@ void ActivityManager::renderTaskLoop() {
         EpubDiagnostics::phaseRecord("lifecycle_first_usable", currentActivity->isReaderActivity() ? 2 : 1);
       }
 #endif
+#if FREEINK_CAP_BLE_HID_HOST
+      char bluetoothNotification[sizeof(pendingBluetoothNotification)] = {};
+      bool showBluetoothNotification = false;
+      taskENTER_CRITICAL(&activityManagerSpinlock);
+      if (hasBluetoothNotification && !isReaderActivity()) {
+        strncpy(bluetoothNotification, pendingBluetoothNotification, sizeof(bluetoothNotification) - 1);
+        pendingBluetoothNotification[0] = '\0';
+        hasBluetoothNotification = false;
+        showBluetoothNotification = true;
+      }
+      taskEXIT_CRITICAL(&activityManagerSpinlock);
+      if (showBluetoothNotification) GUI.drawPopup(renderer, bluetoothNotification, true);
+#endif
     }
     // Notify any task blocked in requestUpdateAndWait() that the render is done.
     TaskHandle_t waiter = nullptr;
     taskENTER_CRITICAL(&activityManagerSpinlock);
     waiter = waitingTaskHandle;
     waitingTaskHandle = nullptr;
+    renderInFlight.store(false, std::memory_order_release);
     taskEXIT_CRITICAL(&activityManagerSpinlock);
+    bleinput::requestLifecycleReevaluation();
     if (waiter) {
       xTaskNotify(waiter, 1, eIncrement);
     }
@@ -97,7 +134,8 @@ void ActivityManager::renderTaskLoop() {
 }
 
 void ActivityManager::loop() {
-  if (suppressRestoredReaderInput) {
+  const bool sleepTransitionPending = pendingActivity && pendingActivity->name == "Sleep";
+  if (suppressRestoredReaderInput && !sleepTransitionPending) {
     const auto button = [this](const MappedInputManager::Button input) {
       return mappedInput.isPressed(input) || mappedInput.wasReleased(input);
     };
@@ -112,7 +150,7 @@ void ActivityManager::loop() {
     return;
   }
 
-  if (currentActivity) {
+  if (currentActivity && !sleepTransitionPending) {
     if (!currentActivity->isHomeActivity() && mappedInput.wasHomeGesture()) {
       if (currentActivity->handleHomeGesture()) {
         return;
@@ -152,9 +190,7 @@ void ActivityManager::loop() {
         currentActivity = std::move(stackActivities.back());
         stackActivities.pop_back();
         LOG_DBG("ACT", "Popped from activity stack, new size = %zu", stackActivities.size());
-        if (currentActivity->isReaderActivity()) {
-          suppressRestoredReaderInput = true;
-        }
+        if (currentActivity->isReaderActivity()) suppressRestoredReaderInput = true;
         // Handle result if necessary
         if (currentActivity->resultHandler) {
           LOG_DBG("ACT", "Handling result for popped activity");
@@ -196,7 +232,23 @@ void ActivityManager::loop() {
       currentActivity = std::move(pendingActivity);
 
       lock.unlock();  // onEnter may acquire its own lock
+      if (currentActivity->name == "Sleep") {
+        LOG_INF("SLEEP", "sleep_quiesce_complete section_stopped free=%u largest=%u",
+                static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+        EpubDiagnostics::phaseRecord("sleep_section_stopped");
+      }
+#if FREEINK_CAP_BLE_HID_HOST
+      // Stop BLE before entering resource-sensitive activities.  The main-loop
+      // lifecycle gate runs before ActivityManager::loop(), so without this
+      // boundary a Recent -> EPUB transition can begin its allocations while
+      // the NimBLE heap is still resident for one full loop iteration.
+      if (currentActivity->bluetoothResourceSensitive() && BleHid.isRunning()) {
+        bleinput::recordDiagnosticEvent("resource_stop activity=%.20s", currentActivity->name.c_str());
+        bleinput::stop();
+      }
+#endif
       currentActivity->onEnter();
+      bleinput::requestLifecycleReevaluation();
 #if NOOIR_EPUB_DIAGNOSTICS
       if (!lifecycleHomeConstructionRecorded &&
           (currentActivity->isHomeActivity() || currentActivity->name == "RecentBooks")) {
@@ -210,20 +262,48 @@ void ActivityManager::loop() {
     }
   }
 
-  if (requestedUpdate.exchange(false)) {
-    // Using direct notification to signal the render task to update
-    // Increment counter so multiple rapid calls won't be lost
-    if (renderTaskHandle) {
-      xTaskNotify(renderTaskHandle, 1, eIncrement);
+  // Keep optional interface-font I/O out of the render task and out of the
+  // input path above. One bounded .cpfont metadata file is processed per main
+  // loop pass; built-in UI remains active until all three sizes finish.
+  if (currentActivity) {
+    const bool sdIndependentScreen = currentActivity->name == "Boot" || currentActivity->name == "Sleep" ||
+                                     currentActivity->name == "Crash" || currentActivity->name == "OtaUpdate" ||
+                                     currentActivity->name == "SdFirmwareUpdate" || currentActivity->name == "FontDownload";
+    if (!sdIndependentScreen) {
+      sdFontSystem.ensureUiLoaded(renderer);
+      if (sdFontSystem.progressUiLoad(renderer)) requestUpdate();
     }
+  }
+
+  if (requestedUpdate.load(std::memory_order_acquire)) {
+    // Consume the deferred request and publish queued state together under
+    // the same lock so lifecycle admission cannot observe a false-idle gap.
+    queueRenderNotification();
   }
 }
 
 void ActivityManager::exitActivity(const RenderLock& lock) {
   // Note: lock must be held by the caller
   if (currentActivity) {
+    const bool readerActivity = currentActivity->isReaderActivity();
+    const bool epubReaderActivity = currentActivity->name == "EpubReader";
+    const bool wifiSelectionActivity = currentActivity->name == "WifiSelection";
     currentActivity->onExit();
     currentActivity.reset();
+#if FREEINK_CAP_BLE_HID_HOST
+    if (epubReaderActivity) {
+      LOG_INF("MEM", "reader_exit stage=activity_destroyed free=%u max=%u",
+              static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    }
+    if (wifiSelectionActivity) {
+      LOG_INF("WIFI", "selection_destroyed free=%u largest=%u",
+              static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    }
+#endif
+#if NOOIR_EPUB_DIAGNOSTICS
+    if (readerActivity) EpubDiagnostics::phaseRecord("reader_exit_activity_destroyed");
+#endif
+    bleinput::requestLifecycleReevaluation();
   }
 }
 
@@ -237,7 +317,14 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
   } else {
     // No current activity, safe to launch immediately
     currentActivity = std::move(newActivity);
+#if FREEINK_CAP_BLE_HID_HOST
+    if (currentActivity->bluetoothResourceSensitive() && BleHid.isRunning()) {
+      bleinput::recordDiagnosticEvent("resource_stop activity=%.20s", currentActivity->name.c_str());
+      bleinput::stop();
+    }
+#endif
     currentActivity->onEnter();
+    bleinput::requestLifecycleReevaluation();
 #if NOOIR_EPUB_DIAGNOSTICS
     if (!lifecycleHomeConstructionRecorded &&
         (currentActivity->isHomeActivity() || currentActivity->name == "RecentBooks")) {
@@ -367,12 +454,49 @@ bool ActivityManager::isReaderActivity() const {
          (currentActivity && currentActivity->isReaderActivity());
 }
 
+bool ActivityManager::isCurrentReaderActivity() const {
+  return currentActivity && currentActivity->isReaderActivity();
+}
+
+const char* ActivityManager::currentActivityName() const {
+  return currentActivity ? currentActivity->name.c_str() : "none";
+}
+
 bool ActivityManager::bluetoothShouldBeActive() const {
-  const auto wantsBluetooth = [](const auto& activity) {
-    return activity && (activity->isReaderActivity() || activity->keepsBluetoothAlive());
-  };
-  return std::any_of(stackActivities.begin(), stackActivities.end(), wantsBluetooth) ||
-         wantsBluetooth(currentActivity);
+  return currentActivity && currentActivity->acceptsBluetoothInput();
+}
+
+bool ActivityManager::bluetoothResourceSensitive() const {
+  if (currentActivity && currentActivity->bluetoothResourceSensitive()) return true;
+  return std::any_of(stackActivities.begin(), stackActivities.end(),
+                     [](const auto& activity) { return activity->bluetoothResourceSensitive(); });
+}
+
+bool ActivityManager::bluetoothRenderSafe() const {
+  return currentActivity && currentActivity->bluetoothRenderSafe();
+}
+
+bool ActivityManager::hasPendingRenderWork() const {
+  taskENTER_CRITICAL(&activityManagerSpinlock);
+  const bool pending = requestedUpdate.load(std::memory_order_acquire) ||
+                       renderQueued.load(std::memory_order_acquire) ||
+                       renderInFlight.load(std::memory_order_acquire);
+  taskEXIT_CRITICAL(&activityManagerSpinlock);
+  return pending;
+}
+
+void ActivityManager::postBluetoothNotification(const char* message) {
+#if FREEINK_CAP_BLE_HID_HOST
+  if (!message || !message[0]) return;
+  taskENTER_CRITICAL(&activityManagerSpinlock);
+  strncpy(pendingBluetoothNotification, message, sizeof(pendingBluetoothNotification) - 1);
+  pendingBluetoothNotification[sizeof(pendingBluetoothNotification) - 1] = '\0';
+  hasBluetoothNotification = true;
+  taskEXIT_CRITICAL(&activityManagerSpinlock);
+  if (!isReaderActivity()) requestUpdate();
+#else
+  (void)message;
+#endif
 }
 
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }
@@ -386,14 +510,23 @@ ScreenshotInfo ActivityManager::getScreenshotInfo() const {
 
 void ActivityManager::requestUpdate(bool immediate) {
   if (immediate) {
-    if (renderTaskHandle) {
-      xTaskNotify(renderTaskHandle, 1, eIncrement);
-    }
+    queueRenderNotification();
   } else {
     // Deferring the update until current loop is finished
     // This is to avoid multiple updates being requested in the same loop
     requestedUpdate = true;
   }
+}
+
+void ActivityManager::queueRenderNotification() {
+  taskENTER_CRITICAL(&activityManagerSpinlock);
+  if (renderTaskHandle) {
+    requestedUpdate.exchange(false, std::memory_order_acq_rel);
+    // Publish queued state before handing the notification to the render task.
+    renderQueued.store(true, std::memory_order_release);
+    xTaskNotify(renderTaskHandle, 1, eIncrement);
+  }
+  taskEXIT_CRITICAL(&activityManagerSpinlock);
 }
 void ActivityManager::requestUpdateAndWait() {
   if (!renderTaskHandle) {
@@ -421,7 +554,7 @@ void ActivityManager::requestUpdateAndWait() {
   // Cannot call while holding RenderLock or it will cause a deadlock
   assert(!holdingRenderLock && "Cannot call requestUpdateAndWait() while holding RenderLock");
 
-  xTaskNotify(renderTaskHandle, 1, eIncrement);
+  queueRenderNotification();
   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 }
 

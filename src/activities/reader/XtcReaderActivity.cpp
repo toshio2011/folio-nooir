@@ -17,6 +17,7 @@
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "BleInput.h"
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
 #include "activities/home/ReadingStatsActivity.h"
@@ -199,6 +200,8 @@ void XtcReaderActivity::loop() {
       pagesUntilFullRefresh = 1;
       darkShortcutFired = true;
       requestUpdate();
+    } else if (SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_TOGGLE_BLUETOOTH) {
+      // The shared main-loop handler performs this action exactly once.
     }
     return;
   }
@@ -234,7 +237,8 @@ void XtcReaderActivity::loop() {
   }
   if ((SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_SLEEP ||
        SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_READING_STATS ||
-       SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_SCREENSHOT) &&
+       SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_SCREENSHOT ||
+       SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_TOGGLE_BLUETOOTH) &&
       mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
       mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && !darkShortcutFired) {
     darkShortcutFired = true;
@@ -247,9 +251,11 @@ void XtcReaderActivity::loop() {
                                skipNextButtonCheck = true;
                                requestUpdate();
                              });
-    } else {
+    } else if (SETTINGS.longPressMenuFunction == CrossPointSettings::LP_MENU_SCREENSHOT) {
       RenderLock lock(*this);
       ScreenshotUtil::takeScreenshot(renderer);
+    } else {
+      bleinput::toggleBluetooth();
     }
     return;
   }
@@ -318,6 +324,11 @@ void XtcReaderActivity::loop() {
   }
 
   const unsigned long heldMs = (touch.prev || touch.next) ? touch.heldMs : mappedInput.getHeldTime();
+  if (!fromTilt && fromSide && heldMs > ReaderUtils::SKIP_HOLD_MS &&
+      SETTINGS.sideLongPressAction == CrossPointSettings::SIDE_LONG_TOGGLE_BLUETOOTH) {
+    bleinput::toggleBluetooth();
+    return;
+  }
   const auto longPressBehavior = fromSide
                                      ? (SETTINGS.sideLongPressAction == CrossPointSettings::SIDE_LONG_CHAPTER_SKIP
                                             ? CrossPointSettings::CHAPTER_SKIP

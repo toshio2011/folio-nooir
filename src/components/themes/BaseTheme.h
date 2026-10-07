@@ -196,7 +196,9 @@ class BaseTheme {
                         const std::function<std::string(int index)>& rowSubtitle = nullptr,
                         const std::function<UIIcon(int index)>& rowIcon = nullptr,
                         const std::function<std::string(int index)>& rowValue = nullptr, bool highlightValue = false,
-                        const std::function<bool(int index)>& rowDimmed = nullptr) const;
+                        const std::function<bool(int index)>& rowDimmed = nullptr,
+                        const std::function<int(int index)>& rowToggleState = nullptr,
+                        const std::function<bool(int index)>& rowSubmenu = nullptr) const;
   virtual void drawHeader(const GfxRenderer& renderer, Rect rect, const char* title,
                           const char* subtitle = nullptr) const;
   virtual void drawSubHeader(const GfxRenderer& renderer, Rect rect, const char* label,
@@ -215,7 +217,7 @@ class BaseTheme {
   // e-ink. Existing callers keep the classic popup by default.
   virtual Rect drawPopup(const GfxRenderer& renderer, const char* message, bool lightBackground = false) const;
   virtual void drawOptionPopup(const GfxRenderer& renderer, const char* title, const std::vector<std::string>& options,
-                               int selectedIndex) const;
+                               int selectedIndex, int firstVisibleIndex = 0, int visibleCount = -1) const;
   virtual void fillPopupProgress(const GfxRenderer& renderer, const Rect& layout, const int progress) const;
   void drawStatusBar(GfxRenderer& renderer, const float bookProgress, const int currentPage, const int pageCount,
                      std::string title, const int paddingBottom = 0, const int textYOffset = 0,

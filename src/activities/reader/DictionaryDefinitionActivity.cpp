@@ -482,6 +482,8 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
     const int statusY = sourceY + sourceFontHeight;
     const int dictionaryMaxWidth = std::max(0, contentWidth - 2 * SIDE_PADDING);
     const std::string displayName = renderer.truncatedText(UI_10_FONT_ID, dictionaryName.c_str(), dictionaryMaxWidth);
+    renderer.drawLine(contentX + SIDE_PADDING - 6, sourceY - 1, contentX + SIDE_PADDING - 6,
+                      statusY + sourceFontHeight - 1, 2, true);
     renderer.drawText(UI_10_FONT_ID, contentX + SIDE_PADDING, sourceY, displayName.c_str());
 
     std::string sourceStatus = currentSourceIsPreferred() ? "Preferred" : "Fallback";

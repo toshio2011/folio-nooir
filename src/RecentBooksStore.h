@@ -26,8 +26,6 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
  private:
   std::vector<RecentBook> recentBooks;
 
-  static constexpr int MAX_RECENT_BOOKS = 10;
-
   RecentBooksStore() = default;
   ~RecentBooksStore() = default;
 

@@ -34,20 +34,23 @@
 #include "SdCardFontSystem.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
+#include "activities/RenderLock.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "images/LoadingIcon.h"
 #include "util/ButtonNavigator.h"
+#include "util/BleMemoryPolicy.h"
 #include "util/EpubDiagnostics.h"
 #include "util/ScreenshotUtil.h"
+#include "activities/reader/ReaderUtils.h"
 
 GfxRenderer renderer(display);
 MappedInputManager mappedInputManager(gpio, renderer);
 ActivityManager activityManager(renderer, mappedInputManager);
 FontDecompressor fontDecompressor;
 SdCardFontSystem sdFontSystem;
-FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts());
+FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts(), &renderer);
 static unsigned long allowSleepAt = 0;
 
 // Fonts
@@ -190,6 +193,8 @@ static bool loadSleepFrameBuffer() {
 void enterDeepSleep(bool fromTimeout = false) {
   EpubDiagnostics::startPhase();
   EpubDiagnostics::phaseRecord("sleep_request", fromTimeout ? 2 : 1);
+  LOG_INF("SLEEP", "sleep_requested timeout=%d free=%u largest=%u", fromTimeout ? 1 : 0,
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
 
@@ -205,7 +210,29 @@ void enterDeepSleep(bool fromTimeout = false) {
   // Commit to sleeping before goToSleep() runs the outgoing activity's onExit():
   // a WiFi activity would otherwise silentRestart() here and reboot instead.
   deepSleepInProgress = true;
+
+  // Phase 1/2: prevent any main-loop BLE rearm, then synchronously reclaim both
+  // radios before ActivityManager constructs/renders the sleep screen.
+  LOG_INF("SLEEP", "sleep_quiesce_begin free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  WiFi.scanDelete();
+  if (WiFi.getMode() != WIFI_MODE_NULL) {
+    WiFi.disconnect(false, false);
+    const bool wifiStopped = WiFi.mode(WIFI_OFF);
+    LOG_INF("SLEEP", "wifi_stopped result=%d mode=%d free=%u largest=%u", wifiStopped ? 1 : 0,
+            static_cast<int>(WiFi.getMode()), static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  } else {
+    LOG_INF("SLEEP", "wifi_stopped already_off free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  }
+  bleinput::stop();
+  LOG_INF("SLEEP", "ble_stopped running=%d free=%u largest=%u", BleHid.isRunning() ? 1 : 0,
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+
   activityManager.goToSleep(fromTimeout);
+  LOG_INF("SLEEP", "sleep_screen_ready free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
   EpubDiagnostics::phaseRecord("sleep_screen_ready");
 
   if (isQuickResumeSleep) {
@@ -213,20 +240,14 @@ void enterDeepSleep(bool fromTimeout = false) {
     EpubDiagnostics::phaseRecord("sleep_quick_frame_saved");
   }
 
-  // Tear down WiFi so the modem power domain isn't held alive across deep sleep.
-  // Wake from deep sleep is effectively a chip reset, so no state needs to survive.
-  if (WiFi.getMode() != WIFI_MODE_NULL) {
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
-  }
-  bleinput::stop();
-
   halTiltSensor.deepSleep();
   EpubDiagnostics::phaseRecord("sleep_peripherals_cleaned");
   display.deepSleep();
   EpubDiagnostics::phaseRecord("sleep_display_suspended");
   LOG_DBG("MAIN", "Entering deep sleep");
 
+  LOG_INF("SLEEP", "deep_sleep_enter free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
   EpubDiagnostics::phaseRecord("sleep_enter");
   powerManager.startDeepSleep(gpio);
 }
@@ -277,6 +298,9 @@ void setupDisplayAndFonts(bool seamless = false) {
   sdFontSystem.begin(renderer);
 
   EpubDiagnostics::phaseRecord("boot_fonts_ready");
+#if NOOIR_SD_FONT_DIAGNOSTICS
+  sdFontSystem.diagnosticCheckpoint("boot_fonts_ready");
+#endif
   LOG_DBG("MAIN", "Fonts setup");
 }
 
@@ -507,16 +531,82 @@ void setup() {
 }
 
 void updateBluetoothLifecycle() {
-#if FREEINK_CAP_BLE_HID_HOST
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+  static bool resourceDeferReported = false;
   const bool wanted =
-      SETTINGS.bluetoothEnabled && activityManager.bluetoothShouldBeActive() && WiFi.getMode() == WIFI_MODE_NULL;
-  if (wanted && !BleHid.isRunning()) {
-    bleinput::ensureStarted();
-  } else if (!wanted && BleHid.isRunning()) {
-    bleinput::stop();
+      !deepSleepInProgress && SETTINGS.bluetoothEnabled && activityManager.bluetoothShouldBeActive() &&
+      WiFi.getMode() == WIFI_MODE_NULL;
+  const bool readerContext = activityManager.isReaderActivity();
+  const bool resourceSensitive = activityManager.bluetoothResourceSensitive();
+  // A stable, cached Reader page may still have queued render work. That work
+  // is intentionally not a reason to tear down an already-running NimBLE host;
+  // the Reader activity's resource-sensitive predicate covers the allocations
+  // that genuinely need the heap back. Cold admission still applies its
+  // existing render/lock guard in connectionAdmissionAllowed().
+  const bool renderPressure = readerContext && (RenderLock::peek() || activityManager.hasPendingRenderWork());
+  const bool blocked = resourceSensitive;
+
+  if (!wanted) {
+    resourceDeferReported = false;
+    if (BleHid.isRunning()) {
+      bleinput::stop();
+      bleinput::recordDiagnosticEvent("ble_suspend reason=activity_or_wifi_or_disabled");
+    }
+    return;
   }
+
+  if (blocked) {
+    if (BleHid.isRunning()) {
+      // Preserve the enabled/controller intent while the heavy Reader phase
+      // temporarily suppresses BLE. The next real lifecycle signal can retry;
+      // there is no timer-based polling path.
+      bleinput::requestLifecycleReevaluation();
+      bleinput::recordDiagnosticEvent("ble_suspend reason=resource_pressure");
+      bleinput::stop();
+      resourceDeferReported = true;
+    } else if (!resourceDeferReported) {
+      resourceDeferReported = true;
+      LOG_INF("BLEMEM", "stage=admission_deferred reason=resource activity=%.20s sensitive=%d render=%d reader=%d free=%u largest=%u",
+              activityManager.currentActivityName(), resourceSensitive ? 1 : 0, renderPressure ? 1 : 0,
+              readerContext ? 1 : 0, ESP.getFreeHeap(),
+              ESP.getMaxAllocHeap());
+      bleinput::recordDiagnosticEvent("ble_suspend reason=resource_pressure");
+    }
+    return;
+  }
+
+  resourceDeferReported = false;
+  if (BleHid.isRunning()) {
+    bleinput::clearReAdmissionPending();
+    return;
+  }
+  if (!bleinput::reAdmissionPending()) return;
+  if (!bleinput::takeLifecycleReevaluation()) return;
+
+  LOG_INF("BLEMEM", "stage=before_cold_admission activity=%.20s free=%u largest=%u floors=%u/%u",
+          activityManager.currentActivityName(), ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
+          static_cast<unsigned>(bleinput::kReaderBleStartMinFreeHeap),
+          static_cast<unsigned>(bleinput::kReaderBleStartMinLargestBlock));
+  const bool admitted = bleinput::connectionAdmissionAllowed();
+
+  if (!admitted) {
+    bleinput::recordDiagnosticEvent("ble_admit result=defer reason=normal_heap reader=%d free=%u max=%u",
+                                    readerContext ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    return;
+  }
+
+  LOG_INF("BLEMEM", "stage=cold_admission result=allow activity=%.20s free=%u largest=%u",
+          activityManager.currentActivityName(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  bleinput::recordDiagnosticEvent("ble_admit result=allow free=%u max=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  const bool started = bleinput::ensureStarted();
+  if (!started) {
+    LOG_ERR("BLELC", "start failed free=%u maxAlloc=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    bleinput::recordDiagnosticEvent("ble_resume result=failed");
+    return;
+  }
+  bleinput::clearReAdmissionPending();
+  bleinput::recordDiagnosticEvent("ble_resume result=started");
 #else
-  // Folio Nooir reader builds currently keep experimental BLE completely dormant.
   if (BleHid.isRunning()) bleinput::stop();
 #endif
 }
@@ -530,15 +620,29 @@ void loop() {
   gpio.update();
   updateBluetoothLifecycle();
   BleHid.poll();
+#if FREEINK_CAP_BLE_HID_HOST
+  bleinput::pollLifecycle();
+  char bleNotification[64];
+  if (bleinput::takeNotification(bleNotification, sizeof(bleNotification))) {
+    activityManager.postBluetoothNotification(bleNotification);
+  }
+#endif
+#if NOOIR_BLE_DIAGNOSTICS
+  bleinput::setActivityContext(activityManager.currentActivityName());
+#endif
   mappedInputManager.pollBle();
+  // Let Reader classify the resulting action before changing BLE state. A
+  // cached page turn is not resource-sensitive; heavy Reader work requests
+  // lifecycle reevaluation through the centralized admission path below.
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
 
   renderer.setFadingFix(SETTINGS.fadingFix);
   renderer.setUiScalePercent(SETTINGS.uiScalePercent);
 
   if (Serial && millis() - lastMemPrint >= 10000) {
-    LOG_INF("MEM", "Free: %d bytes, Total: %d bytes, Min Free: %d bytes, MaxAlloc: %d bytes", ESP.getFreeHeap(),
-            ESP.getHeapSize(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
+    LOG_INF("MEM", "activity=%.20s free=%d total=%d minFree=%d largest=%d bleRunning=%d bleConnected=%d",
+            activityManager.currentActivityName(), ESP.getFreeHeap(), ESP.getHeapSize(), ESP.getMinFreeHeap(),
+            ESP.getMaxAllocHeap(), BleHid.isRunning() ? 1 : 0, BleHid.isConnected() ? 1 : 0);
     lastMemPrint = millis();
   }
 
@@ -599,8 +703,25 @@ void loop() {
     return;
   }
 
-  const bool readerOwnsLongPower = activityManager.isReaderActivity() &&
-                                   SETTINGS.longPwrBtn != CrossPointSettings::LP_PWR_SLEEP;
+  static bool longPowerToggleFired = false;
+  const bool configuredLongPowerToggle = SETTINGS.longPwrBtn == CrossPointSettings::LP_PWR_TOGGLE_BLUETOOTH;
+  if (gpio.wasReleased(HalGPIO::BTN_POWER)) {
+    const bool wasLongToggle = longPowerToggleFired;
+    longPowerToggleFired = false;
+    if (!wasLongToggle && SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::TOGGLE_BLUETOOTH &&
+        gpio.getPowerButtonHeldTime() < ReaderUtils::GO_HOME_MS) {
+      bleinput::toggleBluetooth();
+    }
+  }
+  if (configuredLongPowerToggle && gpio.isPressed(HalGPIO::BTN_POWER) &&
+      gpio.getPowerButtonHeldTime() >= ReaderUtils::GO_HOME_MS && !longPowerToggleFired) {
+    longPowerToggleFired = true;
+    bleinput::toggleBluetooth();
+  }
+
+  const bool readerOwnsLongPower =
+      (activityManager.isReaderActivity() && SETTINGS.longPwrBtn != CrossPointSettings::LP_PWR_SLEEP) ||
+      configuredLongPowerToggle;
   if (millis() >= allowSleepAt && gpio.isPressed(HalGPIO::BTN_POWER) &&
       gpio.getPowerButtonHeldTime() > SETTINGS.getPowerButtonDuration() && !readerOwnsLongPower) {
     // If the screenshot combination is potentially being pressed, don't sleep

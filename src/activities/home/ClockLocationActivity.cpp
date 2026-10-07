@@ -118,7 +118,7 @@ void ClockLocationActivity::resolveLocation() {
 }
 
 void ClockLocationActivity::syncResolvedLocation() {
-  const ClockWeatherSyncResult result = ClockWeatherSyncService::sync(true, true);
+  const ClockWeatherSyncResult result = ClockWeatherSyncService::sync(true, true, true);
   if (!result.clockSynced && !result.weatherSynced) {
     state = State::ERROR;
     status = "Sync failed. Press Edit to try again.";

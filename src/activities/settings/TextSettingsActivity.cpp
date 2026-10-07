@@ -11,10 +11,12 @@
 #include <vector>
 
 #include "CrossPointSettings.h"
+#include "BleInput.h"
 #include "FontSelectionCompatibility.h"
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
 #include "TextSettingsPreview.h"
+#include "activities/ActivityManager.h"
 #include "activities/util/IntervalSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -39,15 +41,16 @@ constexpr StrId FRONT_LONG_PRESS_OPTIONS[] = {
     StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION, StrId::STR_SIDE_LONG_PRESS_FONT_SIZE};
 constexpr StrId SIDE_LONG_PRESS_OPTIONS[] = {StrId::STR_SIDE_LONG_PRESS_OFF, StrId::STR_SIDE_LONG_PRESS_CHAPTER,
                                              StrId::STR_SIDE_LONG_PRESS_FONT_SIZE,
-                                             StrId::STR_SIDE_LONG_PRESS_ORIENTATION};
+                                             StrId::STR_SIDE_LONG_PRESS_ORIENTATION,
+                                             StrId::STR_TOGGLE_BLUETOOTH};
 constexpr StrId MENU_LONG_PRESS_OPTIONS[] = {
     StrId::STR_KOSYNC, StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION, StrId::STR_DICTIONARY, StrId::STR_DARK,
     StrId::STR_LONG_PRESS_MENU_READER_OPTIONS, StrId::STR_LONG_PWR_SLEEP, StrId::STR_LONG_PWR_READING_STATS,
-    StrId::STR_LONG_PWR_SCREENSHOT};
+    StrId::STR_LONG_PWR_SCREENSHOT, StrId::STR_TOGGLE_BLUETOOTH};
 constexpr StrId POWER_LONG_PRESS_OPTIONS[] = {
     StrId::STR_LONG_PWR_SLEEP, StrId::STR_LONG_PWR_READER_OPTIONS, StrId::STR_LONG_PWR_READING_STATS,
     StrId::STR_LONG_PWR_SCREENSHOT, StrId::STR_LONG_PWR_IGNORE, StrId::STR_BOOKMARK_OPTION, StrId::STR_DICTIONARY,
-    StrId::STR_DARK, StrId::STR_KOSYNC};
+    StrId::STR_DARK, StrId::STR_KOSYNC, StrId::STR_TOGGLE_BLUETOOTH};
 constexpr StrId HIGHLIGHT_COLOR_IDS[] = {StrId::STR_HIGHLIGHT_BLACK, StrId::STR_HIGHLIGHT_DARK_GRAY,
                                          StrId::STR_HIGHLIGHT_LIGHT_GRAY, StrId::STR_HIGHLIGHT_WHITE};
 
@@ -135,6 +138,19 @@ void TextSettingsActivity::onEnter() {
 
 void TextSettingsActivity::onExit() { Activity::onExit(); }
 
+bool TextSettingsActivity::bluetoothResourceSensitive() const {
+  // The standalone Text Settings route can enumerate/preview SD fonts and is
+  // not the lightweight Reader Settings overlay. In a Reader child, allow BLE
+  // only until the user requests an operation that reloads font ownership.
+  if (!activityManager.isReaderActivity()) return true;
+  return fontOperationChanged_ || pendingFontOperation_ != PendingFontOperation::None ||
+         fontRenderPending_.load(std::memory_order_acquire);
+}
+
+bool TextSettingsActivity::bluetoothRenderSafe() const {
+  return activityManager.isReaderActivity() && !bluetoothResourceSensitive();
+}
+
 bool TextSettingsActivity::handleHomeGesture() {
   // Reader Options is a modal child of the reader.  A bottom-edge swipe is
   // treated as Home by ActivityManager before this activity's loop() runs;
@@ -217,6 +233,25 @@ bool TextSettingsActivity::handleTouch() {
 
 void TextSettingsActivity::loop() {
   renderer.setUiScaleTextEnabled(true);
+  if (pendingFontOperation_ != PendingFontOperation::None) {
+    // The activity-level admission manager suspends NimBLE before this point.
+    // Keep the operation pending if called from an unexpected path while the
+    // host is still resident; never reload an SD font beside NimBLE.
+    if (BleHid.isRunning()) return;
+    const PendingFontOperation operation = pendingFontOperation_;
+    const int index = pendingFontIndex_;
+    pendingFontOperation_ = PendingFontOperation::None;
+    pendingFontIndex_ = -1;
+    fontOperationChanged_ = true;
+    fontRenderPending_.store(true, std::memory_order_release);
+    if (operation == PendingFontOperation::Family) {
+      if (index >= 0 && index < static_cast<int>(fonts_.size())) applyFamily(index);
+    } else if (index >= 0 && index < static_cast<int>(sizes_.size())) {
+      applySize(index);
+    }
+    requestUpdate();
+    return;
+  }
   if (optionPopup_.handleInput(mappedInput, [this] { requestUpdate(); })) return;  // picker owns input while open
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
@@ -269,8 +304,17 @@ void TextSettingsActivity::render(RenderLock&&) {
   const char* sizeName = (currentSizeIndex_ >= 0 && currentSizeIndex_ < static_cast<int>(sizes_.size()))
                              ? sizes_[currentSizeIndex_].name.c_str()
                              : "";
-  textsettings::renderPreview(renderer, previewLayout_, metrics_.previewPadding, metrics_.verticalSpacing,
-                              geo.previewTop, previewHeight, familyName, sizeName);
+#if FREEINK_CAP_BLE_HID_HOST
+  if (activityManager.isReaderActivity() && BleHid.isRunning()) {
+    GUI.drawHelpText(renderer, Rect{metrics_.previewPadding, geo.previewTop,
+                                   pageWidth - 2 * metrics_.previewPadding, previewHeight},
+                     tr(STR_BT_FONT_PREVIEW_PAUSED));
+  } else
+#endif
+  {
+    textsettings::renderPreview(renderer, previewLayout_, metrics_.previewPadding, metrics_.verticalSpacing,
+                                geo.previewTop, previewHeight, familyName, sizeName);
+  }
 
   const bool onTabBar = selectedIndex() == 0;
   std::vector<TabInfo> tabs;
@@ -309,7 +353,17 @@ void TextSettingsActivity::render(RenderLock&&) {
       GUI.drawList(
           renderer, listRect, LAYOUT_ROWS, selectedItem,
           [](int index) { return std::string(I18N.get(ROW_NAME_IDS[index])); }, nullptr, nullptr,
-          [this](int index) { return layoutValueText(index); }, true);
+          [this](int index) { return layoutValueText(index); }, true, nullptr,
+          [this](const int index) -> int {
+            if (index == static_cast<int>(LayoutRow::ParaSpacing)) return SETTINGS.extraParagraphSpacing ? 1 : 0;
+            if (index == static_cast<int>(LayoutRow::ForceIndents)) return SETTINGS.forceParagraphIndents ? 1 : 0;
+            return -1;
+          },
+          [](const int index) {
+            return index == static_cast<int>(LayoutRow::LineSpacing) ||
+                   index == static_cast<int>(LayoutRow::Alignment) ||
+                   index == static_cast<int>(LayoutRow::ScreenMargin);
+          });
       if (onTabBar)
         confirmLabel = tr(STR_STYLE);
       else  // Extra Paragraph Spacing toggles; the rest open a picker
@@ -328,7 +382,24 @@ void TextSettingsActivity::render(RenderLock&&) {
       GUI.drawList(
           renderer, listRect, STYLE_ROWS, selectedItem,
           [](int index) { return std::string(I18N.get(ROW_NAME_IDS[index])); }, nullptr, nullptr,
-          [this](int index) { return styleValueText(index); }, true);
+          [this](int index) { return styleValueText(index); }, true, nullptr,
+          [this](const int index) -> int {
+            switch (static_cast<StyleRow>(index)) {
+              case StyleRow::FocusReading:
+                return SETTINGS.focusReadingEnabled ? 1 : 0;
+              case StyleRow::GuideDots:
+                return SETTINGS.guideDots ? 1 : 0;
+              case StyleRow::Hyphenation:
+                return SETTINGS.hyphenationEnabled ? 1 : 0;
+              case StyleRow::EmbeddedStyle:
+                return SETTINGS.embeddedStyle ? 1 : 0;
+              case StyleRow::AntiAliasing:
+                return SETTINGS.textAntiAliasing ? 1 : 0;
+              default:
+                return -1;
+            }
+          },
+          [](const int index) { return index == static_cast<int>(StyleRow::HighlightColor); });
       if (onTabBar) {
         confirmLabel = tr(STR_FONT);
       } else {
@@ -357,7 +428,8 @@ void TextSettingsActivity::render(RenderLock&&) {
       GUI.drawList(
           renderer, listRect, CONTROL_ROWS, selectedItem,
           [](int index) { return std::string(I18N.get(CONTROL_ROW_NAME_IDS[index])); }, nullptr, nullptr,
-          [this](int index) { return controlValueText(index); }, true);
+          [this](int index) { return controlValueText(index); }, true, nullptr, nullptr,
+          [](const int) { return true; });
       confirmLabel = onTabBar ? tr(STR_FONT) : tr(STR_SELECT);
       break;
     }
@@ -375,6 +447,7 @@ void TextSettingsActivity::render(RenderLock&&) {
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();
+  fontRenderPending_.store(false, std::memory_order_release);
 }
 
 // Font switching runs on the main task from loop(), which deliberately holds no
@@ -406,14 +479,14 @@ void TextSettingsActivity::activateRow(int row) {
   switch (tab_) {
     case Tab::Family:
       if (row != currentFamilyIndex_) {
-        applyFamily(row);
-        requestUpdate();
+        pendingFontOperation_ = PendingFontOperation::Family;
+        pendingFontIndex_ = row;
       }
       break;
     case Tab::Size:
       if (row != currentSizeIndex_) {
-        applySize(row);
-        requestUpdate();
+        pendingFontOperation_ = PendingFontOperation::Size;
+        pendingFontIndex_ = row;
       }
       break;
     case Tab::Layout:

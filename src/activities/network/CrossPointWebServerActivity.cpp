@@ -12,6 +12,7 @@
 #include "NetworkModeSelectionActivity.h"
 #include "SilentRestart.h"
 #include "WifiSelectionActivity.h"
+#include "BleInput.h"
 #include "activities/network/CalibreConnectActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -92,6 +93,22 @@ void CrossPointWebServerActivity::onExit() {
   LOG_DBG("WEBACT", "Free heap at onExit start: %d bytes", ESP.getFreeHeap());
 
   state = WebServerActivityState::SHUTTING_DOWN;
+  // ActivityManager destroys this activity after onExit(), but the transfer
+  // path requests a reboot below. Tear down every server-owned resource before
+  // touching Wi-Fi so sockets, request buffers, upload files, UDP discovery,
+  // and the task watchdog cannot survive into the radio teardown.
+  if (webServer) {
+    webServer->stop();
+    webServer.reset();
+    LOG_DBG("WEBACT", "Web server fully stopped before WiFi teardown free=%lu min=%lu largest=%lu",
+            static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+            static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+  }
+  // The event is intentionally requested after server-owned allocations are
+  // gone. If Wi-Fi is still active, the lifecycle gate leaves it pending; if
+  // this path also turns Wi-Fi off, the next main-loop pass can admit BLE once
+  // the unchanged safety floors are met.
+  bleinput::requestLifecycleReevaluation();
   stopDnsServer();
   MDNS.end();
 

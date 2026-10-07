@@ -247,7 +247,7 @@ bool isWordCharacter(uint32_t cp) {
 }  // namespace
 
 void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle, const bool underline,
-                         const bool attachToPrevious) {
+                         const bool attachToPrevious, const uint16_t paddingBefore) {
   if (word.empty()) return;
 
   // The device fonts carry no combining-mark positioning, so EPUB text stored in NFD
@@ -265,6 +265,13 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
   const bool wordStartsRtl = !hasRtlWord && utf8ContainsRtlScript(word.c_str()) &&
                              BidiUtils::startsWithRtl(word.c_str(), RTL_PER_WORD_PROBE_DEPTH);
 
+  uint16_t pendingPadding = paddingBefore;
+  const auto consumePadding = [&]() {
+    const uint16_t tokenPadding = pendingPadding;
+    pendingPadding = 0;
+    wordPaddingBefore.push_back(tokenPadding);
+  };
+
   const auto pushToken = [&](std::string token, const bool continues, const bool noSpaceBefore,
                              const bool isFocusSuffix) {
     words.push_back(std::move(token));
@@ -272,6 +279,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
     wordContinues.push_back(continues);
     wordNoSpaceBefore.push_back(noSpaceBefore);
     wordIsFocusSuffix.push_back(isFocusSuffix);
+    consumePadding();
   };
 
   bool effectiveAttachToPrevious = attachToPrevious;
@@ -296,6 +304,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
     wordContinues.reserve(newCapacity);
     wordNoSpaceBefore.reserve(newCapacity);
     wordIsFocusSuffix.reserve(newCapacity);
+    wordPaddingBefore.reserve(newCapacity);
   };
 
   if (auto breakOffsets = cjkCharacterBreakByteOffsets(word); !breakOffsets.empty()) {
@@ -353,6 +362,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
       wordContinues.push_back(attach);
       wordNoSpaceBefore.push_back(noSpaceBefore);
       wordIsFocusSuffix.push_back(false);
+      consumePadding();
     } else {
       size_t charCount = 0;
       const unsigned char* countPtr = reinterpret_cast<const unsigned char*>(segment.data());
@@ -375,6 +385,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
         wordContinues.push_back(attach);
         wordNoSpaceBefore.push_back(noSpaceBefore);
         wordIsFocusSuffix.push_back(false);
+        consumePadding();
       } else {
         countPtr = reinterpret_cast<const unsigned char*>(segment.data());
         for (size_t i = 0; i < targetBoldChars; ++i) {
@@ -388,6 +399,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
         wordContinues.push_back(attach);
         wordNoSpaceBefore.push_back(noSpaceBefore);
         wordIsFocusSuffix.push_back(false);
+        consumePadding();
 
         // Regular suffix - marked so extractLine can merge it back into single TextBlock entry
         words.emplace_back(segment.substr(splitByteOffset));
@@ -395,6 +407,7 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
         wordContinues.push_back(true);
         wordNoSpaceBefore.push_back(false);
         wordIsFocusSuffix.push_back(true);
+        consumePadding();
       }
     }
   };
@@ -528,6 +541,7 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
     wordContinues.erase(wordContinues.begin(), wordContinues.begin() + consumed);
     wordNoSpaceBefore.erase(wordNoSpaceBefore.begin(), wordNoSpaceBefore.begin() + consumed);
     wordIsFocusSuffix.erase(wordIsFocusSuffix.begin(), wordIsFocusSuffix.begin() + consumed);
+    wordPaddingBefore.erase(wordPaddingBefore.begin(), wordPaddingBefore.begin() + consumed);
   }
 }
 
@@ -592,7 +606,7 @@ std::vector<size_t> ParsedText::computeLineBreaks(const GfxRenderer& renderer, c
         // Cross-boundary kerning for continuation words (e.g. nonbreaking spaces, attached punctuation)
         gap = renderer.getKerning(fontId, lastCodepoint(words[j - 1]), firstCodepoint(words[j]), wordStyles[j - 1]);
       }
-      currlen += wordWidths[j] + gap;
+      currlen += wordPaddingBefore[j] + wordWidths[j] + gap;
 
       if (currlen > effectivePageWidth) {
         break;
@@ -689,7 +703,7 @@ std::vector<size_t> ParsedText::computeHyphenatedLineBreaks(const GfxRenderer& r
         spacing = renderer.getKerning(fontId, lastCodepoint(words[currentIndex - 1]),
                                       firstCodepoint(words[currentIndex]), wordStyles[currentIndex - 1]);
       }
-      const int candidateWidth = spacing + wordWidths[currentIndex];
+      const int candidateWidth = wordPaddingBefore[currentIndex] + spacing + wordWidths[currentIndex];
 
       // Word fits on current line
       if (lineWidth + candidateWidth <= effectivePageWidth) {
@@ -699,7 +713,7 @@ std::vector<size_t> ParsedText::computeHyphenatedLineBreaks(const GfxRenderer& r
       }
 
       // Word would overflow — try to split based on hyphenation points
-      const int availableWidth = effectivePageWidth - lineWidth - spacing;
+      const int availableWidth = effectivePageWidth - lineWidth - wordPaddingBefore[currentIndex] - spacing;
       const bool allowFallbackBreaks = isFirstWord;  // Only for first word on line
 
       if (availableWidth > 0 &&
@@ -787,6 +801,7 @@ bool ParsedText::hyphenateWordAtIndex(const size_t wordIndex, const int availabl
   // Insert the remainder word (with matching style and continuation flag) directly after the prefix.
   words.insert(words.begin() + wordIndex + 1, remainder);
   wordStyles.insert(wordStyles.begin() + wordIndex + 1, style);
+  wordPaddingBefore.insert(wordPaddingBefore.begin() + wordIndex + 1, 0);
   // The hyphen remainder is not a focus suffix - it starts fresh on the next line.
   wordIsFocusSuffix.insert(wordIsFocusSuffix.begin() + wordIndex + 1, false);
 
@@ -836,6 +851,8 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
   lineWords.reserve(lineWordCount);
   std::vector<EpdFontFamily::Style> lineWordStyles;
   lineWordStyles.reserve(lineWordCount);
+  std::vector<uint16_t> lineWordPadding;
+  lineWordPadding.reserve(lineWordCount);
 
   for (size_t i = 0; i < lineWordCount; ++i) {
     std::string word = std::move(words[lastBreakAt + i]);
@@ -844,6 +861,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     }
     lineWords.push_back(std::move(word));
     lineWordStyles.push_back(wordStyles[lastBreakAt + i]);
+    lineWordPadding.push_back(wordPaddingBefore[lastBreakAt + i]);
   }
 
   // Calculate total word width for this line, count actual word gaps,
@@ -853,7 +871,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
   int totalNaturalGaps = 0;
 
   for (size_t wordIdx = 0; wordIdx < lineWordCount; wordIdx++) {
-    lineWordWidthSum += wordWidths[lastBreakAt + wordIdx];
+    lineWordWidthSum += lineWordPadding[wordIdx] + wordWidths[lastBreakAt + wordIdx];
     // Count gaps: each word after the first creates a gap, unless it's a continuation
     if (wordIdx > 0 && noSpaceBeforeVec[lastBreakAt + wordIdx]) {
       // Unicode break opportunity with no inserted Latin-style space. It is still
@@ -907,12 +925,14 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     reorderedWordsScratch.clear();
     reorderedStylesScratch.clear();
     reorderedWidthsScratch.clear();
+    reorderedPaddingScratch.clear();
     reorderedContinuesScratch.clear();
     reorderedNoSpaceBeforeScratch.clear();
     reorderedFocusSuffixScratch.clear();
     reorderedWordsScratch.reserve(visualOrderScratch.size());
     reorderedStylesScratch.reserve(visualOrderScratch.size());
     reorderedWidthsScratch.reserve(visualOrderScratch.size());
+    reorderedPaddingScratch.reserve(visualOrderScratch.size());
     reorderedContinuesScratch.reserve(visualOrderScratch.size());
     reorderedNoSpaceBeforeScratch.reserve(visualOrderScratch.size());
     reorderedFocusSuffixScratch.reserve(visualOrderScratch.size());
@@ -922,6 +942,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
       reorderedWordsScratch.push_back(std::move(lineWords[src]));
       reorderedStylesScratch.push_back(lineWordStyles[src]);
       reorderedWidthsScratch.push_back(wordWidths[lastBreakAt + src]);
+      reorderedPaddingScratch.push_back(lineWordPadding[src]);
       reorderedFocusSuffixScratch.push_back(wordIsFocusSuffix[lastBreakAt + src]);
 
       // Continuation means "no break/gap between two adjacent logical tokens".
@@ -948,7 +969,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     size_t reorderedGapCount = 0;
     int reorderedNaturalGaps = 0;
     for (size_t wordIdx = 0; wordIdx < reorderedWidthsScratch.size(); wordIdx++) {
-      reorderedWordWidthSum += reorderedWidthsScratch[wordIdx];
+      reorderedWordWidthSum += reorderedPaddingScratch[wordIdx] + reorderedWidthsScratch[wordIdx];
       if (wordIdx > 0 && reorderedNoSpaceBeforeScratch[wordIdx]) {
         // Unicode break opportunity with no inserted Latin-style space. It is still
         // a stretchable gap for justified CJK/Korean text.
@@ -995,6 +1016,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     }
 
     for (size_t wordIdx = 0; wordIdx < reorderedWidthsScratch.size(); wordIdx++) {
+      xpos += reorderedPaddingScratch[wordIdx];
       lineXPos.push_back(static_cast<int16_t>(xpos));
       xpos += reorderedWidthsScratch[wordIdx];
 
@@ -1041,8 +1063,8 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
       // For Right and Justify, start from right edge (xpos = effectivePageWidth)
 
       for (size_t wordIdx = 0; wordIdx < lineWordCount; wordIdx++) {
-        xpos -= wordWidths[lastBreakAt + wordIdx];
-        lineXPos.push_back(static_cast<int16_t>(xpos));
+        xpos -= lineWordPadding[wordIdx] + wordWidths[lastBreakAt + wordIdx];
+        lineXPos.push_back(static_cast<int16_t>(xpos + lineWordPadding[wordIdx]));
 
         const bool nextIsContinuation = wordIdx + 1 < lineWordCount && continuesVec[lastBreakAt + wordIdx + 1];
         if (nextIsContinuation) {
@@ -1081,6 +1103,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
       }
 
       for (size_t wordIdx = 0; wordIdx < lineWordCount; wordIdx++) {
+        xpos += lineWordPadding[wordIdx];
         lineXPos.push_back(static_cast<int16_t>(xpos));
 
         const bool nextIsContinuation = wordIdx + 1 < lineWordCount && continuesVec[lastBreakAt + wordIdx + 1];

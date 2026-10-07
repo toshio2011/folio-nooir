@@ -235,7 +235,8 @@ void HomeActivity::showBookActions() {
     } else if (action == 8) {
       startActivityForResult(
           std::make_unique<SynopsisActivity>(renderer, mappedInput, selected.title, selected.author, selected.synopsis,
-                                             selected.path),
+                                             selected.path, selected.coverBmpPath, selected.progressPercent,
+                                             selected.readingSeconds, selected.readingSessions),
           nullptr);
       return;
     } else if (action == 9) {

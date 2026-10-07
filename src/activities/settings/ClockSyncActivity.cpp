@@ -71,7 +71,7 @@ void ClockSyncActivity::runSync() {
     return;
   }
 
-  const ClockWeatherSyncResult result = ClockWeatherSyncService::sync(true, syncWeather);
+  const ClockWeatherSyncResult result = ClockWeatherSyncService::sync(true, syncWeather, true);
 
   // This device action is deliberately one-shot: release the radio as soon
   // as the request is complete rather than keeping Wi-Fi alive while the
@@ -80,6 +80,8 @@ void ClockSyncActivity::runSync() {
     WiFi.disconnect(false);
     WiFi.mode(WIFI_OFF);
     shouldTearDownWifiOnExit = false;
+    LOG_INF("NETMEM", "stage=wifi_deinit_complete free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
   }
 
   // Read the freshly synced time back for the user-facing confirmation.

@@ -22,7 +22,16 @@
 // project source headers as library dependencies.
 #include "../../src/fontIds.h"
 
+#ifndef NOOIR_INTERFACE_FONT_DIAGNOSTICS
+#define NOOIR_INTERFACE_FONT_DIAGNOSTICS 0
+#endif
+
 namespace {
+#if NOOIR_INTERFACE_FONT_DIAGNOSTICS
+uint8_t interfaceFontPrepDiagnosticRecords = 0;
+uint8_t interfaceFontPrepHitDiagnosticRecords = 0;
+#endif
+
 
 /**
  * Resolves the requested style to the best available style in the given SD card font.
@@ -358,25 +367,112 @@ int GfxRenderer::getRenderedTextAdvanceX(const int fontId, const char* renderedT
 }
 
 int GfxRenderer::scaleUiFontId(const int fontId) const {
-  if (!uiScaleTextEnabled || uiScalePercent == 100) return fontId;
+  if (!uiScaleTextEnabled || uiScalePercent == 100) {
+    const auto it = uiFontOverrideMap_.find(fontId);
+    return it != uiFontOverrideMap_.end() ? it->second : fontId;
+  }
 
   const bool smaller = uiScalePercent < 95;
   const bool larger = uiScalePercent > 105;
-  if (!smaller && !larger) return fontId;
+  if (!smaller && !larger) {
+    const auto it = uiFontOverrideMap_.find(fontId);
+    return it != uiFontOverrideMap_.end() ? it->second : fontId;
+  }
 
+  int scaledFontId = fontId;
   if (fontId == SMALL_FONT_ID) {
-    return smaller ? SMALL_FONT_ID : UI_10_FONT_ID;
-  }
-  if (fontId == UI_10_FONT_ID) {
-    return smaller ? SMALL_FONT_ID : UI_12_FONT_ID;
-  }
-  if (fontId == UI_12_FONT_ID) {
-    if (smaller) return UI_10_FONT_ID;
+    scaledFontId = smaller ? SMALL_FONT_ID : UI_10_FONT_ID;
+  } else if (fontId == UI_10_FONT_ID) {
+    scaledFontId = smaller ? SMALL_FONT_ID : UI_12_FONT_ID;
+  } else if (fontId == UI_12_FONT_ID) {
+    if (smaller) scaledFontId = UI_10_FONT_ID;
     // Use the same-size reader font for the larger UI-scale fallback. Keep a
     // safe fallback for slim builds that omit the larger font bundle.
-    return fontMap.count(NOTOSERIF_14_FONT_ID) ? NOTOSERIF_14_FONT_ID : UI_12_FONT_ID;
+    else scaledFontId = fontMap.count(NOTOSERIF_14_FONT_ID) ? NOTOSERIF_14_FONT_ID : UI_12_FONT_ID;
   }
-  return fontId;
+  auto it = uiFontOverrideMap_.find(scaledFontId);
+  if (it != uiFontOverrideMap_.end()) return it->second;
+  // UI scale's larger UI_12 target is a 14 pt built-in reader font. Keep the
+  // selected interface family rather than silently switching families.
+  it = uiFontOverrideMap_.find(fontId);
+  return it != uiFontOverrideMap_.end() ? it->second : scaledFontId;
+}
+
+void GfxRenderer::prepareUiTextIfNeeded(const int fontId, const char* text,
+                                        const EpdFontFamily::Style style) const {
+  if (text == nullptr || *text == '\0' || !isUiFontOverride(fontId)) return;
+
+  // UI labels are short, but cap hashing so a malformed caller cannot turn
+  // this guard into an unbounded scan. The cache only suppresses repeated
+  // preparation; the SD font's own mini/overflow caches remain authoritative.
+  static constexpr size_t kMaxHashBytes = 128;
+  static constexpr uint32_t kFnvOffset = 2166136261u;
+  static constexpr uint32_t kFnvPrime = 16777619u;
+  uint32_t hash = kFnvOffset;
+  size_t length = 0;
+  for (; text[length] != '\0' && length < kMaxHashBytes; ++length) {
+    hash ^= static_cast<uint8_t>(text[length]);
+    hash *= kFnvPrime;
+  }
+  hash ^= static_cast<uint32_t>(length);
+  hash *= kFnvPrime;
+  const uint8_t styleMask = static_cast<uint8_t>(1U << (static_cast<uint8_t>(style) & 0x03));
+
+  for (uint8_t i = 0; i < uiPreparedTextCount_; ++i) {
+    const auto& entry = uiPreparedText_[i];
+    if (entry.hash == hash && entry.fontId == fontId && entry.styleMask == styleMask) {
+#if NOOIR_INTERFACE_FONT_DIAGNOSTICS
+      if (interfaceFontPrepHitDiagnosticRecords < 48) {
+        LOG_INF("UIFONT", "hit font=%d style=0x%02X hash=%08lX", fontId, styleMask,
+                static_cast<unsigned long>(hash));
+        ++interfaceFontPrepHitDiagnosticRecords;
+      }
+#endif
+      return;
+    }
+  }
+
+  auto fontIt = sdCardFonts_.find(fontId);
+  if (fontIt == sdCardFonts_.end() || fontIt->second == nullptr) return;
+  if (fontIt->second->hasPreparedGlyphs(text, styleMask)) {
+#if NOOIR_INTERFACE_FONT_DIAGNOSTICS
+    if (interfaceFontPrepDiagnosticRecords < 48) {
+      LOG_INF("UIFONT", "cover font=%d style=0x%02X hash=%08lX", fontId, styleMask,
+              static_cast<unsigned long>(hash));
+      ++interfaceFontPrepDiagnosticRecords;
+    }
+#endif
+    if (uiPreparedTextCount_ < UI_PREPARED_TEXT_CAP) {
+      uiPreparedText_[uiPreparedTextCount_++] = {hash, fontId, styleMask};
+    } else {
+      uiPreparedText_[uiPreparedTextNext_] = {hash, fontId, styleMask};
+      uiPreparedTextNext_ = static_cast<uint8_t>((uiPreparedTextNext_ + 1) % UI_PREPARED_TEXT_CAP);
+    }
+    return;
+  }
+  // Prepare only the selected style and only this bounded label. A failed or
+  // partial preparation is still remembered; render-time on-demand loading is
+  // the bounded recovery path and repeated redraws must not retry SD I/O.
+  const unsigned long startedMs = millis();
+  const auto before = fontIt->second->getStats();
+  (void)fontIt->second->prewarm(text, styleMask);
+#if NOOIR_INTERFACE_FONT_DIAGNOSTICS
+  if (interfaceFontPrepDiagnosticRecords < 48) {
+    const auto after = fontIt->second->getStats();
+    LOG_INF("UIFONT", "prep font=%d style=0x%02X ms=%lu sd=%lu seek=%lu glyph=%lu", fontId, styleMask,
+            millis() - startedMs, static_cast<unsigned long>(after.sdReadTimeMs - before.sdReadTimeMs),
+            static_cast<unsigned long>(after.seekCount - before.seekCount),
+            static_cast<unsigned long>(after.uniqueGlyphs - before.uniqueGlyphs));
+    ++interfaceFontPrepDiagnosticRecords;
+  }
+#endif
+
+  if (uiPreparedTextCount_ < UI_PREPARED_TEXT_CAP) {
+    uiPreparedText_[uiPreparedTextCount_++] = {hash, fontId, styleMask};
+  } else {
+    uiPreparedText_[uiPreparedTextNext_] = {hash, fontId, styleMask};
+    uiPreparedTextNext_ = static_cast<uint8_t>((uiPreparedTextNext_ + 1) % UI_PREPARED_TEXT_CAP);
+  }
 }
 
 uint8_t GfxRenderer::getFontPointSize(const int fontId) const {
@@ -608,7 +704,8 @@ static void placeArabicCombiningMark(const TextRotation rotation, const uint32_t
 
 // Shared glyph rendering logic for normal and rotated text.
 // Coordinate mapping and cursor advance direction are selected at compile time via the template parameter.
-// Render a glyph at 50% scale. Used for SUP/SUB style bits.
+// Render a glyph at a bounded integer scale. Used for SUP/SUB and synthesized
+// small caps; no transformed text or retained bitmap is needed.
 //
 // Each destination pixel represents a 2x2 source block. Drawing when that block
 // contains ink preserves thin strokes that nearest-neighbor sampling can skip.
@@ -617,9 +714,12 @@ static void placeArabicCombiningMark(const TextRotation rotation, const uint32_t
 // horizontal space for the scaled glyph.
 static void renderCharScaled(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode,
                              const EpdFontFamily& fontFamily, const uint32_t cp, int cursorX, int cursorY,
-                             const bool pixelState, const EpdFontFamily::Style style) {
+                             const bool pixelState, const EpdFontFamily::Style style,
+                             const int scaleNumerator = 1, const int scaleDenominator = 2) {
   const EpdGlyph* glyph = fontFamily.getGlyph(cp, style);
   if (!glyph) return;
+
+  if (scaleNumerator <= 0 || scaleDenominator <= 0) return;
 
   const EpdFontData* fontData = fontFamily.getData(style);
   const uint8_t* bitmap = renderer.getGlyphBitmap(fontData, glyph);
@@ -627,25 +727,27 @@ static void renderCharScaled(const GfxRenderer& renderer, GfxRenderer::RenderMod
 
   const int srcW = glyph->width;
   const int srcH = glyph->height;
-  const int dstW = (srcW + 1) / 2;  // ceil so odd-width glyphs aren't clipped
-  const int dstH = (srcH + 1) / 2;
+  const int dstW = (srcW * scaleNumerator + scaleDenominator - 1) / scaleDenominator;
+  const int dstH = (srcH * scaleNumerator + scaleDenominator - 1) / scaleDenominator;
   // Scale the glyph bearing by the same factor so the scaled glyph sits at the correct
   // pixel offset from the (already-shifted) cursor position.
-  const int baseX = cursorX + glyph->left / 2;
-  const int baseY = cursorY - glyph->top / 2;
+  const int baseX = cursorX + (glyph->left * scaleNumerator) / scaleDenominator;
+  const int baseY = cursorY - (glyph->top * scaleNumerator) / scaleDenominator;
 
   if (fontData->is2Bit) {
     // 2-bit packed format: 4 pixels per byte, MSB first, 2 bits per pixel.
     // raw value: 0=white, 1=light-gray, 2=dark-gray, 3=black.
     for (int dstY = 0; dstY < dstH; dstY++) {
-      const int srcY = dstY * 2;
+      const int srcY0 = (dstY * scaleDenominator) / scaleNumerator;
+      const int srcY1 = std::min(srcH - 1, ((dstY + 1) * scaleDenominator) / scaleNumerator - 1);
       for (int dstX = 0; dstX < dstW; dstX++) {
-        const int srcX = dstX * 2;
+        const int srcX0 = (dstX * scaleDenominator) / scaleNumerator;
+        const int srcX1 = std::min(srcW - 1, ((dstX + 1) * scaleDenominator) / scaleNumerator - 1);
         uint8_t coverage = 0;
         uint8_t maxRaw = 0;
-        for (int sampleY = 0; sampleY < 2 && srcY + sampleY < srcH; sampleY++) {
-          for (int sampleX = 0; sampleX < 2 && srcX + sampleX < srcW; sampleX++) {
-            const int pos = (srcY + sampleY) * srcW + srcX + sampleX;
+        for (int srcY = srcY0; srcY <= srcY1; ++srcY) {
+          for (int srcX = srcX0; srcX <= srcX1; ++srcX) {
+            const int pos = srcY * srcW + srcX;
             const uint8_t byte = bitmap[pos >> 2];
             const uint8_t raw = (byte >> ((3 - (pos & 3)) * 2)) & 0x3;
             coverage += raw;
@@ -661,13 +763,15 @@ static void renderCharScaled(const GfxRenderer& renderer, GfxRenderer::RenderMod
   } else {
     // 1-bit packed format: 8 pixels per byte, MSB first.
     for (int dstY = 0; dstY < dstH; dstY++) {
-      const int srcY = dstY * 2;
+      const int srcY0 = (dstY * scaleDenominator) / scaleNumerator;
+      const int srcY1 = std::min(srcH - 1, ((dstY + 1) * scaleDenominator) / scaleNumerator - 1);
       for (int dstX = 0; dstX < dstW; dstX++) {
-        const int srcX = dstX * 2;
+        const int srcX0 = (dstX * scaleDenominator) / scaleNumerator;
+        const int srcX1 = std::min(srcW - 1, ((dstX + 1) * scaleDenominator) / scaleNumerator - 1);
         bool hasInk = false;
-        for (int sampleY = 0; sampleY < 2 && srcY + sampleY < srcH; sampleY++) {
-          for (int sampleX = 0; sampleX < 2 && srcX + sampleX < srcW; sampleX++) {
-            const int pos = (srcY + sampleY) * srcW + srcX + sampleX;
+        for (int srcY = srcY0; srcY <= srcY1; ++srcY) {
+          for (int srcX = srcX0; srcX <= srcX1; ++srcX) {
+            const int pos = srcY * srcW + srcX;
             const uint8_t byte = bitmap[pos >> 3];
             const uint8_t bit = 7 - (pos & 7);
             if ((byte >> bit) & 1) {
@@ -862,6 +966,103 @@ bool GfxRenderer::isPixelBlack(const int x, const int y) const {
   return (target[byteIndex] & (1U << bitPosition)) == 0;
 }
 
+int GfxRenderer::getSmallCapsTextAdvanceX(const int fontId, const char* text,
+                                          const EpdFontFamily::Style style) const {
+  if (text == nullptr || *text == '\0') return 0;
+
+  const auto fontIt = fontMap.find(fontId);
+  if (fontIt == fontMap.end()) return 0;
+  const EpdFontFamily::Style baseStyle = static_cast<EpdFontFamily::Style>(
+      static_cast<uint8_t>(style) & ~static_cast<uint8_t>(EpdFontFamily::SMALL_CAPS));
+  const auto& font = fontIt->second;
+  const auto sdIt = sdCardFonts_.find(fontId);
+  const bool hasSdAdvances = sdIt != sdCardFonts_.end() && sdIt->second->hasAdvanceTable();
+  const uint8_t sdStyle = hasSdAdvances ? resolveSdCardStyle(*sdIt->second, baseStyle) : 0;
+
+  int widthPx = 0;
+  int32_t previousAdvanceFP = 0;
+  uint32_t previousCp = 0;
+  bool previousScaled = false;
+  const unsigned char* cursor = reinterpret_cast<const unsigned char*>(text);
+  while (uint32_t cp = utf8NextCodepoint(&cursor)) {
+    if (utf8IsNonRenderingFormat(cp) || utf8IsTextMark(cp)) continue;
+
+    const bool lowerAscii = cp >= 'a' && cp <= 'z';
+    uint32_t renderedCp = lowerAscii ? cp - ('a' - 'A') : cp;
+    const EpdGlyph* glyph = font.getGlyph(renderedCp, baseStyle);
+    bool scaled = lowerAscii && glyph != nullptr;
+    if (glyph == nullptr) {
+      renderedCp = cp;
+      glyph = font.getGlyph(cp, baseStyle);
+      scaled = false;
+    }
+
+    int32_t advanceFP = 0;
+    if (hasSdAdvances) advanceFP = sdIt->second->getAdvance(renderedCp, sdStyle);
+    if (advanceFP == 0 && glyph != nullptr) advanceFP = glyph->advanceX;
+    if (scaled) advanceFP = (advanceFP * 3 + 2) / 4;
+
+    if (previousCp != 0) {
+      int32_t kernFP = font.getKerning(previousCp, renderedCp, baseStyle);
+      if (previousScaled || scaled) kernFP = (kernFP * 3) / 4;
+      widthPx += fp4::toPixel(previousAdvanceFP + kernFP);
+    }
+    previousAdvanceFP = advanceFP;
+    previousCp = renderedCp;
+    previousScaled = scaled;
+  }
+  widthPx += fp4::toPixel(previousAdvanceFP);
+  return widthPx;
+}
+
+void GfxRenderer::drawSmallCapsText(const int fontId, const int x, const int y, const char* text,
+                                    const bool black, const EpdFontFamily::Style style) const {
+  if (text == nullptr || *text == '\0') return;
+
+  const auto fontIt = fontMap.find(fontId);
+  if (fontIt == fontMap.end()) return;
+  const EpdFontFamily::Style baseStyle = static_cast<EpdFontFamily::Style>(
+      static_cast<uint8_t>(style) & ~static_cast<uint8_t>(EpdFontFamily::SMALL_CAPS));
+  const auto& font = fontIt->second;
+  int cursorX = x;
+  const int baselineY = y + getFontAscenderSize(fontId);
+  int32_t previousAdvanceFP = 0;
+  uint32_t previousCp = 0;
+  bool previousScaled = false;
+  const unsigned char* cursor = reinterpret_cast<const unsigned char*>(text);
+
+  while (uint32_t cp = utf8NextCodepoint(&cursor)) {
+    if (utf8IsNonRenderingFormat(cp) || utf8IsTextMark(cp)) continue;
+
+    const bool lowerAscii = cp >= 'a' && cp <= 'z';
+    uint32_t renderedCp = lowerAscii ? cp - ('a' - 'A') : cp;
+    const EpdGlyph* glyph = font.getGlyph(renderedCp, baseStyle);
+    bool scaled = lowerAscii && glyph != nullptr;
+    if (glyph == nullptr) {
+      renderedCp = cp;
+      glyph = font.getGlyph(renderedCp, baseStyle);
+      scaled = false;
+    }
+    if (glyph == nullptr) continue;
+
+    if (previousCp != 0) {
+      int32_t kernFP = font.getKerning(previousCp, renderedCp, baseStyle);
+      if (previousScaled || scaled) kernFP = (kernFP * 3) / 4;
+      cursorX += fp4::toPixel(previousAdvanceFP + kernFP);
+    }
+
+    if (scaled) {
+      renderCharScaled(*this, renderMode, font, renderedCp, cursorX, baselineY, black, baseStyle, 3, 4);
+      previousAdvanceFP = (static_cast<int32_t>(glyph->advanceX) * 3 + 2) / 4;
+    } else {
+      renderCharImpl<TextRotation::None>(*this, renderMode, font, renderedCp, cursorX, baselineY, black, baseStyle);
+      previousAdvanceFP = glyph->advanceX;
+    }
+    previousCp = renderedCp;
+    previousScaled = scaled;
+  }
+}
+
 int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style,
                                const BidiUtils::BidiBaseDir baseDir) const {
   if (text == nullptr || *text == '\0') {
@@ -879,6 +1080,13 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
 
   std::string visual;
   const char* renderedText = resolveVisualText(text, visual, baseDir);
+  if ((style & EpdFontFamily::SMALL_CAPS) != 0 && !utf8ContainsRtlScript(renderedText)) {
+    return getSmallCapsTextAdvanceX(resolvedFontId, renderedText, style);
+  }
+  // Prepare the bounded UI label before measurement. Without this hook the
+  // first width pass could cause one SD glyph read at a time, before drawText
+  // gets a chance to batch the same label.
+  prepareUiTextIfNeeded(resolvedFontId, renderedText, style);
   if (hasArabicFallbackCandidate(resolvedFontId, renderedText, style)) {
     return getRenderedTextAdvanceX(resolvedFontId, renderedText, style);
   }
@@ -998,6 +1206,21 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
   int32_t prevAdvanceFP = 0;  // 12.4 fixed-point: prev glyph's advance + next kern for snap
 
   const bool mixedArabicFallback = hasArabicFallbackCandidate(resolvedFontId, renderedText, style);
+  if ((style & EpdFontFamily::SMALL_CAPS) != 0 && !utf8ContainsRtlScript(renderedText)) {
+    const EpdFontFamily::Style baseStyle = static_cast<EpdFontFamily::Style>(
+        static_cast<uint8_t>(style) & ~static_cast<uint8_t>(EpdFontFamily::SMALL_CAPS));
+    if (fontCacheManager_ && fontCacheManager_->isScanning()) {
+      const unsigned char* scanCursor = reinterpret_cast<const unsigned char*>(renderedText);
+      while (uint32_t scanCp = utf8NextCodepoint(&scanCursor)) {
+        if (utf8IsNonRenderingFormat(scanCp) || utf8IsTextMark(scanCp)) continue;
+        if (scanCp >= 'a' && scanCp <= 'z') scanCp -= ('a' - 'A');
+        fontCacheManager_->recordCodepoint(scanCp, resolvedFontId, baseStyle);
+      }
+    } else {
+      drawSmallCapsText(resolvedFontId, x, y, renderedText, black, style);
+    }
+    return;
+  }
   if (fontCacheManager_ && fontCacheManager_->isScanning()) {
     if (!mixedArabicFallback) {
       fontCacheManager_->recordText(renderedText, resolvedFontId, style);
@@ -1018,6 +1241,8 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
     }
     return;
   }
+
+  prepareUiTextIfNeeded(resolvedFontId, renderedText, style);
 
   if (mixedArabicFallback) {
     const char* textCursor = renderedText;
@@ -2531,6 +2756,9 @@ int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFami
   // right margin.
   std::string visual;
   const char* renderedText = resolveVisualText(text, visual, BidiUtils::BidiBaseDir::AUTO);
+  if ((style & EpdFontFamily::SMALL_CAPS) != 0 && !utf8ContainsRtlScript(renderedText)) {
+    return getSmallCapsTextAdvanceX(resolvedFontId, renderedText, style);
+  }
   if (hasArabicFallbackCandidate(resolvedFontId, renderedText, style)) {
     return getRenderedTextAdvanceX(resolvedFontId, renderedText, style);
   }
@@ -2649,6 +2877,7 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
 
   // Route CJK-bearing strings to the fallback font (see resolveTextFontId).
   const int resolvedFontId = resolveTextFontId(fontId, text, style);
+  prepareUiTextIfNeeded(resolvedFontId, text, style);
   const auto fontIt = fontMap.find(resolvedFontId);
   if (fontIt == fontMap.end()) {
     LOG_ERR("GFX", "Font %d not found", resolvedFontId);

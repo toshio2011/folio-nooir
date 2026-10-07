@@ -139,11 +139,15 @@ FontInstaller::Error FontInstaller::deleteFamily(const char* familyName) {
   }
   (void)removedAny;
 
-  // If this was the active font, clear the setting
-  if (strcmp(SETTINGS.sdFontFamilyName, familyName) == 0) {
-    SETTINGS.sdFontFamilyName[0] = '\0';
+  // If this was the active reader or interface font, clear only the affected
+  // name selections so a deleted family cannot leave either path dangling.
+  const bool wasReaderFont = strcmp(SETTINGS.sdFontFamilyName, familyName) == 0;
+  const bool wasUiFont = strcmp(SETTINGS.uiFontFamilyName, familyName) == 0;
+  if (wasReaderFont || wasUiFont) {
+    if (wasReaderFont) SETTINGS.sdFontFamilyName[0] = '\0';
+    if (wasUiFont) SETTINGS.uiFontFamilyName[0] = '\0';
     SETTINGS.saveToFile();
-    LOG_DBG("FONT", "Cleared active SD font (deleted family: %s)", familyName);
+    LOG_DBG("FONT", "Cleared active SD font selection(s) (deleted family: %s)", familyName);
   }
 
   return Error::OK;

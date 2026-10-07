@@ -25,18 +25,32 @@
  *   - Combined: element.classname
  *   - ID selectors: #id, element#id
  *   - Bounded compounds: .a.b, tag.a.b, #id.a, tag#id.a
+ *   - Bounded immediate relationships: parent > child, previous + child,
+ *     and the shallow parent > previous + child form
  *   - Grouped: selector1, selector2 { }
  *
  * Not supported (silently ignored):
- *   - Descendant/child selectors
+ *   - Descendant selectors and general sibling selectors
  *   - Pseudo-classes and pseudo-elements
  *   - Media queries (content is skipped)
  *   - @import, @font-face, etc.
  */
+struct CssMatchContext {
+  std::string_view parentTag;
+  std::string_view parentClass;
+  std::string_view parentId;
+  std::string_view previousSiblingTag;
+  std::string_view previousSiblingClass;
+  std::string_view previousSiblingId;
+
+  [[nodiscard]] bool hasParent() const { return !parentTag.empty(); }
+  [[nodiscard]] bool hasPreviousSibling() const { return !previousSiblingTag.empty(); }
+};
+
 class CssParser {
  public:
   // Bump when CSS cache format or rules change; section caches are invalidated when this changes
-  static constexpr uint8_t CSS_CACHE_VERSION = 13;
+  static constexpr uint8_t CSS_CACHE_VERSION = 14;
 
   explicit CssParser(std::string cachePath) : cachePath(std::move(cachePath)) {}
   ~CssParser() = default;
@@ -62,7 +76,8 @@ class CssParser {
    * @return Combined style with all applicable rules merged
    */
   [[nodiscard]] CssStyle resolveStyle(std::string_view tagName, std::string_view classAttr,
-                                      std::string_view idAttr = {}) const;
+                                      std::string_view idAttr = {},
+                                      const CssMatchContext& context = {}) const;
 
   /**
    * Parse an inline style attribute string.
@@ -74,12 +89,20 @@ class CssParser {
   /**
    * Check if any rules have been loaded
    */
-  [[nodiscard]] bool empty() const { return rulesBySelector_.empty() && compoundRulesByAnchor_.empty(); }
+  [[nodiscard]] bool empty() const {
+    return rulesBySelector_.empty() && compoundRulesByAnchor_.empty() && boundedRules_.empty();
+  }
 
   /**
    * Get count of loaded rule sets
    */
-  [[nodiscard]] size_t ruleCount() const { return rulesBySelector_.size() + compoundRulesByAnchor_.size(); }
+  [[nodiscard]] size_t ruleCount() const {
+    return rulesBySelector_.size() + compoundRulesByAnchor_.size() + boundedRules_.size();
+  }
+  [[nodiscard]] size_t bucketCount() const {
+    return rulesBySelector_.bucket_count() + compoundRulesByAnchor_.bucket_count();
+  }
+  [[nodiscard]] bool hasBoundedSelectors() const { return !boundedRules_.empty(); }
 
   /**
    * Clear all loaded rules
@@ -87,7 +110,30 @@ class CssParser {
   void clear() {
     rulesBySelector_.clear();
     compoundRulesByAnchor_.clear();
+    boundedRules_.clear();
     nextSourceOrder_ = 0;
+  }
+
+  // Failure-only release: keep clear()'s normal reuse behavior for successful
+  // section transitions, but return reconstructible hash buckets when a build
+  // is abandoned and the same EPUB remains open.
+  void clearAndReleaseStorage() {
+    decltype(rulesBySelector_) emptyRules;
+    decltype(compoundRulesByAnchor_) emptyCompoundRules;
+    rulesBySelector_.swap(emptyRules);
+    compoundRulesByAnchor_.swap(emptyCompoundRules);
+    decltype(boundedRules_) emptyBoundedRules;
+    boundedRules_.swap(emptyBoundedRules);
+    nextSourceOrder_ = 0;
+  }
+
+  // Pressure-only release for a completed Section. The parser must be empty:
+  // serialized Page objects carry the resolved styles, while a live parser is
+  // still needed by ChapterHtmlSlimParser during a build.
+  bool releaseRetainedStorageIfEmpty() {
+    if (!empty()) return false;
+    clearAndReleaseStorage();
+    return true;
   }
 
   /**
@@ -178,6 +224,19 @@ class CssParser {
     SelectorMetadata metadata;
   };
 
+  struct BoundedSelectorMetadata {
+    std::array<SelectorMetadata, 3> parts{};
+    std::array<char, 2> combinators{};
+    uint8_t partCount = 0;
+  };
+
+  struct BoundedRule {
+    CssStyle style;
+    uint32_t sourceOrder = 0;
+    std::string selector;
+    BoundedSelectorMetadata metadata;
+  };
+
   // Multiple entries for one selector are retained so each declaration block's
   // source order remains available during per-property cascade resolution.
   // Hash/equal are case-insensitive and lookups remain direct.
@@ -187,6 +246,11 @@ class CssParser {
   // verifies the bounded remaining metadata without scanning unrelated rules.
   std::unordered_multimap<std::string, CompoundRule, SvHash, SvEqual> compoundRulesByAnchor_;
 
+  // Bounded combinators are few in real EPUB stylesheets and need relationship
+  // context at lookup time. A flat vector keeps the storage bounded and avoids
+  // retaining a selector tree or building a DOM.
+  std::vector<BoundedRule> boundedRules_;
+
   uint32_t nextSourceOrder_ = 0;
 
   std::string cachePath;
@@ -195,6 +259,7 @@ class CssParser {
   void processRuleBlockWithStyle(std::string_view selectorGroup, const CssStyle& style, uint32_t sourceOrder);
   bool storeSelectorRule(std::string_view selector, const CssStyle& style, uint32_t sourceOrder);
   static bool parseSelectorMetadata(std::string_view selector, SelectorMetadata& metadata);
+  static bool parseBoundedSelectorMetadata(std::string_view selector, BoundedSelectorMetadata& metadata);
   static CssStyle parseDeclarations(std::string_view declBlock);
   static void parseDeclarationIntoStyle(std::string_view decl, CssStyle& style);
 

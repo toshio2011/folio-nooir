@@ -13,6 +13,7 @@
 #include <FontCacheManager.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -34,6 +35,36 @@
 #include "util/StatisticsDate.h"
 
 namespace {
+
+enum class OverlayOpenFailure : uint8_t { None, Allocation, Open };
+OverlayOpenFailure overlayOpenFailure = OverlayOpenFailure::None;
+uint8_t sleepAssetLogCount = 0;
+constexpr uint8_t MAX_SLEEP_ASSET_LOGS = 18;
+
+void logSleepAsset(const char* stage, const char* path, const char* reason = nullptr) {
+  if (sleepAssetLogCount >= MAX_SLEEP_ASSET_LOGS) return;
+  LOG_INF("SLP", "%s path=%.96s reason=%s free=%u largest=%u", stage, path ? path : "-",
+          reason ? reason : "none", static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  ++sleepAssetLogCount;
+}
+
+struct SleepRenderCompletion {
+  GfxRenderer& renderer;
+  ~SleepRenderCompletion() {
+    LOG_INF("SLP", "sleep_decode_done free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    EpubDiagnostics::phaseRecord("sleep_decode_done");
+    LOG_INF("SLP", "sleep_refresh_begin stage=final_wait");
+    renderer.waitRefreshComplete();
+    LOG_INF("SLP", "sleep_refresh_complete free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    EpubDiagnostics::phaseRecord("sleep_refresh_complete");
+    LOG_INF("SLP", "sleep_final_cleanup free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    EpubDiagnostics::phaseRecord("sleep_final_cleanup");
+  }
+};
 
 // A page overlay is decoded directly from PNG so transparent pixels leave the
 // reader framebuffer untouched. This is deliberately separate from the normal
@@ -58,7 +89,14 @@ struct OverlayPngContext {
 
 void* overlayPngOpen(const char* filename, int32_t* size) {
   auto* file = new (std::nothrow) HalFile();
-  if (!file || !Storage.openFileForRead("SLP", std::string(filename), *file)) {
+  if (!file) {
+    overlayOpenFailure = OverlayOpenFailure::Allocation;
+    logSleepAsset("sleep_asset_alloc_fail", filename, "file_handle");
+    return nullptr;
+  }
+  if (!Storage.openFileForRead("SLP", std::string(filename), *file)) {
+    overlayOpenFailure = OverlayOpenFailure::Open;
+    logSleepAsset("sleep_asset_open_fail", filename, "storage_open");
     delete file;
     return nullptr;
   }
@@ -347,6 +385,12 @@ const char* sleepStatusText(const BookStatus status, const uint8_t progress) {
   return tr(STR_STATS_STATUS_NEW);
 }
 
+void drawSleepMetric(const GfxRenderer& renderer, const int fontId, const int x, const int y, const int width,
+                     const std::string& value, const EpdFontFamily::Style style = EpdFontFamily::BOLD) {
+  const int textWidth = renderer.getTextWidth(fontId, value.c_str(), style);
+  renderer.drawText(fontId, x + std::max(0, (width - textWidth) / 2), y, value.c_str(), true, style);
+}
+
 SleepClippingSnapshot loadSleepClippingSnapshot() {
   SleepClippingSnapshot snapshot;
   std::vector<std::string> candidates;
@@ -471,6 +515,12 @@ void drawClippingSleepCard(GfxRenderer& renderer, const std::string& text, const
 void SleepActivity::onEnter() {
   EpubDiagnostics::Scope diagnostics("sleep_render_start", "sleep_render_end");
   Activity::onEnter();
+  sleepAssetLogCount = 0;
+  SleepRenderCompletion completion{renderer};
+  LOG_INF("SLP", "sleep_asset_selected mode=%u free=%u largest=%u",
+          static_cast<unsigned>(SETTINGS.sleepScreen), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  EpubDiagnostics::phaseRecord("sleep_asset_selected", static_cast<int>(SETTINGS.sleepScreen));
 
   const bool renderQuickResume =
       SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
@@ -504,6 +554,9 @@ void SleepActivity::onEnter() {
   if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY && renderOverlaySleepScreen()) {
     return;
   }
+  if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY) {
+    logSleepAsset("sleep_fallback_selected", "default_sleep_screen", "overlay_candidates_failed");
+  }
 
   switch (SETTINGS.sleepScreen) {
     case (CrossPointSettings::SLEEP_SCREEN_MODE::BLANK):
@@ -530,6 +583,10 @@ void SleepActivity::onEnter() {
       return renderClippingCoverSleepScreen();
     case (CrossPointSettings::SLEEP_SCREEN_MODE::TODO_LIST):
       return renderToDoSleepScreen();
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::READING_CALENDAR_SLEEP):
+      return renderReadingCalendarSleepScreen();
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP):
+      return renderReadingSummarySleepScreen();
     default:
       return renderDefaultSleepScreen();
   }
@@ -725,15 +782,19 @@ bool SleepActivity::renderOverlaySleepScreen() const {
   if (!APP_STATE.favoriteSleepImagePath.empty() &&
       FsHelpers::hasPngExtension(APP_STATE.favoriteSleepImagePath) &&
       Storage.exists(APP_STATE.favoriteSleepImagePath.c_str())) {
+    logSleepAsset("sleep_asset_candidate", APP_STATE.favoriteSleepImagePath.c_str(), "favorite");
     bool hasTransparency = false;
     if (renderOverlayPngPass(APP_STATE.favoriteSleepImagePath, GfxRenderer::BW, &hasTransparency, false) &&
         hasTransparency) {
       refreshOverlayBase(renderer);
       if (renderOverlayPng(APP_STATE.favoriteSleepImagePath, false)) {
+        logSleepAsset("sleep_asset_selected", APP_STATE.favoriteSleepImagePath.c_str(), "favorite_overlay");
         LOG_DBG("SLP", "Rendering favorite page overlay: %s", APP_STATE.favoriteSleepImagePath.c_str());
         return true;
       }
+      logSleepAsset("sleep_asset_render_fail", APP_STATE.favoriteSleepImagePath.c_str(), "favorite_overlay");
     } else {
+      logSleepAsset("sleep_asset_invalid", APP_STATE.favoriteSleepImagePath.c_str(), "not_transparent_overlay");
       LOG_DBG("SLP", "Favorite sleep image is not a transparent overlay: %s",
               APP_STATE.favoriteSleepImagePath.c_str());
     }
@@ -764,17 +825,26 @@ bool SleepActivity::renderOverlaySleepScreen() const {
     const size_t start = static_cast<size_t>(random(static_cast<long>(pool.size())));
     for (size_t offset = 0; offset < pool.size(); ++offset) {
       const auto& path = pool[(start + offset) % pool.size()];
+      logSleepAsset("sleep_asset_candidate", path.c_str(), "overlay_pool");
       bool hasTransparency = false;
-      if (!renderOverlayPngPass(path, GfxRenderer::BW, &hasTransparency, false) || !hasTransparency) {
+      const bool probed = renderOverlayPngPass(path, GfxRenderer::BW, &hasTransparency, false);
+      if (!probed) {
+        logSleepAsset("sleep_asset_render_fail", path.c_str(), "probe_pass");
+        continue;
+      }
+      if (!hasTransparency) {
+        logSleepAsset("sleep_asset_invalid", path.c_str(), "opaque_no_alpha");
         LOG_DBG("SLP", "Skipping opaque page overlay PNG: %s", path.c_str());
         continue;
       }
       refreshOverlayBase(renderer);
       LOG_DBG("SLP", "Trying transparent page overlay PNG: %s", path.c_str());
       if (renderOverlayPng(path, false)) {
+        logSleepAsset("sleep_asset_selected", path.c_str(), "transparent_overlay");
         LOG_DBG("SLP", "Rendering page overlay: %s", path.c_str());
         return true;
       }
+      logSleepAsset("sleep_asset_render_fail", path.c_str(), "final_overlay_pass");
       LOG_ERR("SLP", "Skipping failed page overlay PNG: %s", path.c_str());
     }
     return false;
@@ -782,6 +852,7 @@ bool SleepActivity::renderOverlaySleepScreen() const {
 
   if (tryCandidates(folderCandidates) || tryCandidates(fallbackCandidates)) return true;
 
+  logSleepAsset("sleep_fallback_selected", "default_sleep_screen", "all_overlay_candidates_failed");
   LOG_ERR("SLP", "All page overlay PNG candidates failed; using default sleep screen");
   return false;
 }
@@ -837,12 +908,20 @@ std::string SleepActivity::findOverlayPngPath() const {
 bool SleepActivity::renderOverlayPngPass(const std::string& path, const GfxRenderer::RenderMode mode,
                                          bool* transparencyDetected, const bool drawPixels) const {
   auto png = makeUniqueNoThrow<PNG>();
-  if (!png) return false;
+  if (!png) {
+    logSleepAsset("sleep_asset_alloc_fail", path.c_str(), "png_decoder");
+    return false;
+  }
 
+  overlayOpenFailure = OverlayOpenFailure::None;
   const int openResult = png->open(path.c_str(), overlayPngOpen, overlayPngClose, overlayPngRead,
                                    overlayPngSeek, overlayPngDraw);
   const ScopedCleanup cleanup{[&png]() { png->close(); }};
-  if (openResult != PNG_SUCCESS) return false;
+  if (openResult != PNG_SUCCESS) {
+    if (overlayOpenFailure == OverlayOpenFailure::None)
+      logSleepAsset("sleep_asset_invalid", path.c_str(), "png_header_or_format");
+    return false;
+  }
 
   const int srcWidth = png->getWidth();
   const int srcHeight = png->getHeight();
@@ -851,6 +930,7 @@ bool SleepActivity::renderOverlayPngPass(const std::string& path, const GfxRende
   if (srcWidth <= 0 || srcHeight <= 0 || png->isInterlaced() ||
       overlayRequiredPngBufferBytes(srcWidth, pixelType, bitsPerSample) > PNG_MAX_BUFFERED_PIXELS ||
       !overlaySupportedBitDepth(pixelType, bitsPerSample)) {
+    logSleepAsset("sleep_asset_dimension_fail", path.c_str(), "unsupported_geometry_or_format");
     LOG_ERR("SLP", "Unsupported page overlay PNG: %s", path.c_str());
     return false;
   }
@@ -885,13 +965,18 @@ bool SleepActivity::renderOverlayPngPass(const std::string& path, const GfxRende
 
   LOG_DBG("SLP", "Overlay PNG %dx%d -> %dx%d (%s)", srcWidth, srcHeight, dstWidth, dstHeight,
           mode == GfxRenderer::BW ? "BW" : (mode == GfxRenderer::GRAYSCALE_LSB ? "LSB" : "MSB"));
-  return png->decode(&context, 0) == PNG_SUCCESS;
+  if (png->decode(&context, 0) != PNG_SUCCESS) {
+    logSleepAsset("sleep_asset_decode_fail", path.c_str(), "png_decode");
+    return false;
+  }
+  return true;
 }
 
 bool SleepActivity::renderOverlayPng(const std::string& path, const bool allowOpaque) const {
   constexpr size_t PNG_DECODER_APPROX_SIZE = 44 * 1024;
   constexpr size_t MIN_FREE_HEAP_FOR_PNG = PNG_DECODER_APPROX_SIZE + 16 * 1024;
   if (ESP.getFreeHeap() < MIN_FREE_HEAP_FOR_PNG) {
+    logSleepAsset("sleep_asset_alloc_fail", path.c_str(), "minimum_heap");
     LOG_ERR("SLP", "Not enough heap for page overlay PNG");
     return false;
   }
@@ -1055,13 +1140,12 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
   }
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 
-  // Follow the reader's anti-aliased render sequence so the cover remains the
-  // BW base while both the cover details and transparent overlay get gray.
-  if (!renderer.storeBwBuffer()) {
-    LOG_ERR("SLP", "Not enough memory for cover overlay grayscale; keeping BW base");
-    renderer.setRenderMode(GfxRenderer::BW);
-    return;
-  }
+  // Follow the same bounded grayscale sequence as the normal sleep-cover
+  // renderer. The displayed BW frame is the base, so there is no need to copy
+  // a full framebuffer into temporary heap storage before the gray passes.
+  // That old copy was the physical X4 fallback point: when its chunks could
+  // not be allocated, the intentionally harsh BW frame remained visible.
+  renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
 
   bitmap.rewindToData();
   renderer.clearScreen(0x00);
@@ -1069,7 +1153,6 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
   renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
   if (!renderOverlayPngPass(selectedPath, GfxRenderer::GRAYSCALE_LSB, nullptr)) {
     renderer.setRenderMode(GfxRenderer::BW);
-    renderer.restoreBwBuffer();
     return;
   }
   renderer.copyGrayscaleLsbBuffers();
@@ -1080,7 +1163,6 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
   renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
   if (!renderOverlayPngPass(selectedPath, GfxRenderer::GRAYSCALE_MSB, nullptr)) {
     renderer.setRenderMode(GfxRenderer::BW);
-    renderer.restoreBwBuffer();
     return;
   }
   renderer.copyGrayscaleMsbBuffers();
@@ -1089,7 +1171,6 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
   renderer.displayGrayBuffer();
   renderer.setFadingFix(SETTINGS.fadingFix);
   renderer.setRenderMode(GfxRenderer::BW);
-  renderer.restoreBwBuffer();
 }
 
 void SleepActivity::renderBitmapSleepScreenWithClipping(const Bitmap& bitmap, const std::string& text,
@@ -1343,6 +1424,248 @@ void SleepActivity::renderReadingStatsSleepScreen() const {
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 }
 
+void SleepActivity::renderReadingCalendarSleepScreen() const {
+  StatisticsSnapshotOptions options;
+  options.keepDailyHistory = true;
+  options.keepAllBooks = false;
+  options.evaluateAchievements = false;
+  StatisticsSnapshot snapshot = StatisticsSnapshot::build(options);
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int side = metrics.contentSidePadding;
+
+  preconditionSleepRefresh(renderer);
+  renderer.clearScreen();
+
+  int year = 0;
+  int month = 0;
+  int today = 0;
+  if (!StatisticsDate::split(snapshot.todayDateKey, year, month, today)) {
+    renderer.drawCenteredText(UI_10_FONT_ID, 120, tr(STR_STATS_CLOCK_UNAVAILABLE), true, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(SMALL_FONT_ID, 158, tr(STR_STATS_NO_DATED_HISTORY));
+    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+    return;
+  }
+
+  std::array<ReadingDayStat, 31> monthDays{};
+  uint32_t monthMaxSeconds = 0;
+  uint32_t monthSeconds = 0;
+  uint32_t monthPages = 0;
+  uint32_t monthSessions = 0;
+  uint16_t activeDays = 0;
+  for (const auto& entry : snapshot.days) {
+    int entryYear = 0;
+    int entryMonth = 0;
+    int entryDay = 0;
+    if (!StatisticsDate::split(entry.dateKey, entryYear, entryMonth, entryDay) || entryYear != year ||
+        entryMonth != month)
+      continue;
+    auto& day = monthDays[static_cast<size_t>(entryDay - 1)];
+    day.dateKey = entry.dateKey;
+    day.seconds = std::min(entry.seconds, UINT32_MAX - day.seconds) + day.seconds;
+    day.sessions = static_cast<uint16_t>(std::min<uint32_t>(UINT16_MAX, day.sessions + entry.sessions));
+    day.pagesTurned = std::min(entry.pagesTurned, UINT32_MAX - day.pagesTurned) + day.pagesTurned;
+  }
+  for (const auto& day : monthDays) {
+    if (day.dateKey == 0) continue;
+    ++activeDays;
+    monthMaxSeconds = std::max(monthMaxSeconds, day.seconds);
+    monthSeconds = std::min(day.seconds, UINT32_MAX - monthSeconds) + monthSeconds;
+    monthPages = std::min(day.pagesTurned, UINT32_MAX - monthPages) + monthPages;
+    monthSessions = std::min<uint32_t>(UINT32_MAX, monthSessions + day.sessions);
+  }
+
+  static constexpr const char* WEEKDAYS[] = {"M", "T", "W", "T", "F", "S", "S"};
+  const int monthDaysCount = StatisticsDate::daysInMonth(year, month);
+  const uint32_t firstDayKey = static_cast<uint32_t>(year * 10000 + month * 100 + 1);
+  const int firstWeekdayOfMonth = StatisticsDate::weekdayMondayFirst(firstDayKey);
+  const int gridRows = std::max(1, (firstWeekdayOfMonth + monthDaysCount + 6) / 7);
+  const int gridWidth = pageWidth - side * 2;
+  const int cellWidth = std::max(1, gridWidth / 7);
+  const int monthLineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  const int weekdayLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
+  const int metricValueHeight = renderer.getLineHeight(UI_10_FONT_ID);
+  const int metricLabelHeight = renderer.getLineHeight(SMALL_FONT_ID);
+  constexpr int monthGap = 8;
+  constexpr int weekdayGap = 4;
+  constexpr int footerGap = 14;
+  const int footerHeight = metricValueHeight + 4 + metricLabelHeight;
+  const int fixedHeight = monthLineHeight + monthGap + weekdayLineHeight + weekdayGap + footerGap + 1 + footerHeight;
+  const int maxCellHeight = std::max(16, (pageHeight - 16 - fixedHeight) / gridRows);
+  const int cellHeight = std::min(48, maxCellHeight);
+  const int contentHeight = monthLineHeight + monthGap + weekdayLineHeight + weekdayGap + gridRows * cellHeight +
+                            footerGap + 1 + footerHeight;
+  const int contentTop = std::max(8, (pageHeight - contentHeight) / 2);
+  const int monthY = contentTop;
+  const int weekdayY = monthY + monthLineHeight + monthGap;
+  const int gridTop = weekdayY + weekdayLineHeight + weekdayGap;
+  const int footerTop = gridTop + gridRows * cellHeight + footerGap;
+
+  char monthText[16];
+  snprintf(monthText, sizeof(monthText), "%04d-%02d", year, month);
+  renderer.drawCenteredText(UI_12_FONT_ID, monthY, monthText, true, EpdFontFamily::BOLD);
+  for (int col = 0; col < 7; ++col) {
+    const int labelWidth = renderer.getTextWidth(SMALL_FONT_ID, WEEKDAYS[col]);
+    renderer.drawText(SMALL_FONT_ID, side + col * cellWidth + (cellWidth - labelWidth) / 2, weekdayY,
+                      WEEKDAYS[col]);
+  }
+  for (int dayNumber = 1; dayNumber <= monthDaysCount; ++dayNumber) {
+    const int slot = firstWeekdayOfMonth + dayNumber - 1;
+    const int row = slot / 7;
+    const int col = slot % 7;
+    const int x = side + col * cellWidth;
+    const int y = gridTop + row * cellHeight;
+    const auto& day = monthDays[static_cast<size_t>(dayNumber - 1)];
+    bool whiteText = false;
+    if (day.seconds > 0 && monthMaxSeconds > 0) {
+      const uint32_t intensity = static_cast<uint32_t>(static_cast<uint64_t>(day.seconds) * 100UL / monthMaxSeconds);
+      const Color fill = intensity <= 25 ? Color::LightGray : (intensity <= 60 ? Color::DarkGray : Color::Black);
+      renderer.fillRectDither(x + 2, y + 2, cellWidth - 4, cellHeight - 4, fill);
+      whiteText = fill == Color::Black;
+    }
+    const bool isToday = dayNumber == today;
+    if (isToday) renderer.drawRect(x, y, cellWidth, cellHeight, 2, true);
+    const std::string dayLabel = std::to_string(dayNumber);
+    const int dayWidth = renderer.getTextWidth(SMALL_FONT_ID, dayLabel.c_str(), EpdFontFamily::BOLD);
+    renderer.drawText(SMALL_FONT_ID, x + (cellWidth - dayWidth) / 2, y + 6, dayLabel.c_str(), !whiteText,
+                      EpdFontFamily::BOLD);
+  }
+  renderer.drawLine(side, footerTop - 10, pageWidth - side, footerTop - 10);
+  const int metricWidth = std::max(1, gridWidth / 4);
+  const std::string values[] = {sleepDuration(monthSeconds), std::to_string(monthPages),
+                                std::to_string(monthSessions), std::to_string(activeDays)};
+  const char* labels[] = {tr(STR_STATS_READING_TIME), tr(STR_PAGES), tr(STR_SESSIONS), tr(STR_STATS_ACTIVE_DAYS)};
+  for (int i = 0; i < 4; ++i) {
+    const int x = side + i * metricWidth;
+    if (i > 0) renderer.drawLine(x, footerTop, x, footerTop + footerHeight);
+    drawSleepMetric(renderer, UI_10_FONT_ID, x, footerTop, metricWidth, values[i]);
+    const std::string label = renderer.truncatedText(SMALL_FONT_ID, labels[i], metricWidth - 4);
+    drawSleepMetric(renderer, SMALL_FONT_ID, x, footerTop + metricValueHeight + 4, metricWidth, label,
+                    EpdFontFamily::REGULAR);
+  }
+  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+}
+
+void SleepActivity::renderReadingSummarySleepScreen() const {
+  StatisticsSnapshotOptions options;
+  options.keepDailyHistory = false;
+  options.keepAllBooks = true;
+  options.evaluateAchievements = false;
+  options.selectedBookPath = APP_STATE.openEpubPath;
+  options.maxBooks = 4;
+  StatisticsSnapshot snapshot = StatisticsSnapshot::build(options);
+  StatisticsBookSnapshot* book = nullptr;
+  if (!APP_STATE.openEpubPath.empty()) {
+    book = snapshot.findBook(APP_STATE.openEpubPath);
+    if (!book) book = &snapshot.books[snapshot.ensureFallbackBook(APP_STATE.openEpubPath)];
+  }
+  if (!book && !snapshot.books.empty()) book = &snapshot.books.front();
+  const bool hasCover = book && ensureStatisticsCover(*book);
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int side = metrics.contentSidePadding;
+  const int contentWidth = pageWidth - side * 2;
+
+  int recentCount = 0;
+  for (const auto& item : snapshot.books) {
+    if ((!book || item.path != book->path) && recentCount < 3) ++recentCount;
+  }
+  const int titleLineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  const int smallLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
+  const int heroHeight = book ? std::min(184, std::max(132, pageHeight / 3)) : 94;
+  const int sectionGap = 16;
+  const int recentHeaderHeight = smallLineHeight + 10;
+  const int recentRowHeight = 52;
+  const int emptyRecentHeight = smallLineHeight + 16;
+  const int recentHeight = recentHeaderHeight + (recentCount > 0 ? recentCount * recentRowHeight : emptyRecentHeight);
+  const int contentHeight = heroHeight + sectionGap + recentHeight;
+  const int contentTop = std::max(12, (pageHeight - contentHeight) / 2);
+  const int heroTop = contentTop;
+  const int recentTop = heroTop + heroHeight + sectionGap;
+
+  preconditionSleepRefresh(renderer);
+  renderer.clearScreen();
+
+  const int coverHeight = heroHeight - 12;
+  const int coverWidth = std::min(118, std::max(94, contentWidth / 3));
+  const int coverX = side;
+  const int coverTop = heroTop + 6;
+  bool coverDrawn = false;
+  if (book) {
+    const Rect coverBounds(coverX, coverTop, coverWidth, coverHeight);
+    const std::string coverPath = hasCover ? selectStatisticsCoverPath(*book) : std::string{};
+    const bool usingHq = !coverPath.empty() && coverPath != book->coverPath220;
+    coverDrawn = !coverPath.empty() && drawStatisticsCover(renderer, coverPath, coverBounds);
+    if (!coverDrawn && usingHq) {
+      // Match Carousel's safe fallback if an existing HQ file changes between
+      // selection and drawing; do not generate anything during sleep.
+      coverDrawn = drawStatisticsCover(renderer, book->coverPath220, coverBounds);
+    }
+    if (hasCover && !coverDrawn) book->coverAvailable = false;
+    const int detailX = coverDrawn ? coverX + coverWidth + 16 : side;
+    const int detailWidth = pageWidth - side - detailX;
+    const auto lines = renderer.wrappedText(UI_12_FONT_ID, book->title.c_str(), detailWidth, 2);
+    int textY = heroTop + 8;
+    for (const auto& line : lines) {
+      renderer.drawText(UI_12_FONT_ID, detailX, textY, line.c_str(), true, EpdFontFamily::BOLD);
+      textY += titleLineHeight;
+    }
+    if (!book->author.empty()) {
+      renderer.drawText(SMALL_FONT_ID, detailX, textY + 3,
+                        renderer.truncatedText(SMALL_FONT_ID, book->author.c_str(), detailWidth).c_str());
+      textY += smallLineHeight + 4;
+    }
+    const int progressY = textY + 5;
+    renderer.drawText(UI_10_FONT_ID, detailX, progressY,
+                      (std::to_string(book->progress) + "%  ·  " + sleepStatusText(book->status, book->progress))
+                          .c_str(),
+                      true, EpdFontFamily::BOLD);
+    const int barY = progressY + renderer.getLineHeight(UI_10_FONT_ID) + 5;
+    renderer.drawRect(detailX, barY, detailWidth, 12);
+    if (book->progress > 0) renderer.fillRect(detailX + 2, barY + 2, (detailWidth - 4) * book->progress / 100, 8);
+    const std::string metricsText = sleepDuration(book->readingSeconds) + "  ·  " + std::to_string(book->pages) + " " +
+                                    tr(STR_PAGES) + "  ·  " + std::to_string(book->sessions) + " " +
+                                    tr(STR_SESSION_PLURAL);
+    renderer.drawText(SMALL_FONT_ID, detailX, barY + 22,
+                      renderer.truncatedText(SMALL_FONT_ID, metricsText.c_str(), detailWidth).c_str());
+  } else {
+    renderer.drawCenteredText(UI_12_FONT_ID, heroTop + heroHeight / 2 - titleLineHeight / 2,
+                              tr(STR_STATS_NO_TRACKED_BOOKS), true,
+                              EpdFontFamily::BOLD);
+    renderer.drawCenteredText(SMALL_FONT_ID, heroTop + heroHeight / 2 + smallLineHeight,
+                              tr(STR_STATS_PURE_SUMMARY));
+  }
+
+  renderer.drawLine(side, recentTop - 8, pageWidth - side, recentTop - 8);
+  renderer.drawText(SMALL_FONT_ID, side, recentTop, tr(STR_MENU_RECENT_BOOKS), true, EpdFontFamily::BOLD);
+  if (recentCount == 0) {
+    renderer.drawCenteredText(SMALL_FONT_ID, recentTop + recentHeaderHeight + 2, tr(STR_NO_RECENT_BOOKS));
+  }
+  int row = 0;
+  for (const auto& item : snapshot.books) {
+    if (book && item.path == book->path) continue;
+    if (row >= 3) break;
+    const int y = recentTop + recentHeaderHeight + row * recentRowHeight;
+    const std::string progress = std::to_string(item.progress) + "%";
+    const int progressWidth = renderer.getTextWidth(SMALL_FONT_ID, progress.c_str());
+    const int titleWidth = std::max(1, contentWidth - progressWidth - 20);
+    renderer.drawText(UI_10_FONT_ID, side + 8, y + 4,
+                      renderer.truncatedText(UI_10_FONT_ID, item.title.c_str(), titleWidth).c_str(), true,
+                      EpdFontFamily::REGULAR);
+    renderer.drawText(SMALL_FONT_ID, side + contentWidth - progressWidth, y + 6, progress.c_str());
+    const std::string meta = sleepDuration(item.readingSeconds) + "  ·  " + std::to_string(item.pages) + " " +
+                             tr(STR_PAGES) + "  ·  " + std::to_string(item.sessions) + " " +
+                             tr(STR_SESSION_PLURAL);
+    renderer.drawText(SMALL_FONT_ID, side + 8, y + 25,
+                      renderer.truncatedText(SMALL_FONT_ID, meta.c_str(), contentWidth - 16).c_str());
+    if (row + 1 < recentCount) renderer.drawLine(side + 8, y + recentRowHeight - 4, side + contentWidth, y + recentRowHeight - 4);
+    ++row;
+  }
+  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+}
+
 void SleepActivity::renderMinimalStatsSleepScreen() const {
   StatisticsSnapshotOptions options;
   options.keepDailyHistory = false;
@@ -1379,11 +1702,7 @@ void SleepActivity::renderMinimalStatsSleepScreen() const {
     const std::string coverPath = hasCover ? selectStatisticsCoverPath(*book) : std::string{};
     const bool usingHq = !coverPath.empty() && coverPath != book->coverPath220;
     coverDrawn = !coverPath.empty() && drawStatisticsCover(renderer, coverPath, coverBounds);
-    if (!coverDrawn && usingHq) {
-      // Match Carousel's safe fallback if an existing HQ file changes between
-      // selection and drawing; do not generate anything during sleep.
-      coverDrawn = drawStatisticsCover(renderer, book->coverPath220, coverBounds);
-    }
+    if (!coverDrawn && usingHq) coverDrawn = drawStatisticsCover(renderer, book->coverPath220, coverBounds);
     if (hasCover && !coverDrawn) book->coverAvailable = false;
     const int detailWidth = pageWidth - side * 2;
     const auto lines = renderer.wrappedText(UI_12_FONT_ID, book->title.c_str(), detailWidth, 2);
@@ -1435,77 +1754,129 @@ void SleepActivity::renderClippingCoverSleepScreen() const {
 
 void SleepActivity::renderToDoSleepScreen() const {
   const auto& all = TODO_STORE.getItems();
-  std::vector<const ToDoItem*> visible;
+  // ToDoStore bounds the persisted list at 128 items. Keep sleep rendering
+  // bounded and allocation-free instead of building/sorting a temporary vector.
+  constexpr size_t MAX_TODO_ITEMS = 128;
+  std::array<const ToDoItem*, MAX_TODO_ITEMS> visible{};
+  size_t visibleCount = 0;
+  int openCount = 0;
+  int completedCount = 0;
   for (const auto& item : all) {
+    if (item.completed) ++completedCount;
+    else ++openCount;
     const bool include = SETTINGS.todoSleepMode == CrossPointSettings::TODO_COMPLETED
                              ? item.completed
                              : SETTINGS.todoSleepMode == CrossPointSettings::TODO_UNCHECKED ? !item.completed : true;
-    if (include) visible.push_back(&item);
+    if (include && visibleCount < visible.size()) visible[visibleCount++] = &item;
   }
-  // Keep the sleep card compact while ensuring important reminders are seen
-  // first. Stable ordering preserves the user's manual order for equal priority.
-  std::stable_sort(visible.begin(), visible.end(), [](const ToDoItem* a, const ToDoItem* b) {
-    return a->priority && !b->priority;
-  });
+
   preconditionSleepRefresh(renderer);
   renderer.clearScreen();
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
-  const int panelX = 18;
-  const int panelWidth = pageWidth - panelX * 2;
-  const int contentWidth = panelWidth - 44;
+  constexpr int OUTER_MARGIN = 16;
+  const int panelWidth = std::max(1, pageWidth - OUTER_MARGIN * 2);
+  const int panelX = (pageWidth - panelWidth) / 2;
+  const int contentX = panelX + 24;
+  const int contentWidth = std::max(1, panelWidth - 48);
   size_t start = 0;
-  if (SETTINGS.todoSleepMode == CrossPointSettings::TODO_RANDOM && !visible.empty()) {
-    start = static_cast<size_t>(millis() % visible.size());
+  if (SETTINGS.todoSleepMode == CrossPointSettings::TODO_RANDOM && visibleCount > 0) {
+    start = static_cast<size_t>(millis() % visibleCount);
   }
-  // Show the complete list. The panel may use at most 98% of the display;
-  // for longer lists, step down to the small UI font and tighten row spacing
-  // before allowing the card to reach that limit.
-  const size_t rowCount = SETTINGS.todoSleepMode == CrossPointSettings::TODO_RANDOM
-                              ? std::min<size_t>(1, visible.size())
-                              : visible.size();
-  const int maxPanelHeight = std::max(1, pageHeight * 98 / 100);
-  const int headerHeight = 54;
-  const int footerHeight = 18;
-  const int maxRowsHeight = std::max(1, maxPanelHeight - headerHeight - footerHeight - 16);
-  int textFont = UI_10_FONT_ID;
-  int lineHeight = renderer.getLineHeight(textFont) + 12;
-  if (rowCount > 0 && static_cast<uint64_t>(rowCount) * lineHeight > static_cast<uint64_t>(maxRowsHeight)) {
-    textFont = SMALL_FONT_ID;
-    lineHeight = renderer.getLineHeight(textFont) + 6;
-  }
-  if (rowCount > 0 && static_cast<uint64_t>(rowCount) * lineHeight > static_cast<uint64_t>(maxRowsHeight)) {
-    lineHeight = std::max(renderer.getLineHeight(textFont), maxRowsHeight / static_cast<int>(rowCount));
-  }
-  const int desiredPanelHeight = headerHeight + std::max(1, static_cast<int>(rowCount)) * lineHeight + footerHeight + 16;
-  const int panelHeight = std::min(maxPanelHeight, desiredPanelHeight);
-  const int panelY = std::max(4, (pageHeight - panelHeight) / 2);
+  constexpr int HEADER_HEIGHT = 54;
+  constexpr int FOOTER_HEIGHT = 34;
+  constexpr int INNER_VERTICAL_PADDING = 28;
+  constexpr int ROW_GAP = 3;
+  constexpr size_t MAX_VISIBLE_ROWS = 8;
+  const int maxPanelHeight = std::max(1, pageHeight - OUTER_MARGIN * 2);
+  const int rowHeight = std::max(42, renderer.getLineHeight(UI_10_FONT_ID) + 16);
+  const int rowStep = rowHeight + ROW_GAP;
+  const int rowsAvailable = std::max(
+      0, (maxPanelHeight - HEADER_HEIGHT - FOOTER_HEIGHT - INNER_VERTICAL_PADDING + ROW_GAP) / rowStep);
+  const size_t maxRows = std::min(MAX_VISIBLE_ROWS, static_cast<size_t>(rowsAvailable));
+  const size_t wantedRows = SETTINGS.todoSleepMode == CrossPointSettings::TODO_RANDOM
+                                ? std::min<size_t>(1, visibleCount)
+                                : visibleCount;
+  const size_t rowCount = std::min(wantedRows, maxRows);
+  const size_t moreCount = SETTINGS.todoSleepMode == CrossPointSettings::TODO_RANDOM
+                                ? 0
+                                : visibleCount - rowCount;
+  const int rowsHeight = rowCount == 0 ? renderer.getLineHeight(UI_10_FONT_ID) + 12
+                                       : static_cast<int>(rowCount) * rowStep - ROW_GAP;
+  const int panelHeight = std::min(
+      maxPanelHeight, HEADER_HEIGHT + FOOTER_HEIGHT + INNER_VERTICAL_PADDING + rowsHeight);
+  const int panelY = std::max(OUTER_MARGIN, (pageHeight - panelHeight) / 2);
 
-  // Use the same centered, layered card treatment as the clipping sleep
-  // screen. The extra inner border keeps the small list legible on e-ink.
+  // Centered paper-like card: sharp monochrome frame, simple check rows, and
+  // no bitmap assets or additional render buffers.
   renderer.fillRoundedRect(panelX, panelY, panelWidth, panelHeight, 12, Color::White);
   renderer.drawRoundedRect(panelX, panelY, panelWidth, panelHeight, 2, 12, true);
-  renderer.drawRoundedRect(panelX + 8, panelY + 8, panelWidth - 16, panelHeight - 16, 1, 8, true);
-  renderer.drawText(UI_12_FONT_ID, panelX + 22, panelY + 22, "TO-DO LIST", true, EpdFontFamily::BOLD);
-  renderer.drawLine(panelX + 18, panelY + headerHeight, panelX + panelWidth - 18, panelY + headerHeight);
+  renderer.drawText(UI_12_FONT_ID, contentX, panelY + 17, "TO-DO", true, EpdFontFamily::BOLD);
+  char countSummary[32];
+  snprintf(countSummary, sizeof(countSummary), "%d OPEN  /  %d DONE", openCount, completedCount);
+  const int countWidth = renderer.getTextWidth(SMALL_FONT_ID, countSummary);
+  if (countWidth <= contentWidth - renderer.getTextWidth(UI_12_FONT_ID, "TO-DO") - 16) {
+    renderer.drawText(SMALL_FONT_ID, panelX + panelWidth - 24 - countWidth, panelY + 22,
+                      countSummary, true, EpdFontFamily::REGULAR);
+  }
+  renderer.drawLine(contentX, panelY + HEADER_HEIGHT, panelX + panelWidth - 24, panelY + HEADER_HEIGHT);
 
-  if (visible.empty()) {
-    renderer.drawCenteredText(UI_10_FONT_ID, panelY + headerHeight + lineHeight / 2, "NO TASKS YET", true,
+  const int listTop = panelY + HEADER_HEIGHT + 12;
+  if (visibleCount == 0) {
+    const int emptyY = listTop + rowsHeight / 2;
+    renderer.drawCenteredText(UI_10_FONT_ID, emptyY - 8, all.empty() ? "ALL CLEAR" : "NOTHING TO SHOW", true,
                               EpdFontFamily::BOLD);
+    if (all.empty()) {
+      renderer.drawCenteredText(SMALL_FONT_ID, emptyY + 18, "Nothing on your list.");
+    } else if (SETTINGS.todoSleepMode == CrossPointSettings::TODO_UNCHECKED) {
+      renderer.drawCenteredText(SMALL_FONT_ID, emptyY + 18, "No open tasks.");
+    } else {
+      renderer.drawCenteredText(SMALL_FONT_ID, emptyY + 18, "No completed tasks.");
+    }
   } else {
     for (size_t row = 0; row < rowCount; ++row) {
-      const ToDoItem& item = *visible[(start + row) % visible.size()];
-      const std::string text = std::string(item.priority ? "! " : "  ") + (item.completed ? "[x] " : "[ ] ") + item.text;
-      const std::string clipped = renderer.truncatedText(textFont, text.c_str(), contentWidth);
-      const int textY = panelY + headerHeight + 12 + static_cast<int>(row) * lineHeight;
-      renderer.drawText(textFont, panelX + 22, textY, clipped.c_str(), true,
-                        item.completed ? EpdFontFamily::REGULAR : EpdFontFamily::BOLD);
-      if (row + 1 < rowCount)
-        renderer.drawLine(panelX + 18, textY + lineHeight - 7, panelX + panelWidth - 18, textY + lineHeight - 7);
+      const ToDoItem& item = *visible[(start + row) % visibleCount];
+      const int rowY = listTop + static_cast<int>(row) * rowStep;
+      const int checkX = contentX;
+      const int checkY = rowY + (rowHeight - 18) / 2;
+      renderer.drawRoundedRect(checkX, checkY, 18, 18, 1, 3, true);
+      if (item.completed) {
+        renderer.drawLine(checkX + 4, checkY + 9, checkX + 7, checkY + 12, 2, true);
+        renderer.drawLine(checkX + 7, checkY + 12, checkX + 14, checkY + 5, 2, true);
+      }
+      const int priorityWidth = item.priority ? 18 : 0;
+      const int textX = checkX + 30;
+      const int textWidth = std::max(1, panelX + panelWidth - 24 - priorityWidth - textX);
+      const EpdFontFamily::Style textStyle = item.completed ? EpdFontFamily::REGULAR : EpdFontFamily::BOLD;
+      const char* displayText = item.text.c_str();
+      std::string clipped;
+      if (renderer.getTextWidth(UI_10_FONT_ID, displayText, textStyle) > textWidth) {
+        clipped = renderer.truncatedText(UI_10_FONT_ID, displayText, textWidth, textStyle);
+        displayText = clipped.c_str();
+      }
+      const int textY = rowY + (rowHeight - renderer.getLineHeight(UI_10_FONT_ID)) / 2;
+      renderer.drawText(UI_10_FONT_ID, textX, textY, displayText, true, textStyle);
+      if (item.priority) {
+        const int markX = panelX + panelWidth - 34;
+        const int markY = rowY + (rowHeight - renderer.getLineHeight(SMALL_FONT_ID)) / 2 - 1;
+        renderer.drawText(SMALL_FONT_ID, markX, markY, "!", true, EpdFontFamily::BOLD);
+      }
+      if (row + 1 < rowCount) {
+        const int separatorY = rowY + rowHeight + ROW_GAP / 2;
+        renderer.drawLine(contentX, separatorY, panelX + panelWidth - 24, separatorY);
+      }
     }
   }
-  renderer.drawCenteredText(SMALL_FONT_ID, panelY + panelHeight - 22, "FOLIO NOOIR", true,
-                            EpdFontFamily::BOLD);
+
+  if (moreCount > 0) {
+    char moreText[24];
+    snprintf(moreText, sizeof(moreText), "+ %u MORE", static_cast<unsigned>(moreCount));
+    renderer.drawText(SMALL_FONT_ID, contentX, panelY + panelHeight - 25, moreText, true,
+                      EpdFontFamily::BOLD);
+  } else {
+    renderer.drawText(SMALL_FONT_ID, contentX, panelY + panelHeight - 25, "FOLIO NOOIR", true,
+                      EpdFontFamily::BOLD);
+  }
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 }
 

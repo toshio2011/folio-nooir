@@ -17,6 +17,93 @@ Xteink X3/X4 devices. The primary goals are:
 - no regressions in XTC/XTCH, TXT, sleep, web, dictionary, or existing reader
   workflows.
 
+## 1.6.4 release-candidate checkpoint — 2026-10-07
+
+The current Folio Nooir 1.6.4 checkpoint is being prepared on branch
+`reconstruct/folio-nooir-1.6.4`. This checkpoint captures the integrated source,
+tests, and documentation state; it is not a claim that the final physical BLE
+validation has passed.
+
+### P0 Web UI / Transfer
+
+- The `HalFile::close()` startup assert in Transfer was traced to an ownership
+  error and fixed with ownership-safe `closeFileIfOpen()` handling.
+- Web UI / File Transfer was physically confirmed to open and work after the
+  fix.
+- The retained P0 memory work includes streamed `/api/stats`, no full stats
+  duplication, reduced Settings descriptor copying, temporary upload buffers,
+  library temporary-buffer reuse, thumbnail/client cleanup, WebSocket upload
+  cleanup, complete Transfer teardown, and BLE re-evaluation after cleanup.
+
+### Reader BLE lifecycle
+
+The actual normal-page churn root cause was the unconditional post-input handoff
+in `src/main.cpp`: `pollBle()` led to `bleHadActivityThisFrame()` and then
+`bleinput::stop()` before Reader had classified the action. That unconditional
+handoff and its pending flag were removed. Stable cached page turns should now
+keep the running BLE host alive.
+
+BLE is still deliberately stopped for resource-sensitive Reader paths:
+initial unstable Reader open; section/cache build or miss; new-section
+transitions; partial rebuilds; first-use image decode or cache misses; loading
+UI; quality-recovery or full-refresh work; queued work while rendering is
+occupied; exit/settings-triggered reflow; and Wi-Fi, Web UI, sleep, OTA, or
+other resource-sensitive activities.
+
+The `BLE wanted` and pending re-admission semantics remain intact: failed
+admission does not clear pending intent, lifecycle events trigger
+re-evaluation, and there is no polling loop. The memory floors remain 96 KiB
+free heap and 36 KiB largest free block. Physical evidence showed repeated
+NimBLE teardown/reinitialization to be the proven fragmentation amplifier; no
+specific Reader cache was proven to be a permanent leak.
+
+### P1 EPUB
+
+The bounded P1 work remains present: small caps; `hgroup`; bounded `>` and `+`
+selectors; verse hanging indents; letter roles; table captions; bounded
+`colspan`; figure, `figcaption`, and full-page image handling; and CSS cache
+version 14. The implementation keeps the performance rules: no DOM, no general
+browser CSS engine, no deep or unbounded selectors, and the ordinary fast path
+is preserved.
+
+### P2 carryovers included in 1.6.4
+
+- Empty CSS span/inline spacing now queues transient `padding-left` geometry
+  onto the next real token. Line breaking, hyphenation, RTL reordering, and
+  positioning account for it; no synthetic DOM token or cache-format change
+  was added.
+- KOReader oversized `getProgress()` handling uses a bounded 8 KiB streaming
+  response buffer, rejects oversized, incomplete, or aborted bodies, and parses
+  the bounded buffer directly without an extra retained `getString()` copy.
+- No other P2 items were included in this checkpoint.
+- The remaining P2 backlog is limited to items not already equivalent or
+  superseded; broader parser, cache, global-per-book, and memory-policy changes
+  remain deferred.
+
+### Build and release-candidate checkpoint
+
+- Version: **1.6.4**.
+- Latest physical-test/release-candidate `firmware.bin`: **5,803,184 bytes**.
+- SHA256: `7F9586900C9D4E4A5DA065E9E7E25AA155B9886795F1F8BB57B9E46D0D2EC2CE`.
+- Build succeeded; flash/app slot is **5,789,035 / 6,553,600 bytes (88.3%)**.
+- Static RAM is **60,996 / 327,680 bytes (18.6%)**.
+- Linked components include **NimBLE-Arduino 2.5.1** and
+  **BleKeyboardHost 1.0.0**.
+- `git diff --check` was clean at the build checkpoint.
+- Web UI physical validation passed; final BLE physical validation for this
+  exact RC is still pending.
+
+### Near-term roadmap
+
+Next is the short physical BLE validation: cached page retention across pages
+1–4; temporary drop and recovery when entering a heavy/new section; BLE return
+after Transfer; and largest-block behavior. If that passes without a new
+blocker, release 1.6.4 quickly rather than expanding scope.
+
+Later 1.6.5 candidates are the remaining safe CrossInk/parser carryovers, a
+regression/torture suite, more BLE controller UX/support, deterministic builds,
+CBZ improvements, formal X3 validation, and X4 Pro/Classic work later.
+
 The durable EPUB/CSS research record is
 [`docs/EPUB_CSS_RESEARCH.md`](docs/EPUB_CSS_RESEARCH.md). It captures the
 current Nooir parser/layout/cache baseline, the constrained-reader findings

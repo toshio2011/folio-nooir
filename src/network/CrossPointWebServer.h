@@ -5,9 +5,10 @@
 #include <WebServer.h>
 #include <WebSocketsServer.h>
 
+#include <functional>
 #include <memory>
+#include <new>
 #include <string>
-#include <vector>
 
 // Structure to hold file information
 struct FileInfo {
@@ -43,10 +44,21 @@ class CrossPointWebServer {
     // 4KB is a good balance: large enough to reduce syscall overhead, small enough
     // to keep individual write times short and avoid watchdog issues
     static constexpr size_t UPLOAD_BUFFER_SIZE = 4096;  // 4KB buffer
-    std::vector<uint8_t> buffer;
+    // Allocate only while an upload is active. This object lives for the entire
+    // web session, so an eager buffer permanently consumed 4KB of X4 heap.
+    std::unique_ptr<uint8_t[]> buffer;
     size_t bufferPos = 0;
 
-    UploadState() { buffer.resize(UPLOAD_BUFFER_SIZE); }
+    bool ensureBuffer() {
+      if (buffer) return true;
+      buffer.reset(new (std::nothrow) uint8_t[UPLOAD_BUFFER_SIZE]);
+      return static_cast<bool>(buffer);
+    }
+
+    void releaseBuffer() {
+      buffer.reset();
+      bufferPos = 0;
+    }
   } upload;
 
   CrossPointWebServer();
@@ -74,6 +86,8 @@ class CrossPointWebServer {
   std::unique_ptr<WebSocketsServer> wsServer = nullptr;
   bool running = false;
   bool watchdogTaskRegistered = false;
+  bool lastHttpClientConnected = false;
+  unsigned long lastClientDiagnosticAt = 0;
   bool apMode = false;  // true when running in AP mode, false for STA mode
   uint16_t port = 80;
   uint16_t wsPort = 81;  // WebSocket port
@@ -134,10 +148,21 @@ class CrossPointWebServer {
     bool magicChecked = false;
     size_t bytesWritten = 0;
     static constexpr size_t BUFFER_SIZE = 4096;
-    std::vector<uint8_t> buffer;
+    // Font uploads are uncommon; keep this buffer out of the idle web-server
+    // footprint and return it as soon as the multipart request ends.
+    std::unique_ptr<uint8_t[]> buffer;
     size_t bufferPos = 0;
 
-    FontUploadState() { buffer.resize(BUFFER_SIZE); }
+    bool ensureBuffer() {
+      if (buffer) return true;
+      buffer.reset(new (std::nothrow) uint8_t[BUFFER_SIZE]);
+      return static_cast<bool>(buffer);
+    }
+
+    void releaseBuffer() {
+      buffer.reset();
+      bufferPos = 0;
+    }
   } fontUpload;
 
   // OPDS server handlers

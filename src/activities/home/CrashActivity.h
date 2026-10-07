@@ -10,4 +10,5 @@ class CrashActivity final : public Activity {
   void onEnter() override;
   void loop() override;
   void render(RenderLock&&) override;
+  bool acceptsBluetoothInput() const override { return false; }
 };

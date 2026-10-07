@@ -11,6 +11,8 @@ class SleepActivity final : public Activity {
   explicit SleepActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool fromTimeout = false)
       : Activity("Sleep", renderer, mappedInput), fromTimeout(fromTimeout) {}
   void onEnter() override;
+  bool acceptsBluetoothInput() const override { return false; }
+  bool bluetoothResourceSensitive() const override { return true; }
 
  private:
   void renderDefaultSleepScreen() const;
@@ -22,6 +24,8 @@ class SleepActivity final : public Activity {
   void renderCoverOverlaySleepScreen() const;
   void renderReadingStatsSleepScreen() const;
   void renderMinimalStatsSleepScreen() const;
+  void renderReadingCalendarSleepScreen() const;
+  void renderReadingSummarySleepScreen() const;
   void renderClippingCoverSleepScreen() const;
   void renderToDoSleepScreen() const;
   void renderBitmapSleepScreen(const Bitmap& bitmap) const;

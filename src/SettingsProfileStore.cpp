@@ -20,6 +20,22 @@ bool hasJsonExtension(const std::string& name) {
          std::tolower(static_cast<unsigned char>(name[dot + 3])) == 'o' &&
          std::tolower(static_cast<unsigned char>(name[dot + 4])) == 'n';
 }
+
+bool hasCurrentRc1ProfileShape(JsonVariantConst profile) {
+  // These fields are emitted by every current RC1 saveCurrent() call. A
+  // schema-1 document missing any of them is an older profile shape and must
+  // preserve live values for newer manually handled fields that it omits.
+  constexpr const char* requiredCurrentKeys[] = {
+      "sleepModeLayoutVersion", "uiScalePercent",          "recentBookLayout",
+      "finishedBookLayout",     "statusBarPercentageFormat", "lineSpacing",
+      "quickActionSlot1",       "quickActionSlot2",        "quickActionSlot3",
+      "quickActionSlot4",
+  };
+  for (const char* key : requiredCurrentKeys) {
+    if (profile[key].isNull()) return false;
+  }
+  return true;
+}
 }  // namespace
 
 std::string SettingsProfileStore::sanitizeName(const std::string& name) {
@@ -86,6 +102,10 @@ bool SettingsProfileStore::saveCurrent(const std::string& name) {
   const std::string safe = sanitizeName(name);
   const std::string path = pathForName(safe);
   if (safe.empty() || path.empty()) return false;
+  if (SETTINGS.isSettingsRecoveryRequired()) {
+    LOG_ERR("PROF", "Cannot save profile while settings recovery is pending: %s", safe.c_str());
+    return false;
+  }
 
   Storage.mkdir(PROFILE_DIR);
   JsonDocument doc;
@@ -118,18 +138,28 @@ bool SettingsProfileStore::apply(const std::string& name) {
   JsonDocument previous;
   SETTINGS.toJson(previous);
   const uint8_t currentClockSync = SETTINGS.clockHasBeenSynced;
-  if (!SETTINGS.fromJson(profile.as<JsonVariantConst>())) {
+  const bool preserveMissingManualFields = !hasCurrentRc1ProfileShape(profile.as<JsonVariantConst>());
+  const bool recoveryWasRequired = SETTINGS.isSettingsRecoveryRequired();
+  if (!SETTINGS.fromJsonForProfile(profile.as<JsonVariantConst>(), preserveMissingManualFields)) {
     SETTINGS.fromJson(previous.as<JsonVariantConst>());
     return false;
   }
   // Runtime sync state belongs to the current device, not the profile.
   SETTINGS.clockHasBeenSynced = currentClockSync;
 
+  // Selecting a valid profile is an explicit recovery action: it replaces
+  // the unusable on-disk candidate with a complete in-memory settings object.
+  if (recoveryWasRequired) SETTINGS.acknowledgeSettingsRecovery();
+
   if (!SETTINGS.saveToFile()) {
     LOG_ERR("PROF", "Failed to commit profile: %s", name.c_str());
     SETTINGS.fromJson(previous.as<JsonVariantConst>());
     SETTINGS.clockHasBeenSynced = currentClockSync;
-    SETTINGS.saveToFile();
+    if (recoveryWasRequired) {
+      SETTINGS.markSettingsRecoveryRequired();
+    } else {
+      SETTINGS.saveToFile();
+    }
     return false;
   }
   LOG_INF("PROF", "Applied settings profile: %s", name.c_str());

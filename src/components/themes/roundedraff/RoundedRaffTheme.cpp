@@ -276,10 +276,25 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
                                 const std::function<std::string(int index)>& rowSubtitle,
                                 const std::function<UIIcon(int index)>& rowIcon,
                                 const std::function<std::string(int index)>& rowValue, bool highlightValue,
-                                const std::function<bool(int index)>& rowDimmed) const {
+                                const std::function<bool(int index)>& rowDimmed,
+                                const std::function<int(int index)>& rowToggleState,
+                                const std::function<bool(int index)>& rowSubmenu) const {
   (void)rowIcon;
   (void)highlightValue;
   (void)rowDimmed;
+  constexpr int toggleWidth = 30;
+  constexpr int toggleHeight = 12;
+  constexpr int adornmentGap = 6;
+  constexpr int submenuWidth = 12;
+  const auto drawToggle = [&renderer](const int x, const int y, const bool on, const bool black) {
+    renderer.drawRoundedRect(x, y, toggleWidth, toggleHeight, 1, toggleHeight / 2, black);
+    const int knobX = on ? x + toggleWidth - 10 : x + 2;
+    renderer.fillRoundedRect(knobX, y + 2, 8, toggleHeight - 4, 4, black ? Color::Black : Color::White);
+  };
+  const auto drawSubmenu = [&renderer](const int x, const int y, const bool black) {
+    renderer.drawLine(x, y, x + 4, y + 4, 1, black);
+    renderer.drawLine(x + 4, y + 4, x, y + 8, 1, black);
+  };
   const bool hasSubtitle = static_cast<bool>(rowSubtitle);
   const int titleLineHeight = renderer.getLineHeight(kTitleFontId);
   const int subtitleLineHeight = renderer.getLineHeight(kSubtitleFontId);
@@ -304,21 +319,30 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
 
     constexpr int kMinTitleWidth = 40;
     constexpr int kMinValueGap = kInteractiveInsetX;
+    const int toggleState = rowToggleState ? rowToggleState(i) : -1;
+    const bool hasToggle = toggleState >= 0;
+    const bool hasSubmenu = rowSubmenu && rowSubmenu(i);
+    const int adornmentWidth = (hasToggle ? toggleWidth + adornmentGap : 0) + (hasSubmenu ? submenuWidth : 0);
     int textAreaWidth = rowWidth - kInteractiveInsetX * 2;
     if (rowValue) {
       std::string valueText = rowValue(i);
       if (!valueText.empty()) {
-        const int maxValueWidth = std::max(0, rowWidth - kInteractiveInsetX * 2 - kMinValueGap - kMinTitleWidth);
+        const int maxValueWidth =
+            std::max(0, rowWidth - kInteractiveInsetX * 2 - adornmentWidth - kMinValueGap - kMinTitleWidth);
         if (maxValueWidth > 0) {
           const std::string truncatedValue =
               renderer.truncatedText(kTitleFontId, valueText.c_str(), maxValueWidth, EpdFontFamily::REGULAR);
           const int valueW = renderer.getTextWidth(kTitleFontId, truncatedValue.c_str(), EpdFontFamily::REGULAR);
-          renderer.drawText(kTitleFontId, rowX + rowWidth - kInteractiveInsetX - valueW,
+          renderer.drawText(kTitleFontId, rowX + rowWidth - kInteractiveInsetX - adornmentWidth - valueW,
                             rowY + (rowHeight - renderer.getLineHeight(kTitleFontId)) / 2, truncatedValue.c_str(),
                             !isSelected, EpdFontFamily::REGULAR);
-          textAreaWidth = std::max(0, textAreaWidth - valueW - kMinValueGap);
+          textAreaWidth = std::max(0, textAreaWidth - valueW - kMinValueGap - adornmentWidth);
         }
+      } else {
+        textAreaWidth = std::max(0, textAreaWidth - adornmentWidth);
       }
+    } else {
+      textAreaWidth = std::max(0, textAreaWidth - adornmentWidth);
     }
 
     if (hasSubtitle) {
@@ -345,6 +369,15 @@ void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int item
       renderer.drawText(kTitleFontId, rowX + kInteractiveInsetX,
                         rowY + (rowHeight - renderer.getLineHeight(kTitleFontId)) / 2, title.c_str(), !isSelected,
                         EpdFontFamily::BOLD);
+    }
+
+    int valueRight = rowX + rowWidth - kInteractiveInsetX;
+    if (hasSubmenu) {
+      drawSubmenu(valueRight - submenuWidth + 2, rowY + (rowHeight - 9) / 2, !isSelected);
+      valueRight -= submenuWidth;
+    }
+    if (hasToggle) {
+      drawToggle(valueRight - toggleWidth, rowY + (rowHeight - toggleHeight) / 2, toggleState != 0, !isSelected);
     }
   }
 

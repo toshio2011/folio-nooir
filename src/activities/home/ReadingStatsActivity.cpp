@@ -2,6 +2,8 @@
 
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <Logging.h>
+#include <esp_system.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -13,6 +15,14 @@
 #include "util/StatisticsDate.h"
 
 namespace {
+void logReadingStatsDiagnostic(const char* stage, const size_t dayCount = 0, const size_t bookCount = 0,
+                               const size_t achievementCount = 0) {
+  LOG_INF("RSDIAG", "stage=%s days=%u books=%u achievements=%u free=%u min=%u largest=%u serial=%d reset=%d", stage,
+          static_cast<unsigned>(dayCount), static_cast<unsigned>(bookCount), static_cast<unsigned>(achievementCount),
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMinFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()), logSerial ? 1 : 0, static_cast<int>(esp_reset_reason()));
+}
+
 std::string durationText(const uint32_t seconds) {
   const uint32_t minutes = (seconds + 30) / 60;
   if (minutes < 60) return std::to_string(minutes) + " min";
@@ -125,10 +135,21 @@ size_t wrapSelection(const size_t current, const size_t count, const int directi
 }
 }  // namespace
 
+ReadingStatsActivity::ReadingStatsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string bookPath,
+                                           const bool calendarMode)
+    : Activity(calendarMode ? "ReadingCalendar" : "ReadingStats", renderer, mappedInput),
+      entryBookPath(std::move(bookPath)), calendarEntry(calendarMode) {
+  logReadingStatsDiagnostic("entry");
+}
+
+ReadingStatsActivity::~ReadingStatsActivity() { logReadingStatsDiagnostic("destructor"); }
+
 void ReadingStatsActivity::onEnter() {
+  logReadingStatsDiagnostic("onEnter_begin");
   Activity::onEnter();
   renderer.setUiScaleTextEnabled(true);
   snapshot = StatisticsSnapshot::build();
+  logReadingStatsDiagnostic("snapshot_built", snapshot.days.size(), snapshot.books.size(), snapshot.achievements.size());
   activeTab = calendarEntry ? Tab::Calendar : Tab::Overview;
   directBookEntry = !entryBookPath.empty();
   if (directBookEntry) {
@@ -137,7 +158,14 @@ void ReadingStatsActivity::onEnter() {
     bookDetail = true;
   }
   initializeCalendar();
+  logReadingStatsDiagnostic("onEnter_ready", snapshot.days.size(), snapshot.books.size(), snapshot.achievements.size());
   requestUpdate();
+}
+
+void ReadingStatsActivity::onExit() {
+  logReadingStatsDiagnostic("onExit_begin", snapshot.days.size(), snapshot.books.size(), snapshot.achievements.size());
+  Activity::onExit();
+  logReadingStatsDiagnostic("onExit_end", snapshot.days.size(), snapshot.books.size(), snapshot.achievements.size());
 }
 
 int ReadingStatsActivity::tabBarTop() const {
@@ -202,6 +230,8 @@ void ReadingStatsActivity::loop() {
       bookDetail = false;
       requestUpdate();
     } else {
+      logReadingStatsDiagnostic("navigation_pop_requested", snapshot.days.size(), snapshot.books.size(),
+                                snapshot.achievements.size());
       finish();
     }
     return;
@@ -404,8 +434,10 @@ void ReadingStatsActivity::renderTabs() const {
     const auto style = selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
     const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, label, style);
     renderer.drawText(SMALL_FONT_ID, i * tabWidth + (tabWidth - textWidth) / 2, y, label, true, style);
+    if (i < 3) renderer.drawLine((i + 1) * tabWidth, y + 4, (i + 1) * tabWidth, y + 18);
     if (selected) renderer.drawLine(i * tabWidth + 10, y + 20, (i + 1) * tabWidth - 11, y + 20, 2, true);
   }
+  renderer.drawLine(0, y + 24, width - 1, y + 24);
 }
 
 void ReadingStatsActivity::drawSevenDayChart(const int x, const int y, const int width, const int height) const {

@@ -4,6 +4,7 @@
 #include <I18n.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <memory>
 
 #include "MappedInputManager.h"
@@ -13,11 +14,16 @@
 #include "fontIds.h"
 
 namespace {
-constexpr int TITLE_HEIGHT = 42;
-constexpr int FOOTER_HEIGHT = 64;
+constexpr int SUMMARY_HEIGHT = 32;
+constexpr int ROW_MIN_HEIGHT = 54;
+constexpr int ROW_GAP = 6;
+constexpr int MAX_VISIBLE_ROWS = 8;
 
-std::string rowText(const ToDoItem& item) {
-  return std::string(item.priority ? "! " : "  ") + (item.completed ? "[x] " : "[ ] ") + item.text;
+void drawTaskCheck(GfxRenderer& renderer, const int x, const int y, const bool checked) {
+  renderer.drawRoundedRect(x, y, 18, 18, 1, 3, true);
+  if (!checked) return;
+  renderer.drawLine(x + 4, y + 9, x + 7, y + 12, 2, true);
+  renderer.drawLine(x + 7, y + 12, x + 14, y + 5, 2, true);
 }
 }  // namespace
 
@@ -36,11 +42,13 @@ void ToDoListActivity::onEnter() {
 
 int ToDoListActivity::listTop() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  return metrics.topPadding + metrics.headerHeight + TITLE_HEIGHT;
+  return metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing + SUMMARY_HEIGHT;
 }
 
 int ToDoListActivity::listHeight() const {
-  return std::max(1, renderer.getScreenHeight() - listTop() - FOOTER_HEIGHT);
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int footer = metrics.buttonHintsHeight + metrics.verticalSpacing;
+  return std::max(1, renderer.getScreenHeight() - listTop() - footer);
 }
 
 void ToDoListActivity::addItem() {
@@ -92,7 +100,7 @@ void ToDoListActivity::deleteSelected() {
 void ToDoListActivity::showActions() {
   const char* options[] = {"Cancel",       "Add task",       "Edit task", "Delete task",
                            "Toggle priority", "Move up",    "Move down", "Clear completed"};
-  actionsPopup.show("To-Do List", options, 8, 0, [this](const int action) {
+  actionsPopup.show("Task actions", options, 8, 0, [this](const int action) {
     if (action == 1) addItem();
     else if (action == 2) editSelected();
     else if (action == 3) deleteSelected();
@@ -203,27 +211,102 @@ void ToDoListActivity::render(RenderLock&&) {
   renderer.setUiScaleTextEnabled(true);
   renderer.clearScreen();
   const auto& metrics = UITheme::getInstance().getMetrics();
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight}, "To-Do List");
-  const int top = listTop();
-  const int height = listHeight();
+  const int screenWidth = renderer.getScreenWidth();
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, screenWidth, metrics.headerHeight}, tr(STR_TODO_LIST));
+
   const int completedCount = static_cast<int>(std::count_if(items.begin(), items.end(),
                                                             [](const ToDoItem& item) { return item.completed; }));
   const int openCount = static_cast<int>(items.size()) - completedCount;
-  const std::string summary = std::to_string(openCount) + " open  ·  " + std::to_string(completedCount) + " done";
-  renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, top - 24, summary.c_str(), true,
-                    EpdFontFamily::REGULAR);
+  const int summaryY = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing / 2;
+  const int side = metrics.contentSidePadding;
+  char countText[12];
+  renderer.drawText(SMALL_FONT_ID, side, summaryY, "OPEN", true, EpdFontFamily::BOLD);
+  snprintf(countText, sizeof(countText), "%d", openCount);
+  const int openX = side + renderer.getTextWidth(SMALL_FONT_ID, "OPEN") + 8;
+  renderer.drawText(UI_10_FONT_ID, openX, summaryY - 2, countText, true, EpdFontFamily::BOLD);
+  const int doneLabelX = screenWidth / 2 + 8;
+  renderer.drawLine(screenWidth / 2, summaryY - 1, screenWidth / 2, summaryY + 18);
+  renderer.drawText(SMALL_FONT_ID, doneLabelX, summaryY, "DONE", true, EpdFontFamily::BOLD);
+  snprintf(countText, sizeof(countText), "%d", completedCount);
+  const int doneX = doneLabelX + renderer.getTextWidth(SMALL_FONT_ID, "DONE") + 8;
+  renderer.drawText(UI_10_FONT_ID, doneX, summaryY - 2, countText, true, EpdFontFamily::BOLD);
+  renderer.drawLine(side, summaryY + 25, screenWidth - side, summaryY + 25);
+
+  const int top = listTop();
+  const int height = listHeight();
+  const int rowHeight = std::max(ROW_MIN_HEIGHT, renderer.getLineHeight(UI_12_FONT_ID) + 28);
+  const int rowStep = rowHeight + ROW_GAP;
+  const int visibleRows = std::max(1, std::min(MAX_VISIBLE_ROWS, height / rowStep));
+  const int firstVisible = items.empty() ? 0 : selectedIndex / visibleRows * visibleRows;
+  const int visibleCount = std::min(visibleRows, static_cast<int>(items.size()) - firstVisible);
+  const int rightInset = items.size() > static_cast<size_t>(visibleRows) ? 12 : 0;
+  const int rowX = side;
+  const int rowWidth = std::max(1, screenWidth - side * 2 - rightInset);
+
   if (items.empty()) {
-    renderer.drawCenteredText(UI_12_FONT_ID, renderer.getScreenHeight() / 2 - 15, "No tasks yet", true,
+    const int centerY = top + height / 2;
+    const int iconX = screenWidth / 2 - 15;
+    renderer.drawRoundedRect(iconX, centerY - 62, 30, 30, 2, 7, true);
+    renderer.drawLine(iconX + 9, centerY - 47, iconX + 21, centerY - 47, 2, true);
+    renderer.drawLine(iconX + 15, centerY - 53, iconX + 15, centerY - 41, 2, true);
+    renderer.drawCenteredText(UI_12_FONT_ID, centerY - 20, "Nothing on your list", true,
                               EpdFontFamily::BOLD);
-    renderer.drawCenteredText(SMALL_FONT_ID, renderer.getScreenHeight() / 2 + 18, "Press OK to add a task");
+    renderer.drawCenteredText(SMALL_FONT_ID, centerY + 12, "Press OK to add a task");
   } else {
-    GUI.drawList(renderer, Rect{metrics.contentSidePadding, top,
-                                renderer.getScreenWidth() - metrics.contentSidePadding * 2, height},
-                 items.size(), selectedIndex, [this](const int index) { return rowText(items[index]); },
-                 [this](const int index) {
-                   if (items[index].completed) return std::string("Completed");
-                   return items[index].priority ? std::string("Important") : std::string("Open");
-                 });
+    constexpr int priorityMarkWidth = 20;
+    for (int row = 0; row < visibleCount; ++row) {
+      const int index = firstVisible + row;
+      const ToDoItem& item = items[static_cast<size_t>(index)];
+      const int y = top + row * rowStep;
+      const bool selected = index == selectedIndex;
+      if (selected) {
+        renderer.fillRoundedRect(rowX, y, rowWidth, rowHeight, 7, Color::LightGray);
+        renderer.fillRoundedRect(rowX, y + 9, 3, rowHeight - 18, 1, Color::Black);
+      } else {
+        renderer.drawRoundedRect(rowX, y, rowWidth, rowHeight, 1, 7, true);
+      }
+
+      const int checkX = rowX + 14;
+      const int checkY = y + (rowHeight - 18) / 2;
+      drawTaskCheck(renderer, checkX, checkY, item.completed);
+
+      const int badgeWidth = item.priority ? priorityMarkWidth : 0;
+      const int textX = checkX + 18 + 14;
+      const int textWidth = std::max(1, rowX + rowWidth - 14 - badgeWidth - textX);
+      const EpdFontFamily::Style style = item.completed ? EpdFontFamily::REGULAR : EpdFontFamily::BOLD;
+      const char* text = item.text.c_str();
+      std::string clipped;
+      if (renderer.getTextWidth(UI_12_FONT_ID, text, style) > textWidth) {
+        clipped = renderer.truncatedText(UI_12_FONT_ID, text, textWidth, style);
+        text = clipped.c_str();
+      }
+      const int textY = y + (rowHeight - renderer.getLineHeight(UI_12_FONT_ID)) / 2;
+      renderer.drawText(UI_12_FONT_ID, textX, textY, text, true, style);
+
+      if (item.priority) {
+        const int badgeX = rowX + rowWidth - 10 - priorityMarkWidth;
+        const int badgeHeight = 22;
+        const int badgeY = y + (rowHeight - badgeHeight) / 2;
+        renderer.drawRoundedRect(badgeX, badgeY, priorityMarkWidth, badgeHeight, 1, 5, true);
+        const int markWidth = renderer.getTextWidth(SMALL_FONT_ID, "!", EpdFontFamily::BOLD);
+        const int markY = badgeY + (badgeHeight - renderer.getLineHeight(SMALL_FONT_ID)) / 2;
+        renderer.drawText(SMALL_FONT_ID, badgeX + (priorityMarkWidth - markWidth) / 2, markY, "!", true,
+                          EpdFontFamily::BOLD);
+      }
+    }
+
+    // Keep the theme's previous page-at-a-time selection behavior while
+    // making the current position visible on long task lists.
+    if (items.size() > static_cast<size_t>(visibleRows) && height > 0) {
+      const int trackX = screenWidth - side - 2;
+      const int thumbHeight = std::max(16, height * visibleRows / static_cast<int>(items.size()));
+      const int pageCount = (static_cast<int>(items.size()) + visibleRows - 1) / visibleRows;
+      const int page = selectedIndex / visibleRows;
+      const int thumbTravel = std::max(0, height - thumbHeight);
+      const int thumbY = top + (pageCount > 1 ? thumbTravel * page / (pageCount - 1) : 0);
+      renderer.drawLine(trackX, top, trackX, top + height - 1);
+      renderer.fillRect(trackX - 3, thumbY, 4, thumbHeight);
+    }
   }
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_CONFIRM), "Add (hold)", "Edit (hold)");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

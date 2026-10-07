@@ -47,6 +47,7 @@ class FontDownloadActivity : public Activity {
            state_ == COMPLETE || state_ == ERROR;
   }
   bool skipLoopDelay() override { return true; }
+  bool bluetoothResourceSensitive() const override { return true; }
 
  private:
   enum State {

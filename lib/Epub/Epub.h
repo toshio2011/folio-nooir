@@ -90,5 +90,10 @@ class Epub {
   size_t getBookSize() const;
   float calculateProgress(int currentSpineIndex, float currentSpineRead) const;
   CssParser* getCssParser() const { return cssParser.get(); }
+  // Safe only at a quiescent Reader boundary: no active Section parser/build
+  // may be using the shared parser when this is called.
+  bool releaseCssParserRetainedStorage() const {
+    return cssParser && cssParser->releaseRetainedStorageIfEmpty();
+  }
   int resolveHrefToSpineIndex(const std::string& href) const;
 };

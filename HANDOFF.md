@@ -3,6 +3,22 @@
 Read [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) for the complete project
 history, decisions, and feature inventory.
 
+## 1.6.4 release-candidate checkpoint — 2026-10-07
+
+The active checkpoint is branch `reconstruct/folio-nooir-1.6.4`. It includes
+the ownership-safe Transfer startup fix and retained P0 memory cleanup, the
+normal-page BLE lifecycle correction, bounded P1 EPUB work, and only the empty
+CSS span-spacing plus KOReader bounded-`getProgress()` P2 carryovers. The
+authoritative detailed record is maintained in
+[`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md#164-release-candidate-checkpoint--2026-10-07).
+
+The latest RC build succeeded at 5,803,184 bytes (`firmware.bin`), with
+5,789,035 / 6,553,600 bytes (88.3%) in the app slot and 60,996 / 327,680
+bytes (18.6%) static RAM. Web UI physical validation passed. Final BLE
+validation for this exact RC remains pending; release should follow quickly if
+cached-page retention, heavy-section recovery, post-Transfer BLE return, and
+largest-block behavior all pass.
+
 ## Durable EPUB/CSS research record
 
 The documentation-only EPUB/CSS research is preserved in

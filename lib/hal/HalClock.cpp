@@ -128,17 +128,19 @@ bool HalClock::formatTime(char* buf, size_t bufSize, uint8_t utcOffsetQuarterHou
   return true;
 }
 
-bool HalClock::syncFromNTP() {
+bool HalClock::syncFromNTP(const bool stopServiceAfterSync) {
   if (WiFi.status() != WL_CONNECTED) {
     LOG_ERR("CLK", "WiFi not connected, cannot sync NTP");
     return false;
   }
 
-  LOG_INF("CLK", "Starting NTP sync...");
+  LOG_INF("NETMEM", "stage=ntp_begin free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
   configTzTime("UTC0", "pool.ntp.org", "time.nist.gov");
 
   // Wait for SNTP sync to complete (up to 5 seconds)
   constexpr int maxAttempts = 50;
+  bool synced = false;
   for (int i = 0; i < maxAttempts; i++) {
     // The web server registers the main task with the watchdog. NTP can wait
     // for several seconds, so feed it between polls instead of letting a
@@ -164,16 +166,25 @@ bool HalClock::syncFromNTP() {
       _hasCachedTime = true;
       if (_available && !_sdkRtc.set(dt)) {
         LOG_ERR("CLK", "System time synced but RTC write failed");
-        return true;
+      } else {
+        LOG_INF("CLK", _available ? "RTC/system clock set to %04u-%02u-%02u %02u:%02u:%02u UTC"
+                                  : "System clock set to %04u-%02u-%02u %02u:%02u:%02u UTC",
+                dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second);
       }
-      LOG_INF("CLK", _available ? "RTC/system clock set to %04u-%02u-%02u %02u:%02u:%02u UTC"
-                                : "System clock set to %04u-%02u-%02u %02u:%02u:%02u UTC",
-              dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second);
-      return true;
+      synced = true;
+      break;
     }
     delay(100);
   }
 
-  LOG_ERR("CLK", "NTP sync timed out");
-  return false;
+  // Device Settings syncs turn Wi-Fi off as soon as the request completes.
+  // Stop SNTP in that one-shot case; callers that keep Wi-Fi alive (the Web
+  // UI and Wi-Fi-session auto-sync) retain the existing periodic service.
+  if (stopServiceAfterSync && esp_sntp_enabled()) esp_sntp_stop();
+  if (stopServiceAfterSync) {
+    LOG_INF("NETMEM", "stage=ntp_stopped synced=%d free=%u largest=%u", synced ? 1 : 0,
+            static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  }
+  if (!synced) LOG_ERR("CLK", "NTP sync timed out");
+  return synced;
 }

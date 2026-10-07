@@ -5,10 +5,17 @@
 
 #include <cstdint>
 
+#include "util/QuickActions.h"
+
 class CrossPointSettings : public PersistableStore<CrossPointSettings> {
  private:
   // Private constructor for singleton
   CrossPointSettings() = default;
+
+  // Set only when boot could not load any existing settings candidate.  It is
+  // deliberately not serialized: a failed load must not turn built-in
+  // defaults into a new settings file by accident.
+  bool settingsRecoveryRequired = false;
 
   friend class PersistableStore<CrossPointSettings>;
 
@@ -30,6 +37,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     MINIMAL_STATS = 10,
     CLIPPING_COVER = 11,
     TODO_LIST = 12,
+    // RC2 additions. Keep the RC1 values above stable for persisted settings.
+    READING_CALENDAR_SLEEP = 13,
+    READING_SUMMARY_SLEEP = 14,
     SLEEP_SCREEN_MODE_COUNT
   };
   enum TODO_SLEEP_MODE {
@@ -58,6 +68,12 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     PROGRESS_BAR_NORMAL = 1,
     PROGRESS_BAR_THICK = 2,
     STATUS_BAR_PROGRESS_BAR_THICKNESS_COUNT
+  };
+  enum STATUS_BAR_PERCENTAGE_FORMAT {
+    PERCENTAGE_WHOLE = 0,
+    PERCENTAGE_ONE_DECIMAL = 1,
+    PERCENTAGE_TWO_DECIMALS = 2,
+    STATUS_BAR_PERCENTAGE_FORMAT_COUNT
   };
   enum STATUS_BAR_TITLE { BOOK_TITLE = 0, CHAPTER_TITLE = 1, HIDE_TITLE = 2, STATUS_BAR_TITLE_COUNT };
   enum XTC_STATUS_BAR_MODE {
@@ -167,6 +183,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     FOOTNOTES = 4,
     BOOKMARK = 5,
     DARK_MODE = 6,
+    TOGGLE_BLUETOOTH = 7,
     SHORT_PWRBTN_COUNT
   };
 
@@ -184,6 +201,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LP_MENU_SLEEP = 6,
     LP_MENU_READING_STATS = 7,
     LP_MENU_SCREENSHOT = 8,
+    LP_MENU_TOGGLE_BLUETOOTH = 9,
     LONG_PRESS_MENU_FUNCTION_COUNT
   };
 
@@ -198,6 +216,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LP_PWR_DICTIONARY = 6,
     LP_PWR_DARK_MODE = 7,
     LP_PWR_KOSYNC = 8,
+    LP_PWR_TOGGLE_BLUETOOTH = 9,
     LONG_PWRBTN_COUNT
   };
 
@@ -220,6 +239,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     SIDE_LONG_CHAPTER_SKIP = 1,
     SIDE_LONG_FONT_SIZE = 2,
     SIDE_LONG_ORIENTATION = 3,
+    SIDE_LONG_TOGGLE_BLUETOOTH = 4,
     SIDE_LONG_PRESS_ACTION_COUNT
   };
 
@@ -242,6 +262,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     FOLIO_LAYOUT_THREE_COVER_CAROUSEL = 2,
     FOLIO_LAYOUT_FIVE_COVER_CAROUSEL = 3,
     FOLIO_LAYOUT_SPINE = 4,
+    FOLIO_LAYOUT_TWO_ROW_SPINE = 5,
     FOLIO_BOOK_LAYOUT_COUNT
   };
 
@@ -284,6 +305,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Status bar settings
   uint8_t statusBarChapterPageCount = 1;
   uint8_t statusBarBookProgressPercentage = 1;
+  // 0 preserves the established whole-percent display; 1/2 add decimal precision.
+  uint8_t statusBarPercentageFormat = PERCENTAGE_WHOLE;
   uint8_t statusBarProgressBar = HIDE_PROGRESS;
   uint8_t statusBarProgressBarThickness = PROGRESS_BAR_NORMAL;
   uint8_t statusBarTitle = CHAPTER_TITLE;
@@ -338,16 +361,32 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Master on/off for the BLE HID host. Persisted; auto-restored on boot/wake.
   // Managed by BluetoothSettingsActivity and the in-reader "Toggle Bluetooth" menu item.
   uint8_t bluetoothEnabled = 0;
+  // Connection opportunity before Bluetooth is automatically switched off.
+  // Stored as seconds (0=Never; supported values: 30, 60, 90).
+  static constexpr uint16_t BLE_NO_DEVICE_TIMEOUT_DEFAULT_SECONDS = 60;
+  uint16_t bluetoothNoDeviceTimeoutSeconds = BLE_NO_DEVICE_TIMEOUT_DEFAULT_SECONDS;
+  // How the BLE host interprets the connected controller's HID reports. Keep
+  // existing users on the generic decoder unless they explicitly select a
+  // bounded hardware preset.
+  static constexpr uint8_t BLE_CONTROLLER_PRESET_GENERIC = 0;
+  static constexpr uint8_t BLE_CONTROLLER_PRESET_YISER_J6_RING = 1;
+  uint8_t bleControllerPreset = BLE_CONTROLLER_PRESET_GENERIC;
   // Remote-button mapping table: each slot binds a decoded BLE key identity to a
   // logical MappedInputManager::Button. Fixed-capacity POD (no heap), persisted
   // manually in JsonSettingsIO (like the front-button remap). 0xFF = empty/unassigned.
   // Headroom for several buttons plus optional presets and rolling-code remotes
   // (some buttons emit more than one code). Each entry is 3 bytes.
   static constexpr uint8_t BLE_MAP_CAPACITY = 10;
+  static constexpr uint8_t BLE_SIGNATURE_MAX_EVENTS = 8;
   struct BleKeyMapEntry {
     uint8_t keyKind = 0xFF;   // 0 = SpecialKey, 1 = HID usage code; 0xFF = empty slot
     uint8_t keyValue = 0;     // (uint8_t)freeink::SpecialKey, or the raw HID usage id
     uint8_t button = 0xFF;    // (uint8_t)MappedInputManager::Button; 0xFF = unassigned
+    // Optional bounded decoded-event signature. signatureCount == 0 retains
+    // the legacy single-event representation; the first event is duplicated
+    // in keyKind/keyValue for old web/settings readers.
+    uint8_t signatureCount = 0;
+    uint16_t signature[BLE_SIGNATURE_MAX_EVENTS] = {};
   };
   BleKeyMapEntry bleKeyMap[BLE_MAP_CAPACITY] = {};
   // Reader font settings
@@ -402,6 +441,15 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // UI text scale. Folio Nooir keeps its shelf text and geometry fixed so the
   // featured book and Recent/Finished/library grid remain stable.
   uint8_t uiScalePercent = 100;
+  // Optional interface font family. Empty keeps the built-in UI font. The
+  // stable family name is persisted instead of an SD discovery-list index.
+  char uiFontFamilyName[32] = "";
+  // Four reader-menu Quick Action slots. Missing keys retain these defaults
+  // for older settings files.
+  uint8_t quickActionSlot1 = static_cast<uint8_t>(QuickActions::ActionId::ToggleBookmark);
+  uint8_t quickActionSlot2 = static_cast<uint8_t>(QuickActions::ActionId::Lookup);
+  uint8_t quickActionSlot3 = static_cast<uint8_t>(QuickActions::ActionId::ToggleDarkMode);
+  uint8_t quickActionSlot4 = static_cast<uint8_t>(QuickActions::ActionId::RefreshScreen);
   // Sunlight fading compensation
   uint8_t fadingFix = 0;
   // Power button return from footnotes (1 = enabled, 0 = disabled)
@@ -473,6 +521,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   struct StatusBarSpec {
     bool showChapterPageCount = false;
     bool showBookProgressPercent = false;
+    uint8_t percentageFormat = PERCENTAGE_WHOLE;  // STATUS_BAR_PERCENTAGE_FORMAT
     uint8_t titleMode = HIDE_TITLE;  // STATUS_BAR_TITLE
     bool showBattery = false;
     bool showBatteryPercent = false;
@@ -504,6 +553,16 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   static const char* getFilePath() { return "/.crosspoint/settings.json"; }
   void toJson(JsonDocument& doc) const;
   bool fromJson(JsonVariantConst doc);
+  bool fromJsonForProfile(JsonVariantConst doc, bool preserveMissingManualFields);
+
+  // Hide the generic CRTP methods so the settings store can guard normal
+  // saves after an unsuccessful boot load while keeping first-boot defaults
+  // writable and allowing an explicit valid profile to resolve recovery.
+  bool loadFromFile();
+  bool saveToFile() const;
+  void markSettingsRecoveryRequired();
+  void acknowledgeSettingsRecovery();
+  bool isSettingsRecoveryRequired() const { return settingsRecoveryRequired; }
 
   static void validateFrontButtonMapping(CrossPointSettings& settings);
   static uint8_t sleepTimeoutEnumToMinutes(uint8_t legacyValue);

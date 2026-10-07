@@ -4,6 +4,8 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
+#include <BoardConfig.h>
+
 #include <atomic>
 #include <cassert>
 #include <memory>
@@ -67,12 +69,24 @@ class ActivityManager {
   // This variable must only be set by the main loop, to avoid race conditions
   std::atomic<bool> requestedUpdate{false};
 
+  // Render notifications are consumed by a separate FreeRTOS task. Keep the
+  // notification and render-task ownership visible to lifecycle admission so
+  // a cleared requestedUpdate cannot create a false idle window.
+  std::atomic<bool> renderQueued{false};
+  std::atomic<bool> renderInFlight{false};
+
+  void queueRenderNotification();
+
   // A button can still be held (or report its release edge) when a modal
   // activity finishes.  Keep the restored reader input-gated until that
   // closing gesture is idle, otherwise Reader Options can immediately be
   // interpreted as Home/Back and leave the book.
   bool suppressRestoredReaderInput = false;
   bool sleepRequested = false;
+#if FREEINK_CAP_BLE_HID_HOST
+  char pendingBluetoothNotification[64] = {};
+  bool hasBluetoothNotification = false;
+#endif
 
  public:
   explicit ActivityManager(GfxRenderer& renderer, MappedInputManager& mappedInput)
@@ -120,7 +134,14 @@ class ActivityManager {
   void requestSleep();
   bool consumeSleepRequest();
   bool isReaderActivity() const;
+  bool isCurrentReaderActivity() const;
+  const char* currentActivityName() const;
   bool bluetoothShouldBeActive() const;
+  bool bluetoothResourceSensitive() const;
+  bool bluetoothRenderSafe() const;
+  bool hasPendingUpdate() const { return requestedUpdate.load(std::memory_order_acquire); }
+  bool hasPendingRenderWork() const;
+  void postBluetoothNotification(const char* message);
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;
 

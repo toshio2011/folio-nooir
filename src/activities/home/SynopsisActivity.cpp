@@ -1,17 +1,33 @@
 #include "SynopsisActivity.h"
 
+#include <Bitmap.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <HalStorage.h>
 #include <I18n.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <limits>
 
+#include "BookStateStore.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/BookFormat.h"
 #include "util/HtmlToPlainText.h"
+
+namespace {
+
+const char* statusText(const BookStatus status, const uint8_t progress) {
+  if (progress >= 100 || status == BookStatus::Finished) return tr(STR_FINISHED);
+  if (status == BookStatus::OnHold) return tr(STR_STATS_STATUS_ON_HOLD);
+  if (progress > 0 || status == BookStatus::Reading) return tr(STR_STATS_STATUS_READING);
+  return tr(STR_STATS_STATUS_NEW);
+}
+
+}  // namespace
 
 void SynopsisActivity::buildLines() {
   renderer.setUiScaleTextEnabled(true);
@@ -43,6 +59,23 @@ void SynopsisActivity::buildLines() {
 
 void SynopsisActivity::onEnter() {
   Activity::onEnter();
+  if (!bookPath.empty()) {
+    // Callers provide the already-loaded Recent/Library metadata.  Book Info
+    // deliberately does not scan the full Recent history just to hydrate one
+    // selected book.
+    if (const BookState* state = BOOK_STATES.find(bookPath)) {
+      status = state->status;
+      progressPercent = state->progressPercent;
+      readingSeconds = state->readingSeconds;
+      readingSessions = state->readingSessions;
+    }
+    if (progressPercent >= 100) {
+      status = BookStatus::Finished;
+      progressPercent = 100;
+    } else if (status == BookStatus::New && progressPercent > 0) {
+      status = BookStatus::Reading;
+    }
+  }
   // Shelf entries intentionally keep a small synopsis cache for boot and
   // scrolling speed. This activity is the explicit full-text view, so always
   // reload the EPUB metadata and replace the preview when a complete OPF
@@ -62,10 +95,23 @@ void SynopsisActivity::onEnter() {
   requestUpdate();
 }
 
+int SynopsisActivity::synopsisTop() const {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int oldTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing + 24;
+  if (bookPath.empty()) return oldTop;
+
+  const int titleY = metrics.topPadding + 18;
+  const int titleHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  const int authorHeight = renderer.getLineHeight(UI_10_FONT_ID);
+  const int infoTop = titleY + titleHeight + authorHeight + 10;
+  const int infoHeight = std::min(132, std::max(96, renderer.getScreenHeight() / 7));
+  return infoTop + infoHeight + 18;
+}
+
 void SynopsisActivity::movePage(const int direction) {
   renderer.setUiScaleTextEnabled(true);
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const int top = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing + 24;
+  const int top = synopsisTop();
   const int bottom = renderer.getScreenHeight() - metrics.buttonHintsHeight - metrics.verticalSpacing;
   const size_t pageLines = static_cast<size_t>(std::max(1, (bottom - top) / renderer.getLineHeight(SMALL_FONT_ID)));
   const size_t maxStart = lines.size() > pageLines ? lines.size() - pageLines : 0;
@@ -117,7 +163,66 @@ void SynopsisActivity::render(RenderLock&&) {
                       renderer.truncatedText(UI_10_FONT_ID, author.c_str(), width).c_str());
   }
 
-  const int top = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing + 24;
+  if (!bookPath.empty()) {
+    const int titleHeight = renderer.getLineHeight(UI_12_FONT_ID);
+    const int infoTop = titleY + titleHeight + renderer.getLineHeight(UI_10_FONT_ID) + 10;
+    const int infoHeight = std::min(132, std::max(96, renderer.getScreenHeight() / 7));
+    const int coverWidth = std::min(104, std::max(76, width / 3));
+    const int detailX = side + coverWidth + 14;
+    const int detailWidth = std::max(1, width - coverWidth - 14);
+    const std::string thumb = UITheme::getCoverThumbPath(coverBmpPath, 220);
+    bool drewCover = false;
+    HalFile file;
+    if (!coverBmpPath.empty() && Storage.openFileForRead("SYNOPSIS", thumb, file)) {
+      Bitmap bitmap(file);
+      if (bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() > 0 && bitmap.getHeight() > 0) {
+        int drawWidth = bitmap.getWidth();
+        int drawHeight = bitmap.getHeight();
+        if (drawWidth > coverWidth || drawHeight > infoHeight) {
+          if (static_cast<long long>(drawWidth) * infoHeight > static_cast<long long>(drawHeight) * coverWidth) {
+            drawWidth = coverWidth;
+            drawHeight = std::max(1, bitmap.getHeight() * coverWidth / bitmap.getWidth());
+          } else {
+            drawHeight = infoHeight;
+            drawWidth = std::max(1, bitmap.getWidth() * infoHeight / bitmap.getHeight());
+          }
+        }
+        renderer.drawBitmap(bitmap, side + (coverWidth - drawWidth) / 2,
+                            infoTop + (infoHeight - drawHeight) / 2, drawWidth, drawHeight);
+        drewCover = true;
+      }
+    }
+    if (!drewCover) {
+      renderer.drawRect(side, infoTop, coverWidth, infoHeight);
+      const std::string fallback = renderer.truncatedText(UI_10_FONT_ID, title.c_str(), coverWidth - 12);
+      const int fallbackWidth = renderer.getTextWidth(UI_10_FONT_ID, fallback.c_str());
+      renderer.drawText(UI_10_FONT_ID, side + std::max(4, (coverWidth - fallbackWidth) / 2),
+                        infoTop + infoHeight / 2, fallback.c_str(), true);
+    } else {
+      renderer.drawRect(side, infoTop, coverWidth, infoHeight);
+    }
+
+    const char* format = BookFormat::labelForPath(bookPath.c_str());
+    if (format != nullptr) renderer.drawText(SMALL_FONT_ID, detailX, infoTop + 12, format, true);
+    renderer.drawText(SMALL_FONT_ID, detailX, infoTop + 12 + renderer.getLineHeight(SMALL_FONT_ID),
+                      statusText(status, progressPercent));
+    char progress[32];
+    snprintf(progress, sizeof(progress), "%u%%", progressPercent);
+    renderer.drawText(SMALL_FONT_ID, detailX, infoTop + 12 + renderer.getLineHeight(SMALL_FONT_ID) * 2, progress);
+    char reading[64];
+    snprintf(reading, sizeof(reading), "%lu min - %u sessions",
+             static_cast<unsigned long>((readingSeconds + 30) / 60), readingSessions);
+    const std::string readingText = renderer.truncatedText(SMALL_FONT_ID, reading, detailWidth);
+    renderer.drawText(SMALL_FONT_ID, detailX, infoTop + 12 + renderer.getLineHeight(SMALL_FONT_ID) * 3,
+                      readingText.c_str());
+    const int progressY = infoTop + infoHeight - 14;
+    renderer.drawRect(detailX, progressY, detailWidth, 10);
+    const int fill = (detailWidth - 2) * progressPercent / 100;
+    if (fill > 0) renderer.fillRect(detailX + 1, progressY + 1, fill, 8);
+    renderer.drawLine(side, infoTop + infoHeight + 8, side + width, infoTop + infoHeight + 8);
+  }
+
+  const int top = synopsisTop();
   const int bottom = renderer.getScreenHeight() - metrics.buttonHintsHeight - metrics.verticalSpacing;
   const int lineHeight = renderer.getLineHeight(SMALL_FONT_ID);
   const size_t pageLines = static_cast<size_t>(std::max(1, (bottom - top) / lineHeight));

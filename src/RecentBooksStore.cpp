@@ -47,9 +47,8 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
   // JSON parse error is fatal. A null JsonArray iterates zero times.
   recentBooks.clear();
   JsonArrayConst arr = doc["books"].as<JsonArrayConst>();
-  recentBooks.reserve(std::min(arr.size(), static_cast<size_t>(MAX_RECENT_BOOKS)));
+  recentBooks.reserve(arr.size());
   for (JsonObjectConst obj : arr) {
-    if (getCount() >= MAX_RECENT_BOOKS) break;
     RecentBook book;
     book.path = obj["path"] | "";
     book.title = obj["title"] | "";
@@ -108,11 +107,6 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
 
   // Add to front
   recentBooks.insert(recentBooks.begin(), std::move(entry));
-
-  // Trim to max size
-  if (recentBooks.size() > MAX_RECENT_BOOKS) {
-    recentBooks.resize(MAX_RECENT_BOOKS);
-  }
 
   saveToFile();
 }

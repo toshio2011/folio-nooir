@@ -11,15 +11,18 @@
 #include <Xtc.h>
 #include <esp_efuse.h>
 #include <esp_efuse_table.h>
+#include <freertos/task.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <string_view>
 
 #include "CrossPointSettings.h"
+#include "BleInput.h"
 #include "ClockWeatherSyncService.h"
 #include "components/UITheme.h"
 #include "FontInstaller.h"
@@ -55,6 +58,14 @@ constexpr uint16_t LOCAL_UDP_PORT = 8134;
 
 // Static pointer for WebSocket callback (WebSocketsServer requires C-style callback)
 CrossPointWebServer* wsInstance = nullptr;
+
+void closeFileIfOpen(HalFile& file) {
+  // HalFile deliberately asserts on operations against a default-constructed
+  // or moved-from object.  isOpen() is the ownership-safe probe for the
+  // persistent upload members below; it also avoids a second close after the
+  // underlying FsFile has already been released.
+  if (file.isOpen()) file.close();
+}
 
 // WebSocket upload state
 HalFile wsUploadFile;
@@ -112,11 +123,26 @@ bool isBookFile(const String& filename) {
 // - HomePageHtml (from html/HomePage.html)
 // - FilesPageHeaderHtml (from html/FilesPageHeader.html)
 // - FilesPageFooterHtml (from html/FilesPageFooter.html)
-CrossPointWebServer::CrossPointWebServer() {}
+CrossPointWebServer::CrossPointWebServer() {
+  LOG_DBG("WEB", "[LIFECYCLE] CrossPointWebServer constructed this=%p free=%lu min=%lu largest=%lu", this,
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+}
 
-CrossPointWebServer::~CrossPointWebServer() { stop(); }
+CrossPointWebServer::~CrossPointWebServer() {
+  LOG_DBG("WEB", "[LIFECYCLE] CrossPointWebServer destructing this=%p running=%d server=%p ws=%p free=%lu min=%lu largest=%lu",
+          this, running, server.get(), wsServer.get(), static_cast<unsigned long>(ESP.getFreeHeap()),
+          static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+  stop();
+  LOG_DBG("WEB", "[LIFECYCLE] CrossPointWebServer destroyed this=%p free=%lu min=%lu largest=%lu", this,
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+}
 
 void CrossPointWebServer::begin() {
+  LOG_DBG("WEB", "[LIFECYCLE] begin enter this=%p running=%d server=%p ws=%p free=%lu min=%lu largest=%lu", this,
+          running, server.get(), wsServer.get(), static_cast<unsigned long>(ESP.getFreeHeap()),
+          static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   if (running) {
     LOG_DBG("WEB", "Web server already running");
     return;
@@ -128,17 +154,34 @@ void CrossPointWebServer::begin() {
   const bool isInApMode = (wifiMode & WIFI_MODE_AP) && (WiFi.softAPgetStationNum() >= 0);  // AP is running
 
   if (!isStaConnected && !isInApMode) {
-    LOG_DBG("WEB", "Cannot start webserver - no valid network (mode=%d, status=%d)", wifiMode, WiFi.status());
+    LOG_DBG("WEB", "Cannot start webserver - no valid network (mode=%d, status=%d, free=%lu, min=%lu, largest=%lu)",
+            wifiMode, WiFi.status(), static_cast<unsigned long>(ESP.getFreeHeap()),
+            static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
     return;
   }
 
   // Store AP mode flag for later use (e.g., in handleStatus)
   apMode = isInApMode;
 
-  LOG_DBG("WEB", "[MEM] Free heap before begin: %d bytes", ESP.getFreeHeap());
+  lastHttpClientConnected = false;
+  lastClientDiagnosticAt = 0;
+  closeFileIfOpen(wsUploadFile);
+  wsUploadFileName = String();
+  wsUploadPath = String();
+  wsUploadSize = 0;
+  wsUploadReceived = 0;
+  wsUploadStartTime = 0;
+  wsUploadInProgress = false;
+  wsUploadClientNum = 255;
+  wsLastProgressSent = 0;
+  wsLastCompleteName = String();
+  wsLastCompleteSize = 0;
+  wsLastCompleteAt = 0;
+  LOG_DBG("WEB", "[MEM] stage=begin free=%lu min=%lu largest=%lu", static_cast<unsigned long>(ESP.getFreeHeap()),
+          static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   LOG_DBG("WEB", "Network mode: %s", apMode ? "AP" : "STA");
 
-  LOG_DBG("WEB", "Creating web server on port %d...", port);
+  LOG_DBG("WEB", "Creating web server on port %d (this=%p)...", port, this);
   server.reset(new WebServer(port));
 
   // Disable WiFi sleep to improve responsiveness and prevent 'unreachable' errors.
@@ -151,7 +194,10 @@ void CrossPointWebServer::begin() {
   // Note: WebServer class doesn't have setNoDelay() in the standard ESP32 library.
   // We rely on disabling WiFi sleep for responsiveness.
 
-  LOG_DBG("WEB", "[MEM] Free heap after WebServer allocation: %d bytes", ESP.getFreeHeap());
+  LOG_DBG("WEB", "[LIFECYCLE] WebServer object created server=%p", server.get());
+  LOG_DBG("WEB", "[MEM] stage=after-http-allocation free=%lu min=%lu largest=%lu",
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 
   if (!server) {
     LOG_ERR("WEB", "Failed to create WebServer!");
@@ -223,7 +269,9 @@ void CrossPointWebServer::begin() {
   server->on("/api/clock-weather", HTTP_POST, [this] { handlePostClockWeather(); });
 
   server->onNotFound([this] { handleNotFound(); });
-  LOG_DBG("WEB", "[MEM] Free heap after route setup: %d bytes", ESP.getFreeHeap());
+  LOG_DBG("WEB", "[MEM] stage=after-route-setup free=%lu min=%lu largest=%lu",
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 
   // Collect WebDAV headers and register handler
   const char* davHeaders[] = {"Depth", "Destination", "Overwrite", "If", "Lock-Token", "Timeout"};
@@ -231,23 +279,38 @@ void CrossPointWebServer::begin() {
   server->addHandler(new WebDAVHandler());  // Note: WebDAVHandler will be deleted by WebServer when server is stopped
   LOG_DBG("WEB", "WebDAV handler initialized");
 
+  LOG_DBG("WEB", "[LIFECYCLE] Calling WebServer::begin server=%p port=%d", server.get(), port);
   server->begin();
+  LOG_DBG("WEB", "[LIFECYCLE] WebServer::begin returned server=%p free=%lu min=%lu largest=%lu", server.get(),
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 
   // Start WebSocket server for fast binary uploads
   LOG_DBG("WEB", "Starting WebSocket server on port %d...", wsPort);
   wsServer.reset(new WebSocketsServer(wsPort));
+  LOG_DBG("WEB", "[LIFECYCLE] WebSocketsServer object created ws=%p free=%lu min=%lu largest=%lu", wsServer.get(),
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   wsInstance = const_cast<CrossPointWebServer*>(this);
   wsServer->begin();
   wsServer->onEvent(wsEventCallback);
-  LOG_DBG("WEB", "WebSocket server started");
+  LOG_DBG("WEB", "WebSocket server started ws=%p free=%lu min=%lu largest=%lu", wsServer.get(),
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 
   udpActive = udp.begin(LOCAL_UDP_PORT);
-  LOG_DBG("WEB", "Discovery UDP %s on port %d", udpActive ? "enabled" : "failed", LOCAL_UDP_PORT);
+  LOG_DBG("WEB", "Discovery UDP %s on port %d free=%lu min=%lu largest=%lu", udpActive ? "enabled" : "failed",
+          LOCAL_UDP_PORT, static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 
   // All request handlers run on the task that calls handleClient(). Register
   // that task before any handler can call esp_task_wdt_reset().
+  LOG_DBG("WEB", "[TASK] Registering current task name=%s handle=%p stackHighWater=%lu", pcTaskGetName(nullptr),
+          xTaskGetCurrentTaskHandle(), static_cast<unsigned long>(uxTaskGetStackHighWaterMark(nullptr)));
   const esp_err_t watchdogResult = esp_task_wdt_add(nullptr);
   watchdogTaskRegistered = watchdogResult == ESP_OK;
+  LOG_DBG("WEB", "[TASK] Watchdog registration result=%s registered=%d stackHighWater=%lu", esp_err_to_name(watchdogResult),
+          watchdogTaskRegistered, static_cast<unsigned long>(uxTaskGetStackHighWaterMark(nullptr)));
   if (!watchdogTaskRegistered) {
     LOG_ERR("WEB", "Failed to register web server task with watchdog: %s", esp_err_to_name(watchdogResult));
   }
@@ -259,42 +322,55 @@ void CrossPointWebServer::begin() {
   const String ipAddr = apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
   LOG_DBG("WEB", "Access at http://%s/", ipAddr.c_str());
   LOG_DBG("WEB", "WebSocket at ws://%s:%d/", ipAddr.c_str(), wsPort);
-  LOG_DBG("WEB", "[MEM] Free heap after server.begin(): %d bytes", ESP.getFreeHeap());
+  LOG_DBG("WEB", "[MEM] stage=server-started free=%lu min=%lu largest=%lu",
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 }
 
 void CrossPointWebServer::abortWsUpload(const char* tag) {
+  LOG_DBG(tag, "[WS] Aborting upload client=%u received=%lu total=%lu free=%lu min=%lu largest=%lu", wsUploadClientNum,
+          static_cast<unsigned long>(wsUploadReceived), static_cast<unsigned long>(wsUploadSize),
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   // Explicit close() required: file-scope global persists beyond function scope
-  wsUploadFile.close();
-  String filePath = wsUploadPath;
-  if (!filePath.endsWith("/")) filePath += "/";
-  filePath += wsUploadFileName;
-  if (Storage.remove(filePath.c_str())) {
-    LOG_DBG(tag, "Deleted incomplete upload: %s", filePath.c_str());
-  } else {
-    LOG_DBG(tag, "Failed to delete incomplete upload: %s", filePath.c_str());
+  closeFileIfOpen(wsUploadFile);
+  if (!wsUploadFileName.isEmpty()) {
+    String filePath = wsUploadPath;
+    if (!filePath.endsWith("/")) filePath += "/";
+    filePath += wsUploadFileName;
+    if (Storage.remove(filePath.c_str())) {
+      LOG_DBG(tag, "Deleted incomplete upload: %s", filePath.c_str());
+    } else {
+      LOG_DBG(tag, "Failed to delete incomplete upload: %s", filePath.c_str());
+    }
   }
   wsUploadInProgress = false;
   wsUploadClientNum = 255;
   wsLastProgressSent = 0;
+  wsUploadSize = 0;
+  wsUploadReceived = 0;
+  wsUploadStartTime = 0;
+  wsUploadFileName = String();
+  wsUploadPath = String();
+  LOG_DBG(tag, "[WS] Upload abort cleanup complete free=%lu min=%lu largest=%lu",
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 }
 
 void CrossPointWebServer::stop() {
-  if (!running || !server) {
-    LOG_DBG("WEB", "stop() called but already stopped (running=%d, server=%p)", running, server.get());
-    if (watchdogTaskRegistered) {
-      esp_task_wdt_delete(nullptr);
-      watchdogTaskRegistered = false;
-    }
-    return;
-  }
-
+  LOG_DBG("WEB", "[LIFECYCLE] stop enter this=%p running=%d server=%p ws=%p watchdog=%d free=%lu min=%lu largest=%lu",
+          this, running, server.get(), wsServer.get(), watchdogTaskRegistered,
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   LOG_DBG("WEB", "STOP INITIATED - setting running=false first");
   running = false;  // Set this FIRST to prevent handleClient from using server
 
-  LOG_DBG("WEB", "[MEM] Free heap before stop: %d bytes", ESP.getFreeHeap());
+  LOG_DBG("WEB", "[MEM] stage=stop-enter free=%lu min=%lu largest=%lu",
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 
   // Close any in-progress WebSocket upload and remove partial file
-  if (wsUploadInProgress && wsUploadFile) {
+  if (wsUploadInProgress || wsUploadFile) {
     abortWsUpload("WEB");
   }
 
@@ -302,37 +378,64 @@ void CrossPointWebServer::stop() {
   if (wsServer) {
     LOG_DBG("WEB", "Stopping WebSocket server...");
     wsServer->close();
-    wsServer.reset();
     wsInstance = nullptr;
-    LOG_DBG("WEB", "WebSocket server stopped");
+    wsServer.reset();
+    LOG_DBG("WEB", "WebSocket server stopped ws=%p free=%lu min=%lu largest=%lu", wsServer.get(),
+            static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+            static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   }
 
   if (udpActive) {
     udp.stop();
     udpActive = false;
+    LOG_DBG("WEB", "Discovery UDP stopped free=%lu min=%lu largest=%lu", static_cast<unsigned long>(ESP.getFreeHeap()),
+            static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   }
 
-  // Brief delay to allow any in-flight handleClient() calls to complete
-  delay(20);
-
-  server->stop();
-  LOG_DBG("WEB", "[MEM] Free heap after server->stop(): %d bytes", ESP.getFreeHeap());
-
-  // Brief delay before deletion
-  delay(10);
-
-  server.reset();
-  LOG_DBG("WEB", "Web server stopped and deleted");
-  LOG_DBG("WEB", "[MEM] Free heap after delete server: %d bytes", ESP.getFreeHeap());
+  if (server) {
+    server->stop();
+    LOG_DBG("WEB", "[LIFECYCLE] WebServer::stop returned server=%p free=%lu min=%lu largest=%lu", server.get(),
+            static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+            static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+    server.reset();
+  }
+  LOG_DBG("WEB", "Web server stopped and deleted server=%p free=%lu min=%lu largest=%lu", server.get(),
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 
   if (watchdogTaskRegistered) {
-    esp_task_wdt_delete(nullptr);
+    LOG_DBG("WEB", "[TASK] Removing watchdog registration task=%s handle=%p stackHighWater=%lu", pcTaskGetName(nullptr),
+            xTaskGetCurrentTaskHandle(), static_cast<unsigned long>(uxTaskGetStackHighWaterMark(nullptr)));
+    const esp_err_t watchdogResult = esp_task_wdt_delete(nullptr);
     watchdogTaskRegistered = false;
+    LOG_DBG("WEB", "[TASK] Watchdog removal result=%s", esp_err_to_name(watchdogResult));
   }
-
-  // Note: Static upload variables (uploadFileName, uploadPath, uploadError) are declared
-  // later in the file and will be cleared when they go out of scope or on next upload
-  LOG_DBG("WEB", "[MEM] Free heap final: %d bytes", ESP.getFreeHeap());
+  lastHttpClientConnected = false;
+  lastClientDiagnosticAt = 0;
+  closeFileIfOpen(upload.file);
+  upload.releaseBuffer();
+  upload.fileName = String();
+  upload.path = String("/");
+  upload.size = 0;
+  upload.success = false;
+  upload.error = String();
+  closeFileIfOpen(fontUpload.file);
+  fontUpload.releaseBuffer();
+  std::string().swap(fontUpload.familyName);
+  std::string().swap(fontUpload.filePath);
+  fontUpload.valid = false;
+  fontUpload.magicChecked = false;
+  fontUpload.bytesWritten = 0;
+  wsLastCompleteName = String();
+  wsLastCompleteSize = 0;
+  wsLastCompleteAt = 0;
+  // Signal once after all server-owned allocations are gone. The lifecycle
+  // gate will defer admission while Wi-Fi is still active or the heap is below
+  // its unchanged BLE floors.
+  bleinput::requestLifecycleReevaluation();
+  LOG_DBG("WEB", "[MEM] stage=stop-complete free=%lu min=%lu largest=%lu",
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 }
 
 void CrossPointWebServer::handleClient() {
@@ -349,13 +452,29 @@ void CrossPointWebServer::handleClient() {
     return;
   }
 
-  // Print debug every 10 seconds to confirm handleClient is being called
-  if (millis() - lastDebugPrint > 10000) {
-    LOG_DBG("WEB", "handleClient active, server running on port %d", port);
-    lastDebugPrint = millis();
+  const unsigned long now = millis();
+  if (now - lastDebugPrint > 10000) {
+    LOG_DBG("WEB", "[HTTP] handleClient active port=%d connected=%d task=%s stackHighWater=%lu free=%lu min=%lu largest=%lu",
+            port, lastHttpClientConnected, pcTaskGetName(nullptr),
+            static_cast<unsigned long>(uxTaskGetStackHighWaterMark(nullptr)), static_cast<unsigned long>(ESP.getFreeHeap()),
+            static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+    lastDebugPrint = now;
   }
 
+  const unsigned long handleStart = now;
   server->handleClient();
+  const unsigned long handleElapsed = millis() - handleStart;
+  const bool clientConnectedAfter = server->client().connected();
+  const unsigned long after = millis();
+  if (clientConnectedAfter != lastHttpClientConnected ||
+      (handleElapsed >= 10 && after - lastClientDiagnosticAt > 1000)) {
+    LOG_DBG("WEB", "[HTTP] handleClient exit elapsed=%lu connected=%d uri=%s method=%d free=%lu min=%lu largest=%lu",
+            handleElapsed, clientConnectedAfter, server->uri().c_str(),
+            static_cast<int>(server->method()), static_cast<unsigned long>(ESP.getFreeHeap()),
+            static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+    lastClientDiagnosticAt = after;
+  }
+  lastHttpClientConnected = clientConnectedAfter;
 
   // Handle WebSocket events
   if (wsServer) {
@@ -403,6 +522,8 @@ static void sendHtmlContent(WebServer* server, const char* data, size_t len) {
 }
 
 void CrossPointWebServer::handleRoot() const {
+  LOG_DBG("WEB", "[HTTP] request start uri=%s method=%d client=%d", server->uri().c_str(),
+          static_cast<int>(server->method()), server->client().connected());
   sendHtmlContent(server.get(), HomePageHtml, sizeof(HomePageHtml));
   LOG_DBG("WEB", "Served root page");
 }
@@ -412,15 +533,45 @@ void CrossPointWebServer::handleLibrary() const {
 }
 
 void CrossPointWebServer::handleLibraryData() const {
+  constexpr int WEB_LIBRARY_PAGE_SIZE = 10;
+  const unsigned long requestStart = millis();
+  size_t thumbnailChecks = 0;
+  size_t thumbnailHits = 0;
+  LOG_DBG("WEB", "[HTTP] library request start uri=%s method=%d client=%d free=%lu min=%lu largest=%lu",
+          server->uri().c_str(), static_cast<int>(server->method()), server->client().connected(),
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+  const bool paginatedRequest = server->hasArg("offset") || server->hasArg("limit");
+  int offset = 0;
+  if (paginatedRequest && server->hasArg("offset")) {
+    offset = std::max(0, static_cast<int>(server->arg("offset").toInt()));
+  }
+  int limit = WEB_LIBRARY_PAGE_SIZE;
+  if (paginatedRequest && server->hasArg("limit")) {
+    limit = std::clamp(static_cast<int>(server->arg("limit").toInt()), 1, WEB_LIBRARY_PAGE_SIZE);
+  }
+
   server->setContentLength(CONTENT_LENGTH_UNKNOWN);
   server->send(200, "application/json", "");
   server->sendContent("{\"books\":[");
   bool first = true;
-  int index = 0;
+  size_t visibleIndex = 0;
+  size_t emitted = 0;
+  bool hasMore = false;
+  JsonDocument doc;
+  String row;
   for (const auto& book : RECENT_BOOKS.getBooks()) {
     if (RecentBooksStore::isMissing(book)) continue;
-    JsonDocument doc;
-    doc["index"] = index++;
+    if (visibleIndex < static_cast<size_t>(offset)) {
+      ++visibleIndex;
+      continue;
+    }
+    if (paginatedRequest && emitted >= static_cast<size_t>(limit)) {
+      hasMore = true;
+      break;
+    }
+    doc.clear();
+    doc["index"] = static_cast<uint32_t>(visibleIndex);
     doc["title"] = book.title;
     doc["author"] = book.author;
     doc["progress"] = book.progressPercent;
@@ -432,21 +583,45 @@ void CrossPointWebServer::handleLibraryData() const {
     bool hasCover = false;
     if (!book.coverBmpPath.empty()) {
       const int coverHeight = UITheme::getInstance().getMetrics().homeCoverHeight;
-      hasCover = isValidBookThumbnail(UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight));
+      const std::string thumbnailPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
+      ++thumbnailChecks;
+      hasCover = isValidBookThumbnail(thumbnailPath);
+      if (hasCover) ++thumbnailHits;
     }
     doc["hasCover"] = hasCover;
-    String row;
+    row.clear();
     serializeJson(doc, row);
     if (!first) server->sendContent(",");
     first = false;
     server->sendContent(row);
+    ++visibleIndex;
+    ++emitted;
   }
-  server->sendContent("]}");
+  char footer[128];
+  if (paginatedRequest) {
+    snprintf(footer, sizeof(footer), "],\"offset\":%d,\"limit\":%d,\"hasMore\":%s}", offset, limit,
+             hasMore ? "true" : "false");
+  } else {
+    // Preserve the pre-pagination contract for legacy callers that do not
+    // provide query parameters: return the complete library response.
+    snprintf(footer, sizeof(footer), "]}");
+  }
+  server->sendContent(footer);
   server->sendContent("");
+  LOG_DBG("WEB", "[THUMB] library response emitted=%lu checks=%lu hits=%lu elapsed=%lu free=%lu min=%lu largest=%lu",
+          static_cast<unsigned long>(emitted), static_cast<unsigned long>(thumbnailChecks),
+          static_cast<unsigned long>(thumbnailHits), millis() - requestStart,
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 }
 
 void CrossPointWebServer::handleLibraryCover() const {
+  const unsigned long requestStart = millis();
+  LOG_DBG("WEB", "[THUMB] request start uri=%s method=%d client=%d free=%lu min=%lu largest=%lu", server->uri().c_str(),
+          static_cast<int>(server->method()), server->client().connected(), static_cast<unsigned long>(ESP.getFreeHeap()),
+          static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   if (!server->hasArg("index")) {
+    LOG_DBG("WEB", "[THUMB] request rejected: missing index");
     server->send(400, "text/plain", "Missing index");
     return;
   }
@@ -466,31 +641,55 @@ void CrossPointWebServer::handleLibraryCover() const {
   }
   const int coverHeight = UITheme::getInstance().getMetrics().homeCoverHeight;
   const std::string coverPath = UITheme::getCoverThumbPath(selected->coverBmpPath, coverHeight);
+  LOG_DBG("WEB", "[THUMB] resolved index=%d cachePath=%s", wanted, coverPath.c_str());
   // The Web Bookshelf is presentation-only. Never parse an EPUB or decode an
   // image from this request: opening the page should not compete with a file
   // transfer for the SD/SPI bus or Wi-Fi task. Device-side Library retrieval
   // remains available when the user highlights a book or uses Retrieve All.
-  if (!isValidBookThumbnail(coverPath)) {
+  const bool validThumbnail = isValidBookThumbnail(coverPath);
+  LOG_DBG("WEB", "[THUMB] cache validation path=%s valid=%d free=%lu min=%lu largest=%lu", coverPath.c_str(),
+          validThumbnail, static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+  if (!validThumbnail) {
     server->send(404, "text/plain", "Cover not cached");
     return;
   }
   HalFile file = Storage.open(coverPath.c_str());
   if (!file || file.isDirectory()) {
+    LOG_DBG("WEB", "[THUMB] cache open failed path=%s", coverPath.c_str());
     server->send(404, "text/plain", "Cover not found");
     return;
   }
-  server->setContentLength(file.size());
+  const size_t contentLength = file.size();
+  LOG_DBG("WEB", "[THUMB] serving path=%s bytes=%lu client=%d free=%lu min=%lu largest=%lu", coverPath.c_str(),
+          static_cast<unsigned long>(contentLength), server->client().connected(),
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+  server->setContentLength(contentLength);
   server->sendHeader("Cache-Control", "public, max-age=3600");
   server->send(200, "image/bmp", "");
   NetworkClient client = server->client();
   uint8_t buffer[1024];
+  size_t bytesSent = 0;
+  bool clientWriteFailed = false;
   while (file.available()) {
     const int count = file.read(buffer, sizeof(buffer));
     if (count <= 0) break;
-    if (client.write(buffer, static_cast<size_t>(count)) != static_cast<size_t>(count)) break;
+    const size_t expected = static_cast<size_t>(count);
+    if (client.write(buffer, expected) != expected) {
+      clientWriteFailed = true;
+      break;
+    }
+    bytesSent += expected;
     resetTaskWatchdogIfSubscribed();
     yield();
   }
+  client.clear();
+  file.close();
+  LOG_DBG("WEB", "[THUMB] serving complete path=%s sent=%lu expected=%lu writeFailed=%d elapsed=%lu client=%d free=%lu min=%lu largest=%lu",
+          coverPath.c_str(), static_cast<unsigned long>(bytesSent), static_cast<unsigned long>(contentLength),
+          clientWriteFailed, millis() - requestStart, client.connected(), static_cast<unsigned long>(ESP.getFreeHeap()),
+          static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 }
 
 void CrossPointWebServer::handleStatsPage() const {
@@ -503,7 +702,8 @@ void CrossPointWebServer::handleStatsExport() const {
 }
 
 void CrossPointWebServer::handleStatsData() const {
-  JsonDocument doc;
+  LOG_DBG("WEB", "[STATS] request start free=%lu min=%lu largest=%lu", static_cast<unsigned long>(ESP.getFreeHeap()),
+          static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   const uint32_t today = halClock.getDateKey();
   // Older installations already have cumulative per-book counters but do
   // not have the newer day-bucket file yet. Keep those users' totals visible
@@ -519,29 +719,42 @@ void CrossPointWebServer::handleStatsData() const {
   const uint32_t totalSeconds = std::max(bookSeconds, READING_STATS.totalSeconds());
   const uint32_t totalSessions = std::max(bookSessions, READING_STATS.totalSessions());
   const uint32_t totalPages = std::max(bookPages, READING_STATS.totalPagesTurned());
-  doc["totalSeconds"] = totalSeconds;
-  doc["sessions"] = totalSessions;
-  doc["pagesTurned"] = totalPages;
-  doc["pagesPerMinute"] = totalSeconds == 0 ? 0 : totalPages / std::max<uint32_t>(1, (totalSeconds + 30) / 60);
-  doc["streak"] = READING_STATS.currentStreakDays();
-  doc["bestStreak"] = READING_STATS.longestStreakDays();
-  doc["today"] = today;
-  doc["todaySeconds"] = today == 0 ? 0 : READING_STATS.secondsForDate(today);
-  doc["todayPages"] = today == 0 ? 0 : READING_STATS.pagesForDate(today);
 
-  JsonArray days = doc["days"].to<JsonArray>();
+  // Stream the response in bounded pieces. The previous implementation kept
+  // the complete document in ArduinoJson and then serialized a second complete
+  // copy into String before WebServer copied it again for transmission. With
+  // unlimited Recent Books that transient triple-copy is what drives the X4
+  // heap into the 1-2KB largest-block failure seen during Web UI sessions.
+  server->setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server->send(200, "application/json", "");
+  char summary[512];
+  snprintf(summary, sizeof(summary),
+           "{\"totalSeconds\":%lu,\"sessions\":%lu,\"pagesTurned\":%lu,\"pagesPerMinute\":%lu,"
+           "\"streak\":%u,\"bestStreak\":%u,\"today\":%lu,\"todaySeconds\":%lu,\"todayPages\":%lu,\"days\":[",
+           static_cast<unsigned long>(totalSeconds), static_cast<unsigned long>(totalSessions),
+           static_cast<unsigned long>(totalPages),
+           static_cast<unsigned long>(totalSeconds == 0 ? 0 : totalPages / std::max<uint32_t>(1, (totalSeconds + 30) / 60)),
+           static_cast<unsigned>(READING_STATS.currentStreakDays()), static_cast<unsigned>(READING_STATS.longestStreakDays()),
+           static_cast<unsigned long>(today), static_cast<unsigned long>(today == 0 ? 0 : READING_STATS.secondsForDate(today)),
+           static_cast<unsigned long>(today == 0 ? 0 : READING_STATS.pagesForDate(today)));
+  server->sendContent(summary);
+
   const auto& dayRows = READING_STATS.getDays();
   const size_t firstDay = dayRows.size() > 90 ? dayRows.size() - 90 : 0;
+  char dayRow[160];
   for (size_t i = firstDay; i < dayRows.size(); ++i) {
-    JsonObject row = days.add<JsonObject>();
-    row["date"] = dayRows[i].dateKey;
-    row["seconds"] = dayRows[i].seconds;
-    row["sessions"] = dayRows[i].sessions;
-    row["pages"] = dayRows[i].pagesTurned;
+    if (i != firstDay) server->sendContent(",");
+    snprintf(dayRow, sizeof(dayRow), "{\"date\":%lu,\"seconds\":%lu,\"sessions\":%u,\"pages\":%lu}",
+             static_cast<unsigned long>(dayRows[i].dateKey), static_cast<unsigned long>(dayRows[i].seconds),
+             static_cast<unsigned>(dayRows[i].sessions), static_cast<unsigned long>(dayRows[i].pagesTurned));
+    server->sendContent(dayRow);
   }
+  server->sendContent("],\"books\":[");
 
-  JsonArray books = doc["books"].to<JsonArray>();
-  auto appendBook = [&](const std::string& path, const BookState* state, const RecentBook* recent) {
+  JsonDocument rowDoc;
+  String rowJson;
+  bool seenBook = false;
+  auto appendBook = [&](const std::string& path, const BookState* state, const RecentBook* recent, const int coverIndex) {
     const uint8_t progress = std::max<uint8_t>(state ? state->progressPercent : 0,
                                                 recent ? recent->progressPercent : 0);
     const uint32_t seconds = std::max<uint32_t>(state ? state->readingSeconds : 0,
@@ -554,7 +767,8 @@ void CrossPointWebServer::handleStatsData() const {
     if (progress >= 100) status = static_cast<uint8_t>(BookStatus::Finished);
     else if (status == static_cast<uint8_t>(BookStatus::New) && progress > 0)
       status = static_cast<uint8_t>(BookStatus::Reading);
-    JsonObject row = books.add<JsonObject>();
+    rowDoc.clear();
+    JsonObject row = rowDoc.to<JsonObject>();
     row["path"] = path;
     row["title"] = recent && !recent->title.empty() ? recent->title : path;
     row["author"] = recent ? recent->author : "";
@@ -568,38 +782,40 @@ void CrossPointWebServer::handleStatsData() const {
     row["startDate"] = state ? state->startDate : 0;
     row["finishDate"] = state ? state->finishDate : 0;
     row["lastOpenedDate"] = state ? state->lastOpenedDate : 0;
-    int coverIndex = -1;
-    int visibleIndex = 0;
-    for (const auto& candidate : RECENT_BOOKS.getBooks()) {
-      if (RecentBooksStore::isMissing(candidate)) continue;
-      if (candidate.path == path) {
-        coverIndex = visibleIndex;
-        break;
-      }
-      ++visibleIndex;
-    }
     row["coverIndex"] = coverIndex;
+    rowJson.clear();
+    serializeJson(rowDoc, rowJson);
+    if (seenBook) server->sendContent(",");
+    server->sendContent(rowJson);
+    seenBook = true;
   };
+  // Walk Recent Books once so each entry performs at most one SD existence
+  // check and receives its cover index without the old per-state nested scan.
+  // Recent order is also the useful presentation order for the web page.
+  int visibleIndex = 0;
+  for (const auto& recent : RECENT_BOOKS.getBooks()) {
+    const bool missing = RecentBooksStore::isMissing(recent);
+    const int coverIndex = missing ? -1 : visibleIndex++;
+    appendBook(recent.path, BOOK_STATES.find(recent.path), &recent, coverIndex);
+  }
+  // A book can exist in Book States without a Recent Books entry. Include it
+  // too, preserving the full statistics feature without another SD scan.
   for (const auto& book : BOOK_STATES.getBooks()) {
-    const RecentBook* recent = nullptr;
-    for (const auto& candidate : RECENT_BOOKS.getBooks()) {
-      if (candidate.path == book.path) {
-        recent = &candidate;
+    bool inRecent = false;
+    for (const auto& recent : RECENT_BOOKS.getBooks()) {
+      if (recent.path == book.path) {
+        inRecent = true;
         break;
       }
     }
-    appendBook(book.path, &book, recent);
-  }
-  // A book can exist in Recent Books before its first reader session creates
-  // a BookState entry. Include it too, so the web view and long-press flow do
-  // not look empty on a fresh installation.
-  for (const auto& recent : RECENT_BOOKS.getBooks()) {
-    if (!BOOK_STATES.find(recent.path)) appendBook(recent.path, nullptr, &recent);
+    if (!inRecent) appendBook(book.path, &book, nullptr, -1);
   }
 
-  String response;
-  serializeJson(doc, response);
-  server->send(200, "application/json", response);
+  server->sendContent("]}");
+  server->sendContent("");
+  LOG_DBG("WEB", "[STATS] streamed response free=%lu min=%lu largest=%lu",
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 }
 
 void CrossPointWebServer::handleGetBookInfo() const {
@@ -797,6 +1013,10 @@ void CrossPointWebServer::handleJszip() const {
 }
 
 void CrossPointWebServer::handleNotFound() const {
+  LOG_DBG("WEB", "[HTTP] not-found method=%d uri=%s client=%d free=%lu min=%lu largest=%lu",
+          static_cast<int>(server->method()), server->uri().c_str(), server->client().connected(),
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   // CORS preflight: routes are registered per-method, so OPTIONS requests land
   // here. The Access-Control-Allow-* headers are added by enableCORS().
   if (server->method() == HTTP_OPTIONS) {
@@ -975,6 +1195,11 @@ void CrossPointWebServer::handleFileListData() const {
 }
 
 void CrossPointWebServer::handleDownload() const {
+  const unsigned long requestStart = millis();
+  LOG_DBG("WEB", "[HTTP] download request start uri=%s method=%d client=%d free=%lu min=%lu largest=%lu",
+          server->uri().c_str(), static_cast<int>(server->method()), server->client().connected(),
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   if (!server->hasArg("path")) {
     server->send(400, "text/plain", "Missing path");
     return;
@@ -1028,7 +1253,10 @@ void CrossPointWebServer::handleDownload() const {
     filename = nameBuf;
   }
 
-  server->setContentLength(file.size());
+  const size_t contentLength = file.size();
+  LOG_DBG("WEB", "[HTTP] download serving path=%s bytes=%lu client=%d", itemPath.c_str(),
+          static_cast<unsigned long>(contentLength), server->client().connected());
+  server->setContentLength(contentLength);
   server->sendHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
   server->send(200, contentType.c_str(), "");
 
@@ -1037,6 +1265,7 @@ void CrossPointWebServer::handleDownload() const {
   uint8_t buffer[chunkSize];
 
   bool downloadOk = true;
+  size_t bytesSent = 0;
   while (downloadOk && file.available()) {
     int result = file.read(buffer, chunkSize);
     if (result <= 0) break;
@@ -1050,10 +1279,19 @@ void CrossPointWebServer::handleDownload() const {
         break;
       }
       totalWritten += wrote;
+      bytesSent += wrote;
     }
     yield();
   }
+  LOG_DBG("WEB", "[HTTP] download client write complete path=%s sent=%lu expected=%lu ok=%d elapsed=%lu client=%d "
+                 "free=%lu min=%lu largest=%lu",
+          itemPath.c_str(), static_cast<unsigned long>(bytesSent), static_cast<unsigned long>(contentLength), downloadOk,
+          millis() - requestStart, client.connected(), static_cast<unsigned long>(ESP.getFreeHeap()),
+          static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   client.clear();
+  LOG_DBG("WEB", "[HTTP] download client cleared path=%s connected=%d free=%lu min=%lu largest=%lu", itemPath.c_str(),
+          client.connected(), static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   file.close();
 }
 
@@ -1066,7 +1304,7 @@ static bool flushUploadBuffer(CrossPointWebServer::UploadState& state) {
   if (state.bufferPos > 0 && state.file) {
     resetTaskWatchdogIfSubscribed();  // Reset watchdog before potentially slow SD write
     const unsigned long writeStart = millis();
-    const size_t written = state.file.write(state.buffer.data(), state.bufferPos);
+    const size_t written = state.file.write(state.buffer.get(), state.bufferPos);
     totalWriteTime += millis() - writeStart;
     writeCount++;
     resetTaskWatchdogIfSubscribed();  // Reset watchdog after SD write
@@ -1110,6 +1348,11 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     uploadStartTime = millis();
     lastLoggedSize = 0;
     state.bufferPos = 0;
+    if (!state.ensureBuffer()) {
+      state.error = "Not enough memory for upload buffer";
+      LOG_ERR("WEB", "[UPLOAD] Failed to allocate upload buffer");
+      return;
+    }
     totalWriteTime = 0;
     writeCount = 0;
 
@@ -1131,7 +1374,9 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     }
 
     LOG_DBG("WEB", "[UPLOAD] START: %s to path: %s", state.fileName.c_str(), state.path.c_str());
-    LOG_DBG("WEB", "[UPLOAD] Free heap: %d bytes", ESP.getFreeHeap());
+    LOG_DBG("WEB", "[UPLOAD] request client=%d free=%lu min=%lu largest=%lu", server->client().connected(),
+            static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+            static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 
     String filePath = state.path;
     if (!filePath.endsWith("/")) filePath += "/";
@@ -1141,6 +1386,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     resetTaskWatchdogIfSubscribed();
     if (Storage.exists(filePath.c_str())) {
       state.error = "File already exists: " + state.fileName;
+      state.releaseBuffer();
       LOG_DBG("WEB", "[UPLOAD] Collision: %s", filePath.c_str());
       return;
     }
@@ -1149,12 +1395,15 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     resetTaskWatchdogIfSubscribed();
     if (!Storage.openFileForWrite("WEB", filePath, state.file)) {
       state.error = "Failed to create file on SD card";
+      state.releaseBuffer();
       LOG_DBG("WEB", "[UPLOAD] FAILED to create file: %s", filePath.c_str());
       return;
     }
     resetTaskWatchdogIfSubscribed();
 
-    LOG_DBG("WEB", "[UPLOAD] File created successfully: %s", filePath.c_str());
+    LOG_DBG("WEB", "[UPLOAD] File created successfully: %s free=%lu min=%lu largest=%lu", filePath.c_str(),
+            static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+            static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     if (state.file && state.error.isEmpty()) {
       // Buffer incoming data and flush when buffer is full
@@ -1166,7 +1415,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         const size_t space = UploadState::UPLOAD_BUFFER_SIZE - state.bufferPos;
         const size_t toCopy = (remaining < space) ? remaining : space;
 
-        memcpy(state.buffer.data() + state.bufferPos, data, toCopy);
+        memcpy(state.buffer.get() + state.bufferPos, data, toCopy);
         state.bufferPos += toCopy;
         data += toCopy;
         remaining -= toCopy;
@@ -1176,6 +1425,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
           if (!flushUploadBuffer(state)) {
             state.error = "Failed to write to SD card - disk may be full";
             state.file.close();
+            state.releaseBuffer();
             return;
           }
         }
@@ -1187,8 +1437,9 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       if (state.size - lastLoggedSize >= 102400) {
         const unsigned long elapsed = millis() - uploadStartTime;
         const float kbps = (elapsed > 0) ? (state.size / 1024.0) / (elapsed / 1000.0) : 0;
-        LOG_DBG("WEB", "[UPLOAD] %d bytes (%.1f KB), %.1f KB/s, %d writes", state.size, state.size / 1024.0, kbps,
-                writeCount);
+        LOG_DBG("WEB", "[UPLOAD] %d bytes (%.1f KB), %.1f KB/s, %d writes free=%lu min=%lu largest=%lu", state.size,
+                state.size / 1024.0, kbps, writeCount, static_cast<unsigned long>(ESP.getFreeHeap()),
+                static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
         lastLoggedSize = state.size;
       }
     }
@@ -1199,6 +1450,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         state.error = "Failed to write final data to SD card";
       }
       state.file.close();
+      state.releaseBuffer();
 
       if (state.error.isEmpty()) {
         state.success = true;
@@ -1210,13 +1462,22 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
         LOG_DBG("WEB", "[UPLOAD] Diagnostics: %d writes, total write time: %lu ms (%.1f%%)", writeCount, totalWriteTime,
                 writePercent);
 
-        // Clear epub cache after uploading the file
+        // Clear book cache after uploading the file
         String filePath = state.path;
         if (!filePath.endsWith("/")) filePath += "/";
         filePath += state.fileName;
+        LOG_DBG("WEB", "[BOOKCACHE] invalidate after HTTP upload path=%s free=%lu min=%lu largest=%lu", filePath.c_str(),
+                static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+                static_cast<unsigned long>(ESP.getMaxAllocHeap()));
         clearBookCache(filePath.c_str());
+        LOG_DBG("WEB", "[BOOKCACHE] invalidate complete after HTTP upload path=%s free=%lu min=%lu largest=%lu",
+                filePath.c_str(), static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+                static_cast<unsigned long>(ESP.getMaxAllocHeap()));
       }
     }
+    // The multipart callback may reach FILE_END after an earlier open/write
+    // failure, so release the buffer outside the file-open branch as well.
+    state.releaseBuffer();
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
     state.bufferPos = 0;  // Discard buffered data
     if (state.file) {
@@ -1228,17 +1489,29 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
       Storage.remove(filePath.c_str());
     }
     state.error = "Upload aborted";
-    LOG_DBG("WEB", "Upload aborted");
+    state.releaseBuffer();
+    LOG_DBG("WEB", "Upload aborted client=%d free=%lu min=%lu largest=%lu", server->client().connected(),
+            static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+            static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   }
 }
 
 void CrossPointWebServer::handleUploadPost(UploadState& state) const {
+  LOG_DBG("WEB", "[HTTP] upload request complete success=%d bytes=%lu client=%d free=%lu min=%lu largest=%lu",
+          state.success, static_cast<unsigned long>(state.size), server->client().connected(),
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   if (state.success) {
     server->send(200, "text/plain", "File uploaded successfully: " + state.fileName);
   } else {
     const String error = state.error.isEmpty() ? "Unknown error during upload" : state.error;
     server->send(400, "text/plain", error);
   }
+  state.fileName = String();
+  state.path = String("/");
+  state.error = String();
+  state.size = 0;
+  state.success = false;
 }
 
 void CrossPointWebServer::handleCreateFolder() const {
@@ -1360,7 +1633,13 @@ void CrossPointWebServer::handleRename() const {
     return;
   }
 
+  LOG_DBG("WEB", "[BOOKCACHE] invalidate before rename path=%s free=%lu min=%lu largest=%lu", itemPath.c_str(),
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   clearBookCache(itemPath.c_str());
+  LOG_DBG("WEB", "[BOOKCACHE] invalidate complete before rename path=%s free=%lu min=%lu largest=%lu", itemPath.c_str(),
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   const bool success = file.rename(newPath.c_str());
   file.close();
 
@@ -1454,7 +1733,13 @@ void CrossPointWebServer::handleMove() const {
     return;
   }
 
+  LOG_DBG("WEB", "[BOOKCACHE] invalidate before move path=%s free=%lu min=%lu largest=%lu", itemPath.c_str(),
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   clearBookCache(itemPath.c_str());
+  LOG_DBG("WEB", "[BOOKCACHE] invalidate complete before move path=%s free=%lu min=%lu largest=%lu", itemPath.c_str(),
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   const bool success = file.rename(newPath.c_str());
   file.close();
 
@@ -1574,7 +1859,13 @@ void CrossPointWebServer::handleDelete() const {
       // It's a file (or couldn't open as dir) — remove file
       if (f) f.close();
       success = Storage.remove(itemPath.c_str());
+      LOG_DBG("WEB", "[BOOKCACHE] invalidate after delete path=%s removed=%d free=%lu min=%lu largest=%lu",
+              itemPath.c_str(), success, static_cast<unsigned long>(ESP.getFreeHeap()),
+              static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
       clearBookCache(itemPath.c_str());
+      LOG_DBG("WEB", "[BOOKCACHE] invalidate complete after delete path=%s free=%lu min=%lu largest=%lu", itemPath.c_str(),
+              static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+              static_cast<unsigned long>(ESP.getMaxAllocHeap()));
       if (success) BOOK_METADATA_OVERRIDES.removeByPath(itemPath.c_str());
     }
 
@@ -1597,11 +1888,11 @@ void CrossPointWebServer::handleSettingsPage() const {
 }
 
 void CrossPointWebServer::handleGetSettings() const {
+  LOG_DBG("WEB", "[SETTINGS] GET start free=%lu min=%lu largest=%lu", static_cast<unsigned long>(ESP.getFreeHeap()),
+          static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   // Pass the SD font registry so the fontFamily setting's enumStringValues
   // includes SD-resident families — otherwise the web API only exposes the
   // three built-in fonts.
-  const auto& settings = getSettingsList(&sdFontSystem.registry());
-
   server->setContentLength(CONTENT_LENGTH_UNKNOWN);
   server->send(200, "application/json", "");
   server->sendContent("[");
@@ -1611,8 +1902,8 @@ void CrossPointWebServer::handleGetSettings() const {
   bool seenFirst = false;
   JsonDocument doc;
 
-  for (const auto& s : settings) {
-    if (!s.key) continue;  // Skip ACTION-only entries
+  forEachEffectiveSetting(&sdFontSystem.registry(), nullptr, [&](const SettingInfo& s) {
+    if (!s.key) return;  // Skip ACTION-only entries
 
     doc.clear();
     doc["key"] = s.key;
@@ -1666,13 +1957,13 @@ void CrossPointWebServer::handleGetSettings() const {
         break;
       }
       default:
-        continue;
+        return;
     }
 
     const size_t written = serializeJson(doc, output, outputSize);
     if (written >= outputSize) {
       LOG_DBG("WEB", "Skipping oversized setting JSON for: %s", s.key);
-      continue;
+      return;
     }
 
     if (seenFirst) {
@@ -1681,33 +1972,39 @@ void CrossPointWebServer::handleGetSettings() const {
       seenFirst = true;
     }
     server->sendContent(output);
-  }
+  });
 
   server->sendContent("]");
   server->sendContent("");
-  LOG_DBG("WEB", "Served settings API");
+  LOG_DBG("WEB", "[SETTINGS] GET complete free=%lu min=%lu largest=%lu", static_cast<unsigned long>(ESP.getFreeHeap()),
+          static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 }
 
 void CrossPointWebServer::handlePostSettings() {
+  LOG_DBG("WEB", "[SETTINGS] POST start free=%lu min=%lu largest=%lu", static_cast<unsigned long>(ESP.getFreeHeap()),
+          static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   if (!server->hasArg("plain")) {
     server->send(400, "text/plain", "Missing JSON body");
     return;
   }
 
-  const String body = server->arg("plain");
+  String body = server->arg("plain");
   JsonDocument doc;
   const DeserializationError err = deserializeJson(doc, body);
   if (err) {
     server->send(400, "text/plain", String("Invalid JSON: ") + err.c_str());
     return;
   }
+  // WebServer and ArduinoJson both need the request while parsing, but the
+  // settings walk does not. Release the body before constructing any dynamic
+  // font-setting entries.
+  body = String();
 
-  const auto& settings = getSettingsList(&sdFontSystem.registry());
   int applied = 0;
 
-  for (const auto& s : settings) {
-    if (!s.key) continue;
-    if (!doc[s.key].is<JsonVariant>()) continue;
+  forEachEffectiveSetting(&sdFontSystem.registry(), nullptr, [&](const SettingInfo& s) {
+    if (!s.key) return;
+    if (!doc[s.key].is<JsonVariant>()) return;
 
     switch (s.type) {
       case SettingType::TOGGLE: {
@@ -1757,11 +2054,13 @@ void CrossPointWebServer::handlePostSettings() {
       default:
         break;
     }
-  }
+  });
 
   SETTINGS.saveToFile();
 
-  LOG_DBG("WEB", "Applied %d setting(s)", applied);
+  LOG_DBG("WEB", "[SETTINGS] applied=%d complete free=%lu min=%lu largest=%lu", applied,
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   server->send(200, "text/plain", String("Applied ") + String(applied) + " setting(s)");
 }
 
@@ -2195,7 +2494,9 @@ void CrossPointWebServer::wsEventCallback(uint8_t num, WStype_t type, uint8_t* p
 void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
   switch (type) {
     case WStype_DISCONNECTED:
-      LOG_DBG("WS", "Client %u disconnected", num);
+      LOG_DBG("WS", "Client %u disconnected uploadClient=%u inProgress=%d free=%lu min=%lu largest=%lu", num,
+              wsUploadClientNum, wsUploadInProgress, static_cast<unsigned long>(ESP.getFreeHeap()),
+              static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
       // Only clean up if this is the client that owns the active upload.
       // A new client may have already started a fresh upload before this
       // DISCONNECTED event fires (race condition on quick cancel + retry).
@@ -2205,7 +2506,9 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
       break;
 
     case WStype_CONNECTED: {
-      LOG_DBG("WS", "Client %u connected", num);
+      LOG_DBG("WS", "Client %u connected free=%lu min=%lu largest=%lu", num,
+              static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+              static_cast<unsigned long>(ESP.getMaxAllocHeap()));
       break;
     }
 
@@ -2263,8 +2566,9 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
             return;
           }
 
-          LOG_DBG("WS", "Starting upload: %s (%d bytes) to %s", wsUploadFileName.c_str(), wsUploadSize,
-                  filePath.c_str());
+          LOG_DBG("WS", "Starting upload: %s (%d bytes) to %s client=%u free=%lu min=%lu largest=%lu",
+                  wsUploadFileName.c_str(), wsUploadSize, filePath.c_str(), num, static_cast<unsigned long>(ESP.getFreeHeap()),
+                  static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 
           // Open file for writing
           resetTaskWatchdogIfSubscribed();
@@ -2275,18 +2579,34 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
             return;
           }
           resetTaskWatchdogIfSubscribed();
+          LOG_DBG("WS", "Upload file opened path=%s client=%u free=%lu min=%lu largest=%lu", filePath.c_str(), num,
+                  static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+                  static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 
           // Zero-byte upload: complete immediately without waiting for BIN frames
           if (wsUploadSize == 0) {
             // Explicit close() required: file-scope global persists beyond function scope
-            wsUploadFile.close();
+            closeFileIfOpen(wsUploadFile);
             wsLastCompleteName = wsUploadFileName;
             wsLastCompleteSize = 0;
             wsLastCompleteAt = millis();
-            LOG_DBG("WS", "Zero-byte upload complete: %s", filePath.c_str());
+            LOG_DBG("WS", "Zero-byte upload complete: %s free=%lu min=%lu largest=%lu", filePath.c_str(),
+                    static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+                    static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+            LOG_DBG("WEB", "[BOOKCACHE] invalidate after WebSocket upload path=%s free=%lu min=%lu largest=%lu",
+                    filePath.c_str(), static_cast<unsigned long>(ESP.getFreeHeap()),
+                    static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
             clearBookCache(filePath.c_str());
+            LOG_DBG("WEB", "[BOOKCACHE] invalidate complete after WebSocket upload path=%s free=%lu min=%lu largest=%lu",
+                    filePath.c_str(), static_cast<unsigned long>(ESP.getFreeHeap()),
+                    static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
             wsServer->sendTXT(num, "DONE");
             wsLastProgressSent = 0;
+            wsUploadSize = 0;
+            wsUploadReceived = 0;
+            wsUploadStartTime = 0;
+            wsUploadFileName = String();
+            wsUploadPath = String();
             break;
           }
 
@@ -2331,12 +2651,16 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
         String progress = "PROGRESS:" + String(wsUploadReceived) + ":" + String(wsUploadSize);
         wsServer->sendTXT(num, progress);
         wsLastProgressSent = wsUploadReceived;
+        LOG_DBG("WS", "Upload progress client=%u received=%lu total=%lu free=%lu min=%lu largest=%lu", num,
+                static_cast<unsigned long>(wsUploadReceived), static_cast<unsigned long>(wsUploadSize),
+                static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+                static_cast<unsigned long>(ESP.getMaxAllocHeap()));
       }
 
       // Check if upload complete
       if (wsUploadReceived >= wsUploadSize) {
         // Explicit close() required: file-scope global persists beyond function scope
-        wsUploadFile.close();
+        closeFileIfOpen(wsUploadFile);
         wsUploadInProgress = false;
         wsUploadClientNum = 255;
 
@@ -2347,17 +2671,29 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
         unsigned long elapsed = millis() - wsUploadStartTime;
         float kbps = (elapsed > 0) ? (wsUploadSize / 1024.0) / (elapsed / 1000.0) : 0;
 
-        LOG_DBG("WS", "Upload complete: %s (%d bytes in %lu ms, %.1f KB/s)", wsUploadFileName.c_str(), wsUploadSize,
-                elapsed, kbps);
+        LOG_DBG("WS", "Upload complete: %s (%d bytes in %lu ms, %.1f KB/s) free=%lu min=%lu largest=%lu",
+                wsUploadFileName.c_str(), wsUploadSize, elapsed, kbps, static_cast<unsigned long>(ESP.getFreeHeap()),
+                static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 
-        // Clear epub cache after uploading the file
+        // Clear book cache after uploading the file
         String filePath = wsUploadPath;
         if (!filePath.endsWith("/")) filePath += "/";
         filePath += wsUploadFileName;
+        LOG_DBG("WEB", "[BOOKCACHE] invalidate after WebSocket upload path=%s free=%lu min=%lu largest=%lu",
+                filePath.c_str(), static_cast<unsigned long>(ESP.getFreeHeap()),
+                static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
         clearBookCache(filePath.c_str());
+        LOG_DBG("WEB", "[BOOKCACHE] invalidate complete after WebSocket upload path=%s free=%lu min=%lu largest=%lu",
+                filePath.c_str(), static_cast<unsigned long>(ESP.getFreeHeap()),
+                static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 
         wsServer->sendTXT(num, "DONE");
         wsLastProgressSent = 0;
+        wsUploadSize = 0;
+        wsUploadReceived = 0;
+        wsUploadStartTime = 0;
+        wsUploadFileName = String();
+        wsUploadPath = String();
       }
       break;
     }
@@ -2432,6 +2768,7 @@ void CrossPointWebServer::handleFontUploadData() {
 
       if (!FontInstaller::isValidFamilyName(family.c_str())) {
         LOG_ERR("WEB", "Invalid font family name: %s", family.c_str());
+        fontUpload.releaseBuffer();
         break;
       }
 
@@ -2443,6 +2780,7 @@ void CrossPointWebServer::handleFontUploadData() {
       // a "filename" and have it written outside the fonts directory.
       if (!FontInstaller::isValidCpfontFilename(filename.c_str())) {
         LOG_ERR("WEB", "Invalid font filename: %s", filename.c_str());
+        fontUpload.releaseBuffer();
         break;
       }
 
@@ -2452,6 +2790,7 @@ void CrossPointWebServer::handleFontUploadData() {
       FontInstaller installer(sdFontSystem.registry());
       if (!installer.ensureFamilyDir(family.c_str())) {
         LOG_ERR("WEB", "Failed to create font family dir");
+        fontUpload.releaseBuffer();
         break;
       }
 
@@ -2461,6 +2800,14 @@ void CrossPointWebServer::handleFontUploadData() {
 
       if (!Storage.openFileForWrite("WEB", path, fontUpload.file)) {
         LOG_ERR("WEB", "Failed to open font file for write: %s", path);
+        fontUpload.releaseBuffer();
+        break;
+      }
+
+      if (!fontUpload.ensureBuffer()) {
+        closeFileIfOpen(fontUpload.file);
+        Storage.remove(path);
+        LOG_ERR("WEB", "Failed to allocate font upload buffer");
         break;
       }
 
@@ -2489,13 +2836,13 @@ void CrossPointWebServer::handleFontUploadData() {
       while (remaining > 0) {
         size_t space = FontUploadState::BUFFER_SIZE - fontUpload.bufferPos;
         size_t chunk = (remaining < space) ? remaining : space;
-        memcpy(fontUpload.buffer.data() + fontUpload.bufferPos, src, chunk);
+        memcpy(fontUpload.buffer.get() + fontUpload.bufferPos, src, chunk);
         fontUpload.bufferPos += chunk;
         src += chunk;
         remaining -= chunk;
 
         if (fontUpload.bufferPos >= FontUploadState::BUFFER_SIZE) {
-          fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
+          fontUpload.file.write(fontUpload.buffer.get(), fontUpload.bufferPos);
           fontUpload.bytesWritten += fontUpload.bufferPos;
           fontUpload.bufferPos = 0;
           resetTaskWatchdogIfSubscribed();
@@ -2507,30 +2854,28 @@ void CrossPointWebServer::handleFontUploadData() {
     case UPLOAD_FILE_END: {
       // Flush remaining buffer
       if (fontUpload.valid && fontUpload.bufferPos > 0) {
-        fontUpload.file.write(fontUpload.buffer.data(), fontUpload.bufferPos);
+        fontUpload.file.write(fontUpload.buffer.get(), fontUpload.bufferPos);
         fontUpload.bytesWritten += fontUpload.bufferPos;
         fontUpload.bufferPos = 0;
       }
-      if (fontUpload.file.isOpen()) {
-        fontUpload.file.close();
-      }
+      closeFileIfOpen(fontUpload.file);
 
       if (!fontUpload.valid && !fontUpload.filePath.empty()) {
         Storage.remove(fontUpload.filePath.c_str());
       }
 
       LOG_DBG("WEB", "Font upload end: valid=%d, %zu bytes", fontUpload.valid, fontUpload.bytesWritten);
+      fontUpload.releaseBuffer();
       break;
     }
 
     case UPLOAD_FILE_ABORTED: {
-      if (fontUpload.file) {
-        fontUpload.file.close();
-      }
+      closeFileIfOpen(fontUpload.file);
       if (!fontUpload.filePath.empty()) {
         Storage.remove(fontUpload.filePath.c_str());
       }
       fontUpload.valid = false;
+      fontUpload.releaseBuffer();
       LOG_DBG("WEB", "Font upload aborted");
       break;
     }
@@ -2545,6 +2890,11 @@ void CrossPointWebServer::handleFontUpload() {
   } else {
     server->send(400, "application/json", "{\"error\":\"Invalid .cpfont file\"}");
   }
+  std::string().swap(fontUpload.familyName);
+  std::string().swap(fontUpload.filePath);
+  fontUpload.valid = false;
+  fontUpload.magicChecked = false;
+  fontUpload.bytesWritten = 0;
 }
 
 void CrossPointWebServer::handleFontDelete() {

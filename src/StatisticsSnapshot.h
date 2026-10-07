@@ -89,6 +89,9 @@ struct StatisticsSnapshotOptions {
   bool keepAllBooks = true;
   bool evaluateAchievements = true;
   std::string selectedBookPath;
+  // Optional bounded view for screens that need a small recent/current-book
+  // summary.  Zero preserves the existing unlimited Statistics activity path.
+  size_t maxBooks = 0;
 };
 
 struct StatisticsSnapshot {

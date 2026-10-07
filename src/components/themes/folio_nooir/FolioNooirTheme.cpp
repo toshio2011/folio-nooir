@@ -71,6 +71,10 @@ void FolioNooirTheme::drawShelfTabs(const GfxRenderer& renderer, const FolioShel
     renderer.drawText(UI_10_FONT_ID, left + (right - left - width) / 2, layout.headerTop + 8, tabs[i], true,
                       i == activeTab ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
     if (i == activeTab) renderer.fillRect(left + 12, layout.headerTop + layout.headerHeight - 3, right - left - 24, 3);
+    if (i < 2) {
+      renderer.drawLine(right - 1, layout.headerTop + 9, right - 1,
+                        layout.headerTop + layout.headerHeight - 9);
+    }
   }
   renderer.drawLine(0, layout.headerTop + layout.headerHeight, pageWidth - 1,
                     layout.headerTop + layout.headerHeight);
@@ -107,6 +111,8 @@ void FolioNooirTheme::drawShelfStats(const GfxRenderer& renderer, const FolioShe
     renderer.drawText(SMALL_FONT_ID, left + (right - left - labelWidth) / 2, layout.statsTop + 8, labels[i]);
     renderer.drawText(UI_10_FONT_ID, left + (right - left - valueWidth) / 2, layout.statsTop + 29, values[i], true);
   }
+  renderer.drawLine(0, layout.statsTop + layout.statsHeight - 1, pageWidth - 1,
+                    layout.statsTop + layout.statsHeight - 1);
 }
 
 int FolioNooirTheme::featuredFormatBadgeWidth(const GfxRenderer& renderer, const char* path) const {
@@ -128,7 +134,9 @@ void FolioNooirTheme::drawFeaturedFormatBadge(const GfxRenderer& renderer, const
   const int height = textHeight + BADGE_VERTICAL_PADDING * 2;
   const int x = right - width;
   renderer.drawRect(x, top, width, height);
-  renderer.drawText(SMALL_FONT_ID, x + BADGE_HORIZONTAL_PADDING, top + BADGE_VERTICAL_PADDING, label);
+  if (width > 10 && height > 8) renderer.drawRect(x + 2, top + 2, width - 4, height - 4);
+  renderer.drawText(SMALL_FONT_ID, x + BADGE_HORIZONTAL_PADDING, top + BADGE_VERTICAL_PADDING, label, true,
+                    EpdFontFamily::BOLD);
 }
 
 void FolioNooirTheme::drawCoverProgress(const GfxRenderer& renderer, const int x, const int y, const int width,

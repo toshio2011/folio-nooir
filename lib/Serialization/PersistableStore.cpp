@@ -4,6 +4,56 @@
 #include <Logging.h>
 #include <ObfuscationUtils.h>
 
+#include <cstring>
+
+namespace {
+
+constexpr const char* SETTINGS_PATH = "/.crosspoint/settings.json";
+
+bool isSettingsPath(const char* path) {
+  return path && strcmp(path, SETTINGS_PATH) == 0;
+}
+
+const char* settingsCandidateName(const size_t index) {
+  switch (index) {
+    case 0:
+      return "main";
+    case 1:
+      return "bak";
+    default:
+      return "tmp";
+  }
+}
+
+}  // namespace
+
+bool PersistableStoreBase::isSemanticallyValidSettingsDocument(JsonVariantConst doc) {
+  if (!doc.is<JsonObjectConst>()) return false;
+
+  // Profile documents use the same field names as settings but carry this
+  // reserved marker.  Never let a profile be mistaken for the main settings
+  // document during recovery.  Test key presence rather than value so even a
+  // profile carrying a null marker cannot be accepted as main settings.
+  const JsonObjectConst settings = doc.as<JsonObjectConst>();
+  if (settings["_profileSchema"].is<JsonVariantConst>()) return false;
+
+  // JSON settings have no global schema number.  Use three independent,
+  // long-lived serializer identities instead of a language field (which was
+  // added later) or an arbitrary recognized-key count:
+  //   * reader: font family + font size;
+  //   * sleep/power: sleep mode + the original or renamed sleep timeout;
+  //   * display: orientation + the long-lived fading-fix setting.
+  // These fields were emitted together by the first JSON serializer and remain
+  // present in current settings.  Requiring all three groups rejects empty and
+  // tiny fragments without requiring recently introduced settings.
+  const bool hasReaderIdentity = settings["fontFamily"].is<uint8_t>() && settings["fontSize"].is<uint8_t>();
+  const bool hasSleepIdentity = settings["sleepScreen"].is<uint8_t>() &&
+                                (settings["sleepTimeout"].is<uint8_t>() ||
+                                 settings["sleepTimeoutMinutes"].is<uint8_t>());
+  const bool hasDisplayIdentity = settings["orientation"].is<uint8_t>() && settings["fadingFix"].is<uint8_t>();
+  return hasReaderIdentity && hasSleepIdentity && hasDisplayIdentity;
+}
+
 bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& doc) {
   Storage.mkdir("/.crosspoint");
   String json;
@@ -22,6 +72,29 @@ bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& 
     LOG_ERR("PERSIST", "Failed to write temporary document %s", tmpPath.c_str());
     Storage.remove(tmpPath.c_str());
     return false;
+  }
+
+  // A successful write call is not enough to prove that the completed
+  // temporary document is readable and meaningful.  Read it back only for
+  // the main settings file: settings saves are explicit and infrequent, and
+  // this closes the exact truncation/garbling window before promotion.
+  if (isSettingsPath(path)) {
+    const String writtenTemp = Storage.readFile(tmpPath.c_str());
+    bool parsed = false;
+    bool valid = false;
+    if (!writtenTemp.isEmpty()) {
+      JsonDocument verified;
+      const auto error = deserializeJson(verified, writtenTemp);
+      parsed = !error;
+      valid = parsed && isSemanticallyValidSettingsDocument(verified.as<JsonVariantConst>());
+    }
+    LOG_INF("PERSIST", "settings_save_phase=temp_validation read=%d parse=%d validation=%d", !writtenTemp.isEmpty(),
+            parsed, valid);
+    if (!valid) {
+      LOG_ERR("PERSIST", "settings_save_phase=temp_validation_failed");
+      Storage.remove(tmpPath.c_str());
+      return false;
+    }
   }
 
   const bool hadOriginal = Storage.exists(path);
@@ -58,34 +131,63 @@ bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& 
 }
 
 bool PersistableStoreBase::readDocFromFile(const char* path, JsonDocument& doc) {
+  const bool settingsPath = isSettingsPath(path);
   const String backupPath = String(path) + ".bak";
   const String tmpPath = String(path) + ".tmp";
   const String candidates[] = {String(path), backupPath, tmpPath};
 
   for (size_t i = 0; i < (sizeof(candidates) / sizeof(candidates[0])); ++i) {
     const String& candidate = candidates[i];
-    if (!Storage.exists(candidate.c_str())) continue;
+    if (!Storage.exists(candidate.c_str())) {
+      if (settingsPath) {
+        LOG_INF("PERSIST", "settings_candidate=%s exists=0 read=0 parse=0 validation=0",
+                settingsCandidateName(i));
+      }
+      continue;
+    }
 
     String json = Storage.readFile(candidate.c_str());
+    bool parsed = false;
+    bool valid = false;
     if (json.isEmpty()) {
       LOG_ERR("PERSIST", "Failed to read %s (empty)", candidate.c_str());
+      if (settingsPath) {
+        LOG_INF("PERSIST", "settings_candidate=%s exists=1 read=0 parse=0 validation=0", settingsCandidateName(i));
+      }
       continue;
     }
 
     doc.clear();
     auto error = deserializeJson(doc, json);
     if (!error) {
+      parsed = true;
+      valid = !settingsPath || isSemanticallyValidSettingsDocument(doc.as<JsonVariantConst>());
+      if (settingsPath) {
+        LOG_INF("PERSIST", "settings_candidate=%s exists=1 read=1 parse=1 validation=%d", settingsCandidateName(i),
+                valid);
+      }
+      if (!valid) {
+        LOG_ERR("PERSIST", "Rejected semantically invalid settings candidate %s", candidate.c_str());
+        doc.clear();
+        continue;
+      }
       if (i == 1) {
         LOG_ERR("PERSIST", "Recovered %s from backup %s", path, candidate.c_str());
       } else if (i == 2) {
         LOG_ERR("PERSIST", "Recovered %s from pending write %s", path, candidate.c_str());
       }
+      if (settingsPath) LOG_INF("PERSIST", "settings_source=%s", settingsCandidateName(i));
       return true;
+    }
+    parsed = false;
+    if (settingsPath) {
+      LOG_INF("PERSIST", "settings_candidate=%s exists=1 read=1 parse=0 validation=0", settingsCandidateName(i));
     }
     LOG_ERR("PERSIST", "JSON parse error in %s: %s", candidate.c_str(), error.c_str());
   }
 
   // Missing documents are normal on first boot; malformed documents are not.
+  if (settingsPath) LOG_ERR("PERSIST", "settings_source=defaults");
   return false;
 }
 

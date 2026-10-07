@@ -19,6 +19,17 @@ constexpr int MIN_BOOK_WIDTH = 42;
 constexpr int MAX_BOOK_WIDTH = 62;
 constexpr int MIN_BOOK_HEIGHT = 115;
 constexpr int MAX_BOOK_HEIGHT = 246;
+constexpr int TWO_ROW_BOOK_GAP = 3;
+constexpr int TWO_ROW_MIN_BOOK_WIDTH = 32;
+constexpr int TWO_ROW_MAX_BOOK_WIDTH = 48;
+constexpr int TWO_ROW_ROW_GAP = 10;
+constexpr int TWO_ROW_SHELF_HEIGHT = 16;
+// The lower shelf must stay above FolioNooirTheme::drawPageIndicator().
+constexpr int TWO_ROW_BOTTOM_GAP = 32;
+// Bounded storage for the largest supported X3/X4 viewport. The planner still
+// stops only when the final deterministic geometry no longer fits; this is a
+// page-local safety ceiling, not a visible-book/page-size rule.
+constexpr size_t TWO_ROW_SLOT_CAPACITY = 28;
 
 struct Book {
   const char* key = nullptr;
@@ -67,12 +78,30 @@ struct Page {
   Plant plant{};
 };
 
+// The additional two-row view uses a bounded page-local slot record; actual
+// occupancy is determined by the final row geometry, not by a fixed per-row
+// book count.
+struct TwoRowPage {
+  size_t firstIndex = 0;
+  uint8_t itemCount = 0;
+  uint8_t pageNumber = 0;
+  uint8_t pageCount = 0;
+  Slot slots[TWO_ROW_SLOT_CAPACITY]{};
+  Plant plants[2]{};
+};
+
 uint32_t stableHash(const Book& book, size_t itemIndex = 0);
 SpineStyle styleFor(const Book& book);
 SpineTone toneFor(const Book& book);
 int bookWidth(const Book& book, const Rect& bounds);
 int bookHeight(const Book& book, const Rect& bounds);
 Rect shelfRect(const Page& page, const Rect& bounds);
+
+TwoRowPage twoRowPageForSelection(const Book* books, size_t bookCount, size_t selectedIndex,
+                                  const Rect& bounds);
+size_t twoRowNextPageStart(const Book* books, size_t bookCount, size_t selectedIndex, const Rect& bounds);
+size_t twoRowPreviousPageStart(const Book* books, size_t bookCount, size_t selectedIndex, const Rect& bounds);
+Rect twoRowShelfRect(const TwoRowPage& page, const Rect& bounds, size_t row);
 
 // Return the packed page containing selectedIndex.  Selection indexes are
 // indexes in the visible (filtered) shelf list, not indexes in RecentBook

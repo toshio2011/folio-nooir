@@ -289,8 +289,64 @@ bool CssParser::parseSelectorMetadata(const std::string_view selector, SelectorM
   return true;
 }
 
+bool CssParser::parseBoundedSelectorMetadata(const std::string_view selector,
+                                             BoundedSelectorMetadata& metadata) {
+  metadata = {};
+  if (selector.empty() || selector.size() > MAX_SELECTOR_LENGTH) return false;
+
+  const auto adjustOffsets = [](SelectorMetadata& part, const size_t offset) {
+    auto adjust = [offset](SelectorPart& span) {
+      if (span.length != 0) span.offset = static_cast<uint16_t>(span.offset + offset);
+    };
+    adjust(part.tag);
+    adjust(part.id);
+    for (uint8_t i = 0; i < part.classCount; ++i) adjust(part.classes[i]);
+  };
+
+  size_t pos = 0;
+  while (true) {
+    while (pos < selector.size() && isCssWhitespace(selector[pos])) ++pos;
+    const size_t partStart = pos;
+    while (pos < selector.size() && !isCssWhitespace(selector[pos]) && selector[pos] != '>' && selector[pos] != '+') {
+      ++pos;
+    }
+    if (partStart == pos || metadata.partCount >= metadata.parts.size()) return false;
+
+    SelectorMetadata part;
+    if (!parseSelectorMetadata(selector.substr(partStart, pos - partStart), part)) return false;
+    adjustOffsets(part, partStart);
+    metadata.parts[metadata.partCount++] = part;
+
+    while (pos < selector.size() && isCssWhitespace(selector[pos])) ++pos;
+    if (pos == selector.size()) break;
+    const char combinator = selector[pos];
+    if (combinator != '>' && combinator != '+') return false;
+    if (metadata.partCount > metadata.combinators.size()) return false;
+    metadata.combinators[metadata.partCount - 1] = combinator;
+    ++pos;
+  }
+
+  // The only three-part relationship used by the reference EPUB is
+  // ancestor > previous-sibling + current. Rejecting other chains keeps
+  // matching shallow and predictable.
+  if (metadata.partCount < 2) return false;
+  if (metadata.partCount == 3 &&
+      (metadata.combinators[0] != '>' || metadata.combinators[1] != '+')) {
+    return false;
+  }
+  return true;
+}
+
 bool CssParser::storeSelectorRule(const std::string_view selector, const CssStyle& style,
                                   const uint32_t sourceOrder) {
+  if (selector.find_first_of(">+") != std::string_view::npos) {
+    BoundedSelectorMetadata metadata;
+    if (!parseBoundedSelectorMetadata(selector, metadata)) return false;
+    if (ruleCount() >= MAX_RULES) return false;
+    boundedRules_.push_back(BoundedRule{style, sourceOrder, std::string(selector), metadata});
+    return true;
+  }
+
   SelectorMetadata metadata;
   if (!parseSelectorMetadata(selector, metadata)) return false;
   if (ruleCount() >= MAX_RULES) return false;
@@ -458,6 +514,16 @@ void CssParser::parseDeclarationIntoStyle(std::string_view decl, CssStyle& style
     parsed.fontWeight = interpretFontWeight(value);
     parsed.defined.fontWeight = 1;
     markImportant(CssPropertyIndex::FontWeight);
+  } else if (iequalsAscii(name, "font-variant")) {
+    if (iequalsAscii(value, "small-caps")) {
+      parsed.fontVariant = CssFontVariant::SmallCaps;
+      parsed.defined.fontVariant = 1;
+      markImportant(CssPropertyIndex::FontVariant);
+    } else if (iequalsAscii(value, "normal")) {
+      parsed.fontVariant = CssFontVariant::Normal;
+      parsed.defined.fontVariant = 1;
+      markImportant(CssPropertyIndex::FontVariant);
+    }
   } else if (iequalsAscii(name, "text-decoration") || iequalsAscii(name, "text-decoration-line")) {
     parsed.textDecoration = interpretDecoration(value);
     parsed.defined.textDecoration = 1;
@@ -615,10 +681,9 @@ void CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const 
     return;
   }
 
-  // Walk comma-separated selectors in place — no vector allocation. Selectors
-  // with unsupported syntax (combinators, attributes, pseudo, etc.) are skipped
-  // silently; the only heap allocation per kept selector is the std::string
-  // map key, which is unavoidable since the map owns its keys.
+  // Walk comma-separated selectors in place — no vector allocation. The simple
+  // path remains a direct hash lookup; only the small supported relationship
+  // forms are retained in the bounded flat vector.
   bool limitReached = false;
   forEachDelimitedToken(
       selectorGroup, [](char c) { return c == ','; },
@@ -629,20 +694,6 @@ void CssParser::processRuleBlockWithStyle(std::string_view selectorGroup, const 
           LOG_DBG("CSS", "Selector too long (%zu > %zu), skipping", sel.size(), MAX_SELECTOR_LENGTH);
           return;
         }
-
-        // TODO: Support richer CSS selector syntax in the future. For now we handle
-        // `tag`, `.class`, `tag.class`, `#id`, or `tag#id`. Reject anything containing a
-        // character that introduces unsupported syntax:
-        //   '+'  adjacent sibling combinator
-        //   '>'  child combinator
-        //   '['  attribute selector
-        //   ':'  pseudo class/element
-        //   '~'  general sibling combinator
-        //   '*'  wildcard
-        //   ' '  descendant combinator
-        // Single-pass scan via find_first_of instead of eight sequential find() calls.
-        constexpr std::string_view kUnsupportedSelectorChars = "+>[:~* ";
-        if (sel.find_first_of(kUnsupportedSelectorChars) != std::string_view::npos) return;
 
         // Skip if this would exceed the rule limit
         if (ruleCount() >= MAX_RULES) {
@@ -810,7 +861,7 @@ bool CssParser::loadFromStream(HalFile& source) {
 // Style resolution
 
 CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view classAttr,
-                                  std::string_view idAttr) const {
+                                  std::string_view idAttr, const CssMatchContext& context) const {
   static bool lowHeapWarningLogged = false;
   if (ESP.getFreeHeap() < MIN_FREE_HEAP_FOR_CSS) {
     if (!lowHeapWarningLogged) {
@@ -927,6 +978,10 @@ CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view clas
       result.lineHeight = style.lineHeight;
       result.defined.lineHeight = 1;
     });
+    applyProperty(20, style.hasFontVariant(), [&] {
+      result.fontVariant = style.fontVariant;
+      result.defined.fontVariant = 1;
+    });
   };
 
   auto applyMatches = [&](const auto& key, const uint8_t specificity) {
@@ -983,6 +1038,59 @@ CssStyle CssParser::resolveStyle(std::string_view tagName, std::string_view clas
       }
     });
   };
+
+  const auto matchesSimple = [&](const SelectorMetadata& metadata, const std::string_view selector,
+                                 const std::string_view candidateTag, const std::string_view candidateClass,
+                                 const std::string_view candidateId) {
+    if (metadata.hasTag && !equalsAscii(candidateTag, selector.substr(metadata.tag.offset, metadata.tag.length))) {
+      return false;
+    }
+    if (metadata.hasId && !equalsAscii(candidateId, selector.substr(metadata.id.offset, metadata.id.length))) {
+      return false;
+    }
+    for (uint8_t i = 0; i < metadata.classCount; ++i) {
+      const std::string_view required = selector.substr(metadata.classes[i].offset, metadata.classes[i].length);
+      bool found = false;
+      forEachDelimitedToken(candidateClass, isCssWhitespace,
+                            [&](const std::string_view token) {
+                              if (equalsAscii(token, required)) found = true;
+                            });
+      if (!found) return false;
+    }
+    return true;
+  };
+
+  for (const auto& bounded : boundedRules_) {
+    const auto& metadata = bounded.metadata;
+    const std::string_view selector = bounded.selector;
+    bool matched = false;
+    if (metadata.partCount == 2 && metadata.combinators[0] == '>') {
+      matched = context.hasParent() &&
+                matchesSimple(metadata.parts[0], selector, context.parentTag, context.parentClass, context.parentId) &&
+                matchesSimple(metadata.parts[1], selector, tagName, classAttr, idAttr);
+    } else if (metadata.partCount == 2 && metadata.combinators[0] == '+') {
+      matched = context.hasPreviousSibling() &&
+                matchesSimple(metadata.parts[0], selector, context.previousSiblingTag,
+                              context.previousSiblingClass, context.previousSiblingId) &&
+                matchesSimple(metadata.parts[1], selector, tagName, classAttr, idAttr);
+    } else if (metadata.partCount == 3 && metadata.combinators[0] == '>' && metadata.combinators[1] == '+') {
+      // For A > B + C, C's parent is A and its immediate previous sibling is B.
+      matched = context.hasParent() && context.hasPreviousSibling() &&
+                matchesSimple(metadata.parts[0], selector, context.parentTag, context.parentClass, context.parentId) &&
+                matchesSimple(metadata.parts[1], selector, context.previousSiblingTag,
+                              context.previousSiblingClass, context.previousSiblingId) &&
+                matchesSimple(metadata.parts[2], selector, tagName, classAttr, idAttr);
+    }
+    if (matched) {
+      uint8_t specificity = 0;
+      for (uint8_t i = 0; i < metadata.partCount; ++i) {
+        const auto& part = metadata.parts[i];
+        specificity = static_cast<uint8_t>(std::min<int>(255, specificity + (part.hasId ? 16 : 0) +
+                                                                   (part.classCount * 2) + (part.hasTag ? 1 : 0)));
+      }
+      applyRule(bounded, specificity);
+    }
+  }
 
   // Encode the bounded specificity tuple (ID, class count, tag) so that IDs
   // dominate multi-class selectors, and class count dominates tag presence.
@@ -1087,6 +1195,7 @@ bool CssParser::saveToCache() const {
       writeOk = writeOk && writeByte(static_cast<uint8_t>(style.textAlign));
       writeOk = writeOk && writeByte(static_cast<uint8_t>(style.fontStyle));
       writeOk = writeOk && writeByte(static_cast<uint8_t>(style.fontWeight));
+      writeOk = writeOk && writeByte(static_cast<uint8_t>(style.fontVariant));
       writeOk = writeOk && writeByte(static_cast<uint8_t>(style.textDecoration));
       writeOk = writeOk && writeByte(static_cast<uint8_t>(style.direction));
 
@@ -1134,6 +1243,7 @@ bool CssParser::saveToCache() const {
       if (style.defined.verticalAlign) definedBits |= 1 << 17;
       if (style.defined.fontSize) definedBits |= 1 << 18;
       if (style.defined.lineHeight) definedBits |= 1 << 19;
+      if (style.defined.fontVariant) definedBits |= 1 << 20;
       writeOk = writeOk && writeBytes(&definedBits, sizeof(definedBits));
       writeOk = writeOk && writeBytes(&style.importantBits, sizeof(style.importantBits));
     };
@@ -1143,6 +1253,9 @@ bool CssParser::saveToCache() const {
     }
     for (const auto& pair : compoundRulesByAnchor_) {
       writeRule(pair.second.selector, pair.second.style, pair.second.sourceOrder);
+    }
+    for (const auto& rule : boundedRules_) {
+      writeRule(rule.selector, rule.style, rule.sourceOrder);
     }
 
     file.flush();
@@ -1239,6 +1352,7 @@ bool CssParser::loadFromCache() {
   // Size the bucket array up front to avoid incremental rehashes while loading rules.
   rulesBySelector_.reserve(ruleCount);
   compoundRulesByAnchor_.reserve(ruleCount);
+  boundedRules_.reserve(ruleCount);
 
   auto hasRemainingBytes = [&file](const size_t neededBytes) -> bool {
     return static_cast<size_t>(file.available()) >= neededBytes;
@@ -1247,7 +1361,7 @@ bool CssParser::loadFromCache() {
   constexpr size_t CSS_LENGTH_FIELD_COUNT = 13;
   constexpr size_t CSS_LENGTH_BYTES = sizeof(float) + sizeof(uint8_t);
   constexpr size_t CSS_FIXED_STYLE_BYTES = sizeof(uint32_t) +
-      5 * sizeof(uint8_t) + (CSS_LENGTH_FIELD_COUNT * CSS_LENGTH_BYTES) + sizeof(uint8_t) +
+      6 * sizeof(uint8_t) + (CSS_LENGTH_FIELD_COUNT * CSS_LENGTH_BYTES) + sizeof(uint8_t) +
       2 * sizeof(uint32_t);
 
   // Read each rule
@@ -1309,6 +1423,12 @@ bool CssParser::loadFromCache() {
       return false;
     }
     style.fontWeight = static_cast<CssFontWeight>(enumVal);
+
+    if (file.read(&enumVal, 1) != 1) {
+      rulesBySelector_.clear();
+      return false;
+    }
+    style.fontVariant = static_cast<CssFontVariant>(enumVal);
 
     if (file.read(&enumVal, 1) != 1) {
       rulesBySelector_.clear();
@@ -1386,6 +1506,7 @@ bool CssParser::loadFromCache() {
     style.defined.verticalAlign = (definedBits & 1 << 17) != 0;
     style.defined.fontSize = (definedBits & 1 << 18) != 0;
     style.defined.lineHeight = (definedBits & 1 << 19) != 0;
+    style.defined.fontVariant = (definedBits & 1 << 20) != 0;
 
     if (file.read(&style.importantBits, sizeof(style.importantBits)) != sizeof(style.importantBits)) {
       rulesBySelector_.clear();

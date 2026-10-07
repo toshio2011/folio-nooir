@@ -1095,7 +1095,7 @@ void FolioLibraryActivity::showBookActions() {
     } else if (action == 7) {
       startActivityForResult(
           std::make_unique<SynopsisActivity>(renderer, mappedInput, preview.title, preview.author, preview.synopsis,
-                                             path),
+                                             path, preview.coverBmpPath, preview.progressPercent),
           nullptr);
       return;
     } else if (action == 8) {

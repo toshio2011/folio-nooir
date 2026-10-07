@@ -15,6 +15,8 @@
 #include "util/SpineShelfPlanner.h"
 #include "components/OptionPopup.h"
 
+struct FolioShelfLayout;
+
 class RecentBooksActivity final : public Activity {
  private:
   ButtonNavigator buttonNavigator;
@@ -23,8 +25,10 @@ class RecentBooksActivity final : public Activity {
 
   size_t selectorIndex = 0;
   uint8_t activeTab = 1;  // 1 Recent/ongoing, 2 Finished; Library opens the browser
-  uint8_t visibleBookIndexes[10] = {};
-  uint8_t visibleBookCount = 0;
+  // The filtered Recent list can now be larger than the shelf. Keep only its
+  // count here and resolve the selected/page entries on demand so history size
+  // does not create a second index vector in RAM.
+  size_t visibleBookCount = 0;
 
   // Recent tab state
   std::vector<RecentBook> recentBooks;
@@ -97,8 +101,12 @@ class RecentBooksActivity final : public Activity {
   uint32_t carouselSourceCacheClock = 0;
   // Optional high-quality Carousel covers are prepared only by the explicit
   // Home-menu action. Missing HQ files never block normal shelf navigation.
-  std::vector<size_t> carouselHqQueue;
-  size_t carouselHqQueueIndex = 0;
+  // Explicit Carousel HQ preparation walks Recent lazily. Keep only a scan
+  // cursor and one current item instead of materializing one queue entry per
+  // persisted Recent book.
+  size_t carouselHqScanIndex = 0;
+  size_t carouselHqCurrentIndex = SIZE_MAX;
+  size_t carouselHqPreparedCount = 0;
   bool carouselHqPreparationActive = false;
   volatile bool carouselHqPopupRendered = false;
   bool carouselHqCompletionPopupPending = false;
@@ -115,6 +123,28 @@ class RecentBooksActivity final : public Activity {
   bool snapshotRestored = false;
   size_t snapshotPageStart = SIZE_MAX;
   size_t snapshotSelectorIndex = SIZE_MAX;
+  struct SpinePageWindow {
+    std::array<SpineShelfPlanner::Book, SpineShelfPlanner::MAX_BOOKS> books{};
+    SpineShelfPlanner::Page page{};
+    size_t pageNumber = 0;
+    size_t pageCount = 0;
+    size_t previousPageStart = 0;
+    size_t nextPageStart = 0;
+    SpineShelfPlanner::Rect bounds{};
+    bool valid = false;
+  };
+  SpinePageWindow spinePageWindow{};
+  struct TwoRowSpinePageWindow {
+    std::array<SpineShelfPlanner::Book, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> books{};
+    SpineShelfPlanner::TwoRowPage page{};
+    size_t pageNumber = 0;
+    size_t pageCount = 0;
+    size_t previousPageStart = 0;
+    size_t nextPageStart = 0;
+    SpineShelfPlanner::Rect bounds{};
+    bool valid = false;
+  };
+  TwoRowSpinePageWindow twoRowSpinePageWindow{};
   // When the persisted frame is still valid (for example after leaving
   // Settings), one panel refresh is enough. The first render can reuse the
   // frame instead of rebuilding all cover/text geometry.
@@ -155,6 +185,15 @@ class RecentBooksActivity final : public Activity {
   uint64_t carouselCoverIdentity(const RecentBook& book) const;
   CarouselHqProbe& carouselHqProbe(const RecentBook& book);
   void rebuildVisibleBooks();
+  bool isVisibleRecentBook(const RecentBook& book) const;
+  size_t recentIndexForVisibleIndex(size_t visibleIndex) const;
+  const SpinePageWindow& spinePageForSelection(const SpineShelfPlanner::Rect& bounds);
+  void invalidateSpinePageWindow() {
+    spinePageWindow.valid = false;
+    twoRowSpinePageWindow.valid = false;
+  }
+  const TwoRowSpinePageWindow& twoRowSpinePageForSelection(const SpineShelfPlanner::Rect& bounds);
+  void invalidateTwoRowSpinePageWindow() { twoRowSpinePageWindow.valid = false; }
   size_t selectedRecentIndex() const;
   bool hasMissingRecentCache() const;
   void generateNextCover();
@@ -171,7 +210,10 @@ class RecentBooksActivity final : public Activity {
   bool usesSpineLayout() const;
   bool usesThreeCoverGrid() const;
   bool usesFourByTwoGrid() const;
+  bool usesTwoRowSpineLayout() const;
   int activePageItems() const;
+  size_t moveSpinePage(const FolioShelfLayout& layout, bool next);
+  size_t moveTwoRowSpinePage(const FolioShelfLayout& layout, bool next);
   void renderCarousel(bool threeCover);
   void renderFolioCarouselShelf(int shelfTop, int shelfHeight, bool threeCover);
 

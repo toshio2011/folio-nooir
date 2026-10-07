@@ -47,6 +47,7 @@ class Section {
     // HTML byte progress, for estimating the section's total page count while it's still building.
     uint32_t bytesConsumed = 0;
     uint32_t totalBytes = 0;
+    uint8_t lastLoggedProgressBucket = 0;
     // Exponentially-smoothed page-count estimate (0 = not yet seeded) and the bytesConsumed at its
     // last update. The raw byte-ratio estimate jitters as the build crosses dense/sparse regions;
     // the EMA is stepped once per build advance (not per redraw) to damp that wobble.
