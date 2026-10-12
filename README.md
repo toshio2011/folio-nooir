@@ -16,7 +16,7 @@
 
 # Folio Nooir
 
-Latest released version: **[v1.6.3](https://github.com/toshio2011/folio-nooir/releases/tag/1.6.3)**.
+Latest released version: **[v1.6.4](https://github.com/toshio2011/folio-nooir/releases/tag/1.6.4)**.
 
 Folio Nooir is an experimental, bookshelf-focused custom firmware for XTEINK e-readers. It is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), keeping the strong CrossPoint reader/network foundation while adding a Folio-style bookshelf, richer reading tools, statistics, sleep screens, CBZ support, reader controls, and now memory-aware Bluetooth page-turner support.
 
