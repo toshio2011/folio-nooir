@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -85,6 +86,22 @@ class SdCardFont {
   // the loaded coverage/kerning/ligature metadata and persistent advance
   // tables needed by Nooir's layout and fallback paths.
   void releaseDisposableCaches();
+
+  // Release reader-built layout caches at the Reader lifetime boundary. The
+  // font object remains registered and its coverage index remains available,
+  // but advance tables, lazily loaded kern/ligature classes, and page-local
+  // glyph arenas are rebuildable from the .cpfont file and must not pin the
+  // Home/Recent heap after Reader destruction.
+  void releaseReaderCaches();
+
+  // Retry memoized mini-cache allocation failures only at a real Reader
+  // lifecycle boundary, never on every subsequent cached page render.
+  void beginAllocationRetryBoundary();
+
+  // Coverage tables stay resident while a font is registered. Report their
+  // exact ownership when the Reader-sized font is detached at Reader exit.
+  uint32_t retainedCoverageBytes() const;
+  void logCoverageOwners() const;
 
   // Returns pointer to the managed EpdFont for a given style.
   // Returns nullptr if the style is not present.
@@ -211,18 +228,11 @@ class SdCardFont {
     // (capacities below track allocated sizes): freeing and reallocating slightly
     // different sizes on every page turn was a primary heap fragmenter — each page's
     // freed hole rarely fit the next page's need, so maxAlloc eroded all session.
-    // The per-render PrewarmScope calls clearCache() -> resetStyleMiniData(), which
-    // keeps both the allocations AND the loaded data. Buffers: reuse means
-    // ensureArrayCapacity early-returns once capacities converge on the book's
-    // max, so page turns stop touching the allocator (the free/realloc-per-page
-    // pattern was a primary heap fragmenter). Data: the next prewarm
-    // subset-checks against the resident tables (see prewarmStyle), so the idle
-    // prewarm of page N+1 serves the actual turn with zero SD reads. Retention
-    // is bounded two ways in resetStyleMiniData(): a heap floor frees outright
-    // under pressure, and sustained underuse (an outlier page's oversized bitmap
-    // arena) frees after a few consecutive low-use rebuilds. freeStyleMiniData()
-    // remains the full teardown (zeroes capacities) for style eviction / font
-    // unload.
+    // The per-render PrewarmScope calls clearCache() -> resetStyleMiniData(),
+    // which deliberately retains both allocations and loaded data. High-water
+    // arenas are released only by explicit font/Reader lifecycle cleanup, not
+    // because a normal page render happens to run below a free-heap threshold.
+    // That keeps cached turns out of the allocator after the first warm pass.
     EpdFontData miniData{};
     EpdUnicodeInterval* miniIntervals = nullptr;
     EpdGlyph* miniGlyphs = nullptr;
@@ -232,18 +242,14 @@ class SdCardFont {
     uint32_t miniIntervalCapacity = 0;
     uint32_t miniGlyphCapacity = 0;
     uint32_t miniBitmapCapacity = 0;
-    // Bitmap bytes the current page actually used (set by prewarmStyle), the
-    // underuse-hysteresis signal; 0 = no bitmap built this scope (metadata-only
-    // prewarm), which leaves the hysteresis counter untouched.
-    uint32_t miniBitmapUsed = 0;
-    uint8_t miniUnderuseRuns = 0;
     // True when the resident mini was built metadata-only (no bitmaps): it can
     // serve metadata requests but a full render request must rebuild.
     bool miniMetadataOnly = false;
-    // Set by a rebuild, consumed by resetStyleMiniData: gates the underuse
-    // hysteresis to one evaluation per rebuild (scopes reset twice, and subset
-    // hits load nothing new to judge).
-    bool miniHysteresisPending = false;
+    // Failed mini arenas are memoized for one explicit memory-lifecycle
+    // generation so every cached page does not repeat a doomed allocation.
+    uint32_t miniDataDeferredGeneration = 0;
+    uint32_t miniKernDeferredGeneration = 0;
+    uint32_t kernLigDeferredGeneration = 0;
 
     // Per-page mini kern matrix (built by buildMiniKernMatrix on each full
     // prewarm). miniKernLeftClasses/miniKernRightClasses map ONLY the codepoints
@@ -306,6 +312,18 @@ class SdCardFont {
   static constexpr uint32_t ADVANCE_CACHE_LIMIT = 768;
   AdvanceEntry* advanceTable_[MAX_STYLES] = {};
   uint32_t advanceTableSize_[MAX_STYLES] = {};
+  // A failed transient codepoint-workspace allocation is remembered until
+  // allocator topology improves or a genuine disposable-font release occurs.
+  // This prevents every paragraph in one constrained section build from
+  // repeating the same impossible contiguous allocation.
+  uint32_t advanceWorkspaceFailedBytes_ = 0;
+  uint32_t advanceWorkspaceFailureLargest_ = 0;
+  uint32_t advanceWorkspaceFailureGeneration_ = 0;
+  bool advanceWorkspaceSuppressionLogged_ = false;
+  std::unique_ptr<uint32_t[]> codepointWorkspace_;
+  uint32_t codepointWorkspaceFailureLargest_ = 0;
+  bool codepointWorkspaceSuppressionLogged_ = false;
+  uint32_t allocationRetryGeneration_ = 1;
   bool advanceTableLookup(uint8_t styleIdx, uint32_t codepoint, uint16_t* outAdvance) const;
   // Merge sortedNew (sorted by codepoint, no overlap with existing) into the
   // advance table for styleIdx, preserving sort order; cap-truncates the tail.
@@ -318,14 +336,13 @@ class SdCardFont {
   // Per-style helpers
   void freeStyleMiniData(PerStyle& s);
   // Per-scope variant: drop the page's data, keep the allocations (see the
-  // PerStyle comment). May escalate to freeStyleMiniData under heap pressure
-  // or sustained underuse.
+  // PerStyle comment). Storage is released only by explicit lifecycle owners.
   void resetStyleMiniData(PerStyle& s);
   void freeStyleAll(PerStyle& s);
   void freeStyleKernLigatureData(PerStyle& s);
   void freeStyleMiniKern(PerStyle& s);
-  bool loadStyleKernLigatureData(PerStyle& s);
-  bool buildMiniKernMatrix(PerStyle& s, const uint32_t* codepoints, uint32_t cpCount);
+  bool loadStyleKernLigatureData(PerStyle& s, uint8_t styleIdx);
+  bool buildMiniKernMatrix(PerStyle& s, uint8_t styleIdx, const uint32_t* codepoints, uint32_t cpCount);
   void applyKernLigaturePointers(PerStyle& s, EpdFontData& data) const;
   void applyGlyphMissCallback(uint8_t styleIdx);
   int32_t findGlobalGlyphIndex(const PerStyle& s, uint32_t codepoint) const;

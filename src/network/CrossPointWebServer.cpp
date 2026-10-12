@@ -12,6 +12,7 @@
 #include <esp_efuse.h>
 #include <esp_efuse_table.h>
 #include <freertos/task.h>
+#include <lwip/sockets.h>
 
 #include <algorithm>
 #include <cctype>
@@ -19,6 +20,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <cstdint>
 #include <string_view>
 
 #include "CrossPointSettings.h"
@@ -81,6 +83,12 @@ String wsLastCompleteName;
 size_t wsLastCompleteSize = 0;
 unsigned long wsLastCompleteAt = 0;
 
+void logWebOwnerDelta(const char* owner, const size_t beforeFree, const size_t beforeLargest) {
+  LOG_INF("WEBMEM", "owner=%s free=%u->%u largest=%u->%u", owner ? owner : "unknown",
+          static_cast<unsigned>(beforeFree), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(beforeLargest), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+}
+
 String normalizeWebPath(const String& inputPath) {
   if (inputPath.isEmpty() || inputPath == "/") {
     return "/";
@@ -117,6 +125,306 @@ bool isBookFile(const String& filename) {
          FsHelpers::hasTxtExtension(view) ||
          FsHelpers::hasMarkdownExtension(view);
 }
+
+// Web requests can ask for the same absent cover repeatedly while the browser
+// refreshes its library view. Keep this small, fixed-size, and session-scoped:
+// a miss must not cause another SD stat/open on every request, and no thumbnail
+// generation is permitted from the WebServer path.
+constexpr size_t kWebThumbnailNegativeCacheSize = 24;
+constexpr unsigned long kWebThumbnailNegativeTtlMs = 5UL * 60UL * 1000UL;
+struct WebThumbnailNegativeEntry {
+  uint64_t key = 0;
+  unsigned long expiresAt = 0;
+};
+WebThumbnailNegativeEntry webThumbnailNegativeCache[kWebThumbnailNegativeCacheSize];
+size_t webThumbnailNegativeCursor = 0;
+
+uint64_t webThumbnailKey(const std::string& path) {
+  uint64_t hash = 1469598103934665603ULL;
+  for (const unsigned char c : path) {
+    hash ^= c;
+    hash *= 1099511628211ULL;
+  }
+  return hash;
+}
+
+void clearWebThumbnailNegativeCache() {
+  for (auto& entry : webThumbnailNegativeCache) entry = {};
+  webThumbnailNegativeCursor = 0;
+}
+
+bool isWebThumbnailKnownMissing(const uint64_t key) {
+  const unsigned long now = millis();
+  for (auto& entry : webThumbnailNegativeCache) {
+    if (entry.key == 0) continue;
+    if (static_cast<long>(now - entry.expiresAt) >= 0) {
+      entry = {};
+      continue;
+    }
+    if (entry.key == key) return true;
+  }
+  return false;
+}
+
+void rememberWebThumbnailMissing(const uint64_t key) {
+  if (key == 0) return;
+  const unsigned long expiresAt = millis() + kWebThumbnailNegativeTtlMs;
+  for (auto& entry : webThumbnailNegativeCache) {
+    if (entry.key == key) {
+      entry.expiresAt = expiresAt;
+      return;
+    }
+  }
+  for (auto& entry : webThumbnailNegativeCache) {
+    if (entry.key == 0) {
+      entry.key = key;
+      entry.expiresAt = expiresAt;
+      return;
+    }
+  }
+  webThumbnailNegativeCache[webThumbnailNegativeCursor] = {key, expiresAt};
+  webThumbnailNegativeCursor = (webThumbnailNegativeCursor + 1) % kWebThumbnailNegativeCacheSize;
+}
+
+void forgetWebThumbnailMissing(const uint64_t key) {
+  for (auto& entry : webThumbnailNegativeCache) {
+    if (entry.key == key) entry = {};
+  }
+}
+
+bool checkWebThumbnail(const std::string& path, const char* route) {
+  const uint64_t key = webThumbnailKey(path);
+  if (isWebThumbnailKnownMissing(key)) {
+    LOG_INF("WEBRT", "route=%s phase=thumbnail result=negative_cached key=%s", route ? route : "unknown",
+            path.c_str());
+    return false;
+  }
+  const bool valid = isValidBookThumbnail(path);
+  if (valid) {
+    forgetWebThumbnailMissing(key);
+  } else {
+    rememberWebThumbnailMissing(key);
+  }
+  LOG_INF("WEBRT", "route=%s phase=thumbnail result=%s key=%s", route ? route : "unknown",
+          valid ? "valid" : "missing_cached", path.c_str());
+  return valid;
+}
+
+struct WebRouteTrace {
+  WebServer* server;
+  const char* route;
+  const char* strategy;
+  unsigned long startedAt;
+
+  WebRouteTrace(WebServer* server, const char* route, const char* strategy)
+      : server(server), route(route), strategy(strategy), startedAt(millis()) {
+    LOG_INF("WEBRT", "route=%s phase=begin strategy=%s free=%lu largest=%lu min=%lu client=%d", route, strategy,
+            static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()),
+            static_cast<unsigned long>(ESP.getMinFreeHeap()), server && server->client().connected() ? 1 : 0);
+  }
+
+  ~WebRouteTrace() {
+    LOG_INF("WEBRT", "route=%s phase=complete strategy=%s elapsed=%lu free=%lu largest=%lu min=%lu client=%d",
+            route, strategy, millis() - startedAt, static_cast<unsigned long>(ESP.getFreeHeap()),
+            static_cast<unsigned long>(ESP.getMaxAllocHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+            server && server->client().connected() ? 1 : 0);
+  }
+};
+
+void logSettingsStage(const char* phase, const unsigned index = 0, const char* key = nullptr, WebServer* server = nullptr) {
+  LOG_INF("WEBRT",
+          "route=/api/settings phase=%s index=%u key=%.24s free=%lu largest=%lu min=%lu stack=%u client=%d", phase,
+          index, key ? key : "-", static_cast<unsigned long>(ESP.getFreeHeap()),
+          static_cast<unsigned long>(ESP.getMaxAllocHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+          static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)), server && server->client().connected() ? 1 : 0);
+}
+
+// Bounded JSON writer for GET /api/settings. ArduinoJson's dynamic document
+// grows to the largest option list and its serializeJson path adds another
+// temporary String. Emit directly from the effective descriptor into one small
+// reusable chunk instead; the descriptor visitor remains the only per-setting
+// object lifetime.
+struct SettingsJsonStream {
+  static constexpr size_t kBufferSize = 256;
+  WebServer* server;
+  char buffer[kBufferSize];
+  size_t length = 0;
+  size_t totalBytes = 0;
+  size_t transportBytesAccepted = 0;
+  size_t transportChunks = 0;
+  size_t transportWriteCalls = 0;
+  bool closed = false;
+  bool firstField = true;
+  bool countOnly = false;
+
+  explicit SettingsJsonStream(WebServer* server, const bool countOnly = false)
+      : server(server), countOnly(countOnly) {}
+
+  size_t bytesWritten() const { return totalBytes; }
+
+  void flush() {
+    if (countOnly) return;
+    if (closed || length == 0) return;
+    const size_t requested = length;
+    const size_t freeBefore = ESP.getFreeHeap();
+    const size_t largestBefore = ESP.getMaxAllocHeap();
+    const bool connectedBefore = server->client().connected();
+    size_t sent = 0;
+    // NetworkClient::write retries EAGAIN internally but can still return a
+    // partial count after its bounded select window. Resume only the unsent
+    // suffix a few times while this same synchronous client remains live.
+    // A peer close is still a transport failure, never a successful/truncated
+    // JSON response.
+    constexpr unsigned kResumeAttempts = 3;
+    for (unsigned attempt = 0; sent < requested && attempt <= kResumeAttempts; ++attempt) {
+      if (!server->client().connected()) break;
+      const size_t written = server->client().write(
+          reinterpret_cast<const uint8_t*>(buffer) + sent, requested - sent);
+      sent += written;
+      if (written == 0 && !server->client().connected()) break;
+    }
+    transportBytesAccepted += sent;
+    if (sent == requested) ++transportChunks;
+    ++transportWriteCalls;
+    length = 0;
+    const size_t freeAfter = ESP.getFreeHeap();
+    const size_t largestAfter = ESP.getMaxAllocHeap();
+    const bool connectedAfter = server->client().connected();
+    LOG_INF("WEBRT", "route=/api/settings phase=write call=%u requested=%u accepted=%u total=%u/%u free=%u->%u largest=%u->%u client=%d->%d tx_pending=unavailable",
+            static_cast<unsigned>(transportWriteCalls), static_cast<unsigned>(requested),
+            static_cast<unsigned>(sent), static_cast<unsigned>(transportBytesAccepted),
+            static_cast<unsigned>(totalBytes), static_cast<unsigned>(freeBefore),
+            static_cast<unsigned>(freeAfter), static_cast<unsigned>(largestBefore),
+            static_cast<unsigned>(largestAfter), connectedBefore ? 1 : 0, connectedAfter ? 1 : 0);
+    if (sent != requested || !server->client().connected()) {
+      closed = true;
+      LOG_ERR("WEBRT", "route=/api/settings phase=transport_backpressure requested=%u sent=%u total=%u/%u free=%u largest=%u",
+              static_cast<unsigned>(requested), static_cast<unsigned>(sent),
+              static_cast<unsigned>(transportBytesAccepted), static_cast<unsigned>(totalBytes),
+              static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+      server->client().stop();
+    }
+  }
+
+  void append(const char c) {
+    if (countOnly) {
+      ++totalBytes;
+      return;
+    }
+    if (length + 2 >= kBufferSize) flush();
+    if (closed) return;
+    buffer[length++] = c;
+    ++totalBytes;
+  }
+
+  void raw(const char* text) {
+    if (!text) return;
+    while (*text && !closed) append(*text++);
+  }
+
+  void quoted(const char* text) {
+    append('"');
+    if (text) {
+      for (const unsigned char* p = reinterpret_cast<const unsigned char*>(text); *p && !closed; ++p) {
+        switch (*p) {
+          case '"': raw("\\\""); break;
+          case '\\': raw("\\\\"); break;
+          case '\b': raw("\\b"); break;
+          case '\f': raw("\\f"); break;
+          case '\n': raw("\\n"); break;
+          case '\r': raw("\\r"); break;
+          case '\t': raw("\\t"); break;
+          default:
+            if (*p < 0x20) {
+              static constexpr char kHex[] = "0123456789ABCDEF";
+              char escaped[7] = {'\\', 'u', '0', '0', kHex[*p >> 4], kHex[*p & 0x0F], '\0'};
+              raw(escaped);
+            } else {
+              append(static_cast<char>(*p));
+            }
+            break;
+        }
+      }
+    }
+    append('"');
+  }
+
+  void fieldName(const char* name) {
+    if (!firstField) append(',');
+    quoted(name);
+    append(':');
+    firstField = false;
+  }
+
+  void fieldString(const char* name, const char* value) {
+    fieldName(name);
+    quoted(value);
+  }
+
+  void fieldString(const char* name, const std::string& value) { fieldString(name, value.c_str()); }
+
+  void fieldInt(const char* name, const int value) {
+    char number[16];
+    snprintf(number, sizeof(number), "%d", value);
+    fieldName(name);
+    raw(number);
+  }
+
+  void beginObject() {
+    append('{');
+    firstField = true;
+  }
+
+  void endObject() { append('}'); }
+
+  void beginArray(const char* name) {
+    fieldName(name);
+    append('[');
+    firstField = true;
+  }
+
+  void arrayString(const char* value) {
+    if (!firstField) append(',');
+    quoted(value);
+    firstField = false;
+  }
+
+  void endArray() { append(']'); }
+};
+
+// Wi-Fi/server buffers are already active when a route starts. This floor is
+// intentionally Web-specific: it is derived from the observed settings
+// request's lowest stable working point, not from the BLE admission floors.
+// The settings response uses a 256-byte stack writer and static descriptor
+// references. Physical measurements showed up to 24,548 bytes of transient
+// heap pressure for a 9,489-byte response, so budget a conservative 3x body
+// allowance plus 12 KiB reserve. This applies per page and is not a BLE floor.
+constexpr size_t kWebSettingsMinFreeHeap = 20 * 1024;
+constexpr size_t kWebSettingsMinLargestBlock = 8 * 1024;
+constexpr size_t kWebSettingsSafetyReserve = 12 * 1024;
+constexpr size_t kWebSettingsObservedPeakMultiplier = 3;
+
+bool webSettingsMemoryAdmitted(WebServer* server, const size_t responseBytes) {
+  const size_t freeHeap = ESP.getFreeHeap();
+  const size_t largest = ESP.getMaxAllocHeap();
+  const size_t maxSize = static_cast<size_t>(-1);
+  const size_t projectedTransport =
+      responseBytes > (maxSize - kWebSettingsSafetyReserve) / kWebSettingsObservedPeakMultiplier
+          ? maxSize
+          : kWebSettingsSafetyReserve + responseBytes * kWebSettingsObservedPeakMultiplier;
+  const size_t requiredFree = std::max(kWebSettingsMinFreeHeap, projectedTransport);
+  const bool admitted = freeHeap >= requiredFree && largest >= kWebSettingsMinLargestBlock;
+  LOG_INF("WEBMEM", "stage=settings_guard result=%s bytes=%u free=%u largest=%u required=%u reserve=%u ratio=%u largest_floor=%u",
+          admitted ? "allow" : "reject", static_cast<unsigned>(responseBytes),
+          static_cast<unsigned>(freeHeap), static_cast<unsigned>(largest), static_cast<unsigned>(requiredFree),
+          static_cast<unsigned>(kWebSettingsSafetyReserve),
+          static_cast<unsigned>(kWebSettingsObservedPeakMultiplier),
+          static_cast<unsigned>(kWebSettingsMinLargestBlock));
+  if (!admitted && server) {
+    server->send(503, "text/plain", "Web memory temporarily unavailable");
+  }
+  return admitted;
+}
 }  // namespace
 
 // File listing page template - now using generated headers:
@@ -140,6 +448,7 @@ CrossPointWebServer::~CrossPointWebServer() {
 }
 
 void CrossPointWebServer::begin() {
+  stopCompleted = false;
   LOG_DBG("WEB", "[LIFECYCLE] begin enter this=%p running=%d server=%p ws=%p free=%lu min=%lu largest=%lu", this,
           running, server.get(), wsServer.get(), static_cast<unsigned long>(ESP.getFreeHeap()),
           static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
@@ -177,6 +486,7 @@ void CrossPointWebServer::begin() {
   wsLastCompleteName = String();
   wsLastCompleteSize = 0;
   wsLastCompleteAt = 0;
+  clearWebThumbnailNegativeCache();
   LOG_DBG("WEB", "[MEM] stage=begin free=%lu min=%lu largest=%lu", static_cast<unsigned long>(ESP.getFreeHeap()),
           static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   LOG_DBG("WEB", "Network mode: %s", apMode ? "AP" : "STA");
@@ -358,6 +668,8 @@ void CrossPointWebServer::abortWsUpload(const char* tag) {
 }
 
 void CrossPointWebServer::stop() {
+  if (stopCompleted) return;
+  stopCompleted = true;
   LOG_DBG("WEB", "[LIFECYCLE] stop enter this=%p running=%d server=%p ws=%p watchdog=%d free=%lu min=%lu largest=%lu",
           this, running, server.get(), wsServer.get(), watchdogTaskRegistered,
           static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
@@ -376,28 +688,47 @@ void CrossPointWebServer::stop() {
 
   // Stop WebSocket server
   if (wsServer) {
+    const size_t beforeFree = ESP.getFreeHeap();
+    const size_t beforeLargest = ESP.getMaxAllocHeap();
     LOG_DBG("WEB", "Stopping WebSocket server...");
+    // WebSocketsServer::close() synchronously emits disconnect callbacks for
+    // connected clients. Clear the trampoline first so teardown callbacks
+    // cannot re-enter this object after running has been invalidated.
+    if (wsInstance == this) wsInstance = nullptr;
     wsServer->close();
-    wsInstance = nullptr;
     wsServer.reset();
+    logWebOwnerDelta("websocket_server_clients", beforeFree, beforeLargest);
     LOG_DBG("WEB", "WebSocket server stopped ws=%p free=%lu min=%lu largest=%lu", wsServer.get(),
             static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
             static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   }
 
   if (udpActive) {
+    const size_t beforeFree = ESP.getFreeHeap();
+    const size_t beforeLargest = ESP.getMaxAllocHeap();
     udp.stop();
     udpActive = false;
+    logWebOwnerDelta("discovery_udp", beforeFree, beforeLargest);
     LOG_DBG("WEB", "Discovery UDP stopped free=%lu min=%lu largest=%lu", static_cast<unsigned long>(ESP.getFreeHeap()),
             static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   }
 
   if (server) {
+    const size_t beforeFree = ESP.getFreeHeap();
+    const size_t beforeLargest = ESP.getMaxAllocHeap();
+    const int activeClientFd = server->client().fd();
+    const bool activeClientConnected = server->client().connected();
+    server->client().stop();
+    LOG_INF("WEBMEM", "owner=http_active_client fd=%d connected=%u closed=%u free=%u->%u largest=%u->%u",
+            activeClientFd, activeClientConnected ? 1U : 0U, activeClientFd >= 0 ? 1U : 0U,
+            static_cast<unsigned>(beforeFree), static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(beforeLargest), static_cast<unsigned>(ESP.getMaxAllocHeap()));
     server->stop();
     LOG_DBG("WEB", "[LIFECYCLE] WebServer::stop returned server=%p free=%lu min=%lu largest=%lu", server.get(),
             static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
             static_cast<unsigned long>(ESP.getMaxAllocHeap()));
     server.reset();
+    logWebOwnerDelta("http_server_request_handlers_webdav_client", beforeFree, beforeLargest);
   }
   LOG_DBG("WEB", "Web server stopped and deleted server=%p free=%lu min=%lu largest=%lu", server.get(),
           static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
@@ -412,10 +743,12 @@ void CrossPointWebServer::stop() {
   }
   lastHttpClientConnected = false;
   lastClientDiagnosticAt = 0;
+  const size_t beforeUploadFree = ESP.getFreeHeap();
+  const size_t beforeUploadLargest = ESP.getMaxAllocHeap();
   closeFileIfOpen(upload.file);
   upload.releaseBuffer();
   upload.fileName = String();
-  upload.path = String("/");
+  upload.path = String();
   upload.size = 0;
   upload.success = false;
   upload.error = String();
@@ -429,6 +762,16 @@ void CrossPointWebServer::stop() {
   wsLastCompleteName = String();
   wsLastCompleteSize = 0;
   wsLastCompleteAt = 0;
+  closeFileIfOpen(wsUploadFile);
+  wsUploadFileName = String();
+  wsUploadPath = String();
+  wsUploadSize = 0;
+  wsUploadReceived = 0;
+  wsUploadStartTime = 0;
+  wsUploadInProgress = false;
+  wsUploadClientNum = 255;
+  wsLastProgressSent = 0;
+  logWebOwnerDelta("upload_buffers_and_global_websocket_state", beforeUploadFree, beforeUploadLargest);
   // Signal once after all server-owned allocations are gone. The lifecycle
   // gate will defer admission while Wi-Fi is still active or the heap is below
   // its unchanged BLE floors.
@@ -462,6 +805,14 @@ void CrossPointWebServer::handleClient() {
   }
 
   const unsigned long handleStart = now;
+  const bool clientConnectedBefore = server->client().connected();
+  if (clientConnectedBefore && !lastHttpClientConnected) {
+    LOG_INF("WEBRT", "stage=dispatch_begin uri=%s method=%d task=%s stack=%lu free=%lu largest=%lu min=%lu",
+            server->uri().c_str(), static_cast<int>(server->method()), pcTaskGetName(nullptr),
+            static_cast<unsigned long>(uxTaskGetStackHighWaterMark(nullptr)),
+            static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()),
+            static_cast<unsigned long>(ESP.getMinFreeHeap()));
+  }
   server->handleClient();
   const unsigned long handleElapsed = millis() - handleStart;
   const bool clientConnectedAfter = server->client().connected();
@@ -534,6 +885,7 @@ void CrossPointWebServer::handleLibrary() const {
 
 void CrossPointWebServer::handleLibraryData() const {
   constexpr int WEB_LIBRARY_PAGE_SIZE = 10;
+  WebRouteTrace routeTrace(server.get(), "/api/library", "streamed_bounded");
   const unsigned long requestStart = millis();
   size_t thumbnailChecks = 0;
   size_t thumbnailHits = 0;
@@ -585,7 +937,7 @@ void CrossPointWebServer::handleLibraryData() const {
       const int coverHeight = UITheme::getInstance().getMetrics().homeCoverHeight;
       const std::string thumbnailPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
       ++thumbnailChecks;
-      hasCover = isValidBookThumbnail(thumbnailPath);
+      hasCover = checkWebThumbnail(thumbnailPath, "/api/library");
       if (hasCover) ++thumbnailHits;
     }
     doc["hasCover"] = hasCover;
@@ -616,10 +968,17 @@ void CrossPointWebServer::handleLibraryData() const {
 }
 
 void CrossPointWebServer::handleLibraryCover() const {
+  WebRouteTrace routeTrace(server.get(), "/api/library/cover", "streamed_1kb");
   const unsigned long requestStart = millis();
   LOG_DBG("WEB", "[THUMB] request start uri=%s method=%d client=%d free=%lu min=%lu largest=%lu", server->uri().c_str(),
           static_cast<int>(server->method()), server->client().connected(), static_cast<unsigned long>(ESP.getFreeHeap()),
           static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+  const auto sendMissingThumbnail = [this](const char* message) {
+    // Cache negative thumbnail results briefly so a missing cached cover does
+    // not become a browser retry loop while preserving cover retrieval.
+    server->sendHeader("Cache-Control", "public, max-age=300");
+    server->send(404, "text/plain", message);
+  };
   if (!server->hasArg("index")) {
     LOG_DBG("WEB", "[THUMB] request rejected: missing index");
     server->send(400, "text/plain", "Missing index");
@@ -636,7 +995,7 @@ void CrossPointWebServer::handleLibraryCover() const {
     }
   }
   if (!selected || selected->coverBmpPath.empty()) {
-    server->send(404, "text/plain", "Cover not found");
+    sendMissingThumbnail("Cover not found");
     return;
   }
   const int coverHeight = UITheme::getInstance().getMetrics().homeCoverHeight;
@@ -646,18 +1005,18 @@ void CrossPointWebServer::handleLibraryCover() const {
   // image from this request: opening the page should not compete with a file
   // transfer for the SD/SPI bus or Wi-Fi task. Device-side Library retrieval
   // remains available when the user highlights a book or uses Retrieve All.
-  const bool validThumbnail = isValidBookThumbnail(coverPath);
+  const bool validThumbnail = checkWebThumbnail(coverPath, "/api/library/cover");
   LOG_DBG("WEB", "[THUMB] cache validation path=%s valid=%d free=%lu min=%lu largest=%lu", coverPath.c_str(),
           validThumbnail, static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
           static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   if (!validThumbnail) {
-    server->send(404, "text/plain", "Cover not cached");
+    sendMissingThumbnail("Cover not cached");
     return;
   }
   HalFile file = Storage.open(coverPath.c_str());
   if (!file || file.isDirectory()) {
     LOG_DBG("WEB", "[THUMB] cache open failed path=%s", coverPath.c_str());
-    server->send(404, "text/plain", "Cover not found");
+    sendMissingThumbnail("Cover not found");
     return;
   }
   const size_t contentLength = file.size();
@@ -702,6 +1061,7 @@ void CrossPointWebServer::handleStatsExport() const {
 }
 
 void CrossPointWebServer::handleStatsData() const {
+  WebRouteTrace routeTrace(server.get(), "/api/stats", "streamed_bounded");
   LOG_DBG("WEB", "[STATS] request start free=%lu min=%lu largest=%lu", static_cast<unsigned long>(ESP.getFreeHeap()),
           static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   const uint32_t today = halClock.getDateKey();
@@ -790,8 +1150,8 @@ void CrossPointWebServer::handleStatsData() const {
     seenBook = true;
   };
   // Walk Recent Books once so each entry performs at most one SD existence
-  // check and receives its cover index without the old per-state nested scan.
-  // Recent order is also the useful presentation order for the web page.
+  // check and receives its cover index. Recent order is also the useful
+  // presentation order for the web page.
   int visibleIndex = 0;
   for (const auto& recent : RECENT_BOOKS.getBooks()) {
     const bool missing = RecentBooksStore::isMissing(recent);
@@ -1888,99 +2248,267 @@ void CrossPointWebServer::handleSettingsPage() const {
 }
 
 void CrossPointWebServer::handleGetSettings() const {
+  WebRouteTrace routeTrace(server.get(), "/api/settings", "bounded_paged_stream");
+  logSettingsStage("handler_entered", 0, nullptr, server.get());
   LOG_DBG("WEB", "[SETTINGS] GET start free=%lu min=%lu largest=%lu", static_cast<unsigned long>(ESP.getFreeHeap()),
           static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
-  // Pass the SD font registry so the fontFamily setting's enumStringValues
-  // includes SD-resident families — otherwise the web API only exposes the
-  // three built-in fonts.
-  server->setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server->send(200, "application/json", "");
-  server->sendContent("[");
+  if (!webSettingsMemoryAdmitted(server.get(), 0)) return;
 
-  char output[512];
-  constexpr size_t outputSize = sizeof(output);
-  bool seenFirst = false;
-  JsonDocument doc;
-
-  forEachEffectiveSetting(&sdFontSystem.registry(), nullptr, [&](const SettingInfo& s) {
-    if (!s.key) return;  // Skip ACTION-only entries
-
-    doc.clear();
-    doc["key"] = s.key;
-    doc["name"] = I18N.get(s.nameId);
-    doc["category"] = I18N.get(s.category);
-
-    switch (s.type) {
-      case SettingType::TOGGLE: {
-        doc["type"] = "toggle";
-        if (s.valuePtr) {
-          doc["value"] = static_cast<int>(SETTINGS.*(s.valuePtr));
-        }
-        break;
-      }
-      case SettingType::ENUM: {
-        doc["type"] = "enum";
-        if (s.valueGetter) {
-          doc["value"] = static_cast<int>(s.valueGetter());
-        } else if (s.valuePtr) {
-          doc["value"] = static_cast<int>(SETTINGS.*(s.valuePtr));
-        }
-        JsonArray options = doc["options"].to<JsonArray>();
-        if (!s.enumStringValues.empty()) {
-          for (const auto& opt : s.enumStringValues) {
-            options.add(opt);
-          }
-        } else {
-          for (const auto& opt : s.enumValues) {
-            options.add(I18N.get(opt));
-          }
-        }
-        break;
-      }
-      case SettingType::VALUE: {
-        doc["type"] = "value";
-        if (s.valuePtr) {
-          doc["value"] = static_cast<int>(SETTINGS.*(s.valuePtr));
-        }
-        doc["min"] = s.valueRange.min;
-        doc["max"] = s.valueRange.max;
-        doc["step"] = s.valueRange.step;
-        break;
-      }
-      case SettingType::STRING: {
-        doc["type"] = "string";
-        if (s.stringGetter) {
-          doc["value"] = s.stringGetter();
-        } else if (s.stringMaxLen > 0) {
-          doc["value"] = reinterpret_cast<const char*>(&SETTINGS) + s.stringOffset;
-        }
-        break;
-      }
-      default:
-        return;
-    }
-
-    const size_t written = serializeJson(doc, output, outputSize);
-    if (written >= outputSize) {
-      LOG_DBG("WEB", "Skipping oversized setting JSON for: %s", s.key);
+  const bool paged = server->hasArg("offset") || server->hasArg("limit");
+  size_t pageOffset = 0;
+  size_t pageEnd = static_cast<size_t>(-1);
+  if (paged) {
+    const long parsedOffset = server->hasArg("offset") ? server->arg("offset").toInt() : 0;
+    const long parsedLimit = server->hasArg("limit") ? server->arg("limit").toInt() : 6;
+    if (parsedOffset < 0 || parsedLimit <= 0) {
+      server->send(400, "text/plain", "Invalid settings page");
       return;
     }
+    pageOffset = static_cast<size_t>(parsedOffset);
+    const size_t pageLimit = std::min<size_t>(static_cast<size_t>(parsedLimit), 8);
+    const size_t maxSize = static_cast<size_t>(-1);
+    pageEnd = pageLimit > maxSize - pageOffset ? maxSize : pageOffset + pageLimit;
+  }
 
-    if (seenFirst) {
-      server->sendContent(",");
-    } else {
+  // Count the exact response length, then emit through one reused 256-byte
+  // buffer with a fixed Content-Length. Static settings are visited by
+  // reference. The dynamic font and sleep-screen rows are written directly
+  // from their owners instead of constructing SettingInfo copies with
+  // duplicated option vectors and captured family-name copies.
+  const auto emitSettings = [this, pageOffset, pageEnd](SettingsJsonStream& output, WebServer* web,
+                                                        const bool diagnostics) {
+    output.raw("[");
+    bool seenFirst = false;
+    unsigned index = 0;
+    if (diagnostics) logSettingsStage("descriptors_acquired", 0, nullptr, web);
+
+    const auto beginDescriptor = [&](const char* key, const StrId nameId, const StrId category,
+                                     unsigned& currentIndex) {
+      if (output.closed || !key) return false;
+      currentIndex = index++;
+      if (currentIndex < pageOffset || currentIndex >= pageEnd) return false;
+      if (diagnostics && (currentIndex & 7u) == 0u) logSettingsStage("descriptor", currentIndex, key, web);
+      if (seenFirst) output.raw(",");
       seenFirst = true;
-    }
-    server->sendContent(output);
-  });
+      output.beginObject();
+      output.fieldString("key", key);
+      output.fieldString("name", I18N.get(nameId));
+      output.fieldString("category", I18N.get(category));
+      return true;
+    };
 
-  server->sendContent("]");
-  server->sendContent("");
+    const auto emitBaseDescriptor = [&](const SettingInfo& s) {
+      if (!s.key || s.type == SettingType::ACTION) return;  // Skip non-JSON entries
+      unsigned currentIndex = 0;
+      if (!beginDescriptor(s.key, s.nameId, s.category, currentIndex)) return;
+      switch (s.type) {
+        case SettingType::TOGGLE: {
+          output.fieldString("type", "toggle");
+          if (s.valuePtr) output.fieldInt("value", static_cast<int>(SETTINGS.*(s.valuePtr)));
+          break;
+        }
+        case SettingType::ENUM: {
+          output.fieldString("type", "enum");
+          if (s.valueGetter) {
+            output.fieldInt("value", static_cast<int>(s.valueGetter()));
+          } else if (s.valuePtr) {
+            output.fieldInt("value", static_cast<int>(SETTINGS.*(s.valuePtr)));
+          }
+          output.beginArray("options");
+          if (!s.enumStringValues.empty()) {
+            for (const auto& opt : s.enumStringValues) output.arrayString(opt.c_str());
+          } else {
+            for (const auto& opt : s.enumValues) output.arrayString(I18N.get(opt));
+          }
+          output.endArray();
+          break;
+        }
+        case SettingType::VALUE: {
+          output.fieldString("type", "value");
+          if (s.valuePtr) output.fieldInt("value", static_cast<int>(SETTINGS.*(s.valuePtr)));
+          output.fieldInt("min", s.valueRange.min);
+          output.fieldInt("max", s.valueRange.max);
+          output.fieldInt("step", s.valueRange.step);
+          break;
+        }
+        case SettingType::STRING: {
+          output.fieldString("type", "string");
+          if (s.stringGetter) {
+            const std::string value = s.stringGetter();
+            output.fieldString("value", value);
+          } else if (s.stringMaxLen > 0) {
+            output.fieldString("value", reinterpret_cast<const char*>(&SETTINGS) + s.stringOffset);
+          }
+          break;
+        }
+        default:
+          return;
+      }
+      output.endObject();
+      if (!output.closed && !output.countOnly && (currentIndex == 0u || (currentIndex & 7u) == 0u)) output.flush();
+    };
+
+    const auto emitSleepScreen = [&]() {
+      unsigned currentIndex = 0;
+      if (!beginDescriptor("sleepScreen", StrId::STR_SLEEP_SCREEN, StrId::STR_CAT_DISPLAY, currentIndex)) return;
+      const auto sleepValue = []() -> uint8_t {
+        switch (SETTINGS.sleepScreen) {
+          case CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM: return 3;
+          case CrossPointSettings::SLEEP_SCREEN_MODE::BLANK: return 4;
+          case CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME: return 5;
+          case CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY: return 6;
+          case CrossPointSettings::SLEEP_SCREEN_MODE::COVER_OVERLAY: return 7;
+          case CrossPointSettings::SLEEP_SCREEN_MODE::READING_STATS_SLEEP: return 8;
+          case CrossPointSettings::SLEEP_SCREEN_MODE::MINIMAL_STATS: return 9;
+          case CrossPointSettings::SLEEP_SCREEN_MODE::CLIPPING_COVER: return 10;
+          case CrossPointSettings::SLEEP_SCREEN_MODE::TODO_LIST: return 11;
+          case CrossPointSettings::SLEEP_SCREEN_MODE::READING_CALENDAR_SLEEP: return 12;
+          case CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP: return 13;
+          default:
+            return SETTINGS.sleepScreen <= CrossPointSettings::SLEEP_SCREEN_MODE::COVER
+                       ? static_cast<uint8_t>(SETTINGS.sleepScreen)
+                       : 3;
+        }
+      };
+      const auto sleepOption = [](const uint8_t option) -> const char* {
+        switch (option) {
+          case 0: return I18N.get(StrId::STR_DARK);
+          case 1: return I18N.get(StrId::STR_LIGHT);
+          case 2: return I18N.get(StrId::STR_CUSTOM);
+          case 3: return I18N.get(StrId::STR_COVER);
+          case 4: return I18N.get(StrId::STR_NONE_OPT);
+          case 5: return I18N.get(StrId::STR_QUICK_RESUME);
+          case 6: return I18N.get(StrId::STR_PAGE_OVERLAY);
+          case 7: return "Cover + Overlay";
+          case 8: return "Reading Stats";
+          case 9: return "Minimal Stats";
+          case 10: return "Clipping + Cover";
+          case 11: return I18N.get(StrId::STR_TODO_LIST);
+          case 12: return I18N.get(StrId::STR_READING_CALENDAR_SLEEP);
+          default: return I18N.get(StrId::STR_READING_SUMMARY_SLEEP);
+        }
+      };
+      output.fieldString("type", "enum");
+      output.fieldInt("value", sleepValue());
+      output.beginArray("options");
+      for (uint8_t option = 0; option < 14; ++option) output.arrayString(sleepOption(option));
+      output.endArray();
+      output.endObject();
+      if (!output.closed && !output.countOnly && (currentIndex == 0u || (currentIndex & 7u) == 0u)) output.flush();
+    };
+
+    const auto emitReaderFontFamily = [&]() {
+      unsigned currentIndex = 0;
+      if (!beginDescriptor("fontFamily", StrId::STR_FONT_FAMILY, StrId::STR_CAT_READER, currentIndex)) return;
+      const auto& families = sdFontSystem.registry().getFamilies();
+      uint8_t value = FontSelectionCompatibility::readerVisibleIndex(SETTINGS.fontFamily);
+      if (SETTINGS.sdFontFamilyName[0] != '\0') {
+        for (size_t i = 0; i < families.size(); ++i) {
+          if (families[i].name == SETTINGS.sdFontFamilyName) {
+            value = static_cast<uint8_t>(CrossPointSettings::VISIBLE_BUILTIN_FONT_COUNT + i);
+            break;
+          }
+        }
+      }
+      output.fieldString("type", "enum");
+      output.fieldInt("value", value);
+      output.beginArray("options");
+      output.arrayString(I18N.get(StrId::STR_NOTO_SERIF));
+      for (const auto& family : families) output.arrayString(family.name.c_str());
+      output.endArray();
+      output.endObject();
+      if (!output.closed && !output.countOnly && (currentIndex == 0u || (currentIndex & 7u) == 0u)) output.flush();
+    };
+
+    const auto emitDictionaryFont = [&]() {
+      unsigned currentIndex = 0;
+      if (!beginDescriptor("dictionaryFontFamily", StrId::STR_DICTIONARY_FONT, StrId::STR_CAT_READER,
+                           currentIndex)) {
+        return;
+      }
+      output.fieldString("type", "enum");
+      output.fieldInt("value", FontSelectionCompatibility::dictionaryFamilyForUi(SETTINGS.dictionaryFontFamily));
+      output.beginArray("options");
+      output.arrayString(I18N.get(StrId::STR_USE_READER_FONT));
+      output.arrayString(I18N.get(StrId::STR_NOTO_SERIF));
+      output.endArray();
+      output.endObject();
+      if (!output.closed && !output.countOnly && (currentIndex == 0u || (currentIndex & 7u) == 0u)) output.flush();
+    };
+
+    const auto& baseSettings = getBaseSettingsList();
+    for (const auto& setting : baseSettings) {
+      if (!BoardConfig::hasTouch() && setting.nameId == StrId::STR_TOUCH_READER_CONTROLS) continue;
+      if (BoardConfig::hasTouch() &&
+          (setting.nameId == StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION ||
+           setting.nameId == StrId::STR_SUNLIGHT_FADING_FIX)) {
+        continue;
+      }
+      if (setting.nameId == StrId::STR_SLEEP_SCREEN) {
+        emitSleepScreen();
+      } else if (setting.nameId == StrId::STR_FONT_FAMILY) {
+        emitReaderFontFamily();
+      } else if (setting.nameId == StrId::STR_DICTIONARY_FONT) {
+        emitDictionaryFont();
+      } else {
+        // The interface-font descriptor intentionally has no API key today;
+        // emitBaseDescriptor preserves the existing skip behavior.
+        emitBaseDescriptor(setting);
+      }
+    }
+
+    output.raw("]");
+    output.flush();
+    return index;
+  };
+
+  SettingsJsonStream counter(nullptr, true);
+  const unsigned countedDescriptors = emitSettings(counter, nullptr, false);
+  const size_t contentLength = counter.bytesWritten();
+  const size_t selectedDescriptorStart = std::min<size_t>(pageOffset, countedDescriptors);
+  const size_t selectedDescriptorEnd = std::min<size_t>(pageEnd, countedDescriptors);
+  const unsigned pageDescriptorCount = static_cast<unsigned>(
+      selectedDescriptorEnd > selectedDescriptorStart ? selectedDescriptorEnd - selectedDescriptorStart : 0);
+  logSettingsStage("counted_response", countedDescriptors, nullptr, server.get());
+  if (!webSettingsMemoryAdmitted(server.get(), contentLength)) return;
+
+  // NetworkClient::write waits for socket writability but its return count is
+  // bytes accepted by lwIP, not proof of remote ACK. The socket queue depth is
+  // not exposed here, so paged callers keep each response's live transport
+  // footprint bounded; the no-query API retains the complete-array contract
+  // and is admitted only when its measured-size budget fits.
+  const int clientFd = server->client().fd();
+  int sendBufferBytes = 0;
+  socklen_t sendBufferLength = sizeof(sendBufferBytes);
+  const int sendBufferResult = clientFd >= 0
+                                   ? getsockopt(clientFd, SOL_SOCKET, SO_SNDBUF, &sendBufferBytes,
+                                                &sendBufferLength)
+                                   : -1;
+  LOG_INF("WEBRT", "route=/api/settings phase=transport fd=%d sndbuf_query=%s sndbuf=%d queue_depth=not_exposed mode=lwip_send_queue chunk=%u page=%d offset=%u end=%u",
+          clientFd, sendBufferResult == 0 ? "ok" : "unavailable", sendBufferBytes,
+          static_cast<unsigned>(SettingsJsonStream::kBufferSize), paged ? 1 : 0,
+          static_cast<unsigned>(pageOffset), static_cast<unsigned>(pageEnd));
+  if (paged) server->sendHeader("X-Settings-Total", String(countedDescriptors));
+  server->setContentLength(contentLength);
+  logSettingsStage("before_response_object", 0, nullptr, server.get());
+  server->send(200, "application/json", "");
+
+  SettingsJsonStream output(server.get());
+  const unsigned emittedTotalDescriptors = emitSettings(output, server.get(), true);
+  const bool responseComplete = !output.closed && output.totalBytes == contentLength &&
+                                output.transportBytesAccepted == contentLength;
+  if (!responseComplete && server->client().connected()) server->client().stop();
+  LOG_INF("WEBRT", "route=/api/settings phase=response_complete result=%s page_descriptors=%u total_descriptors=%u chunks=%u accepted=%u/%u free=%lu largest=%lu",
+          responseComplete ? "ok" : "incomplete", pageDescriptorCount, emittedTotalDescriptors,
+          static_cast<unsigned>(output.transportChunks),
+          static_cast<unsigned>(output.transportBytesAccepted), static_cast<unsigned>(contentLength),
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   LOG_DBG("WEB", "[SETTINGS] GET complete free=%lu min=%lu largest=%lu", static_cast<unsigned long>(ESP.getFreeHeap()),
           static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 }
 
 void CrossPointWebServer::handlePostSettings() {
+  WebRouteTrace routeTrace(server.get(), "/api/settings", "buffered_request_bounded");
   LOG_DBG("WEB", "[SETTINGS] POST start free=%lu min=%lu largest=%lu", static_cast<unsigned long>(ESP.getFreeHeap()),
           static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   if (!server->hasArg("plain")) {
@@ -1996,13 +2524,12 @@ void CrossPointWebServer::handlePostSettings() {
     return;
   }
   // WebServer and ArduinoJson both need the request while parsing, but the
-  // settings walk does not. Release the body before constructing any dynamic
-  // font-setting entries.
+  // settings walk does not. Release the body before applying settings.
   body = String();
 
   int applied = 0;
 
-  forEachEffectiveSetting(&sdFontSystem.registry(), nullptr, [&](const SettingInfo& s) {
+  const auto applySetting = [&](const SettingInfo& s) {
     if (!s.key) return;
     if (!doc[s.key].is<JsonVariant>()) return;
 
@@ -2054,7 +2581,66 @@ void CrossPointWebServer::handlePostSettings() {
       default:
         break;
     }
-  });
+  };
+
+  // Apply the static descriptors by reference. The effective descriptor
+  // builder deep-copies SD-font names into vectors and std::function captures;
+  // the Web API needs only the selected indexes, not those UI objects.
+  for (const auto& setting : getBaseSettingsList()) {
+    if (setting.nameId == StrId::STR_SLEEP_SCREEN || setting.nameId == StrId::STR_FONT_FAMILY ||
+        setting.nameId == StrId::STR_INTERFACE_FONT || setting.nameId == StrId::STR_DICTIONARY_FONT) {
+      continue;
+    }
+    applySetting(setting);
+  }
+
+  if (doc["sleepScreen"].is<JsonVariant>()) {
+    const int value = doc["sleepScreen"].as<int>();
+    if (value >= 0 && value < 14) {
+      switch (value) {
+        case 0: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::DARK; break;
+        case 1: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::LIGHT; break;
+        case 2: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM; break;
+        case 3: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::COVER; break;
+        case 4: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::BLANK; break;
+        case 5: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME; break;
+        case 6: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY; break;
+        case 7: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::COVER_OVERLAY; break;
+        case 8: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::READING_STATS_SLEEP; break;
+        case 9: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::MINIMAL_STATS; break;
+        case 10: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::CLIPPING_COVER; break;
+        case 11: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::TODO_LIST; break;
+        case 12: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::READING_CALENDAR_SLEEP; break;
+        case 13: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP; break;
+      }
+      ++applied;
+    }
+  }
+
+  if (doc["fontFamily"].is<JsonVariant>()) {
+    const int value = doc["fontFamily"].as<int>();
+    const auto& families = sdFontSystem.registry().getFamilies();
+    const int optionCount = static_cast<int>(CrossPointSettings::VISIBLE_BUILTIN_FONT_COUNT + families.size());
+    if (value >= 0 && value < optionCount) {
+      if (value < CrossPointSettings::VISIBLE_BUILTIN_FONT_COUNT) {
+        SETTINGS.fontFamily = static_cast<uint8_t>(value);
+        SETTINGS.sdFontFamilyName[0] = '\0';
+      } else {
+        const size_t familyIndex = static_cast<size_t>(value - CrossPointSettings::VISIBLE_BUILTIN_FONT_COUNT);
+        strncpy(SETTINGS.sdFontFamilyName, families[familyIndex].name.c_str(), sizeof(SETTINGS.sdFontFamilyName) - 1);
+        SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
+      }
+      ++applied;
+    }
+  }
+
+  if (doc["dictionaryFontFamily"].is<JsonVariant>()) {
+    const int value = doc["dictionaryFontFamily"].as<int>();
+    if (value >= 0 && value < FontSelectionCompatibility::kVisibleDictionaryFontCount) {
+      SETTINGS.dictionaryFontFamily = static_cast<uint8_t>(value);
+      ++applied;
+    }
+  }
 
   SETTINGS.saveToFile();
 
@@ -2331,7 +2917,9 @@ void CrossPointWebServer::handleGetClockWeather() const {
   doc["timezone"] = WEATHER_STORE.timezone;
   doc["utcOffsetSeconds"] = WEATHER_STORE.locationUtcOffsetSeconds;
   doc["fahrenheit"] = WEATHER_STORE.fahrenheit != 0;
-  doc["clockSyncEnabled"] = SETTINGS.clockSyncEnabled != 0;
+  // Legacy compatibility field. Clock sync is now always attempted once per
+  // station Wi-Fi session; expose the effective behavior, not the old opt-out.
+  doc["clockSyncEnabled"] = true;
   doc["weatherSyncEnabled"] = SETTINGS.weatherSyncEnabled != 0;
   doc["wifiConnected"] = WiFi.status() == WL_CONNECTED;
   doc["clockLastSyncDate"] = WEATHER_STORE.lastClockSyncDateKey;
@@ -2390,7 +2978,8 @@ void CrossPointWebServer::handlePostClockWeather() {
     WEATHER_STORE.longitude[sizeof(WEATHER_STORE.longitude) - 1] = '\0';
   }
   if (!doc["fahrenheit"].isNull()) WEATHER_STORE.fahrenheit = (doc["fahrenheit"] | false) ? 1 : 0;
-  if (!doc["clockSyncEnabled"].isNull()) SETTINGS.clockSyncEnabled = (doc["clockSyncEnabled"] | false) ? 1 : 0;
+  // Ignore the legacy clockSyncEnabled field if an older client still posts
+  // it. Keep the persisted member for settings-file compatibility only.
   if (!doc["weatherSyncEnabled"].isNull()) SETTINGS.weatherSyncEnabled = (doc["weatherSyncEnabled"] | false) ? 1 : 0;
 
   WEATHER_STORE.saveToFile();
@@ -2480,7 +3069,7 @@ void CrossPointWebServer::handlePostToDo() {
 
 // WebSocket callback trampoline
 void CrossPointWebServer::wsEventCallback(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
-  if (wsInstance) {
+  if (wsInstance && wsInstance->running) {
     wsInstance->onWebSocketEvent(num, type, payload, length);
   }
 }
@@ -2492,6 +3081,7 @@ void CrossPointWebServer::wsEventCallback(uint8_t num, WStype_t type, uint8_t* p
 //   3. Server sends TEXT "PROGRESS:<received>:<total>" after each chunk
 //   4. Server sends TEXT "DONE" or "ERROR:<message>" when complete
 void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
+  if (!running) return;
   switch (type) {
     case WStype_DISCONNECTED:
       LOG_DBG("WS", "Client %u disconnected uploadClient=%u inProgress=%d free=%lu min=%lu largest=%lu", num,

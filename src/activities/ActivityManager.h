@@ -46,9 +46,13 @@ class ActivityManager {
   std::unique_ptr<Activity> currentActivity;
 
   void exitActivity(const RenderLock& lock);
+  bool prepareWebExclusiveExit();
 
   // Pending activity to be launched on next loop iteration
   std::unique_ptr<Activity> pendingActivity;
+  // Main Settings must be allocated after the outgoing shelf/BLE owners are
+  // gone. Its shell otherwise survives in a hole of the connected heap.
+  bool pendingSettingsConstruction = false;
   enum class PendingAction { None, Push, Pop, Replace };
   PendingAction pendingAction = PendingAction::None;
 
@@ -139,6 +143,10 @@ class ActivityManager {
   bool bluetoothShouldBeActive() const;
   bool bluetoothResourceSensitive() const;
   bool bluetoothRenderSafe() const;
+  // Notify the current activity only after a cold BLE admission succeeds.
+  // Settings uses this to consume its explicit return transition; ordinary
+  // redraws remain unrelated to BLE resource sensitivity.
+  void notifyBluetoothAdmission();
   bool hasPendingUpdate() const { return requestedUpdate.load(std::memory_order_acquire); }
   bool hasPendingRenderWork() const;
   void postBluetoothNotification(const char* message);

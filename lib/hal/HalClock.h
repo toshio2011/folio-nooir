@@ -3,10 +3,13 @@
 #include <Arduino.h>
 #include <Rtc.h>
 
+#include <mutex>
+
 class HalClock;
 extern HalClock halClock;  // Singleton
 
 class HalClock {
+  mutable std::mutex _mutex;
   bool _available = false;
   mutable Rtc _sdkRtc;
   mutable uint8_t _cachedHour = 0;
@@ -35,6 +38,11 @@ class HalClock {
   // it with the current network time.
   bool restoreFromEpoch(int64_t epoch);
 
+  // Adopt a validated UTC epoch as the shared system clock and mirror it to
+  // the optional RTC. The live system epoch is the single runtime source;
+  // hardware RTC storage preserves it across power loss.
+  bool setUtcEpoch(int64_t epoch);
+
   // Get current hour (0-23) and minute (0-59).
   // Returns false until an RTC or a successful Wi-Fi/NTP sync is available.
   bool getTime(uint8_t& hour, uint8_t& minute) const;
@@ -57,5 +65,6 @@ class HalClock {
   //
   // Debouncing (skip if already synced once) is enforced by the caller, not here,
   // so the HAL stays free of any app-layer settings dependency.
-  bool syncFromNTP(bool stopServiceAfterSync = false);
+  // Performs one bounded synchronization and always stops SNTP afterward.
+  bool syncFromNTP();
 };

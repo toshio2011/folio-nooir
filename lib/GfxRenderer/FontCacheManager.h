@@ -12,12 +12,17 @@ class SdCardFont;
 
 class FontCacheManager {
  public:
+  static constexpr uint8_t MAX_SCAN_FONTS = 2;
+  static constexpr size_t MAX_SCAN_TEXT_BYTES = 4096;
   FontCacheManager(const std::map<int, EpdFontFamily>& fontMap, const std::map<int, SdCardFont*>& sdCardFonts,
                    GfxRenderer* renderer = nullptr);
 
   void setFontDecompressor(FontDecompressor* d);
 
   void clearCache();
+  // Release only the built-in compressed-font page/hot buffers. The next UI
+  // draw rebuilds these buffers lazily; SD-font ownership is unchanged.
+  void releaseTransientFontCaches();
   // Drop disposable SD-font glyph/mini-cache state while retaining the
   // persistent coverage and advance metadata used by Nooir's layout path.
   void releaseSdFontCaches();
@@ -58,8 +63,6 @@ class FontCacheManager {
 
   enum class ScanMode : uint8_t { None, Scanning };
   ScanMode scanMode_ = ScanMode::None;
-  static constexpr uint8_t MAX_SCAN_FONTS = 2;
-  static constexpr size_t MAX_SCAN_TEXT_BYTES = 4096;
   struct ScanEntry {
     std::string text;
     uint32_t styleCounts[4] = {};

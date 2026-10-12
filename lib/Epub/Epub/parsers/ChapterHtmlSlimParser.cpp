@@ -975,13 +975,16 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
 
       // imageRendering: 0=display, 1=placeholder (alt text only), 2=suppress entirely
       if (self->imageRendering == 2) {
+        LOG_INF("EPUBIMG", "decision=suppressed reason=image_rendering_mode src=%s base=%s", src.c_str(),
+                self->contentBase.c_str());
         self->skipUntilDepth = self->depth;
         self->depth += 1;
         return;
       }
 
       if (!src.empty() && self->imageRendering != 1) {
-        LOG_DBG("EHP", "Found image: src=%s", src.c_str());
+        LOG_DBG("EPUBIMG", "decision=source_candidate src=%s base=%s fullpage=%d", src.c_str(),
+                self->contentBase.c_str(), fullPageImage ? 1 : 0);
 
         {
           // Resolve the image path relative to the HTML file
@@ -1038,7 +1041,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
               }
 
               if (gotDimensions) {
-                LOG_DBG("EHP", "Image dimensions: %dx%d", dims.width, dims.height);
+                LOG_DBG("EPUBIMG", "decision=page_image source=%s cache=%s dimensions=%dx%d fullpage=%d",
+                        resolvedPath.c_str(), cachedImagePath.c_str(), dims.width, dims.height, fullPageImage ? 1 : 0);
 
                 int displayWidth = 0;
                 int displayHeight = 0;
@@ -1219,6 +1223,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 // so both allocations must fail soft into the null-check below.
                 auto imageBlock = makeUniqueNoThrow<ImageBlock>(cachedImagePath, resolvedPath, displayWidth, displayHeight);
                 if (!imageBlock) {
+                  LOG_ERR("EPUBIMG", "placeholder reason=parser_image_block_alloc source=%s cache=%s",
+                          resolvedPath.c_str(), cachedImagePath.c_str());
                   self->failAllocation("image block");
                   return;
                 }
@@ -1226,6 +1232,8 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 auto pageImage =
                     makeUniqueNoThrow<PageImage>(std::move(imageBlock), xPos, self->currentPageNextY);
                 if (!pageImage) {
+                  LOG_ERR("EPUBIMG", "placeholder reason=parser_page_image_alloc source=%s cache=%s",
+                          resolvedPath.c_str(), cachedImagePath.c_str());
                   self->failAllocation("page image");
                   return;
                 }
@@ -1264,16 +1272,22 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                 self->depth += 1;
                 return;
               } else {
-                LOG_ERR("EHP", "Failed to get image dimensions");
+                LOG_ERR("EPUBIMG", "placeholder reason=dimension_probe_failed source=%s cache=%s",
+                        resolvedPath.c_str(), cachedImagePath.c_str());
                 Storage.remove(cachedImagePath.c_str());
               }
             }
+          } else {
+            LOG_ERR("EPUBIMG", "placeholder reason=unsupported_format source=%s src=%s", resolvedPath.c_str(),
+                    src.c_str());
           }  // isFormatSupported
         }
       }
 
       // Fallback to alt text if image processing fails
       if (!alt.empty()) {
+        LOG_ERR("EPUBIMG", "placeholder reason=parser_alt_fallback src=%s alt=%s base=%s", src.c_str(), alt.c_str(),
+                self->contentBase.c_str());
         alt = "[Image: " + alt + "]";
         auto altBlockStyle = self->blockStyleStack.back().getCombinedBlockStyle(
             centeredBlockStyle, BlockStyle::CombineAxis::Horizontal);
@@ -1289,10 +1303,14 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       }
 
       // No alt text, skip
+      LOG_ERR("EPUBIMG", "placeholder reason=parser_no_source_or_alt src=%s base=%s mode=%u", src.c_str(),
+              self->contentBase.c_str(), static_cast<unsigned>(self->imageRendering));
       self->skipUntilDepth = self->depth;
       self->depth += 1;
       return;
     }
+    LOG_ERR("EPUBIMG", "placeholder reason=parser_missing_attributes base=%s mode=%u", self->contentBase.c_str(),
+            static_cast<unsigned>(self->imageRendering));
   }
 
   if (matches(name, SKIP_TAGS, std::size(SKIP_TAGS))) {

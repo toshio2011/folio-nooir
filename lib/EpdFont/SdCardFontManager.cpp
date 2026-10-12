@@ -1,5 +1,6 @@
 #include "SdCardFontManager.h"
 
+#include <Arduino.h>
 #include <EpdFontFamily.h>
 #include <GfxRenderer.h>
 #include <Logging.h>
@@ -14,10 +15,6 @@
 namespace {
 uint8_t interfaceFontLoadDiagnosticRecords = 0;
 }
-#endif
-
-#if NOOIR_SD_FONT_DIAGNOSTICS
-#include <Arduino.h>
 #endif
 
 SdCardFontManager::~SdCardFontManager() {
@@ -69,6 +66,15 @@ int SdCardFontManager::loadFile(const SdCardFontFileInfo& file, const char* fami
     LOG_ERR("SDMGR", "Font ID %d collides with existing font, skipping %s", fontId, file.path.c_str());
     delete font;
     return 0;
+  }
+  if (file.pointSize == 8) {
+    const uint32_t coverageBytes = font->retainedCoverageBytes();
+    LOG_INF("SDMEM",
+            "owner=8pt_coverage event=loaded role=%s manager=%p font=%p id=%d bytes=%u free=%u largest=%u",
+            idSalt_ == 0 ? "reader_or_fallback" : "interface", static_cast<const void*>(this),
+            static_cast<const void*>(font), fontId, static_cast<unsigned>(coverageBytes),
+            static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    font->logCoverageOwners();
   }
   renderer.registerSdCardFont(fontId, font);
   renderer.registerFontPointSize(fontId, file.pointSize);
@@ -153,9 +159,30 @@ void SdCardFontManager::unloadAll(GfxRenderer& renderer, const bool clearRendere
   // Reader and interface-font managers may coexist. Remove only IDs owned by
   // this manager; never clear the renderer-wide SD registry here.
   if (clearRendererFallbacks) renderer.clearFallbackFonts();
+  bool releasedEightPointOwner = false;
+  size_t eightPointFreeBefore = 0;
+  size_t eightPointLargestBefore = 0;
   for (auto& lf : loaded_) {
+    if (lf.size == 8 && lf.font) {
+      if (!releasedEightPointOwner) {
+        releasedEightPointOwner = true;
+        eightPointFreeBefore = ESP.getFreeHeap();
+        eightPointLargestBefore = ESP.getMaxAllocHeap();
+      }
+      LOG_INF("SDMEM", "owner=8pt_coverage event=release_begin role=%s manager=%p font=%p id=%d bytes=%u",
+              idSalt_ == 0 ? "reader_or_fallback" : "interface", static_cast<const void*>(this),
+              static_cast<const void*>(lf.font), lf.fontId,
+              static_cast<unsigned>(lf.font->retainedCoverageBytes()));
+      lf.font->logCoverageOwners();
+    }
     renderer.removeFont(lf.fontId);
     delete lf.font;
+  }
+  if (releasedEightPointOwner) {
+    LOG_INF("SDMEM", "owner=8pt_coverage event=released role=%s manager=%p free=%u->%u largest=%u->%u",
+            idSalt_ == 0 ? "reader_or_fallback" : "interface", static_cast<const void*>(this),
+            static_cast<unsigned>(eightPointFreeBefore), static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(eightPointLargestBefore), static_cast<unsigned>(ESP.getMaxAllocHeap()));
   }
   loaded_.clear();
   loadedFamilyName_.clear();
@@ -169,6 +196,47 @@ void SdCardFontManager::releaseUiFallbackCaches() {
   // repopulated lazily when the UI is shown again.
   for (size_t i = 1; i < loaded_.size(); ++i) {
     if (loaded_[i].font) loaded_[i].font->releaseDisposableCaches();
+  }
+}
+
+void SdCardFontManager::releaseReaderCaches() {
+  for (auto& lf : loaded_) {
+    if (lf.font) lf.font->releaseReaderCaches();
+  }
+}
+
+void SdCardFontManager::releaseReaderFontOwner(GfxRenderer& renderer) {
+  if (loaded_.empty() || loadedPointSize_ == 0 || loaded_.front().size != loadedPointSize_) return;
+
+  const auto selected = loaded_.front();
+  const bool sharedWithUiFallback = renderer.isUiFontReferenced(selected.fontId);
+  const uint32_t coverageBytes = selected.font ? selected.font->retainedCoverageBytes() : 0;
+  const size_t beforeFree = ESP.getFreeHeap();
+  const size_t beforeLargest = ESP.getMaxAllocHeap();
+  if (selected.font) selected.font->logCoverageOwners();
+  if (sharedWithUiFallback) {
+    LOG_INF("SDMEM", "owner=reader_font_coverage result=retained_actual_ui_reference pt=%u id=%d bytes=%u free=%u largest=%u",
+            static_cast<unsigned>(selected.size), selected.fontId, static_cast<unsigned>(coverageBytes),
+            static_cast<unsigned>(beforeFree), static_cast<unsigned>(beforeLargest));
+    return;
+  }
+
+  renderer.removeFont(selected.fontId);
+  delete selected.font;
+  loaded_.erase(loaded_.begin());
+  // Keep the family identity so ensureLoaded() can reload the selected size
+  // at the next Reader entry, while preventing a remaining UI fallback font
+  // from being mistaken for the selected Reader font.
+  loadedPointSize_ = 0;
+  LOG_INF("SDMEM", "owner=reader_font_coverage result=unloaded pt=%u id=%d ui_referenced=0 bytes=%u free=%u->%u largest=%u->%u",
+          static_cast<unsigned>(selected.size), selected.fontId, static_cast<unsigned>(coverageBytes),
+          static_cast<unsigned>(beforeFree), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(beforeLargest), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+}
+
+void SdCardFontManager::beginAllocationRetryBoundary() {
+  for (auto& lf : loaded_) {
+    if (lf.font) lf.font->beginAllocationRetryBoundary();
   }
 }
 
@@ -196,8 +264,11 @@ void SdCardFontManager::logMemoryStats(const char* stage) const {
 #endif
 
 int SdCardFontManager::getFontId(const std::string& familyName) const {
-  if (familyName != loadedFamilyName_ || loaded_.empty()) return 0;
-  return loaded_.front().fontId;
+  if (familyName != loadedFamilyName_ || loaded_.empty() || loadedPointSize_ == 0) return 0;
+  for (const auto& lf : loaded_) {
+    if (lf.size == loadedPointSize_) return lf.fontId;
+  }
+  return 0;
 }
 
 int SdCardFontManager::getFontIdForPointSize(const uint8_t pointSize) const {

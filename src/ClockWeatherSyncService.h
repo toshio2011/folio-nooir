@@ -22,8 +22,13 @@ struct ClockWeatherSyncResult {
 // turned off after the activity returns (device settings action).
 class ClockWeatherSyncService final {
  public:
-  static ClockWeatherSyncResult sync(bool syncClock, bool syncWeather, bool stopNtpAfterSync = false);
+  static ClockWeatherSyncResult sync(bool syncClock, bool syncWeather);
   static ClockWeatherSyncResult syncDueOnWifiConnection();
+  // Wi-Fi callbacks only enqueue state; processPendingWifiConnection() runs
+  // the bounded NTP operation later on the main task.
+  static void notifyWifiConnectedEvent();
+  static void notifyWifiDisconnectedEvent();
+  static void processPendingWifiConnection();
   static bool resolveLocation(const std::string& query, ClockWeatherLocation& result);
   static int32_t locationOffsetSeconds();
   static uint8_t locationOffsetQuarterHours();
@@ -31,5 +36,5 @@ class ClockWeatherSyncService final {
   static const char* weatherDescription(int16_t weatherCode);
 
  private:
-  static bool fetchWeather();
+  static bool fetchWeather(bool& clockUpdated);
 };

@@ -40,6 +40,7 @@ class CrossPointWebServerActivity final : public Activity {
   // Server status
   std::string connectedIP;
   std::string connectedSSID;  // For STA mode: network name, For AP mode: AP name
+  bool webExitPrepared = false;
 
   // Performance monitoring
   unsigned long lastHandleClientTime = 0;
@@ -65,6 +66,9 @@ class CrossPointWebServerActivity final : public Activity {
       : Activity("CrossPointWebServer", renderer, mappedInput) {}
   void onEnter() override;
   void onExit() override;
+  // Called by ActivityManager before it constructs the replacement home/shelf
+  // activity, so its persistent book reconstruction starts after Web teardown.
+  bool prepareForExit();
   void loop() override;
   void render(RenderLock&&) override;
   bool skipLoopDelay() override { return webServer && webServer->isRunning(); }

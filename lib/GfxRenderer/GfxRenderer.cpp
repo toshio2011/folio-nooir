@@ -3055,6 +3055,26 @@ void GfxRenderer::writeGrayscalePlaneStrip(bool lsbPlane, const uint8_t* scratch
 
 bool GfxRenderer::supportsStripGrayscale() const { return display.supportsStripGrayscale(); }
 
+bool GfxRenderer::reserveGrayscaleStripScratch(const size_t bytes) {
+  if (bytes == 0 || grayscaleStripScratchSize_ >= bytes) return true;
+
+  std::unique_ptr<uint8_t[]> replacement(new (std::nothrow) uint8_t[bytes]);
+  if (!replacement) return false;
+  grayscaleStripScratch_ = std::move(replacement);
+  grayscaleStripScratchSize_ = bytes;
+  return true;
+}
+
+uint8_t* GfxRenderer::getGrayscaleStripScratch(const size_t bytes) const {
+  if (bytes == 0 || !grayscaleStripScratch_ || grayscaleStripScratchSize_ < bytes) return nullptr;
+  return grayscaleStripScratch_.get();
+}
+
+void GfxRenderer::releaseGrayscaleStripScratch() {
+  grayscaleStripScratch_.reset();
+  grayscaleStripScratchSize_ = 0;
+}
+
 void GfxRenderer::freeBwBufferChunks() {
   for (size_t i = 0; i < bwBufferChunks.size(); ++i) {
     auto& bwBufferChunk = bwBufferChunks[i];

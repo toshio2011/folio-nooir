@@ -377,8 +377,6 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                             "removeReadBooksFromRecents", StrId::STR_CAT_SYSTEM),
         SettingInfo::Toggle(StrId::STR_MOVE_FINISHED_TO_READ, &CrossPointSettings::moveFinishedToReadFolder,
                             "moveFinishedToReadFolder", StrId::STR_CAT_SYSTEM),
-        SettingInfo::Toggle(StrId::STR_CLOCK_SYNC_ENABLED, &CrossPointSettings::clockSyncEnabled,
-                            "clockSyncEnabled", StrId::STR_CAT_SYSTEM),
         SettingInfo::Toggle(StrId::STR_WEATHER_SYNC_ENABLED, &CrossPointSettings::weatherSyncEnabled,
                             "weatherSyncEnabled", StrId::STR_CAT_SYSTEM),
         SettingInfo::Toggle(StrId::STR_RESUME_READER_ON_WAKE, &CrossPointSettings::resumeReaderOnWake,

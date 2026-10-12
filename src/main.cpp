@@ -20,6 +20,7 @@
 #include <cstring>
 
 #include "BleInput.h"
+#include "ClockWeatherSyncService.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "KOReaderCredentialStore.h"
@@ -226,9 +227,14 @@ void enterDeepSleep(bool fromTimeout = false) {
     LOG_INF("SLEEP", "wifi_stopped already_off free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
             static_cast<unsigned>(ESP.getMaxAllocHeap()));
   }
-  bleinput::stop();
-  LOG_INF("SLEEP", "ble_stopped running=%d free=%u largest=%u", BleHid.isRunning() ? 1 : 0,
-          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  if (SETTINGS.bluetoothEnabled || BleHid.isRunning()) {
+    bleinput::clearReaderBleReturnPending();
+    if (BleHid.isRunning()) {
+      bleinput::stop();
+      LOG_INF("SLEEP", "ble_stopped free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+              static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    }
+  }
 
   activityManager.goToSleep(fromTimeout);
   LOG_INF("SLEEP", "sleep_screen_ready free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
@@ -339,6 +345,12 @@ void setup() {
   powerManager.begin();
   halTiltSensor.begin();
   halClock.begin();
+  // Keep radio callbacks short and allocation-free: the main task consumes a
+  // single pending station event and performs NTP through the shared clock.
+  WiFi.onEvent([](arduino_event_id_t) { ClockWeatherSyncService::notifyWifiConnectedEvent(); },
+               ARDUINO_EVENT_WIFI_STA_GOT_IP);
+  WiFi.onEvent([](arduino_event_id_t) { ClockWeatherSyncService::notifyWifiDisconnectedEvent(); },
+               ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   EpubDiagnostics::phaseRecord("boot_hardware_ready");
 
   LOG_INF("MAIN", "Hardware detect: %s", gpio.deviceIsX3() ? "X3" : "X4");
@@ -533,6 +545,18 @@ void setup() {
 void updateBluetoothLifecycle() {
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
   static bool resourceDeferReported = false;
+  static bool bluetoothSettingsRenderDeferReported = false;
+  static bool settingsBleReturnFloorDeferReported = false;
+  if (bleinput::webExclusiveActive()) {
+    resourceDeferReported = false;
+    bluetoothSettingsRenderDeferReported = false;
+    settingsBleReturnFloorDeferReported = false;
+    if (BleHid.isRunning()) {
+      bleinput::stop();
+      bleinput::recordDiagnosticEvent("ble_suspend reason=web_exclusive");
+    }
+    return;
+  }
   const bool wanted =
       !deepSleepInProgress && SETTINGS.bluetoothEnabled && activityManager.bluetoothShouldBeActive() &&
       WiFi.getMode() == WIFI_MODE_NULL;
@@ -543,11 +567,17 @@ void updateBluetoothLifecycle() {
   // the Reader activity's resource-sensitive predicate covers the allocations
   // that genuinely need the heap back. Cold admission still applies its
   // existing render/lock guard in connectionAdmissionAllowed().
-  const bool renderPressure = readerContext && (RenderLock::peek() || activityManager.hasPendingRenderWork());
+  // Diagnostic only: includes a queued or in-flight render notification as
+  // well as the RenderLock. It is not a static activity classification.
+  const bool renderWorkPendingOrInFlight =
+      readerContext && (RenderLock::peek() || activityManager.hasPendingRenderWork());
   const bool blocked = resourceSensitive;
 
   if (!wanted) {
     resourceDeferReported = false;
+    bluetoothSettingsRenderDeferReported = false;
+    settingsBleReturnFloorDeferReported = false;
+    bleinput::clearReaderBleReturnPending();
     if (BleHid.isRunning()) {
       bleinput::stop();
       bleinput::recordDiagnosticEvent("ble_suspend reason=activity_or_wifi_or_disabled");
@@ -556,18 +586,27 @@ void updateBluetoothLifecycle() {
   }
 
   if (blocked) {
+    const bool settingsContext = strcmp(activityManager.currentActivityName(), "Settings") == 0;
+    if (settingsContext) settingsBleReturnFloorDeferReported = false;
     if (BleHid.isRunning()) {
       // Preserve the enabled/controller intent while the heavy Reader phase
       // temporarily suppresses BLE. The next real lifecycle signal can retry;
       // there is no timer-based polling path.
       bleinput::requestLifecycleReevaluation();
       bleinput::recordDiagnosticEvent("ble_suspend reason=resource_pressure");
-      bleinput::stop();
+      if (readerContext) {
+        bleinput::stopForReaderResourcePressure();
+      } else {
+        bleinput::clearReaderBleReturnPending();
+        bleinput::stop();
+      }
+      if (settingsContext) bleinput::recordDiagnosticEvent("settings_ble_return_deferred");
       resourceDeferReported = true;
     } else if (!resourceDeferReported) {
       resourceDeferReported = true;
-      LOG_INF("BLEMEM", "stage=admission_deferred reason=resource activity=%.20s sensitive=%d render=%d reader=%d free=%u largest=%u",
-              activityManager.currentActivityName(), resourceSensitive ? 1 : 0, renderPressure ? 1 : 0,
+      LOG_INF("BLEMEM", "stage=admission_deferred reason=resource activity=%.20s sensitive=%d render_work_pending_or_inflight=%d reader=%d free=%u largest=%u",
+              activityManager.currentActivityName(), resourceSensitive ? 1 : 0,
+              renderWorkPendingOrInFlight ? 1 : 0,
               readerContext ? 1 : 0, ESP.getFreeHeap(),
               ESP.getMaxAllocHeap());
       bleinput::recordDiagnosticEvent("ble_suspend reason=resource_pressure");
@@ -576,6 +615,22 @@ void updateBluetoothLifecycle() {
   }
 
   resourceDeferReported = false;
+  // Toggle-on from BluetoothSettings requests a redraw. Do not admit BLE in
+  // the same loop that queues that redraw: transient menu/render buffers must
+  // be quiescent first. The render task signals the next lifecycle pass when
+  // it completes; no timer or polling loop is needed.
+  const bool bluetoothSettingsRenderPending =
+      !BleHid.isRunning() && strcmp(activityManager.currentActivityName(), "BluetoothSettings") == 0 &&
+      activityManager.hasPendingRenderWork();
+  if (bluetoothSettingsRenderPending) {
+    if (!bluetoothSettingsRenderDeferReported) {
+      bluetoothSettingsRenderDeferReported = true;
+      LOG_INF("BLEMEM", "stage=admission_deferred reason=bluetooth_settings_render free=%u largest=%u",
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    }
+    return;
+  }
+  bluetoothSettingsRenderDeferReported = false;
   if (BleHid.isRunning()) {
     bleinput::clearReAdmissionPending();
     return;
@@ -590,6 +645,13 @@ void updateBluetoothLifecycle() {
   const bool admitted = bleinput::connectionAdmissionAllowed();
 
   if (!admitted) {
+    if (strcmp(activityManager.currentActivityName(), "Settings") == 0 && !settingsBleReturnFloorDeferReported) {
+      settingsBleReturnFloorDeferReported = true;
+      LOG_INF("BLEMEM", "stage=settings_ble_return_defer free=%u largest=%u floors=%u/%u", ESP.getFreeHeap(),
+              ESP.getMaxAllocHeap(), static_cast<unsigned>(bleinput::kReaderBleStartMinFreeHeap),
+              static_cast<unsigned>(bleinput::kReaderBleStartMinLargestBlock));
+      bleinput::recordDiagnosticEvent("settings_ble_return_defer");
+    }
     bleinput::recordDiagnosticEvent("ble_admit result=defer reason=normal_heap reader=%d free=%u max=%u",
                                     readerContext ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     return;
@@ -597,6 +659,12 @@ void updateBluetoothLifecycle() {
 
   LOG_INF("BLEMEM", "stage=cold_admission result=allow activity=%.20s free=%u largest=%u",
           activityManager.currentActivityName(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  if (strcmp(activityManager.currentActivityName(), "Settings") == 0) {
+    settingsBleReturnFloorDeferReported = false;
+    LOG_INF("BLEMEM", "stage=settings_ble_return_admit free=%u largest=%u", ESP.getFreeHeap(),
+            ESP.getMaxAllocHeap());
+    bleinput::recordDiagnosticEvent("settings_ble_return_admit");
+  }
   bleinput::recordDiagnosticEvent("ble_admit result=allow free=%u max=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   const bool started = bleinput::ensureStarted();
   if (!started) {
@@ -604,6 +672,7 @@ void updateBluetoothLifecycle() {
     bleinput::recordDiagnosticEvent("ble_resume result=failed");
     return;
   }
+  activityManager.notifyBluetoothAdmission();
   bleinput::clearReAdmissionPending();
   bleinput::recordDiagnosticEvent("ble_resume result=started");
 #else
@@ -619,6 +688,7 @@ void loop() {
   gpio.setSharedConfirmPowerShortPressEmitsPower(SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
   gpio.update();
   updateBluetoothLifecycle();
+  ClockWeatherSyncService::processPendingWifiConnection();
   BleHid.poll();
 #if FREEINK_CAP_BLE_HID_HOST
   bleinput::pollLifecycle();

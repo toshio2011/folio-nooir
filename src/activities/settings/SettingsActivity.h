@@ -2,6 +2,8 @@
 #include <I18n.h>
 
 #include <functional>
+#include <atomic>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -160,6 +162,16 @@ struct SettingInfo {
 };
 
 class SettingsActivity final : public Activity {
+  // Settings is only resource-sensitive for an explicit lifecycle boundary.
+  // A queued redraw is not itself a new boundary: BLE notifications and
+  // ordinary menu updates also queue renders while the stable screen remains
+  // safe to keep connected.
+  enum class BluetoothLifecycleState : uint8_t {
+    TransitionSensitive,
+    ReturnPending,
+    StableIdle,
+  };
+
   ButtonNavigator buttonNavigator;
 
   int selectedCategoryIndex = 0;  // Currently selected category
@@ -178,6 +190,20 @@ class SettingsActivity final : public Activity {
 
   OptionPopup optionPopup;
 
+  // Settings may need BLE stopped for its initial/returned full-screen render,
+  // but a stable parent screen is safe for the normal event-driven admission
+  // path. The render task publishes the transition boundary exactly once.
+  std::atomic<BluetoothLifecycleState> bluetoothLifecycleState{
+      BluetoothLifecycleState::TransitionSensitive};
+  std::atomic<uint32_t> bluetoothLifecycleEpoch{0};
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+  // One stable-idle reclaim for the return from Bluetooth Settings. This is
+  // deliberately narrower than the Reader cache release: only the built-in
+  // compressed-font scratch buffers are dropped and rebuilt on the next draw.
+  bool bluetoothReturnArmed = false;
+  bool bluetoothTransientFontCachesReleased = false;
+#endif
+
   static constexpr int categoryCount = 4;
   static const StrId categoryNames[categoryCount];
 
@@ -187,6 +213,11 @@ class SettingsActivity final : public Activity {
   void openQuickActionsPicker();
   void rebuildSettingsLists();
   void syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged);
+  void armBluetoothReturn(const char* reason);
+  void markBluetoothQuiescent();
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+  void reclaimStableBluetoothTransientCaches();
+#endif
 
  public:
   explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
@@ -195,7 +226,18 @@ class SettingsActivity final : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
+  // Consumes the one-shot Settings return transition after NimBLE has been
+  // admitted successfully. This prevents a notification/redraw from being
+  // mistaken for another resource-sensitive transition.
+  void markBluetoothAdmitted();
   // Settings rebuilds several transient lists and can open heavier child
-  // screens; release the optional BLE controller before those allocations.
-  bool bluetoothResourceSensitive() const override { return true; }
+  // screens; release the optional BLE controller until the full-screen render
+  // has completed. A stable parent then uses normal event-driven admission.
+  bool bluetoothResourceSensitive() const override {
+    // Do not fold ActivityManager's generic render queue into this predicate.
+    // A BLE notification itself queues a Settings redraw; treating that queue
+    // as permanent pressure creates the connect -> notify -> stop loop.
+    return bluetoothLifecycleState.load(std::memory_order_acquire) ==
+           BluetoothLifecycleState::TransitionSensitive;
+  }
 };

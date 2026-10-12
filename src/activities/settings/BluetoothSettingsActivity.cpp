@@ -174,12 +174,28 @@ void BluetoothSettingsActivity::beginPairedConnect() {
   pairedFallbackAttempted = false;
   connectOrigin = ConnectOrigin::PairedDirect;
   setBanner(tr(STR_CONNECTING));
-  bleinput::recordDiagnosticEvent("reconnect_start direct addr=%.17s", pairedTargetAddr);
+  if (BleHid.isConnected()) {
+    awaitingConnect = false;
+    setBanner(tr(STR_CONNECTED));
+    requestUpdate();
+    return;
+  }
+  if (BleHid.isConnecting()) {
+    bleinput::recordDiagnosticEvent("reconnect_join_inflight direct addr=%.17s", pairedTargetAddr);
+    requestUpdate();
+    return;
+  }
   // The host already knows the bonded address type. Try that stable identity
   // first instead of making every manual reconnect depend on a scan response;
   // if the peripheral is using a rotated/private address, the bounded scan
   // fallback below can still recover it by address or name.
-  if (!BleHid.connect(pairedTargetAddr) && !BleHid.isConnecting()) {
+  const bool queued = BleHid.connect(pairedTargetAddr);
+  if (queued) {
+    bleinput::recordDiagnosticEvent("reconnect_start direct addr=%.17s", pairedTargetAddr);
+  } else if (BleHid.isConnecting() || BleHid.isConnected()) {
+    bleinput::recordDiagnosticEvent("reconnect_join_inflight direct addr=%.17s", pairedTargetAddr);
+  }
+  if (!queued && !BleHid.isConnecting() && !BleHid.isConnected()) {
     pairedFallbackAttempted = true;
     pairedScanActive = true;
     connectOrigin = ConnectOrigin::PairedScan;
@@ -297,9 +313,15 @@ void BluetoothSettingsActivity::loop() {
           address[sizeof(address) - 1] = '\0';
           BleHid.stopScan();
           pairedScanActive = false;
-          bleinput::recordDiagnosticEvent("reconnect_start scan addr=%.17s", address);
           setBanner(tr(STR_CONNECTING));
-          BleHid.connect(address);
+          if (!BleHid.isConnecting() && !BleHid.isConnected()) {
+            const bool queued = BleHid.connect(address);
+            bleinput::recordDiagnosticEvent(queued ? "reconnect_start scan addr=%.17s"
+                                                   : "reconnect_join_inflight scan addr=%.17s",
+                                            address);
+          } else {
+            bleinput::recordDiagnosticEvent("reconnect_join_inflight scan addr=%.17s", address);
+          }
         }
       } else if (!BleHid.isConnecting()) {
         // A direct bonded attempt was already made before this scan. Do not
@@ -431,10 +453,15 @@ void BluetoothSettingsActivity::loop() {
         const auto& d = BleHid.device(static_cast<uint8_t>(scanIndex));
         awaitingConnect = true;
         connectOrigin = ConnectOrigin::Scan;
-        bleinput::recordDiagnosticEvent("pair_start addr=%.17s name=%.24s type=%u", d.addr, d.name,
-                                        static_cast<unsigned>(d.addrType));
         setBanner(tr(STR_CONNECTING));
-        BleHid.connect(d.addr);
+        if (!BleHid.isConnecting() && !BleHid.isConnected()) {
+          const bool queued = BleHid.connect(d.addr);
+          bleinput::recordDiagnosticEvent(queued ? "pair_start addr=%.17s name=%.24s type=%u"
+                                                 : "pair_join_inflight addr=%.17s",
+                                          d.addr, d.name, static_cast<unsigned>(d.addrType));
+        } else {
+          bleinput::recordDiagnosticEvent("pair_join_inflight addr=%.17s", d.addr);
+        }
         requestUpdate();
       }
     }

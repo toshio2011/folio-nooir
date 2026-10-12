@@ -161,6 +161,8 @@ class RecentBooksActivity final : public Activity {
   bool snapshotWritePending = false;
   unsigned long snapshotWriteRequestedMs = 0;
   bool initialRenderPending = true;
+  bool statsTransientStateReleased = false;
+  bool statsReturnAwaitingFirstRender = false;
   bool swallowMenuBackRelease = false;
   bool longPressActionShown = false;
   bool swallowBookConfirmRelease = false;
@@ -171,7 +173,8 @@ class RecentBooksActivity final : public Activity {
   static constexpr int CAROUSEL_HQ_COVER_HEIGHT = 360;
 
   // Data loading
-  void loadRecentBooks();
+  void loadRecentBooks(bool renderLockHeld = false);
+  void markStatsReturnFrameReady();
   void invalidateCarouselHqProbes();
   void invalidateCarouselHqProbesLocked();
   void invalidateCarouselSourceCache();
@@ -214,7 +217,7 @@ class RecentBooksActivity final : public Activity {
   int activePageItems() const;
   size_t moveSpinePage(const FolioShelfLayout& layout, bool next);
   size_t moveTwoRowSpinePage(const FolioShelfLayout& layout, bool next);
-  void renderCarousel(bool threeCover);
+  bool renderCarousel(bool threeCover);
   void renderFolioCarouselShelf(int shelfTop, int shelfHeight, bool threeCover);
 
   // Show an OK/Cancel prompt to remove the given book from the Recent Books list.
@@ -223,6 +226,17 @@ class RecentBooksActivity final : public Activity {
  public:
   explicit RecentBooksActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, uint8_t initialTab = 1)
       : Activity("RecentBooks", renderer, mappedInput), activeTab(initialTab == 2 ? 2 : 1) {}
+  // Called while RenderLock is held immediately before ReadingStats is pushed.
+  // Only rebuildable shelf state is released; the persisted shelf data and
+  // navigation state remain available for the parent resume.
+  void releaseTransientStateForReadingStats();
+  // Called once after the ReadingStats child is destroyed and the parent is
+  // resumed. Rehydrates the local shelf copy from RecentBooksStore before the
+  // normal cached shelf render continues.
+  void restoreTransientStateAfterReadingStats();
+  bool bluetoothResourceSensitive() const override {
+    return statsTransientStateReleased || statsReturnAwaitingFirstRender;
+  }
   void onEnter() override;
   void onExit() override;
   void loop() override;

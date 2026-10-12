@@ -1,5 +1,208 @@
 # Folio Nooir Project Context
 
+## Combined X4 stabilization pass — 2026-10-09
+
+The current pass keeps reclamation transition-scoped. ReadingStats entry
+releases only RecentBooks-owned rebuildable cover-source state, popup state,
+and the local `recentBooks` copy (including its per-book strings); the
+persistent `RecentBooksStore` is retained. The local copy is restored once
+after the stats child is destroyed, before the resumed shelf render. No normal
+scroll, browse, cached page turn, or steady-state font path performs cleanup.
+
+Settings BLE now has an explicit `TransitionSensitive -> ReturnPending ->
+StableIdle` state and epoch. The old `hasPendingRenderWork()` predicate made a
+BLE connected notification's own Settings redraw look permanently
+resource-sensitive, causing connect/stop oscillation. Successful admission
+consumes the transition; only a new explicit child/heavy transition can arm a
+new stop. BLE-OFF remains inert.
+
+Web/Transfer remains an exclusive-memory session: BLE admission is suppressed
+for the complete session, rebuildable runtime caches are released once on
+entry, and HTTP/Wi-Fi/server teardown completes before UI reconstruction and
+normal BLE admission on exit. `/api/settings` uses a two-pass fixed-buffer
+stream with a measured Web-only guard; schema and image/section semantics are
+unchanged. The pass adds no timers, polling retries, per-frame cleanup, or
+steady-state cache churn.
+
+## X4 COM audit and bounded memory repair — 2026-10-09
+
+The newest physical log confirms three independent return failures. The Reader
+shared-cache owner is the global `SdCardFontManager` loaded-font set: its
+`SdCardFont::releaseReaderCaches()` frees rebuildable advance, kern/ligature,
+mini-glyph, and overflow state while retaining font registration/coverage. The
+existing Reader-exit order also clears the built-in decompressor before this
+shared release, proving the topology
+repair: the physical case moves from about `98.7/22.5 KB` after renderer
+shared release to `108.8/49.1 KB` after Reader shared-cache release. A new
+one-shot deep tier may call that same audited release only after normal Reader
+return cleanup fails, the Reader is quiescent, return-pending is armed, and a
+cold/incomplete section or image/grayscale-scratch miss marked heavy work.
+Fully cached normal page turns never arm it.
+
+The repeated image-miss stop/start sequence is retained. The log shows the
+connected heap shape returning to the same roughly `30.2/27.6 KB` state after
+each NimBLE stop/start, without monotonic NimBLE-only erosion. There is no
+safe event-driven coalescing point that avoids image semantics, so no change
+is made to that behavior.
+
+Stable Settings return now has one narrow, one-shot candidate: the global
+built-in `FontDecompressor` page/hot buffers. It runs only after a
+BluetoothSettings return has been armed and the Settings frame is stable; it
+does not clear SD-font ownership or UI lists. The observed `99.6/34.8 KB`
+case remains under the unchanged `98,304/36,852` admission floors until this
+reclaim is measured on hardware. Wi-Fi Settings remains a separate low-memory
+case and stays deferred; no stale Wi-Fi child owner was proven.
+
+`ReadingStatsActivity::StatisticsSnapshot` owns the day/book/achievement
+vectors and the per-book strings. The explicit Stats exit now releases that
+snapshot before child destruction, then releases only the rebuildable built-in
+font decompressor buffers, with diagnostics before/after each stage and at
+child destruction/RecentBooks resume. The retained RecentBooks local
+book/string copy is released only for the Stats child boundary and restored
+once before the parent shelf render; persistent store data is not reloaded from
+book metadata files.
+
+Bookmark capacity reclaim, Reader-exit shared-cache release, the renderer
+scratch decision, ImageBlock/PXC, Section semantics, Web settings, XTC,
+BLE-OFF behavior, and the `98,304` free / `36,852` largest-block floors remain
+protected. This pass is not flashed, committed, or pushed.
+
+The final offline `gh_release` build completed successfully after the source
+review: PlatformIO reports 61,396 bytes static RAM and 5,804,659 bytes linked
+flash. The physical X4 validation checklist remains outstanding.
+
+## Focused BLE stabilization pass — 2026-10-09
+
+The Settings BLE stop was caused by `SettingsActivity::bluetoothResourceSensitive()`
+being unconditionally true. Returning from `BluetoothSettingsActivity` therefore
+made the parent Settings screen a resource-sensitive activity, so the centralized
+lifecycle stopped NimBLE and had no stable parent-render event that could admit it
+again. The pass now arms a one-shot return on the child result, keeps BLE blocked
+through the Settings render, and admits it on the next event-driven lifecycle pass
+only after the render work is complete and the existing 98,304-free / 36,852-largest
+floors pass. BLE-off remains inert and `ensureStarted()` remains idempotent.
+
+The repeated `reader_caps_a ... bm=0/16 bytes=960` item is
+`EpubReaderActivity::cachedBookmarks`, a `std::vector<BookmarkEntry>` loaded by
+`loadCachedBookmarks()`. `BookmarkEntry` contains the two bookmark strings,
+percentage, and three cached position fields; the load path clears the vector and
+reserves 16 entries even when the bookmark file has no rows. Its uses are the
+quiescent diagnostics, menu visibility, load, add/remove/save, and current-page
+flag paths. The BLE-return cleanup now swaps only an empty vector at the existing
+one-shot quiescent boundary, after font/UI/CSS cleanup, and rechecks admission once.
+Live bookmarks are never released; the vector rebuilds lazily on the next load or
+bookmark action. The physical expectation is up to 960 bytes reclaimed.
+
+The RecentBooks-to-Reader trace is now logged at request, before and after outgoing
+RecentBooks destruction, before and after Reader shell entry, before and after
+EpubReader entry, and after the first render boundary. The outgoing activity already
+dies before EPUB/Section construction; the precise safe ownership fix releases only
+the rebuildable `recentBooks` vector during `RecentBooks::onExit()` before thumbnail
+source invalidation. No global shelf-cache purge was added. The fragmented case
+remains safely deferred unless physical logs show a largest-block improvement.
+
+ImageBlock/PXC behavior, Section build/suspend/cache semantics, Web settings, the
+40-row scratch, Reader exit cleanup, XTC activity-specific safety, and BLE floors
+remain unchanged.
+
+## Uncached section post-persist release — 2026-10-08
+
+After uncached section persistence, release builder-only state before BLE
+return admission; cached page behavior must remain unchanged. The audited
+section-local `BuildContext` owns the live HTML parser/Expat state, parser
+scratch, page LUT, build path strings, and temporary HTML ownership. These are
+destroyed after the committed `section.bin` swap; serialized pages retain the
+resolved text/image layout needed by the current Section. The shared CSS
+parser's rules are cleared at the same boundary, and its empty hash-bucket
+capacity is now released only after the build context is gone. No live CSS
+rules, current page, current Section, image state, font cache, or 40-row
+scratch is released here. `section_post_persist_before_release` and
+`section_post_persist_after_release` report the build-context and CSS-capacity
+heap deltas. BLE floors remain 98,304 free / 36,852 largest; return-pending is
+still one-shot and event-driven.
+
+## BLE return polish — 2026-10-08
+
+The restored 1.6.3 ImageBlock/PXC source-extraction, decode, draw, and cache
+pipeline is protected and remains outside this BLE-only pass. BLE may stop
+temporarily for heavy Reader work, but an enabled session that was running and
+connected is now explicitly marked for automatic return after Reader becomes
+quiescent.
+
+The return policy is one-shot and event-driven per BLE-return event: normal
+Reader idle disposable-font cleanup must complete first, admission must still
+fail, and only then may the bounded return cleanup release UI-fallback font
+glyph arenas and empty CSS parser bucket capacity. There is no per-page
+reclaim, timer, polling loop, repeated retry, or current-page/section/image
+purge. A fragmented failure remains pending quietly until BLE lifecycle state
+creates a fresh return event. The 98,304 free-heap and 36,852 largest-block
+floors are unchanged; diagnostics distinguish free-heap shortage from
+largest-block fragmentation. The reusable 40-row grayscale scratch is retained
+because releasing it would force a new allocation on a connected cached turn;
+it is not counted as expected recovery.
+
+BLE-OFF remains inert: no return-pending state, BLE thresholds, return cleanup,
+or NimBLE work affects ordinary Reader behavior. Reader exit, sleep, Wi-Fi,
+duplicate-connect joining, and one-shot BluetoothSettings deferral remain
+separate lifecycle paths.
+
+## Regression restoration — 2026-10-08
+
+Roosevelt EPUB images physically worked before the BLE coexistence work. This
+pass restores `ImageBlock.cpp/.h` to the canonical 1.6.3-compatible pipeline:
+source resolution/extraction, tolerant historical PXC replay, original decode,
+draw, and cache generation. The later exact-geometry/strict-length policy,
+temporary-cache promotion, cache-invalidating replay changes, and image-path
+telemetry were removed from the normal path. The P1 figure/full-page parser
+work remains layout-only: it chooses page geometry and caption/page breaks;
+the canonical ImageBlock still owns JPEG/PNG/PXC loading and drawing.
+
+BLE remains a lifecycle concern. The FreeInk host's synchronous in-flight
+connection claim is retained, application callers now report join/no-op rather
+than duplicate starts, and BluetoothSettings render deferral is coalesced to a
+single pending event until render completion. The latest on-demand Reader
+glyph experiment was reverted to the proven normal font scan/prewarm behavior.
+Reader-exit shared font/cache/scratch release, the reusable 40-row scratch,
+BLE-OFF inertness, and the 98,304 / 36,852 admission floors remain protected.
+
+Web `/api/settings` bounded diagnostics/streaming remain separate and were not
+changed by this image restoration. Physical Roosevelt validation and release
+sign-off remain pending for the rebuilt binary.
+
+## Stabilization correction — 2026-10-08
+
+The physical candidate `9A23C1D70A161F8492E43F349AD036A88B6EB1D266F776112DCD1A40C04DF1D5`
+regressed BLE-connected cached Reader turns. Its `reader_cached_reclaim` records
+showed zero bytes reclaimed and then deferred BLE stops, so that latest
+pre-render reclaim experiment is being removed. The previous cached-page path,
+40-row renderer scratch, Reader-exit shared-cache release, event-driven
+re-admission, sleep cleanup, and unchanged 98,304 / 36,852 floors remain in
+scope.
+
+The on-device BluetoothSettings bug was traced to the parent Settings activity
+remaining on the activity stack and keeping global BLE admission sensitive.
+BluetoothSettings now ignores only that lightweight Settings parent after its
+own render work is quiescent; a Reader parent remains protective. Manual paired
+or scan connect requests join an existing in-flight request instead of issuing
+duplicate `connect_start` attempts.
+
+Roosevelt images still show placeholders, but the latest physical log contains
+no `EPUBIMG`, `.pxc`, or source-recovery records. Diagnostics now cover the
+parser's pre-PXC decisions and every ImageBlock/layout placeholder, so the
+actual failing source/format/dimension/cache decision can be identified. The
+self-healing PXC path is not claimed physically executed until those records
+appear.
+
+Web Transfer/browser Settings remains a P0 hard-reset path. Repeated missing
+`thumb_226.bmp` probes are now covered by a fixed-size, session-scoped negative
+cache on both library and thumbnail routes, with no synchronous thumbnail
+generation. `/api/library`, `/api/library/cover`, `/api/stats`, and both
+`/api/settings` methods emit bounded begin/complete heap and client diagnostics.
+The current ELF maps MEPC/RA to `esp_cpu_wait_for_intr`, saved PC to
+`esp_system_reset_modules_on_exit`, and MTVAL into FreeRTOS `prvIdleTask`; this
+does not prove WebServer ownership and remains compatible with a panic/reset
+after another task corrupted memory or stack.
+
 ## Project goal
 
 Folio Nooir is a bookshelf-focused firmware fork of CrossPoint Reader for
@@ -677,3 +880,452 @@ The goal is: **make Nooir look much more like Nooir while keeping it lightweight
 The detailed Bluetooth Remote Input research, HID-capture architecture, firmware comparison notes, memory/power test matrices, evidence gaps, and future implementation sequence are preserved in [`docs/BLE_REMOTE_RESEARCH.md`](docs/BLE_REMOTE_RESEARCH.md). Treat that dossier as research input only; re-audit upstream refs before implementation because BLE stacks and firmware branches may change.
 
 The BLE research is intentionally ecosystem-wide rather than limited to obvious page-turner forks. See [`docs/BLE_ECOSYSTEM_SURVEY.md`](docs/BLE_ECOSYSTEM_SURVEY.md) for the 47-entry catalog screen, additional BLE lineages, transferable memory/power/input patterns, and the expanded future audit queue.
+
+## 1.6.4 stabilization continuation — 2026-10-08
+
+The reconstructed local checkout is on `reconstruct/folio-nooir-1.6.4` at
+`d9af683b6f9758c479fefe43aaecc0460c0b5803` (`Prepare Folio Nooir 1.6.4
+release candidate`). This commit is the pre-final-fix safety checkpoint. The
+working tree must not be reset or discarded; `sdkconfig.gh_release` is the
+intentional untracked build configuration.
+
+The unconditional post-input BLE teardown was removed before this checkpoint.
+Physical evidence confirms the important cached-page behavior: BLE reconnects,
+normal cached EPUB pages render, and BLE remains connected. Do not restore a
+BLE stop after every page turn. The remaining BLE issue was the 8,000-byte
+grayscale strip scratch allocated per tiled grayscale render while NimBLE was
+resident, followed by poor largest-block recovery. The final-fix direction is
+to reserve one reusable renderer-owned strip scratch during reader heavy setup,
+reuse it for cached pages, release it before section/EPUB teardown, and only
+gate a render when the scratch cannot be guaranteed. A local fallback remains
+bounded and narrow.
+
+Measured BLE admission floors remain unchanged: 98,304 bytes total free heap
+and 36,852 bytes largest free block. Physical logs show that total free heap
+can recover to roughly 98–102 KiB while the largest block remains around
+34,804, 25,588, or 21 KiB; this is why cold admission can correctly fail. The
+source proves existing rebuildable font/page/CSS cleanup boundaries, but the
+exact allocator owner of every surviving hole is not proven by source alone.
+BLE intent must remain wanted/pending after a failed floor check and be
+reevaluated at real lifecycle transitions, never by polling.
+
+BLE OFF is a required BLE-less mode: no NimBLE init, connection/reconnect,
+admission-floor decision, pending work, BLE-specific render teardown, or
+BLE-only memory reservation may affect the device. Turning BLE off at runtime
+must stop NimBLE, release its resources, and clear pending intent; turning it
+back on may re-enter normal admission. Home, Recent/Library, Reader,
+Reader Settings, main Settings, sleep, Transfer, Web Settings, and Reading
+Stats must remain ordinary BLE-less behavior.
+
+The Web Settings and Reading Stats symptom is a full device reset, not a
+normal Wi-Fi disconnect. Two patterns remain recorded: a degraded post-Reader
+heap with repeated missing `thumb_226.bmp` activity, and a fresh-boot
+immediate-Transfer reset before the normal server memory log. The pre-final-
+checkpoint `gh_release` ELF matched the reported SHA256 prefix `b27d8dfff`;
+`0x40389af6` and `0x40389ae6` resolve to `esp_cpu_wait_for_intr`, while
+`0x4038e3b0` resolves to FreeRTOS `prvIdleTask`. The rebuilt candidate is a
+different ELF and must not be used to decode that older panic. These addresses
+do not identify an application WebServer root cause without the panic
+reason/backtrace. Existing route streaming and ownership fixes remain
+preserved. WebSocket shutdown now clears
+the static callback trampoline before synchronous close callbacks, and missing
+thumbnail 404s receive a short deterministic negative cache while valid cover
+retrieval remains intact.
+
+Do not call this release-ready until the new candidate passes physical BLE-on
+cached-page, heavy-section/pending re-admission, BLE-OFF, and Web UI/Transfer
+reset tests. Do not flash, commit, or push the final fixes automatically.
+
+## 1.6.4 second stabilization pass — 2026-10-08
+
+The first reusable-scratch candidate removed the physical `OOM: grayscale strip
+scratch (8000 bytes)` failure and improved largest-block recovery to about
+57,332 bytes after CSS cleanup. It still left Reader idle at roughly 97,756
+bytes free / 57,332 largest, just 548 bytes below the unchanged BLE admission
+floor of 98,304 bytes. Reader destruction returned about 9.3 KiB, consistent
+with the session-long 8,000-byte scratch plus activity overhead; the source
+confirms that the scratch was `displayWidthBytes * 80` rows.
+
+The second candidate changes only the Reader strip geometry: the existing
+band loop now uses 40 rows, so the reusable allocation is
+`displayWidthBytes * 40` (about 4 KiB on the 800-pixel panel). The renderer
+already handles arbitrary final bands and streams each band to the controller,
+so AA/polarity behavior is unchanged while idle Reader should recover about
+4 KiB of useful margin. The session scratch is still released before Reader
+section/EPUB teardown. BLE floors and lifecycle semantics are unchanged.
+
+The post-`connected_idle` `connect_start` was audited. The automatic host poll
+queues a reconnect only when the live host is not connected, not already
+connecting, and not scanning, after the permission callback allows it. The
+application cold-start path is also gated by `!BleHid.isRunning()`. With no
+complete log proving a redundant request, no BLE lifecycle rewrite or
+speculative reconnect change was made; a later `connect_start` remains either
+a real link-drop recovery or a deliberate direct settings request until the
+physical log distinguishes those cases.
+
+Sleep overlay PNG allocation remains behaviorally unchanged. Source inspection
+shows PNGdec embeds a 32 KiB zlib window, inflate state, a 16,416-byte row
+buffer, palette, and file buffer in each `PNG` object. That explains why a
+contiguous decoder allocation can fail near a 57 KiB largest block despite
+102–108 KiB total free, but the exact capability pool is not yet physically
+proven. Decoder-failure telemetry now reports `sizeof(PNG)`, configured row
+buffer, and free/largest values for default, internal 8-bit, DMA-capable, and
+generic pools. No custom sleep image support was removed or blindly shrunk.
+
+This candidate remains not release-ready until physical validation confirms
++Reader idle margin/BLE re-admission, repeated section transitions, BLE OFF
++inertness, the duplicate-connect interpretation, and sleep PNG diagnostics.
+
+### Third stabilization pass — 2026-10-08
+
+The latest physical run confirms that the 40-row reusable grayscale strip
+removed the old 8 KiB scratch OOM and allows BLE to reconnect inside Reader
+after the initial CSS cleanup (about 101,852 free / 65,524 largest). It also
+shows a separate heap-shape failure: repeated BLE-connected cached/heavy page
+turns progressively reduce the largest block, with the connected session
+reaching about 5,612 bytes minimum free. After BLE stop and idle cleanup,
+total free recovers but the largest block remains fragmented.
+
+The strongest physical signature is an exact approximately 30,708-byte
+largest-block ceiling across Reader exit: section release, EPUB release,
+disposable-font release, and activity destruction all leave that ceiling in
+place. RecentBooks then settles around 90–94 KiB free / 30,708 largest,
+versus a clean baseline near 103 KiB / 65.5 KiB. Reader exit therefore was
+not a hard recovery boundary. The 59,456-byte sleep-PNG decoder allocation
+failure is now treated as a consequence of this fragmentation, not an
+independent PNG design problem.
+
+Source ownership audit identifies the most credible pinning owner: the global
+SdCardFontSystem/font-manager retains Reader-built advance tables and lazy
+kern/ligature data after disposable font cleanup. These allocations are
+created lazily by page layout, can occur while NimBLE is resident, and outlive
+both bleinput::stop() and EpubReaderActivity destruction. The static
+ImageBlock pixel cache and global renderer state remain monitored suspects,
+but their normal render guards release their temporary buffers. Physical
+attribution to the exact 30,708-byte block is not yet proven until the new
+before/after diagnostics are captured.
+
+The lifecycle fix adds an explicit Reader-cache release after section/EPUB,
+disposable-font, renderer scratch, and ImageBlock teardown. It clears
+Reader-built font advance/kern/ligature/mini caches while preserving font
+objects, coverage, registrations, and rebuildability. Reader exit now logs
+heap shape at BLE-connected cached render, BLE stop, idle cleanup, every exit
+stage, shared-cache release, activity destruction, and RecentBooks activation.
+The NimBLE source audit already shows end() disconnects, deletes the client,
+and calls NimBLEDevice::deinit(true); no BLE rewrite is justified without
+physical before/after evidence.
+
+### 1.6.4 fourth stabilization pass — 2026-10-08
+
+The next physical evidence to address is BLE coexistence inside Reader, not
+Reader exit: connected idle is commonly about 29–32 KiB free and cached/light
+turns can consume more than 10 KiB, fragmenting the largest block and causing
+BLE stop/reconnect cycles. The source audit found no retained previous Page
+object to discard. This pass therefore adds a BLE-ON/runtime-only, headroom-
+gated reclaim before cached/light renders. It releases a residual ImageBlock
+pixel replay slot, previous-page footnote/highlight vector capacity, and
+rebuildable SD-font glyph/bitmap/overflow arenas. Section layout, current page
+state, EPUB ownership, CSS/parser state, stable-page data, font registration,
+coverage, and essential metadata remain resident. If the local runtime policy
+still fails after that bounded reclaim, the existing event-driven BLE stop and
+render retry is used as the last resort. The cold admission floors remain
+unchanged at 98,304 free / 36,852 largest.
+
+BLE-OFF remains inert: the new policy is called only for an enabled, running
+BLE host and a cached/light page, with no BLE-specific reclaim, render gate, or
+fallback stop in the disabled path. It does not add polling or delays.
+
+The Roosevelt `img_9_13.pxc` / `img_9_14.pxc` evidence is an invalid-cache
+failure path, not proof that raw image size is too large. PXC v1 is the
+historical four-byte width/height plus exact 2-bpp payload format and has no
+separate version byte. Invalid geometry or exact-length mismatch now closes,
+removes, and reports the cache; the original EPUB source is resolved or
+re-extracted, decoded to the current page, written to a sibling temporary PXC,
+atomically promoted, and validated before reuse. Bounded per-session failure
+memoization remains in place. Diagnostics identify cache invalidation/removal,
+source extraction, decode format/dimensions/heap, cache promotion, and source
+render success. Hardware validation is still required to prove Roosevelt
+images render on the target.
+
+### Targeted stabilization continuation — 2026-10-08
+
+Physical evidence from candidate firmware SHA256
+`DB5CC1B2ED39022757CA5A524B703E90F4D9A167CA65353B00E3D826BD148F4E` and ELF
+SHA256 `291E92734A8C2E286E73242397397425C6A6DB5D53EED6E3D1D7F7EB32117AC7`
+shows cached BLE-connected Reader rendering falling to 1,128 bytes and later
+704 bytes minimum free heap, then recovering at idle to roughly 29 KiB free /
+26 KiB largest. Treat this as transient render pressure. BLE direct connection
+inside BluetoothSettings passes; duplicate `connect_start` remains. Roosevelt
+reaches `decision=image_block` for `OEBPS/image_rsrc587.jpg` with an existing
+464x287 PXC cache, but the downstream replay/draw result is still unknown.
+The `/api/settings` route begins near 34.7 KiB free / 22.5 KiB largest and
+resets before completion. Reader-exit recovery still passes.
+
+The continuation skips only the expensive font scan/prewarm on BLE-connected
+cached pages and preserves the original BLE-OFF path. It claims BLE connection
+ownership synchronously, logs one `connect_join_inflight`, traces PXC replay to
+actual framebuffer writes, requires exact cache geometry/length, and replaces
+the settings GET dynamic JSON document with a reusable 256-byte direct stream.
+The Reader-exit boundary, shared cache release, 40-row scratch, BLE floors
+98,304 / 36,852, BLE-OFF inertness, thumbnail negative cache, and existing
+P0/P1/P2 fixes are not to be broadened or removed. Hardware validation remains
+required before any release decision.
+
+### Reader advance-workspace / Web teardown follow-up — 2026-10-09
+
+The latest X4 report identifies a late-Reader `SdCardFont` topology failure.
+`buildAdvanceTableRange()` previously requested a fixed 4,098-entry
+`uint32_t` array (16,392 bytes) once per paragraph during uncached layout,
+regardless of paragraph length. It now sizes that transient workspace to the
+UTF-8 byte upper bound (capped at the unchanged 4,096 unique-codepoint limit),
+checks the largest block before allocation, and memoizes a failed size per font
+until topology improves or an explicit font-cache release occurs. No advance
+table or mini-font cache is purged on ordinary cached page turns. Mini interval
+allocation failure leaves the font on its stub view; its failed interval arena
+may be gone while unrelated retained glyph/bitmap arenas remain, and later
+glyph/read-order failures perform the existing full mini-arena cleanup.
+
+Web teardown is now instrumented by owner (HTTP/request handlers/WebDAV,
+WebSocket clients, UDP, upload/global state, DNS, mDNS, Wi-Fi scan state, and
+radio deinitialization). Arduino's `WIFI_MODE_NULL` implementation already
+stops and deinitializes the ESP Wi-Fi driver; no second raw deinit is added.
+Home/RecentBooks transitions prepare this teardown before constructing the
+replacement activity, and ActivityManager logs the post-stack
+`exclusive_exit_clean` boundary. BLE remains Web-exclusive through teardown and
+replacement UI entry.
+
+`GET /api/settings` now walks static descriptors by reference and serializes
+the dynamic sleep/font options directly, avoiding per-request copied
+`SettingInfo` vectors and captured family-name copies. It retains the fixed
+256-byte writer and exact Content-Length pass. Its Web-only admission floor is
+20 KiB free / 8 KiB largest; the physical 10-refresh and full Web-exit checks
+remain outstanding. This source pass does not alter EPUB image/PXC, section
+build/suspend/cache semantics, XTC, BLE floors, or BLE-OFF behavior. The
+separate BLE HID canonical-navigation changes in `MappedInputManager.cpp` and
+`OptionPopup.h` are preserved in the same working tree and included in the
+release build.
+
+While Web-exclusive mode is active, ActivityManager now skips its recurring SD
+UI-font load service; released fallback arenas are not recreated by the main
+loop. The normal loader resumes after Web teardown and replacement UI entry.
+Settings POST uses the same allocation-stable approach as GET by visiting base
+settings by reference and applying dynamic keys directly.
+
+### Physical stabilization follow-up — 2026-10-09
+
+The Stats/Calendar parent-return path had two distinct defects: ActivityManager
+held `RenderLock` while RecentBooks rebuilt state through a helper that
+re-entered that lock, and the saved shelf framebuffer could still be treated as
+valid after Stats had overwritten it. Restore now copies the in-memory
+RecentBooks store once, restores the selected tab/index, invalidates only
+rebuildable carousel sources, forces a fresh shelf frame, and keeps BLE gated
+until `displayBuffer()` completes. No persistent book metadata scan is added.
+
+`/api/settings` still uses a 256-byte application writer and exact Content-
+Length pass, but chunks now go through synchronous `NetworkClient::write()`;
+short writes stop the route instead of allowing descriptor generation to
+continue after transport backpressure. Arduino-ESP32's lwIP headers mark
+`SO_SNDBUF` unimplemented and do not expose queued-byte depth, so diagnostics
+report the unavailable transport metric rather than pretending the queue is
+bounded by a socket option. The route retains its 20 KiB / 8 KiB Web-only
+admission guard.
+
+Web exit explicitly closes the active HTTP socket before destroying handlers,
+and records whether the default STA/AP `esp_netif` handles actually disappear
+after Wi-Fi deinit. The ESP-NETIF/TCP-IP core is process-lifetime; do not call
+the unsupported global deinitializer to chase free-heap readings. Whether the
+remaining physical Web-exit deficit is TIME_WAIT/TCP state or another lower
+layer owner still requires X4 evidence; the source now exposes the active
+client and netif boundaries without delaying or polling.
+
+SD-font render scopes now retain mini interval/glyph/bitmap/kern capacities;
+the old low-free-heap scope reset caused repeated release/rebuild on cached
+renders. Kern-row scratch is stack-bounded, failed kern/mini/advance
+allocations are memoized to an explicit retry generation, and capacity growth
+preserves the old arena if replacement allocation fails. `shrink_to_fit()` was
+removed from the page prewarm scope. At Reader exit, the selected Reader-size
+font's global coverage owner is detached unless it is also an 8/10/12-point UI
+fallback; RecentBooks' separate UI fallback fonts remain registered. The next
+Reader entry reloads the selected size once. Physical heap attribution and
+snappiness still require target validation.
+
+The reported eight-page pause is consistent with the existing five-page
+Reader lookahead window: the builder intentionally waits for reading to advance
+before extending farther. `SCT build_wait` now identifies `reader_window` vs
+heap gates; no section persistence/build semantics changed. The prior
+input-sized advance workspace fix remains intact. No image/PXC, XTC, BLE floor,
+or BLE-OFF policy changes are part of this follow-up.
+
+Final offline `gh_release` build succeeded on 2026-10-09. Reported static RAM
+usage is 61,396 / 327,680 bytes (18.7%); flash usage is 5,814,185 / 6,553,600
+bytes (88.7%). The build output and copied `artifacts/firmware.bin` match.
+Physical validation remains required, especially Stats/Calendar usability,
+Web transport minimum heap and post-exit networking topology, and Reader SDCF
+stability/exit topology.
+
+## Paused stabilization continuation — 2026-10-12
+
+The working tree is still based directly on `d9af683b6f9758c479fefe43aaecc0460c0b5803`;
+preserve all existing edits and the intentionally untracked `sdkconfig.gh_release`,
+`src/util/ReaderRenderBudget.h`, and `work/` contents. Do not flash, stage,
+commit, push, or reset. The user chose one-shot NTP on every station Wi-Fi
+session regardless of the old opt-out. The clock now uses one UTC system epoch;
+valid Weather local timestamps plus their returned UTC offset can initialize
+that same epoch, and NTP is latched once per Wi-Fi session and stopped after
+its bounded attempt. Weather remains optional/daily. The obsolete visible
+clock opt-out was removed while the persisted field and `/api/clock-weather`
+compatibility key remain; old POST values are ignored. No clock-tick flash
+writes or Wi-Fi-only-for-time path was introduced.
+
+Clock reads/writes now share a small HAL mutex because the render and main
+tasks can observe/update the shared epoch concurrently. Wi-Fi event callbacks
+only enqueue state; the normal event path and Wi-Fi-selection handoff run the
+sync outside the callback. Web/Transfer's main-task HTTP handling remains
+synchronous, so a new station session can still occupy up to the existing
+five-second NTP bound; physical Web-session validation must check this.
+
+Sleep is now an explicit heap-recovery boundary before artwork/PNG decode. It
+logs and releases only existing reconstructible owners: disposable renderer
+font caches, Reader/shared SD-font layout caches and unreferenced Reader-size
+font ownership, ImageBlock's existing render cache, and the reusable grayscale
+strip scratch. It does not change PNG/PXC/ImageBlock decode semantics or the
+framebuffer. The Reader scratch is consistently 40 rows at reservation and
+use (about 4 KiB on the 800-pixel panel); Reader exit also tears down section,
+EPUB, SDCF Reader caches/coverage owner, ImageBlock cache, and scratch. These
+are source-level lifecycle fixes, not proof of restored physical heap shape.
+
+BLE cold-admission floors remain exactly 98,304 free / 36,852 largest; no
+admission check runs for BLE-OFF Reader work. Defensive stop is inert when the
+host is already stopped, and an OFF/no-host Web session does not create a BLE
+exclusive gate or emit sleep stop diagnostics. Host-library source confirms
+poll returns immediately when `begun_` is false and `end()` clears the queued
+key ring during real shutdown. The 40-row scratch matches the tiled render's
+strip size; its reusable allocation is tried before any render-time fallback.
+
+The Web Settings/Reading Stats symptom remains a full-reset report, not a
+confirmed Wi-Fi disconnect. The only local `.pio` ELF hashes to
+`43e31f8d5634661b4b435ba8b7de9e9d894c3ab1c10a7dbd151d0f568963689d`, which
+does not match the supplied panic prefix `b27d8dfff`; no other ELF is present
+in the checkout. Do not symbolicate that panic against this ELF. Panic class
+and root cause remain unproven. Source traces show synchronous WebServer
+handlers, parent-owned activity lifetime, server-owned route closures, and
+ordered server/client/WebDAV/WebSocket/Wi-Fi teardown; Settings/Stats routes
+do not call Wi-Fi disconnect. Preserve the streamed Stats rows, existing
+cover display, and bounded 24-entry/five-minute missing-thumbnail cache.
+
+The current source has not yet had the requested final build. Run
+`git diff --check`, offline-only available static/tests, then exactly one
+`pio run -e gh_release` when the tree is coherent. Record BIN/ELF/MAP paths,
+sizes and SHA256, app-slot/flash and static DRAM usage, NimBLE link proof,
+warnings and final Git status. Never flash automatically. Physical X4 BLE,
+BLE-OFF, sleep-PNG, Stats/Calendar, Web Settings/Stats/Transfer, thumbnail,
+upload, and Web-exit checks remain mandatory; do not mark release-ready before
+those tests pass.
+
+### Final source/build pass — 2026-10-12
+
+This section supersedes the preceding build-pending paragraph.
+
+The final `gh_release` build succeeded. RAM is 61,428 / 327,680 bytes
+(18.7%); app slot is 5,820,533 / 6,553,600 bytes (88.8%). BIN:
+`artifacts/firmware.bin`, 5,834,688 bytes, SHA256
+`2A4C06489D1F8CC3782DC2F2FA3A706DB6EC0F56426D8DCD13271FF436370E78`.
+ELF: `.pio/build/gh_release/firmware.elf`, 81,625,368 bytes, SHA256
+`259744C6D47D412E95BB208EEDC5DADFA7E599984944A739010BED1D63728F2C`.
+MAP: `.pio/build/gh_release/firmware.map`, 22,074,775 bytes, SHA256
+`A7D8FB12E81FB516213EC1DCB1C4067A760337333873BFDD8173A0B724C95F1A`.
+The linked ELF contains `BleKeyboardHost::begin/poll/end`,
+`NimBLEDevice::init`, and `nimble_port_init`. No build errors; the existing
+`CarouselTheme.cpp` explicit-`Rect` constructor warning remains. The first
+PlatformIO invocation stalled in its Windows cp1252 output thread; the same
+incremental build completed with UTF-8 output in 4m53s. No flash, stage,
+commit, or push was performed. Physical X4 tests remain the release gate.
+Automatic NTP reuses HalClock's existing bounded wait (up to five seconds) on
+the main task; a Wi-Fi reconnect during an active Web session may pause request
+handling for that bound. The old approximately 2.7 KiB Web-exit heap decrease
+still has no source-proven owner; use the new per-owner physical checkpoints.
+
+### Resumed source pass — 2026-10-12 (final build pending)
+
+The local checkout remains the source of truth at
+`d9af683b6f9758c479fefe43aaecc0460c0b5803`, branch
+`reconstruct/folio-nooir-1.6.4`; preserve all existing dirty/untracked work.
+The unconditional post-input BLE stop remains removed, and physical cached
+Reader pages have already proved they can render while BLE stays connected.
+
+The BLE Settings-row defect was in `MappedInputManager::bleEdge`: the
+NavNext/NavPrevious cases handled PageForward/PageBack and side aliases but
+omitted the direct canonical BLE edge. Direct canonical actions are now
+consumed once through that same logical path; physical side mapping and Reader
+page turns are unchanged. Reader return recovery now rechecks Level 1 after
+its disposable font/empty CSS/bookmark releases, then may release the
+renderer-owned grayscale strip exactly once at an idle boundary if admission
+still fails. The strip is 8,000 bytes on the tested path; the existing
+render-priority path stops BLE before rebuilding it. Cold BLE floors stay
+98,304 free / 36,852 largest. `render_work_pending_or_inflight` is an explicit
+queued/in-flight-work diagnostic, not a static activity label.
+
+The 34,804 largest-block topology cause is still unproven. Targeted 8 pt font
+coverage allocation/release pointer logs were added; the known 2,064-byte
+coverage total remains only a hypothesis until X4 logs correlate those owners
+with actual largest-block recovery. Sleep now also releases rebuildable
+interface-font glyph/layout caches before custom PNG decode while retaining
+font coverage ownership.
+
+The Web Settings symptom remains a full device reset, not an ordinary Wi-Fi
+disconnect. The current panic prefix `259744c6d` matches the pre-change local
+ELF SHA256 exactly. The bundled Windows addr2line binary cannot launch
+(`Illegal System DLL Relocation`), but pyelftools resolved the exact ELF DWARF
+rows: MEPC `0x40389af6` -> `esp_cpu_wait_for_intr`, `cpu.c:64`; RA `0x40389ae6`
+-> the same function, `cpu.c:57`; MTVAL `0x4038e3b0` -> `prvIdleTask`,
+`tasks.c:4576`; saved PC `0x4038c1e0` -> `esp_restart_noos`,
+`system_internal.c:115` (`ESP_INFINITE_LOOP`). The idle-task address lies in
+deleted-task cleanup, and its idle hook calls the CPU wait function. The panic
+reason/full backtrace is absent, so the exception class and application/Web
+root cause remain unproven. The saved PC is not
+`esp_system_reset_modules_on_exit`, which begins at `0x4038c1e2`.
+
+`NetworkClient::write()` accepts bytes into the lwIP send path after a
+socket-writable check; it does not prove remote ACK, and its `flush()` clears
+RX data rather than draining TX. The exact TX queue depth is unavailable. The
+bounded Settings serializer remains, but the prior 9,489-byte response showed
+about 24,548 bytes of transient heap pressure. The Web UI now fetches
+sequential descriptor pages, the old full-array API is retained behind a
+response-size heap budget, and per-write requested/accepted bytes plus
+before/after heap/client diagnostics are logged. This is source-level risk
+reduction, not physical proof of stable repeated requests.
+
+The Stats return/streaming behavior and unified UTC NTP/Weather clock path
+remain preserved. NTP is one-shot on every existing Wi-Fi session, even when
+the former auto-clock opt-out is Off; Wi-Fi is never enabled solely for NTP,
+and no periodic polling is added. BLE-OFF continues to bypass host/admission
+work in source; hardware BLE-OFF acceptance remains pending. Run source review,
+`git diff --check`, available offline checks, then exactly one final
+`gh_release` build. Do not flash, stage, commit, push, or call 1.6.4 release
+ready before physical X4 validation.
+
+Latest Settings BLE row-navigation report: `selectedSettingIndex == 0`
+highlights the category tabs; positive indices highlight list rows, and the
+option popup consumes input first. Continuous tab changes are gated to tab
+focus because `ButtonNavigator` suppresses the matching release after a
+continuous move. PageForward/PageBack BLE aliases remain; this is not an
+alias-only fix. X4 must verify row steps, one-shot Confirm/Back, popup movement,
+and unchanged physical side-button/Reader behavior.
+
+The Reader cached-render largest-block budget now includes the full grayscale
+strip allocation, so after a targeted Level-2 release it will not treat a
+smaller contiguous block as sufficient to rebuild the strip.
+
+Final `gh_release` build succeeded on 2026-10-12 (Python 3.12, UTF-8 mode).
+`artifacts/firmware.bin`: 5,837,552 bytes, SHA256
+`32B4BDC1F41031F77FFAE5793B9A037FCC253A573A8D960289F3E81EA578DA92`;
+ELF: 81,633,764 bytes, SHA256
+`254771284DC92529245C470ADBEB5111690504691B53A873A60A4AE70DD373B3`;
+map: 22,076,112 bytes, SHA256
+`CCBA54009D157B4F11611963D9B7C4A25AB0BE0558121C2E30A17D2B7333B561`.
+Linked usage is 61,428/327,680 B RAM and 5,823,409/6,553,600 B app slot.
+The map/symbol table contains BleKeyboardHost and NimBLE functions. No CMake,
+CTest, or host C++ compiler is available for offline gtests; the Settings page
+JavaScript syntax check and `git diff --check` pass. No flash, commit, or push
+was performed. This remains a physical-validation candidate, not a
+release-ready build.

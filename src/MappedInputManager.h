@@ -103,6 +103,11 @@ class MappedInputManager {
   mutable unsigned long touchHeldOverrideAt = 0;
   bool blePressEdge[kButtonCount] = {};
   bool bleReleaseEdge[kButtonCount] = {};
+  bool bleHeld[kButtonCount] = {};
+  unsigned long bleHeldSince[kButtonCount] = {};
+  bool bleActiveBinding[kButtonCount] = {};
+  uint8_t bleActiveKinds[kButtonCount] = {};
+  uint8_t bleActiveValues[kButtonCount] = {};
   bool bleActivityThisFrame = false;
   bool bleCaptureMode = false;
   bool bleHasCaptured = false;

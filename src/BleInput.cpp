@@ -5,6 +5,7 @@
 #include <Logging.h>
 #if FREEINK_CAP_BLE_HID_HOST
 #include <WiFi.h>
+#include <esp_heap_caps.h>
 #endif
 
 #include <cstdio>
@@ -40,6 +41,10 @@ uint32_t g_bleLowFreeHeap = UINT32_MAX;
 uint32_t g_bleLowLargestFreeBlock = UINT32_MAX;
 std::atomic<bool> g_lifecycleReevaluationPending{true};
 std::atomic<bool> g_reAdmissionPending{true};
+std::atomic<bool> g_readerBleReturnPending{false};
+std::atomic<bool> g_readerBleReturnRetryBlocked{false};
+std::atomic<uint32_t> g_readerBleReturnGeneration{0};
+std::atomic<bool> g_webExclusiveActive{false};
 char g_pendingNotification[64] = {};
 bool g_notificationPending = false;
 bool g_noDeviceWindowActive = false;
@@ -76,6 +81,19 @@ const char* dispositionName(const InputDisposition disposition) {
       return "unmapped";
     default:
       return "decode";
+  }
+}
+
+const char* phaseName(const freeink::KeyPhase phase) {
+  switch (phase) {
+    case freeink::KeyPhase::Press:
+      return "press";
+    case freeink::KeyPhase::Repeat:
+      return "repeat";
+    case freeink::KeyPhase::Release:
+      return "release";
+    default:
+      return "unknown";
   }
 }
 
@@ -234,8 +252,17 @@ void setActivityContext(const char* name) {
 
 void requestLifecycleReevaluation() {
 #if FREEINK_CAP_BLE_HID_HOST
+  if (g_webExclusiveActive.load(std::memory_order_acquire)) {
+    g_reAdmissionPending.store(false, std::memory_order_release);
+    g_lifecycleReevaluationPending.store(false, std::memory_order_release);
+    return;
+  }
   if (SETTINGS.bluetoothEnabled) {
     g_reAdmissionPending.store(true, std::memory_order_release);
+    if (g_readerBleReturnPending.load(std::memory_order_acquire) &&
+        g_readerBleReturnRetryBlocked.load(std::memory_order_acquire)) {
+      return;
+    }
     g_lifecycleReevaluationPending.store(true, std::memory_order_release);
   } else {
     g_reAdmissionPending.store(false, std::memory_order_release);
@@ -266,6 +293,97 @@ void clearReAdmissionPending() {
 #endif
 }
 
+bool readerBleReturnPending() {
+#if FREEINK_CAP_BLE_HID_HOST
+  return SETTINGS.bluetoothEnabled && g_readerBleReturnPending.load(std::memory_order_acquire);
+#else
+  return false;
+#endif
+}
+
+void clearReaderBleReturnPending() {
+#if FREEINK_CAP_BLE_HID_HOST
+  g_readerBleReturnPending.store(false, std::memory_order_release);
+  g_readerBleReturnRetryBlocked.store(false, std::memory_order_release);
+#endif
+}
+
+uint32_t readerBleReturnGeneration() {
+#if FREEINK_CAP_BLE_HID_HOST
+  return g_readerBleReturnGeneration.load(std::memory_order_acquire);
+#else
+  return 0;
+#endif
+}
+
+void signalReaderBleReturnLifecycleEvent(const char* reason) {
+#if FREEINK_CAP_BLE_HID_HOST
+  if (!SETTINGS.bluetoothEnabled || !g_readerBleReturnPending.load(std::memory_order_acquire)) return;
+  const uint32_t generation = g_readerBleReturnGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+  g_readerBleReturnRetryBlocked.store(false, std::memory_order_release);
+  g_reAdmissionPending.store(true, std::memory_order_release);
+  g_lifecycleReevaluationPending.store(true, std::memory_order_release);
+  LOG_INF("BLEMEM", "stage=reader_return_event generation=%u reason=%.28s free=%u largest=%u",
+          static_cast<unsigned>(generation), reason ? reason : "lifecycle", static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+#else
+  (void)reason;
+#endif
+}
+
+void blockReaderBleReturnRetry() {
+#if FREEINK_CAP_BLE_HID_HOST
+  if (g_readerBleReturnPending.load(std::memory_order_acquire)) {
+    g_readerBleReturnRetryBlocked.store(true, std::memory_order_release);
+    g_lifecycleReevaluationPending.store(false, std::memory_order_release);
+  }
+#endif
+}
+
+void allowReaderBleReturnRetry() {
+#if FREEINK_CAP_BLE_HID_HOST
+  g_readerBleReturnRetryBlocked.store(false, std::memory_order_release);
+#endif
+}
+
+void setWebExclusive(const bool active) {
+#if FREEINK_CAP_BLE_HID_HOST
+  // BLE Off is the BLE-less runtime mode. A Web activity with no live host
+  // must not create a BLE-only lifecycle gate or pending-return state.
+  if (active && !SETTINGS.bluetoothEnabled && !BleHid.isRunning()) return;
+  const bool readerReturnWasPending = g_readerBleReturnPending.load(std::memory_order_acquire);
+  g_webExclusiveActive.store(active, std::memory_order_release);
+  if (active) {
+    g_reAdmissionPending.store(false, std::memory_order_release);
+    g_lifecycleReevaluationPending.store(false, std::memory_order_release);
+    // Web owns the radio and heap until its exit boundary. Preserve a Reader
+    // return intent across that boundary so a Web transition cannot erase the
+    // only event-driven re-admission request.
+    g_readerBleReturnRetryBlocked.store(false, std::memory_order_release);
+  } else if (SETTINGS.bluetoothEnabled) {
+    g_reAdmissionPending.store(true, std::memory_order_release);
+    g_lifecycleReevaluationPending.store(true, std::memory_order_release);
+    if (readerReturnWasPending) signalReaderBleReturnLifecycleEvent("web_exit");
+  }
+  LOG_INF("BLEMEM", "stage=web_exclusive active=%d reader_pending=%d generation=%u readmission=%d lifecycle=%d free=%u largest=%u",
+          active ? 1 : 0, g_readerBleReturnPending.load(std::memory_order_acquire) ? 1 : 0,
+          static_cast<unsigned>(g_readerBleReturnGeneration.load(std::memory_order_acquire)),
+          g_reAdmissionPending.load(std::memory_order_acquire) ? 1 : 0,
+          g_lifecycleReevaluationPending.load(std::memory_order_acquire) ? 1 : 0,
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+#else
+  (void)active;
+#endif
+}
+
+bool webExclusiveActive() {
+#if FREEINK_CAP_BLE_HID_HOST
+  return g_webExclusiveActive.load(std::memory_order_acquire);
+#else
+  return false;
+#endif
+}
+
  #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_DIAGNOSTICS
 void recordDiagnosticEvent(const char* format, ...) {
   if (!format) return;
@@ -280,7 +398,8 @@ void recordDiagnosticEvent(const char* format, ...) {
 
 bool connectionAdmissionAllowed() {
 #if FREEINK_CAP_BLE_HID_HOST
-  if (!SETTINGS.bluetoothEnabled || !activityManager.bluetoothShouldBeActive() || WiFi.getMode() != WIFI_MODE_NULL)
+  if (g_webExclusiveActive.load(std::memory_order_acquire) || !SETTINGS.bluetoothEnabled ||
+      !activityManager.bluetoothShouldBeActive() || WiFi.getMode() != WIFI_MODE_NULL)
     return false;
 
   const bool readerContext = activityManager.isReaderActivity();
@@ -311,6 +430,7 @@ void setBluetoothEnabled(const bool enabled) {
   resetNoDeviceWindow();
   requestLifecycleReevaluation();
   if (!enabled) {
+    clearReaderBleReturnPending();
     stop();
     SETTINGS.saveToFile();
     return;
@@ -334,6 +454,9 @@ void toggleBluetooth() {
 // (boot restore, settings toggle, reader toggle, sleep) is covered automatically.
 bool ensureStarted() {
 #if FREEINK_CAP_BLE_HID_HOST
+  // Settings OFF is the BLE-less runtime mode. Do not even emit admission
+  // diagnostics or reach the NimBLE begin path when the user has disabled it.
+  if (!SETTINGS.bluetoothEnabled) return false;
   BleHid.setConnectionPermissionCallback(&connectionAdmissionAllowed);
   // All start callers, including Bluetooth Settings, pass through this gate.
   // A Reader may remain on the activity stack while a modal settings screen is
@@ -400,8 +523,9 @@ bool ensureStarted() {
             ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 #endif
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_DIAGNOSTICS
-    recordDiagnosticEvent("reconnect_start src=begin addr=%.17s type=%u queued=%d", bond.addr,
-                          static_cast<unsigned>(bond.addrType), queued ? 1 : 0);
+    recordDiagnosticEvent(queued ? "reconnect_start src=begin addr=%.17s type=%u queued=1"
+                                 : "reconnect_join_inflight src=begin addr=%.17s type=%u",
+                          bond.addr, static_cast<unsigned>(bond.addrType));
 #endif
   }
   return started;
@@ -410,23 +534,65 @@ bool ensureStarted() {
 // Full teardown (NimBLE deinit), not just a link drop, so the BLE stack's RAM is
 // returned to the heap — otherwise memory-hungry work like EPUB inflate can't
 // allocate even after the user turns Bluetooth off.
-void stop() {
+void stopForReaderResourcePressure() {
 #if FREEINK_CAP_BLE_HID_HOST
-  const bool wasRunning = BleHid.isRunning();
-  if (wasRunning) g_suppressNextStopNotice = true;
+  const bool eligible = SETTINGS.bluetoothEnabled && activityManager.isReaderActivity();
+  if (eligible) {
+    const bool wasPending = g_readerBleReturnPending.exchange(true, std::memory_order_acq_rel);
+    g_readerBleReturnRetryBlocked.store(false, std::memory_order_release);
+    if (!wasPending) {
+      const uint32_t generation = g_readerBleReturnGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+      LOG_INF("BLEMEM", "stage=reader_return_armed generation=%u running=%d connected=%d connecting=%d free=%u largest=%u",
+              static_cast<unsigned>(generation), BleHid.isRunning() ? 1 : 0, BleHid.isConnected() ? 1 : 0,
+              BleHid.isConnecting() ? 1 : 0,
+              static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    }
+  }
+  requestLifecycleReevaluation();
 #endif
+  stop();
+}
+
+void stop() {
+#if !FREEINK_CAP_BLE_HID_HOST
+  return;
+#else
+  const bool wasRunning = BleHid.isRunning();
   resetNoDeviceWindow();
+  // Drop queued reports and decoder/held-key state even when the host has
+  // already stopped. Re-admission must begin with a clean input boundary so a
+  // stale press cannot leak into Reader, Settings, or a popup after reconnect.
+  BleHid.resetInputState();
+  // Sleep, Web, and other lifecycle boundaries may call stop defensively.
+  // If Settings already has BLE Off and the host is gone, keep the path
+  // genuinely inert: no NimBLE end call, power lock, or lifecycle log.
+  if (!wasRunning) return;
+  g_suppressNextStopNotice = true;
   const uint32_t beforeFree = static_cast<uint32_t>(ESP.getFreeHeap());
   const uint32_t beforeLargest = static_cast<uint32_t>(ESP.getMaxAllocHeap());
   const unsigned long startedMs = millis();
   HalPowerManager::Lock powerLock;
+#if FREEINK_CAP_BLE_HID_HOST
+  if (wasRunning) {
+    LOG_INF("HEAPSHAPE", "stage=ble_stop_before free=%u largest=%u min=%u internal8=%u/%u dma8=%u/%u",
+            static_cast<unsigned>(beforeFree), static_cast<unsigned>(beforeLargest),
+            static_cast<unsigned>(ESP.getMinFreeHeap()),
+            static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+            static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+            static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_8BIT)),
+            static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_8BIT)));
+  }
+#endif
   BleHid.end();
 #if FREEINK_CAP_BLE_HID_HOST
   if (wasRunning) {
-    LOG_INF("HEAPSHAPE", "stage=ble_stop free=%u->%u largest=%u->%u min_free=%u",
-            static_cast<unsigned>(beforeFree), static_cast<unsigned>(ESP.getFreeHeap()),
-            static_cast<unsigned>(beforeLargest), static_cast<unsigned>(ESP.getMaxAllocHeap()),
-            static_cast<unsigned>(ESP.getMinFreeHeap()));
+    LOG_INF("HEAPSHAPE", "stage=ble_stop_after free=%u largest=%u min=%u internal8=%u/%u dma8=%u/%u",
+            static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()),
+            static_cast<unsigned>(ESP.getMinFreeHeap()),
+            static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+            static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+            static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_8BIT)),
+            static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_8BIT)));
   }
 #endif
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_DIAGNOSTICS && FREEINK_BLE_HID_RAW_DIAGNOSTICS
@@ -438,10 +604,32 @@ void stop() {
                    static_cast<unsigned long>(ESP.getFreeHeap()),
                    static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 #endif
+#endif
 }
 
 void pollLifecycle() {
 #if FREEINK_CAP_BLE_HID_HOST
+  if (!SETTINGS.bluetoothEnabled) {
+    // Keep the disabled state inert: no BLE sampling, retry window, pending
+    // admission, stale notification, or lifecycle transition is carried into
+    // the next enabled session.
+    g_lifecycleKnown = false;
+    g_lastRunning = false;
+    g_lastConnected = false;
+    g_lastConnecting = false;
+    g_lastScanning = false;
+    g_lastDeviceCount = 0;
+    g_suppressNextStopNotice = false;
+    g_bleLowFreeHeap = UINT32_MAX;
+    g_bleLowLargestFreeBlock = UINT32_MAX;
+    g_notificationPending = false;
+    resetNoDeviceWindow();
+    g_reAdmissionPending.store(false, std::memory_order_release);
+    g_lifecycleReevaluationPending.store(false, std::memory_order_release);
+    g_readerBleReturnPending.store(false, std::memory_order_release);
+    g_readerBleReturnRetryBlocked.store(false, std::memory_order_release);
+    return;
+  }
   sampleHeap();
 #if NOOIR_BLE_DIAGNOSTICS && FREEINK_BLE_HID_RAW_DIAGNOSTICS
   serialRawReportDiagnostics();
@@ -477,6 +665,8 @@ void pollLifecycle() {
       char message[64];
       snprintf(message, sizeof(message), "Bluetooth connected: %.36s", BleHid.connectedName());
       queueNotification(message);
+      g_readerBleReturnPending.store(false, std::memory_order_release);
+      g_readerBleReturnRetryBlocked.store(false, std::memory_order_release);
     }
     if (g_lastConnected && !connected && running) recordDiagnosticEvent("disconnect reason=unreported");
     g_suppressNextStopNotice = false;
@@ -599,9 +789,10 @@ void recordDecodedKey(const freeink::KeyEvent& event, const uint8_t kind, const 
 #if FREEINK_CAP_BLE_HID_HOST
   appendRecord(DiagnosticType::Input, kind, value, mappedButton);
 #if NOOIR_BLE_DIAGNOSTICS
-  serialDiagnostic("input act=%.20s k=%u v=%02X p=%d map=%u d=%s reset=%d", g_activityName,
-                   static_cast<unsigned>(kind), static_cast<unsigned>(value), event.pressed ? 1 : 0,
-                   static_cast<unsigned>(mappedButton), dispositionName(disposition), inactivityReset ? 1 : 0);
+  serialDiagnostic("[INPUTDIAG] act=%.20s k=%u v=%02X phase=%s norm=%u:%02X action=%u d=%s reset=%d",
+                   g_activityName, static_cast<unsigned>(kind), static_cast<unsigned>(value), phaseName(event.phase),
+                   static_cast<unsigned>(kind), static_cast<unsigned>(value), static_cast<unsigned>(mappedButton),
+                   dispositionName(disposition), inactivityReset ? 1 : 0);
 #endif
 #else
   (void)event;

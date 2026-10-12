@@ -19,6 +19,12 @@
 
 namespace EpubDiagnostics {
 
+inline int activeSpineIndex = -1;
+inline int activePageIndex = -1;
+
+inline int currentSpineIndex() { return activeSpineIndex; }
+inline int currentPageIndex() { return activePageIndex; }
+
 #if NOOIR_EPUB_DIAGNOSTICS
 inline unsigned long phaseStartMs = 0;
 
@@ -99,6 +105,9 @@ struct Scope {
   const char* endStage;
   int spine;
   int page;
+  int previousSpine;
+  int previousPage;
+  bool restoresContext;
   unsigned long startedMs = 0;
 #if NOOIR_EPUB_DIAGNOSTICS
   HeapWindow heapWindow;
@@ -106,7 +115,12 @@ struct Scope {
 #endif
 
   Scope(const char* beginStage, const char* endStage, const int spine = -1, const int page = -1)
-      : beginStage(beginStage), endStage(endStage), spine(spine), page(page) {
+      : beginStage(beginStage), endStage(endStage), spine(spine), page(page),
+        previousSpine(activeSpineIndex), previousPage(activePageIndex), restoresContext(spine >= 0) {
+    if (restoresContext) {
+      activeSpineIndex = spine;
+      activePageIndex = page;
+    }
 #if NOOIR_EPUB_DIAGNOSTICS
     startedMs = millis();
     previousHeapWindow = activeHeapWindow;
@@ -122,6 +136,10 @@ struct Scope {
     if (previousHeapWindow) previousHeapWindow->sample(heapWindow.minFree, heapWindow.minLargest);
     activeHeapWindow = previousHeapWindow;
 #endif
+    if (restoresContext) {
+      activeSpineIndex = previousSpine;
+      activePageIndex = previousPage;
+    }
   }
 
   Scope(const Scope&) = delete;

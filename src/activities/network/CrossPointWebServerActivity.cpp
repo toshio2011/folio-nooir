@@ -2,21 +2,25 @@
 
 #include <DNSServer.h>
 #include <ESPmDNS.h>
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <WiFi.h>
+#include <Epub/blocks/ImageBlock.h>
+#include <esp_netif.h>
 
 #include <cstddef>
 
 #include "MappedInputManager.h"
 #include "NetworkModeSelectionActivity.h"
-#include "SilentRestart.h"
 #include "WifiSelectionActivity.h"
 #include "BleInput.h"
 #include "activities/network/CalibreConnectActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/QrUtils.h"
+#include "SdCardFontSystem.h"
+#include "activities/RenderLock.h"
 #include <TaskWatchdog.h>
 
 namespace {
@@ -59,9 +63,68 @@ int barsForRssi(int rssi, int currentBars) {
   while (bars > 0 && rssi < FALL_DBM[bars - 1]) bars--;
   return bars;
 }
+
+void logWebMemory(const char* stage) {
+  LOG_INF("WEBMEM", "stage=%s free=%u largest=%u min=%u", stage ? stage : "unknown",
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()),
+          static_cast<unsigned>(ESP.getMinFreeHeap()));
+}
+
+void logWebOwnerDelta(const char* owner, const size_t beforeFree, const size_t beforeLargest) {
+  LOG_INF("WEBMEM", "owner=%s free=%u->%u largest=%u->%u", owner ? owner : "unknown",
+          static_cast<unsigned>(beforeFree), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(beforeLargest), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+}
+
+bool logDefaultWifiNetifs(const char* stage) {
+  esp_netif_t* sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  esp_netif_t* ap = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+  LOG_INF("WEBMEM", "stage=%s wifi_sta_netif=%p wifi_ap_netif=%p tcpip_core=process_lifetime",
+          stage ? stage : "netif_state", sta, ap);
+  return sta == nullptr && ap == nullptr;
+}
+
+void releaseWebExclusiveRuntimeCaches(GfxRenderer& renderer) {
+  logWebMemory("exclusive_begin");
+
+  const auto releaseOwner = [](const char* owner, const std::function<void()>& release) {
+    const size_t beforeFree = ESP.getFreeHeap();
+    const size_t beforeLargest = ESP.getMaxAllocHeap();
+    release();
+    LOG_INF("WEBMEM", "owner=%s free=%u->%u largest=%u->%u", owner ? owner : "unknown",
+            static_cast<unsigned>(beforeFree), static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(beforeLargest), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  };
+
+  // The ActivityManager replacement has already destroyed the previous
+  // activity/stack. Keep this checkpoint explicit so physical logs prove the
+  // Web boundary did not leave an activity-owned shell behind.
+  LOG_INF("WEBMEM", "owner=activity_stack result=replaced free=%u largest=%u",
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+
+  RenderLock lock;
+  releaseOwner("renderer_transient_font_cache", [&renderer] {
+    if (auto* fontCache = renderer.getFontCacheManager()) fontCache->releaseTransientFontCaches();
+  });
+  releaseOwner("reader_disposable_font_cache", [&renderer] {
+    if (auto* fontCache = renderer.getFontCacheManager()) fontCache->releaseSdFontCaches();
+  });
+  releaseOwner("reader_shared_font_cache", [] { sdFontSystem.releaseReaderCaches(); });
+  releaseOwner("ui_fallback_font_cache", [] { sdFontSystem.releaseUiFallbackCaches(); });
+  releaseOwner("image_render_cache", [] { ImageBlock::releaseRenderCache(); });
+  releaseOwner("reader_grayscale_scratch", [&renderer] { renderer.releaseGrayscaleStripScratch(); });
+
+  logWebMemory("exclusive_ready");
+}
 }  // namespace
 
 void CrossPointWebServerActivity::onEnter() {
+  webExitPrepared = false;
+  // Set the gate before any Wi-Fi selection/AP work. This also handles the
+  // case where BLE was already off with a pending reconnect intent.
+  bleinput::setWebExclusive(true);
+  bleinput::stop();
+  releaseWebExclusiveRuntimeCaches(renderer);
   Activity::onEnter();
 
   LOG_DBG("WEBACT", "Free heap at onEnter: %d bytes", ESP.getFreeHeap());
@@ -87,43 +150,74 @@ void CrossPointWebServerActivity::onEnter() {
                          });
 }
 
-void CrossPointWebServerActivity::onExit() {
-  Activity::onExit();
-
-  LOG_DBG("WEBACT", "Free heap at onExit start: %d bytes", ESP.getFreeHeap());
-
+bool CrossPointWebServerActivity::prepareForExit() {
+  if (webExitPrepared) {
+    return !webServer && WiFi.getMode() == WIFI_MODE_NULL &&
+           esp_netif_get_handle_from_ifkey("WIFI_STA_DEF") == nullptr &&
+           esp_netif_get_handle_from_ifkey("WIFI_AP_DEF") == nullptr;
+  }
+  webExitPrepared = true;
+  logWebMemory("exit_begin");
+  logDefaultWifiNetifs("exit_begin_netifs");
   state = WebServerActivityState::SHUTTING_DOWN;
-  // ActivityManager destroys this activity after onExit(), but the transfer
-  // path requests a reboot below. Tear down every server-owned resource before
-  // touching Wi-Fi so sockets, request buffers, upload files, UDP discovery,
-  // and the task watchdog cannot survive into the radio teardown.
+
+  // Tear down server-owned sockets and buffers before the Wi-Fi driver. The
+  // server destructor deletes its registered RequestHandlers, including the
+  // WebDAV handler and captured route closures.
   if (webServer) {
+    const size_t beforeFree = ESP.getFreeHeap();
+    const size_t beforeLargest = ESP.getMaxAllocHeap();
     webServer->stop();
     webServer.reset();
-    LOG_DBG("WEBACT", "Web server fully stopped before WiFi teardown free=%lu min=%lu largest=%lu",
-            static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
-            static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+    logWebOwnerDelta("web_activity_server_object", beforeFree, beforeLargest);
   }
-  // The event is intentionally requested after server-owned allocations are
-  // gone. If Wi-Fi is still active, the lifecycle gate leaves it pending; if
-  // this path also turns Wi-Fi off, the next main-loop pass can admit BLE once
-  // the unchanged safety floors are met.
-  bleinput::requestLifecycleReevaluation();
-  stopDnsServer();
-  MDNS.end();
 
-  // Skip reboot if WiFi was never activated (e.g. user backed out of mode selection).
+  logWebMemory("server_destroyed");
+
+  size_t beforeFree = ESP.getFreeHeap();
+  size_t beforeLargest = ESP.getMaxAllocHeap();
+  stopDnsServer();
+  logWebOwnerDelta("captive_dns", beforeFree, beforeLargest);
+
+  beforeFree = ESP.getFreeHeap();
+  beforeLargest = ESP.getMaxAllocHeap();
+  MDNS.end();
+  logWebOwnerDelta("mdns", beforeFree, beforeLargest);
+
+  beforeFree = ESP.getFreeHeap();
+  beforeLargest = ESP.getMaxAllocHeap();
+  WiFi.scanDelete();
+  logWebOwnerDelta("wifi_scan_results", beforeFree, beforeLargest);
+
+  // Arduino's WIFI_MODE_NULL path calls esp_wifi_stop() and its low-level
+  // deinitializer calls esp_wifi_deinit(); credentials remain in NVS.
+  bool radioStopped = true;
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     if (isApMode) {
       WiFi.softAPdisconnect(true);
     } else {
       WiFi.disconnect(false);
     }
-    delay(30);
-    silentRestart();
+    radioStopped = WiFi.mode(WIFI_MODE_NULL);
   }
 
-  LOG_DBG("WEBACT", "Free heap at onExit end: %d bytes", ESP.getFreeHeap());
+  LOG_INF("WEBMEM", "owner=wifi_driver_deinit result=%s mode=%d", radioStopped ? "ok" : "failed",
+          static_cast<int>(WiFi.getMode()));
+  logWebMemory("wifi_destroyed");
+  const bool netifsDestroyed = logDefaultWifiNetifs("wifi_destroyed_netifs");
+  return radioStopped && !webServer && WiFi.getMode() == WIFI_MODE_NULL && netifsDestroyed;
+}
+
+void CrossPointWebServerActivity::onExit() {
+  const size_t beforeFree = ESP.getFreeHeap();
+  const size_t beforeLargest = ESP.getMaxAllocHeap();
+  Activity::onExit();
+  LOG_INF("WEBMEM", "owner=activity_base_onExit free=%u->%u largest=%u->%u",
+          static_cast<unsigned>(beforeFree), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(beforeLargest), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  const bool released = prepareForExit();
+  LOG_INF("WEBMEM", "stage=exit_activity_cleanup result=%s free=%u largest=%u", released ? "ok" : "incomplete",
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
 }
 
 void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) {
@@ -158,6 +252,7 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
   if (mode == NetworkMode::JOIN_NETWORK) {
     // STA mode - launch WiFi selection
     LOG_DBG("WEBACT", "Turning on WiFi (STA mode)...");
+    logWebMemory("wifi_start");
     WiFi.mode(WIFI_STA);
 
     state = WebServerActivityState::WIFI_SELECTION;
@@ -208,6 +303,7 @@ void CrossPointWebServerActivity::onWifiSelectionComplete(const bool connected) 
 
 void CrossPointWebServerActivity::startAccessPoint() {
   LOG_DBG("WEBACT", "Starting Access Point mode...");
+  logWebMemory("wifi_start");
   LOG_DBG("WEBACT", "Free heap before AP start: %d bytes", ESP.getFreeHeap());
 
   // Configure and start the AP
@@ -261,6 +357,7 @@ void CrossPointWebServerActivity::startAccessPoint() {
 
 void CrossPointWebServerActivity::startWebServer() {
   LOG_DBG("WEBACT", "Starting web server...");
+  logWebMemory("server_start");
 
   // Create the web server instance
   webServer.reset(new CrossPointWebServer());

@@ -49,6 +49,14 @@ class SdCardFontManager {
   // No files are read and the owned font objects remain registered.
   void releaseUiFallbackCaches();
 
+  // Release all rebuildable layout/glyph state for fonts owned by this manager
+  // at the Reader exit boundary. Font objects and coverage remain registered.
+  void releaseReaderCaches();
+  // Detach the selected Reader-sized font after its session unless renderer
+  // mappings actually reference it as a UI font. Point size is not ownership.
+  void releaseReaderFontOwner(GfxRenderer& renderer);
+  void beginAllocationRetryBoundary();
+
 #if NOOIR_SD_FONT_DIAGNOSTICS
   void logMemoryStats(const char* stage) const;
 #endif

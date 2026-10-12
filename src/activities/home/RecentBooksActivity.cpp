@@ -17,6 +17,7 @@
 #include <memory>
 
 #include "MappedInputManager.h"
+#include "BleInput.h"
 #include "RecentBooksStore.h"
 #include "BookStateStore.h"
 #include "activities/util/ConfirmationActivity.h"
@@ -336,10 +337,26 @@ void drawTwoRowSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::
 }
 }  // namespace
 
-void RecentBooksActivity::loadRecentBooks() {
+void RecentBooksActivity::loadRecentBooks(const bool renderLockHeld) {
   recentBooks = RECENT_BOOKS.getBooks();
   invalidateSpinePageWindow();
-  invalidateCarouselHqProbes();
+  if (renderLockHeld) {
+    invalidateCarouselHqProbesLocked();
+  } else {
+    invalidateCarouselHqProbes();
+  }
+}
+
+void RecentBooksActivity::markStatsReturnFrameReady() {
+  if (!statsReturnAwaitingFirstRender) return;
+  statsReturnAwaitingFirstRender = false;
+  LOG_INF("RSDIAG", "stage=parent_return_ready books=%u selected=%u tab=%u free=%u largest=%u",
+          static_cast<unsigned>(recentBooks.size()), static_cast<unsigned>(selectorIndex),
+          static_cast<unsigned>(activeTab), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  LOG_INF("RSDIAG", "stage=parent_recentbooks_resumed free=%u largest=%u",
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  bleinput::requestLifecycleReevaluation();
 }
 
 void RecentBooksActivity::invalidateCarouselHqProbes() {
@@ -1327,6 +1344,7 @@ void RecentBooksActivity::showBookActions() {
 
 void RecentBooksActivity::onEnter() {
   Activity::onEnter();
+  statsTransientStateReleased = false;
 
   // Load data
   loadRecentBooks();
@@ -1397,12 +1415,132 @@ void RecentBooksActivity::onEnter() {
 }
 
 void RecentBooksActivity::onExit() {
+#if FREEINK_CAP_BLE_HID_HOST
+  LOG_INF("HEAPSHAPE", "stage=recentbooks_transition_before_release books=%u capacity=%u bytes=%u free=%u largest=%u",
+          static_cast<unsigned>(recentBooks.size()), static_cast<unsigned>(recentBooks.capacity()),
+          static_cast<unsigned>(recentBooks.capacity() * sizeof(RecentBook)), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+#endif
   Activity::onExit();
-  recentBooks.clear();
+  // This activity is leaving permanently. Release the rebuildable book-vector
+  // allocation before invalidating thumbnail sources so the outgoing shelf's
+  // largest owner is returned at a deliberate transition boundary rather than
+  // being left to member-destruction order.
+  std::vector<RecentBook>().swap(recentBooks);
+  visibleBookCount = 0;
   // ActivityManager calls onExit() while holding RenderLock. Keep cache
   // destruction on the already-locked path so teardown cannot deadlock while
   // still guaranteeing no render is using a cached source.
   invalidateCarouselHqProbesLocked();
+#if FREEINK_CAP_BLE_HID_HOST
+  LOG_INF("HEAPSHAPE", "stage=recentbooks_transition_after_release free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+#endif
+}
+
+void RecentBooksActivity::releaseTransientStateForReadingStats() {
+  const size_t beforeFree = ESP.getFreeHeap();
+  const size_t beforeLargest = ESP.getMaxAllocHeap();
+
+  // These cover files/decoded bitmaps are the only RecentBooks-owned heap
+  // cache that can retain large, movable blocks while a child statistics
+  // screen is on top. The source is reopened lazily on the first resumed
+  // shelf render; persistent RecentBook metadata is intentionally retained.
+  invalidateCarouselSourceCacheLocked();
+  for (auto& entry : carouselSourceCache) std::string().swap(entry.path);
+  const size_t afterCacheFree = ESP.getFreeHeap();
+  const size_t afterCacheLargest = ESP.getMaxAllocHeap();
+
+  // A menu can be the activity that launched ReadingStats. Its option strings,
+  // layout rectangles, and callback are no longer needed while the child is
+  // active and would otherwise survive until the parent is destroyed.
+  menuPopup.clear();
+  bookActionsPopup.clear();
+  const size_t afterPopupFree = ESP.getFreeHeap();
+  const size_t afterPopupLargest = ESP.getMaxAllocHeap();
+
+  // The activity keeps its own copy of every RecentBook, including five
+  // per-book strings. It is rebuildable from the persistent RecentBooksStore
+  // and is the remaining parent-owned topology pin while ReadingStats is on
+  // top. Release it only for this explicit child transition; normal shelf
+  // scrolling and browsing keep the copy hot.
+  std::vector<RecentBook>().swap(recentBooks);
+  visibleBookCount = 0;
+  statsTransientStateReleased = true;
+  const size_t afterBooksFree = ESP.getFreeHeap();
+  const size_t afterBooksLargest = ESP.getMaxAllocHeap();
+
+  // Force the first resumed frame through the normal shelf planner/source
+  // lookup without changing tab, selection, or persisted shelf ordering.
+  invalidateSpinePageWindow();
+  snapshotFastPathUsed = false;
+  snapshotRestored = false;
+  initialRenderPending = true;
+  lastRenderedSelectorIndex = SIZE_MAX;
+  lastRenderedPageStart = SIZE_MAX;
+  lastRenderedTab = 0;
+  std::string().swap(lastFeaturedPath);
+  std::string().swap(lastFeaturedCoverPath);
+
+  LOG_INF("RSDIAG",
+          "stage=recentbooks_stats_transient_release owner=carousel_source_cache free=%u->%u largest=%u->%u "
+          "owner=popup_state free=%u->%u owner=recentbooks_copy free=%u->%u total=%u->%u",
+          static_cast<unsigned>(beforeFree), static_cast<unsigned>(afterCacheFree),
+          static_cast<unsigned>(beforeLargest), static_cast<unsigned>(afterCacheLargest),
+          static_cast<unsigned>(afterCacheFree), static_cast<unsigned>(afterPopupFree),
+          static_cast<unsigned>(afterPopupFree), static_cast<unsigned>(afterBooksFree),
+          static_cast<unsigned>(afterPopupLargest), static_cast<unsigned>(afterBooksLargest),
+          static_cast<unsigned>(beforeFree), static_cast<unsigned>(afterBooksFree));
+}
+
+void RecentBooksActivity::restoreTransientStateAfterReadingStats() {
+  if (!statsTransientStateReleased) return;
+
+  const size_t selectedBefore = selectorIndex;
+  const uint8_t tabBefore = activeTab;
+  const size_t booksBeforeSize = recentBooks.size();
+  const size_t booksBeforeCapacity = recentBooks.capacity();
+  LOG_INF("RSDIAG", "stage=parent_restore_begin books=%u capacity=%u selected=%u tab=%u free=%u largest=%u",
+          static_cast<unsigned>(booksBeforeSize), static_cast<unsigned>(booksBeforeCapacity),
+          static_cast<unsigned>(selectedBefore), static_cast<unsigned>(tabBefore),
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+
+  // ActivityManager calls this with RenderLock held. Rebuild the released copy
+  // from RecentBooksStore's in-memory data and invalidate only its rebuildable
+  // carousel sources using the already-held lock; this is not an SD metadata
+  // rescan and must not recursively acquire RenderLock.
+  const size_t booksBeforeFree = ESP.getFreeHeap();
+  recentBooks = RECENT_BOOKS.getBooks();
+  LOG_INF("RSDIAG", "owner=recentbooks_copy books=%u capacity=%u free=%u->%u largest=%u",
+          static_cast<unsigned>(recentBooks.size()), static_cast<unsigned>(recentBooks.capacity()),
+          static_cast<unsigned>(booksBeforeFree), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+
+  invalidateSpinePageWindow();
+  const size_t carouselBeforeFree = ESP.getFreeHeap();
+  const size_t carouselBeforeLargest = ESP.getMaxAllocHeap();
+  invalidateCarouselHqProbesLocked();
+  LOG_INF("RSDIAG", "owner=carousel_source_cache free=%u->%u largest=%u->%u",
+          static_cast<unsigned>(carouselBeforeFree), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(carouselBeforeLargest), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+
+  // The launch popup was intentionally dismissed before Stats. Restore a
+  // usable shelf, not a stale popup/callback owned by the suspended activity.
+  LOG_INF("RSDIAG", "owner=popup_state menu=%u book_actions=%u restored=closed",
+          menuPopup.isActive() ? 1U : 0U, bookActionsPopup.isActive() ? 1U : 0U);
+  activeTab = tabBefore;
+  rebuildVisibleBooks();
+  selectorIndex = visibleBookCount == 0 ? 0 : std::min(selectedBefore, visibleBookCount - 1);
+  statsTransientStateReleased = false;
+  statsReturnAwaitingFirstRender = true;
+  snapshotFastPathUsed = false;
+  snapshotRestored = false;
+  initialRenderPending = true;
+  LOG_INF("RSDIAG", "stage=parent_restore_complete books=%u capacity=%u visible=%u selected=%u tab=%u free=%u largest=%u",
+          static_cast<unsigned>(recentBooks.size()), static_cast<unsigned>(recentBooks.capacity()),
+          static_cast<unsigned>(visibleBookCount), static_cast<unsigned>(selectorIndex),
+          static_cast<unsigned>(activeTab), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
 }
 
 void RecentBooksActivity::loop() {
@@ -2035,7 +2173,7 @@ void RecentBooksActivity::render(RenderLock&&) {
 }
 #endif
 
-void RecentBooksActivity::renderCarousel(const bool threeCover) {
+bool RecentBooksActivity::renderCarousel(const bool threeCover) {
   const int pageWidth = renderer.getScreenWidth();
   const auto& metrics = UITheme::getInstance().getMetrics();
   static const CarouselTheme carouselPresentation;
@@ -2242,11 +2380,11 @@ void RecentBooksActivity::renderCarousel(const bool threeCover) {
 
   if (menuPopup.processRender(renderer, mappedInput)) {
     overlayFrameShown = true;
-    return;
+    return false;
   }
   if (bookActionsPopup.processRender(renderer, mappedInput)) {
     overlayFrameShown = true;
-    return;
+    return false;
   }
   if (carouselHqPreparationActive) {
     const size_t total = recentBooks.size();
@@ -2262,14 +2400,14 @@ void RecentBooksActivity::renderCarousel(const bool threeCover) {
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     carouselHqPopupRendered = true;
     overlayFrameShown = true;
-    return;
+    return false;
   }
   if (carouselHqCompletionPopupPending) {
     GUI.drawPopup(renderer, "All carousel covers are ready");
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     carouselHqCompletionPopupPending = false;
     overlayFrameShown = true;
-    return;
+    return false;
   }
   if (retrievingBookCache && retrievingBookCacheIndex == selectorIndex) {
     std::string bookName = "book";
@@ -2289,13 +2427,13 @@ void RecentBooksActivity::renderCarousel(const bool threeCover) {
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     retrievingBookCachePopupRendered = true;
     overlayFrameShown = true;
-    return;
+    return false;
   }
   if (recentCacheWarmupActive) {
     GUI.drawPopup(renderer, tr(STR_RETRIEVING_BOOK_DETAILS));
     recentCacheWarmupPopupRendered = true;
     overlayFrameShown = true;
-    return;
+    return false;
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_MENU), tr(STR_OPEN), tr(STR_LIBRARY),
@@ -2308,6 +2446,7 @@ void RecentBooksActivity::renderCarousel(const bool threeCover) {
   lastRenderedPageStart = (selectorIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE;
   lastRenderedTab = activeTab;
   snapshotRestored = false;
+  return true;
 }
 
 void RecentBooksActivity::renderFolioCarouselShelf(const int shelfTop, const int shelfHeight,
@@ -2437,7 +2576,9 @@ void RecentBooksActivity::render(RenderLock&&) {
 
   if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::CAROUSEL) {
     renderer.clearScreen();
-    renderCarousel(activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_THREE_COVER_CAROUSEL);
+    const bool shelfFrameRendered =
+        renderCarousel(activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_THREE_COVER_CAROUSEL);
+    if (shelfFrameRendered) markStatsReturnFrameReady();
     return;
   }
 
@@ -2476,6 +2617,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     const int coverHeight = std::max(40, std::min(cardHeight - 27, cardWidth * 3 / 2));
     renderer.drawRect(x - 3, y - 3, cardWidth + 6, coverHeight + 6);
     renderer.displayBuffer();
+    markStatsReturnFrameReady();
     snapshotFastPathUsed = true;
     initialRenderPending = false;
     lastRenderedSelectorIndex = selectorIndex;
@@ -2544,6 +2686,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_OPEN), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     renderer.displayBuffer();
+    markStatsReturnFrameReady();
     return;
   }
 
@@ -2857,6 +3000,7 @@ void RecentBooksActivity::render(RenderLock&&) {
                                             activeTab == 1 ? tr(STR_FINISHED) : tr(STR_RECENT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
+  markStatsReturnFrameReady();
   if (manualSingleRefresh && !retrievingBookCache) manualSingleRefresh = false;
   if (initialRenderPending) {
     initialRenderPending = false;

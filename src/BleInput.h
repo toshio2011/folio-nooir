@@ -57,6 +57,30 @@ void toggleBluetooth();
 // Drop the active link (e.g. before deep sleep or when the user disables BT).
 void stop();
 
+// Stop BLE for allocation-heavy Reader work, remembering an eligible connected
+// session so the centralized lifecycle can return it after Reader quiesces.
+// When the host is already off because a previous admission was deferred, this
+// also preserves the enabled/wanted Reader return intent without requiring a
+// live NimBLE connection.
+void stopForReaderResourcePressure();
+
+// True only for a BLE-enabled session that was running/connected before a
+// Reader resource stop. This state never affects BLE-OFF Reader behavior.
+bool readerBleReturnPending();
+void clearReaderBleReturnPending();
+uint32_t readerBleReturnGeneration();
+// Mark one genuine Reader memory-lifecycle boundary. This unblocks a failed
+// one-shot cleanup attempt without creating a polling retry loop.
+void signalReaderBleReturnLifecycleEvent(const char* reason);
+void blockReaderBleReturnRetry();
+void allowReaderBleReturnRetry();
+
+// Web/Transfer owns the heap for the duration of its session. While active,
+// BLE admission and reconnects are suppressed even when the user setting is
+// enabled. Clearing the mode restores ordinary lifecycle admission.
+void setWebExclusive(bool active);
+bool webExclusiveActive();
+
 // Sample the published host state and queue bounded lifecycle telemetry.  This
 // never performs BLE work itself and must be called from the main loop.
 void pollLifecycle();

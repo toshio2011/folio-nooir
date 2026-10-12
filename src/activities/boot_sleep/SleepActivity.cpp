@@ -3,14 +3,17 @@
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <Epub/blocks/ImageBlock.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Memory.h>
 #include <PNGdec.h>
 #include <PngToBmpConverter.h>
+#include <SdCardFontSystem.h>
 #include <Txt.h>
 #include <Xtc.h>
 #include <FontCacheManager.h>
+#include <esp_heap_caps.h>
 
 #include <algorithm>
 #include <array>
@@ -24,6 +27,7 @@
 #include "RecentBooksStore.h"
 #include "StatisticsSnapshot.h"
 #include "ToDoStore.h"
+#include "activities/RenderLock.h"
 #include "activities/reader/ReaderUtils.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -47,6 +51,38 @@ void logSleepAsset(const char* stage, const char* path, const char* reason = nul
           reason ? reason : "none", static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(ESP.getMaxAllocHeap()));
   ++sleepAssetLogCount;
+}
+
+template <typename Release>
+void releaseSleepOwner(const char* owner, Release&& release) {
+  const size_t beforeFree = ESP.getFreeHeap();
+  const size_t beforeLargest = ESP.getMaxAllocHeap();
+  release();
+  LOG_INF("SLPMEM", "owner=%s free=%u->%u largest=%u->%u", owner ? owner : "unknown",
+          static_cast<unsigned>(beforeFree), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(beforeLargest), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+}
+
+void releaseSleepBoundaryCaches(GfxRenderer& renderer) {
+  const size_t startFree = ESP.getFreeHeap();
+  const size_t startLargest = ESP.getMaxAllocHeap();
+  LOG_INF("SLPMEM", "stage=boundary_begin free=%u largest=%u", static_cast<unsigned>(startFree),
+          static_cast<unsigned>(startLargest));
+
+  RenderLock renderLock;
+  releaseSleepOwner("renderer_rebuildable_font_cache", [&renderer] {
+    if (auto* fontCache = renderer.getFontCacheManager()) fontCache->releaseSdFontCaches();
+  });
+  releaseSleepOwner("reader_shared_font_cache", [] { sdFontSystem.releaseReaderCaches(); });
+  releaseSleepOwner("ui_fallback_glyph_cache", [] { sdFontSystem.releaseUiFallbackCaches(); });
+  releaseSleepOwner("interface_font_rebuildable_cache", [] { sdFontSystem.releaseInterfaceFontCaches(); });
+  releaseSleepOwner("reader_font_coverage_owner", [&renderer] { sdFontSystem.releaseReaderFontOwner(renderer); });
+  releaseSleepOwner("image_render_cache", [] { ImageBlock::releaseRenderCache(); });
+  releaseSleepOwner("reader_grayscale_scratch", [&renderer] { renderer.releaseGrayscaleStripScratch(); });
+
+  LOG_INF("SLPMEM", "stage=boundary_ready free=%u->%u largest=%u->%u",
+          static_cast<unsigned>(startFree), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(startLargest), static_cast<unsigned>(ESP.getMaxAllocHeap()));
 }
 
 struct SleepRenderCompletion {
@@ -517,6 +553,11 @@ void SleepActivity::onEnter() {
   Activity::onEnter();
   sleepAssetLogCount = 0;
   SleepRenderCompletion completion{renderer};
+  // Sleep is a hard heap-recovery boundary. Reader::onExit performs its own
+  // ordered teardown, but sleep can also be entered from RecentBooks, Settings,
+  // or other screens; release only rebuildable renderer/font owners here,
+  // before PNGdec requests its large contiguous decoder object.
+  releaseSleepBoundaryCaches(renderer);
   LOG_INF("SLP", "sleep_asset_selected mode=%u free=%u largest=%u",
           static_cast<unsigned>(SETTINGS.sleepScreen), static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(ESP.getMaxAllocHeap()));
@@ -909,6 +950,21 @@ bool SleepActivity::renderOverlayPngPass(const std::string& path, const GfxRende
                                          bool* transparencyDetected, const bool drawPixels) const {
   auto png = makeUniqueNoThrow<PNG>();
   if (!png) {
+    // PNGdec embeds its zlib state, two scanline buffers, palette, and file
+    // buffer in PNG itself. `new PNG` therefore needs one large default-cap
+    // allocation; generic ESP.getMaxAllocHeap() alone does not show whether
+    // the default/internal capability pool is the limiting one.
+    LOG_INF("SLP",
+            "png_decoder_alloc_fail path=%.96s request=%u row_buffer=%u default=%u/%u internal8=%u/%u "
+            "dma8=%u/%u generic=%u",
+            path.c_str(), static_cast<unsigned>(sizeof(PNG)), static_cast<unsigned>(PNG_MAX_BUFFERED_PIXELS),
+            static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_DEFAULT)),
+            static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT)),
+            static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+            static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+            static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_8BIT)),
+            static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_8BIT)),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
     logSleepAsset("sleep_asset_alloc_fail", path.c_str(), "png_decoder");
     return false;
   }

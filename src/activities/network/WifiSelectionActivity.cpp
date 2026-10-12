@@ -426,12 +426,16 @@ void WifiSelectionActivity::checkConnectionStatus() {
             WiFi.RSSI());
 #endif
 
-    // Perform a once-per-day, best-effort sync while the connection is already
-    // being established. This never powers Wi-Fi on by itself and does not
-    // disconnect it: the parent activity may be starting the web server.
+    // Perform an optional once-per-day weather refresh while Wi-Fi is already
+    // up. The shared GOT_IP event handles the one-shot clock sync separately;
+    // neither operation powers Wi-Fi on by itself or disconnects this session.
     if (autoSyncClockWeather) {
       ClockWeatherSyncService::syncDueOnWifiConnection();
     }
+    // Consume the station event before handing this connection to Transfer or
+    // another parent activity. The central main-loop handler remains the
+    // fallback for reconnects that do not pass through this selector.
+    ClockWeatherSyncService::processPendingWifiConnection();
 
     // Save this as the last connected network - SD card operations need lock as
     // we use SPI for both

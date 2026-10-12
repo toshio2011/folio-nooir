@@ -85,6 +85,7 @@ class CrossPointWebServer {
   std::unique_ptr<WebServer> server = nullptr;
   std::unique_ptr<WebSocketsServer> wsServer = nullptr;
   bool running = false;
+  bool stopCompleted = false;
   bool watchdogTaskRegistered = false;
   bool lastHttpClientConnected = false;
   unsigned long lastClientDiagnosticAt = 0;

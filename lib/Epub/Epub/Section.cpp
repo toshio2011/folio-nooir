@@ -807,7 +807,56 @@ bool Section::finalizeBuild() {
   const size_t freeAfterCssClear = ESP.getFreeHeap();
   const size_t largestAfterCssClear = ESP.getMaxAllocHeap();
   const size_t cssBucketsAfterClear = build_->cssParser ? build_->cssParser->bucketCount() : 0;
+  const size_t freeBeforeBuildContextRelease = ESP.getFreeHeap();
+  const size_t largestBeforeBuildContextRelease = ESP.getMaxAllocHeap();
+  const size_t cssBucketsBeforeRelease = cssBucketsAfterClear;
+  LOG_INF("SCT",
+          "section_post_persist_before_release spine=%d pages=%u free=%u largest=%u lut_cap=%u path_cap=%u "
+          "css_rules=%u css_buckets=%u",
+          spineIndex, static_cast<unsigned>(builtPageCount_), static_cast<unsigned>(freeBeforeBuildContextRelease),
+          static_cast<unsigned>(largestBeforeBuildContextRelease), static_cast<unsigned>(lutCapacityBytes),
+          static_cast<unsigned>(buildStringCapacity), static_cast<unsigned>(cssRulesBeforeClear),
+          static_cast<unsigned>(cssBucketsBeforeRelease));
   build_.reset();
+  const size_t freeAfterBuildContextRelease = ESP.getFreeHeap();
+  const size_t largestAfterBuildContextRelease = ESP.getMaxAllocHeap();
+
+  // The serialized page contains resolved styles, so an empty CSS parser is no
+  // longer needed by this section. Release only its retained hash buckets after
+  // the parser/build context is gone; this never touches live rules or any
+  // shared font/image cache. The next styled section reloads rules from cache.
+  bool cssStorageReleased = false;
+  size_t freeBeforeCssRelease = freeAfterBuildContextRelease;
+  size_t largestBeforeCssRelease = largestAfterBuildContextRelease;
+  size_t freeAfterCssRelease = freeAfterBuildContextRelease;
+  size_t largestAfterCssRelease = largestAfterBuildContextRelease;
+  size_t cssBucketsAfterRelease = cssBucketsBeforeRelease;
+  if (committed && epub) {
+    freeBeforeCssRelease = ESP.getFreeHeap();
+    largestBeforeCssRelease = ESP.getMaxAllocHeap();
+    cssStorageReleased = epub->releaseCssParserRetainedStorage();
+    freeAfterCssRelease = ESP.getFreeHeap();
+    largestAfterCssRelease = ESP.getMaxAllocHeap();
+    if (const auto* cssParser = epub->getCssParser()) cssBucketsAfterRelease = cssParser->bucketCount();
+  }
+  LOG_INF("SCT",
+          "section_post_persist_after_release spine=%d pages=%u free=%u largest=%u free_gain=%u largest_gain=%u "
+          "build_context_free=%u css_buckets=%u->%u css_free=%u css_released=%u",
+          spineIndex, static_cast<unsigned>(builtPageCount_), static_cast<unsigned>(freeAfterCssRelease),
+          static_cast<unsigned>(largestAfterCssRelease),
+          static_cast<unsigned>(freeAfterCssRelease > freeBeforeBuildContextRelease
+                                   ? freeAfterCssRelease - freeBeforeBuildContextRelease
+                                   : 0),
+          static_cast<unsigned>(largestAfterCssRelease > largestBeforeBuildContextRelease
+                                   ? largestAfterCssRelease - largestBeforeBuildContextRelease
+                                   : 0),
+          static_cast<unsigned>(freeAfterBuildContextRelease > freeBeforeBuildContextRelease
+                                   ? freeAfterBuildContextRelease - freeBeforeBuildContextRelease
+                                   : 0),
+          static_cast<unsigned>(cssBucketsBeforeRelease), static_cast<unsigned>(cssBucketsAfterRelease),
+          static_cast<unsigned>(freeAfterCssRelease > freeBeforeCssRelease ? freeAfterCssRelease - freeBeforeCssRelease
+                                                                             : 0),
+          cssStorageReleased ? 1U : 0U);
   LOG_INF("HEAPSHAPE", "stage=section_core_a spine=%d pages=%u free=%u/%u/%u/%u", spineIndex,
           static_cast<unsigned>(builtPageCount_), static_cast<unsigned>(freeAtFinalizeStart),
           static_cast<unsigned>(freeBeforeCssClear), static_cast<unsigned>(freeAfterCssClear),
@@ -820,6 +869,12 @@ bool Section::finalizeBuild() {
           static_cast<unsigned>(lutCapacityBytes), static_cast<unsigned>(buildStringCapacity),
           static_cast<unsigned>(cssRulesBeforeClear), static_cast<unsigned>(cssBucketsBeforeClear),
           static_cast<unsigned>(cssBucketsAfterClear));
+  LOG_INF("HEAPSHAPE", "stage=section_post_persist spine=%d free=%u/%u/%u largest=%u/%u/%u css=%u>%u",
+          spineIndex, static_cast<unsigned>(freeBeforeBuildContextRelease),
+          static_cast<unsigned>(freeAfterBuildContextRelease), static_cast<unsigned>(freeAfterCssRelease),
+          static_cast<unsigned>(largestBeforeBuildContextRelease), static_cast<unsigned>(largestAfterBuildContextRelease),
+          static_cast<unsigned>(largestAfterCssRelease), static_cast<unsigned>(cssBucketsBeforeRelease),
+          static_cast<unsigned>(cssBucketsAfterRelease));
   if (!committed) {
     // commitBuildFile removed filePath before the failed swap, so nothing valid remains.
     partial_ = false;

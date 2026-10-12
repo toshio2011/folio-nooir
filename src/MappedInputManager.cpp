@@ -290,13 +290,37 @@ bool MappedInputManager::wasHomeGesture() const {
 }
 
 bool MappedInputManager::bleEdge(const bool* edges, const Button button) const {
+  if (!SETTINGS.bluetoothEnabled) return false;
+
+  // A decoded BLE event has one canonical physical-style owner. Keep semantic
+  // aliases narrow and context-bound: Settings consumes Left/Right as tabs and
+  // Up/Down as rows, while Reader may reinterpret its side buttons as
+  // PageBack/PageForward according to the configured side layout. Never alias
+  // PageForward to NavNext (or PageBack to NavPrevious) globally; that was the
+  // source of duplicate navigation actions.
   switch (button) {
     case Button::NavNext:
-      return isNavDirectionSwapped() ? (edges[(int)Button::Up] || edges[(int)Button::Left])
-                                     : (edges[(int)Button::Down] || edges[(int)Button::Right]);
+      return edges[(int)Button::NavNext] ||
+             (!readerMappingMode &&
+              (isNavDirectionSwapped() ? (edges[(int)Button::Up] || edges[(int)Button::Left])
+                                       : (edges[(int)Button::Down] || edges[(int)Button::Right])));
     case Button::NavPrevious:
-      return isNavDirectionSwapped() ? (edges[(int)Button::Down] || edges[(int)Button::Right])
-                                     : (edges[(int)Button::Up] || edges[(int)Button::Left]);
+      return edges[(int)Button::NavPrevious] ||
+             (!readerMappingMode &&
+              (isNavDirectionSwapped() ? (edges[(int)Button::Down] || edges[(int)Button::Right])
+                                       : (edges[(int)Button::Up] || edges[(int)Button::Left])));
+    case Button::PageBack:
+      return edges[(int)Button::PageBack] ||
+             (readerMappingMode &&
+              (SETTINGS.sideButtonLayout == CrossPointSettings::PREV_NEXT
+                   ? edges[(int)Button::Up]
+                   : SETTINGS.sideButtonLayout == CrossPointSettings::NEXT_PREV ? edges[(int)Button::Down] : false));
+    case Button::PageForward:
+      return edges[(int)Button::PageForward] ||
+             (readerMappingMode &&
+              (SETTINGS.sideButtonLayout == CrossPointSettings::PREV_NEXT
+                   ? edges[(int)Button::Down]
+                   : SETTINGS.sideButtonLayout == CrossPointSettings::NEXT_PREV ? edges[(int)Button::Up] : false));
     default:
       return edges[(int)button];
   }
@@ -313,7 +337,7 @@ bool MappedInputManager::wasReleased(const Button button) const {
 }
 
 bool MappedInputManager::isPressed(const Button button) const {
-  return mapButton(button, &HalGPIO::isPressed) || bleEdge(blePressEdge, button);
+  return mapButton(button, &HalGPIO::isPressed) || bleEdge(bleHeld, button);
 }
 
 void MappedInputManager::setBleCaptureMode(const bool enabled) {
@@ -325,10 +349,15 @@ void MappedInputManager::setBleCaptureMode(const bool enabled) {
   blePendingMap = -1;
   blePendingIndex = 0;
   blePendingLastEvent = 0;
-  if (!enabled) return;
   for (uint8_t i = 0; i < kButtonCount; i++) {
     blePressEdge[i] = false;
     bleReleaseEdge[i] = false;
+    bleHeld[i] = false;
+    bleHeldSince[i] = 0;
+    bleActiveBinding[i] = false;
+    bleActiveKinds[i] = 0;
+    bleActiveValues[i] = 0;
+    bleLastDispatchAt[i] = 0;
   }
 }
 
@@ -362,9 +391,36 @@ bool MappedInputManager::takeCapturedBleSignature(uint8_t* kinds, uint8_t* value
 
 void MappedInputManager::pollBle() {
   bleActivityThisFrame = false;
+  auto clearBleInputState = [&] {
+    for (uint8_t i = 0; i < kButtonCount; i++) {
+      blePressEdge[i] = false;
+      bleReleaseEdge[i] = false;
+      bleHeld[i] = false;
+      bleHeldSince[i] = 0;
+      bleActiveBinding[i] = false;
+      bleActiveKinds[i] = 0;
+      bleActiveValues[i] = 0;
+      bleLastDispatchAt[i] = 0;
+    }
+    blePendingMap = -1;
+    blePendingIndex = 0;
+    blePendingLastEvent = 0;
+    bleHasCaptured = false;
+    bleCapturedCount = 0;
+    bleCaptureQuietUntil = 0;
+    bleCaptureStartedAt = 0;
+  };
+
+  // A stopped or disconnected host is an input lifecycle boundary. Clear the
+  // application-side held state here as well as in the host so reconnect cannot
+  // inherit a stale key after an intentional Reader/Web teardown.
+  if (!SETTINGS.bluetoothEnabled || !BleHid.isRunning() || !BleHid.isConnected()) {
+    clearBleInputState();
+    return;
+  }
   for (uint8_t i = 0; i < kButtonCount; i++) {
-    bleReleaseEdge[i] = blePressEdge[i];
     blePressEdge[i] = false;
+    bleReleaseEdge[i] = false;
   }
 
   freeink::KeyEvent event;
@@ -382,6 +438,16 @@ void MappedInputManager::pollBle() {
       // Capture a bounded decoded signature for one physical press. The quiet
       // window ends a burst; the hard cap prevents a held/repeating remote from
       // retaining state or delaying the mapping screen indefinitely.
+      // A mapping signature represents the decoded press burst, not its
+      // release or firmware repeat. Capturing those phases would turn one
+      // physical click into a multi-event mapping and make the next release
+      // look like a second action.
+      if (event.phase != freeink::KeyPhase::Press) {
+#if FREEINK_CAP_BLE_HID_HOST
+        bleinput::recordDecodedKey(event, kind, value, 0xFE, bleinput::InputDisposition::Captured, false);
+#endif
+        continue;
+      }
       if (!bleHasCaptured) {
         bleCaptureStartedAt = millis();
         bleCapturedCount = 0;
@@ -405,6 +471,8 @@ void MappedInputManager::pollBle() {
     bool debounceRejected = false;
     bool signaturePending = false;
     const unsigned long now = millis();
+    const bool isRelease = event.phase == freeink::KeyPhase::Release;
+    const bool isRepeat = event.phase == freeink::KeyPhase::Repeat;
 
     auto entryCount = [](const CrossPointSettings::BleKeyMapEntry& entry) -> uint8_t {
       return entry.signatureCount > 0 ? entry.signatureCount : 1;
@@ -417,21 +485,69 @@ void MappedInputManager::pollBle() {
       }
       return index == 0 && entry.keyKind == kind && entry.keyValue == value;
     };
-    auto dispatch = [&](const CrossPointSettings::BleKeyMapEntry& entry) {
-      const uint8_t button = entry.button;
+    auto applyButton = [&](const uint8_t button, const freeink::KeyPhase phase) {
+      if (button >= kButtonCount) return;
+      if (phase == freeink::KeyPhase::Release) {
+        if (!bleHeld[button]) return;
+        bleHeld[button] = false;
+        bleHeldSince[button] = 0;
+        bleActiveBinding[button] = false;
+        bleReleaseEdge[button] = true;
+        bleActivityThisFrame = true;
+        mappedButton = button;
+        return;
+      }
+      if (phase == freeink::KeyPhase::Repeat) {
+        if (!bleActiveBinding[button]) return;
+        bleHeld[button] = true;
+        bleActivityThisFrame = true;
+        mappedButton = button;
+        return;
+      }
       const unsigned long last = bleLastDispatchAt[button];
       if (last != 0 && now - last < BLE_ACTION_DEBOUNCE_MS) {
         debounceRejected = true;
         return;
       }
       bleLastDispatchAt[button] = now;
+      if (bleHeld[button]) {
+        // A duplicate press while the same physical control is held is not a
+        // second click. Keep hold state intact and let the activity's one
+        // repeat owner decide whether to act continuously.
+        debounceRejected = true;
+        return;
+      }
+      bleHeld[button] = true;
+      bleHeldSince[button] = now;
+      bleActiveBinding[button] = true;
+      bleActiveKinds[button] = kind;
+      bleActiveValues[button] = value;
       blePressEdge[button] = true;
       bleActivityThisFrame = true;
       mappedButton = button;
     };
+    auto dispatch = [&](const CrossPointSettings::BleKeyMapEntry& entry) {
+      applyButton(entry.button, event.phase);
+    };
+
+    // Releases and repeats belong to the binding that consumed the original
+    // press. Resolve them before signature recognition so they can never start
+    // or advance a new multi-report mapping.
+    if (isRelease || isRepeat) {
+      for (uint8_t button = 0; button < kButtonCount; ++button) {
+        if (!bleActiveBinding[button] || bleActiveKinds[button] != kind || bleActiveValues[button] != value) continue;
+        mappingFound = true;
+        applyButton(button, event.phase);
+      }
+      if (isRelease && blePendingMap >= 0) {
+        blePendingMap = -1;
+        blePendingIndex = 0;
+        blePendingLastEvent = 0;
+      }
+    }
 
     // Continue a previously recognized multi-event signature first.
-    if (blePendingMap >= 0) {
+    if (!isRelease && !isRepeat && blePendingMap >= 0) {
       auto& pending = SETTINGS.bleKeyMap[blePendingMap];
       if (now - blePendingLastEvent <= BLE_SIGNATURE_TIMEOUT_MS && entryMatches(pending, blePendingIndex)) {
         ++blePendingIndex;
@@ -452,7 +568,7 @@ void MappedInputManager::pollBle() {
 
     // If no signature was pending, start one from this event or dispatch a
     // legacy single-event binding immediately.
-    if (blePendingMap < 0 && !mappingFound) {
+    if (!isRelease && !isRepeat && blePendingMap < 0 && !mappingFound) {
       for (uint8_t mapIndex = 0; mapIndex < CrossPointSettings::BLE_MAP_CAPACITY; ++mapIndex) {
         const auto& entry = SETTINGS.bleKeyMap[mapIndex];
         if (!entryMatches(entry, 0)) continue;
@@ -480,9 +596,21 @@ void MappedInputManager::pollBle() {
   }
 }
 
-bool MappedInputManager::wasAnyPressed() const { return gpio.wasAnyPressed(); }
+bool MappedInputManager::wasAnyPressed() const {
+  if (gpio.wasAnyPressed()) return true;
+  for (uint8_t i = 0; i < kButtonCount; ++i) {
+    if (blePressEdge[i]) return true;
+  }
+  return false;
+}
 
-bool MappedInputManager::wasAnyReleased() const { return gpio.wasAnyReleased(); }
+bool MappedInputManager::wasAnyReleased() const {
+  if (gpio.wasAnyReleased()) return true;
+  for (uint8_t i = 0; i < kButtonCount; ++i) {
+    if (bleReleaseEdge[i]) return true;
+  }
+  return false;
+}
 
 unsigned long MappedInputManager::getHeldTime() const {
   if (!gpio.wasAnyPressed() && !gpio.wasAnyReleased() && touchHeldOverrideValid &&
@@ -490,7 +618,12 @@ unsigned long MappedInputManager::getHeldTime() const {
     return touchHeldOverrideMs;
   }
   touchHeldOverrideValid = false;
-  return gpio.getHeldTime();
+  unsigned long held = gpio.getHeldTime();
+  const unsigned long now = millis();
+  for (uint8_t i = 0; i < kButtonCount; ++i) {
+    if (bleHeld[i] && bleHeldSince[i] != 0) held = std::max(held, now - bleHeldSince[i]);
+  }
+  return held;
 }
 
 MappedInputManager::Labels MappedInputManager::mapLabels(const char* back, const char* confirm, const char* previous,

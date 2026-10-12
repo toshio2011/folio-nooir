@@ -28,6 +28,10 @@ void FontCacheManager::clearCache() {
   }
 }
 
+void FontCacheManager::releaseTransientFontCaches() {
+  if (fontDecompressor_) fontDecompressor_->clearCache();
+}
+
 void FontCacheManager::releaseSdFontCaches() {
   EpubDiagnostics::record("sd_font_release_start");
   // The built-in decompressor has no persistent layout metadata, so its page
@@ -173,7 +177,6 @@ void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
     if (styleMask == 0) styleMask = 1;
     manager_->prewarmCache(entry.fontId, entry.text.c_str(), styleMask);
     entry.text.clear();
-    entry.text.shrink_to_fit();
   }
   manager_->scanEntryCount_ = 0;
 }

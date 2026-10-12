@@ -3,6 +3,7 @@
 #include <FontCacheManager.h>
 #include <HalPowerManager.h>
 #include <Arduino.h>
+#include <esp_heap_caps.h>
 
 #include <algorithm>
 #include <cstring>
@@ -35,6 +36,18 @@ static bool lifecycleHomeConstructionRecorded = false;
 static bool lifecycleFirstRenderRecorded = false;
 static bool lifecycleFirstRefreshRecorded = false;
 static bool lifecycleFirstUsableRecorded = false;
+#endif
+
+#if FREEINK_CAP_BLE_HID_HOST
+static void logActivityHeapShape(const char* stage) {
+  LOG_INF("HEAPSHAPE", "stage=%s free=%u largest=%u min=%u internal8=%u/%u dma8=%u/%u",
+          stage ? stage : "unknown", static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()), static_cast<unsigned>(ESP.getMinFreeHeap()),
+          static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+          static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+          static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_8BIT)),
+          static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_8BIT)));
+}
 #endif
 
 void ActivityManager::begin() {
@@ -174,6 +187,7 @@ void ActivityManager::loop() {
         continue;
       }
 
+      const bool readingStatsActivity = currentActivity->name == "ReadingStats" || currentActivity->name == "ReadingCalendar";
       ActivityResult pendingResult = std::move(currentActivity->result);
 
       // Destroy the current activity
@@ -191,6 +205,7 @@ void ActivityManager::loop() {
         stackActivities.pop_back();
         LOG_DBG("ACT", "Popped from activity stack, new size = %zu", stackActivities.size());
         if (currentActivity->isReaderActivity()) suppressRestoredReaderInput = true;
+        bool lockReleasedForHandler = false;
         // Handle result if necessary
         if (currentActivity->resultHandler) {
           LOG_DBG("ACT", "Handling result for popped activity");
@@ -199,21 +214,67 @@ void ActivityManager::loop() {
           auto handler = std::move(currentActivity->resultHandler);
           currentActivity->resultHandler = nullptr;
           lock.unlock();  // Handler may acquire its own lock
+          lockReleasedForHandler = true;
           handler(pendingResult);
         }
 
         // Request an update to ensure the popped activity gets re-rendered
         if (pendingAction == PendingAction::None) {
+          if (readingStatsActivity && currentActivity && currentActivity->name == "RecentBooks") {
+            auto* recentBooks = static_cast<RecentBooksActivity*>(currentActivity.get());
+            if (lockReleasedForHandler) {
+              RenderLock restoreLock;
+              recentBooks->restoreTransientStateAfterReadingStats();
+            } else {
+              recentBooks->restoreTransientStateAfterReadingStats();
+            }
+          }
           requestUpdate();
+          if (readingStatsActivity && currentActivity && currentActivity->name == "RecentBooks") {
+            LOG_INF("RSDIAG", "stage=parent_redraw_requested free=%u largest=%u",
+                    static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+          }
         }
 
         // Handler may request another pending action, we will handle it in the next loop iteration
         continue;
       }
 
-    } else if (pendingActivity) {
+    } else if (pendingActivity || pendingSettingsConstruction) {
+      const bool constructSettingsAfterExit = pendingSettingsConstruction;
+#if FREEINK_CAP_BLE_HID_HOST
+      if (constructSettingsAfterExit && BleHid.isRunning()) {
+        bleinput::clearReaderBleReturnPending();
+        bleinput::stop();
+      }
+#endif
+      const bool webActivityOnStack = std::any_of(stackActivities.begin(), stackActivities.end(), [](const auto& activity) {
+        return activity && activity->name == "CrossPointWebServer";
+      });
+      const bool leavingWebExclusive = pendingAction == PendingAction::Replace &&
+                                       ((currentActivity && currentActivity->name == "CrossPointWebServer") ||
+                                        webActivityOnStack);
+      const bool recentBooksToReader = currentActivity && pendingActivity && currentActivity->name == "RecentBooks" &&
+                                       pendingActivity->name == "Reader" && pendingAction == PendingAction::Replace;
+      const bool recentBooksToReadingStats = currentActivity && pendingActivity &&
+                                             currentActivity->name == "RecentBooks" &&
+                                             (pendingActivity->name == "ReadingStats" ||
+                                              pendingActivity->name == "ReadingCalendar") &&
+                                             pendingAction == PendingAction::Push;
+      const bool readerShellToConcrete = currentActivity && pendingActivity && currentActivity->name == "Reader" &&
+                                         pendingActivity->name == "EpubReader" && pendingAction == PendingAction::Replace;
+#if FREEINK_CAP_BLE_HID_HOST
+      if (recentBooksToReader) logActivityHeapShape("reader_transition_before_recentbooks_exit");
+      if (readerShellToConcrete) logActivityHeapShape("reader_transition_before_reader_shell_exit");
+#endif
       // Current activity has requested a new activity to be launched
       RenderLock lock;
+      const size_t webExitBeforeFree = leavingWebExclusive ? ESP.getFreeHeap() : 0;
+      const size_t webExitBeforeLargest = leavingWebExclusive ? ESP.getMaxAllocHeap() : 0;
+
+      if (recentBooksToReadingStats) {
+        static_cast<RecentBooksActivity*>(currentActivity.get())->releaseTransientStateForReadingStats();
+      }
 
       if (pendingAction == PendingAction::Replace) {
         // Destroy the current activity
@@ -228,10 +289,37 @@ void ActivityManager::loop() {
         stackActivities.push_back(std::move(currentActivity));
         LOG_DBG("ACT", "Pushed to activity stack, new size = %zu", stackActivities.size());
       }
+      if (constructSettingsAfterExit) {
+        LOG_INF("SETDIAG", "stage=before_settings_construction free=%u largest=%u",
+                ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+        pendingSettingsConstruction = false;
+        pendingActivity = std::make_unique<SettingsActivity>(renderer, mappedInput);
+        LOG_INF("SETDIAG", "stage=after_settings_construction free=%u largest=%u",
+                ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      }
+      if (leavingWebExclusive) {
+        LOG_INF("WEBMEM", "owner=web_activity_and_child_stack free=%u->%u largest=%u->%u",
+                static_cast<unsigned>(webExitBeforeFree), static_cast<unsigned>(ESP.getFreeHeap()),
+                static_cast<unsigned>(webExitBeforeLargest), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+        LOG_INF("WEBMEM", "stage=exclusive_exit_clean free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
+                static_cast<unsigned>(ESP.getMaxAllocHeap()));
+      }
+#if FREEINK_CAP_BLE_HID_HOST
+      if (recentBooksToReader) logActivityHeapShape("reader_transition_after_recentbooks_destroyed");
+      if (readerShellToConcrete) logActivityHeapShape("reader_transition_after_reader_shell_destroyed");
+#endif
+      const bool recentBooksTransition = pendingActivity->name == "RecentBooks";
+#if FREEINK_CAP_BLE_HID_HOST
+      if (recentBooksTransition) logActivityHeapShape("before_recent_books_construction");
+#endif
       pendingAction = PendingAction::None;
       currentActivity = std::move(pendingActivity);
 
       lock.unlock();  // onEnter may acquire its own lock
+#if FREEINK_CAP_BLE_HID_HOST
+      if (recentBooksToReader) logActivityHeapShape("reader_transition_before_reader_activity_enter");
+      if (readerShellToConcrete) logActivityHeapShape("reader_transition_before_epub_reader_enter");
+#endif
       if (currentActivity->name == "Sleep") {
         LOG_INF("SLEEP", "sleep_quiesce_complete section_stopped free=%u largest=%u",
                 static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
@@ -244,10 +332,34 @@ void ActivityManager::loop() {
       // the NimBLE heap is still resident for one full loop iteration.
       if (currentActivity->bluetoothResourceSensitive() && BleHid.isRunning()) {
         bleinput::recordDiagnosticEvent("resource_stop activity=%.20s", currentActivity->name.c_str());
-        bleinput::stop();
+        if (currentActivity->isReaderActivity()) {
+          bleinput::stopForReaderResourcePressure();
+        } else {
+          bleinput::clearReaderBleReturnPending();
+          bleinput::stop();
+        }
       }
 #endif
       currentActivity->onEnter();
+#if FREEINK_CAP_BLE_HID_HOST
+      if (leavingWebExclusive) {
+        // CrossPointWebServerActivity has already torn down HTTP, WebSocket,
+        // discovery, mDNS, and Wi-Fi. Re-enable normal BLE admission only
+        // after the replacement UI has been constructed and entered.
+        bleinput::setWebExclusive(false);
+        bleinput::requestLifecycleReevaluation();
+        LOG_INF("WEBMEM", "stage=exclusive_exit_ready free=%u largest=%u activity=%.20s",
+                static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()),
+                currentActivity ? currentActivity->name.c_str() : "none");
+      }
+#endif
+#if FREEINK_CAP_BLE_HID_HOST
+      if (recentBooksToReader) logActivityHeapShape("reader_transition_after_reader_activity_enter");
+      if (readerShellToConcrete) logActivityHeapShape("reader_transition_after_epub_reader_enter");
+#endif
+#if FREEINK_CAP_BLE_HID_HOST
+      if (recentBooksTransition) logActivityHeapShape("after_recent_books_construction");
+#endif
       bleinput::requestLifecycleReevaluation();
 #if NOOIR_EPUB_DIAGNOSTICS
       if (!lifecycleHomeConstructionRecorded &&
@@ -266,10 +378,17 @@ void ActivityManager::loop() {
   // input path above. One bounded .cpfont metadata file is processed per main
   // loop pass; built-in UI remains active until all three sizes finish.
   if (currentActivity) {
+    const bool webExclusiveActivityActive = currentActivity->name == "CrossPointWebServer" ||
+        std::any_of(stackActivities.begin(), stackActivities.end(), [](const auto& activity) {
+          return activity && activity->name == "CrossPointWebServer";
+        });
     const bool sdIndependentScreen = currentActivity->name == "Boot" || currentActivity->name == "Sleep" ||
                                      currentActivity->name == "Crash" || currentActivity->name == "OtaUpdate" ||
                                      currentActivity->name == "SdFirmwareUpdate" || currentActivity->name == "FontDownload";
-    if (!sdIndependentScreen) {
+    // Web-exclusive entry deliberately releases rebuildable UI font arenas.
+    // Do not immediately refill them from this steady main-loop service while
+    // Web (or one of its mode-selection children) owns the heap.
+    if (!sdIndependentScreen && !webExclusiveActivityActive) {
       sdFontSystem.ensureUiLoaded(renderer);
       if (sdFontSystem.progressUiLoad(renderer)) requestUpdate();
     }
@@ -286,14 +405,20 @@ void ActivityManager::exitActivity(const RenderLock& lock) {
   // Note: lock must be held by the caller
   if (currentActivity) {
     const bool readerActivity = currentActivity->isReaderActivity();
+    const bool readingStatsActivity = currentActivity->name == "ReadingStats" || currentActivity->name == "ReadingCalendar";
     const bool epubReaderActivity = currentActivity->name == "EpubReader";
     const bool wifiSelectionActivity = currentActivity->name == "WifiSelection";
     currentActivity->onExit();
     currentActivity.reset();
+    if (readingStatsActivity) {
+      LOG_INF("RSDIAG", "stage=child_destroyed free=%u largest=%u",
+              static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    }
 #if FREEINK_CAP_BLE_HID_HOST
     if (epubReaderActivity) {
       LOG_INF("MEM", "reader_exit stage=activity_destroyed free=%u max=%u",
               static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+      logActivityHeapShape("after_activity_destroyed");
     }
     if (wifiSelectionActivity) {
       LOG_INF("WIFI", "selection_destroyed free=%u largest=%u",
@@ -308,8 +433,13 @@ void ActivityManager::exitActivity(const RenderLock& lock) {
 }
 
 void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
+  pendingSettingsConstruction = false;
   // Note: no lock here, this is usually called by loop() and we may run into deadlock
   if (currentActivity) {
+    const bool recentBooksToReader = currentActivity->name == "RecentBooks" && newActivity && newActivity->name == "Reader";
+#if FREEINK_CAP_BLE_HID_HOST
+    if (recentBooksToReader) logActivityHeapShape("reader_transition_requested_reader_shell_pending");
+#endif
     // Defer launch if we're currently in an activity, to avoid deleting the current activity
     // leading to the "delete this" problem
     pendingActivity = std::move(newActivity);
@@ -320,7 +450,12 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
 #if FREEINK_CAP_BLE_HID_HOST
     if (currentActivity->bluetoothResourceSensitive() && BleHid.isRunning()) {
       bleinput::recordDiagnosticEvent("resource_stop activity=%.20s", currentActivity->name.c_str());
-      bleinput::stop();
+      if (currentActivity->isReaderActivity()) {
+        bleinput::stopForReaderResourcePressure();
+      } else {
+        bleinput::clearReaderBleReturnPending();
+        bleinput::stop();
+      }
     }
 #endif
     currentActivity->onEnter();
@@ -336,10 +471,22 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
 }
 
 void ActivityManager::goToFileTransfer() {
+  bleinput::setWebExclusive(true);
   replaceActivity(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput));
 }
 
-void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }
+void ActivityManager::goToSettings() {
+  if (currentActivity) {
+    pendingActivity.reset();
+    pendingSettingsConstruction = true;
+    pendingAction = PendingAction::Replace;
+    return;
+  }
+#if FREEINK_CAP_BLE_HID_HOST
+  if (BleHid.isRunning()) bleinput::stop();
+#endif
+  replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput));
+}
 
 void ActivityManager::goToFileBrowser(std::string path) {
   if (GUI.usesGraphicalLibrary()) {
@@ -350,10 +497,12 @@ void ActivityManager::goToFileBrowser(std::string path) {
 }
 
 void ActivityManager::goToFolioShelf(const uint8_t tab) {
+  if (!prepareWebExclusiveExit()) return;
   replaceActivity(std::make_unique<RecentBooksActivity>(renderer, mappedInput, tab));
 }
 
 void ActivityManager::goToRecentBooks() {
+  if (!prepareWebExclusiveExit()) return;
   replaceActivity(std::make_unique<RecentBooksActivity>(renderer, mappedInput));
 }
 
@@ -397,6 +546,10 @@ void ActivityManager::goToFullScreenMessage(std::string message, EpdFontFamily::
 }
 
 void ActivityManager::goHome(HomeMenuItem initialMenuItem) {
+  // Web/Wi-Fi owns the heap until its complete teardown. Do this before the
+  // replacement RecentBooks/Home activity is constructed; its persistent
+  // library reconstruction then runs only after the exclusive session ends.
+  if (!prepareWebExclusiveExit()) return;
   if (GUI.usesBookshelfHome()) {
     replaceActivity(std::make_unique<RecentBooksActivity>(renderer, mappedInput));
     return;
@@ -417,9 +570,33 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem) {
   }
   replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem));
 }
+
+bool ActivityManager::prepareWebExclusiveExit() {
+  CrossPointWebServerActivity* webActivity = nullptr;
+  if (currentActivity && currentActivity->name == "CrossPointWebServer") {
+    webActivity = static_cast<CrossPointWebServerActivity*>(currentActivity.get());
+  }
+  if (!webActivity) {
+    for (auto it = stackActivities.rbegin(); it != stackActivities.rend(); ++it) {
+      if (*it && (*it)->name == "CrossPointWebServer") {
+        webActivity = static_cast<CrossPointWebServerActivity*>(it->get());
+        break;
+      }
+    }
+  }
+  if (!webActivity) return true;
+
+  const bool released = webActivity->prepareForExit();
+  if (!released) {
+    LOG_ERR("WEBMEM", "stage=exclusive_exit_blocked free=%u largest=%u",
+            static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  }
+  return released;
+}
 void ActivityManager::goToCrashReport() { replaceActivity(std::make_unique<CrashActivity>(renderer, mappedInput)); }
 
 void ActivityManager::pushActivity(std::unique_ptr<Activity>&& activity) {
+  pendingSettingsConstruction = false;
   if (pendingActivity) {
     // Should never happen in practice
     LOG_ERR("ACT", "pendingActivity while pushActivity is not expected");
@@ -430,6 +607,7 @@ void ActivityManager::pushActivity(std::unique_ptr<Activity>&& activity) {
 }
 
 void ActivityManager::popActivity() {
+  pendingSettingsConstruction = false;
   if (pendingActivity) {
     // Should never happen in practice
     LOG_ERR("ACT", "pendingActivity while popActivity is not expected");
@@ -468,12 +646,29 @@ bool ActivityManager::bluetoothShouldBeActive() const {
 
 bool ActivityManager::bluetoothResourceSensitive() const {
   if (currentActivity && currentActivity->bluetoothResourceSensitive()) return true;
+  // BluetoothSettings is an explicit, lightweight BLE control surface. Its
+  // parent Settings activity remains on the stack while the child is shown,
+  // but that parent must not keep a user-requested BLE start blocked until the
+  // user navigates Home.
+  if (currentActivity && currentActivity->name == "BluetoothSettings") {
+    return std::any_of(stackActivities.begin(), stackActivities.end(), [](const auto& activity) {
+      // Settings is the lightweight parent that remains underneath this
+      // child. A Reader (or another genuinely sensitive parent) still wins.
+      return activity->name != "Settings" && activity->bluetoothResourceSensitive();
+    });
+  }
   return std::any_of(stackActivities.begin(), stackActivities.end(),
                      [](const auto& activity) { return activity->bluetoothResourceSensitive(); });
 }
 
 bool ActivityManager::bluetoothRenderSafe() const {
   return currentActivity && currentActivity->bluetoothRenderSafe();
+}
+
+void ActivityManager::notifyBluetoothAdmission() {
+  if (currentActivity && currentActivity->name == "Settings") {
+    static_cast<SettingsActivity*>(currentActivity.get())->markBluetoothAdmitted();
+  }
 }
 
 bool ActivityManager::hasPendingRenderWork() const {

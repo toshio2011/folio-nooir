@@ -64,6 +64,22 @@ class SdCardFontSystem {
   /// is left warm. Coverage, metadata, and advance state are never dropped.
   void releaseUiFallbackCaches();
 
+  /// Release rebuildable reader layout/glyph state while keeping the selected
+  /// font objects and coverage registered for the next UI/Reader session.
+  void releaseReaderCaches();
+
+  /// Release rebuildable state of the separately selected interface font at
+  /// hard boundaries such as Sleep, while preserving its registered coverage.
+  void releaseInterfaceFontCaches();
+
+  /// Drop the selected Reader-size font's coverage owner after Reader exit;
+  /// separately loaded UI fallback sizes remain available to RecentBooks.
+  void releaseReaderFontOwner(GfxRenderer& renderer);
+
+  /// Permit one later retry of memoized font arena failures after a genuine
+  /// section/heavy-render lifecycle event, without clearing warm page caches.
+  void signalReaderFontLifecycleBoundary();
+
 #if NOOIR_SD_FONT_DIAGNOSTICS
   /// Emit one bounded SDMEM checkpoint for the diagnostic firmware. Repeated
   /// render-task calls are coalesced for lifecycle stages.

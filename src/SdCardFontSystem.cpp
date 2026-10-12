@@ -313,6 +313,32 @@ void SdCardFontSystem::releaseUiFallbackCaches() {
 #endif
 }
 
+void SdCardFontSystem::releaseReaderCaches() {
+#if NOOIR_SD_FONT_DIAGNOSTICS
+  manager_.logMemoryStats("reader_before_shared_release");
+#endif
+  manager_.releaseReaderCaches();
+#if NOOIR_SD_FONT_DIAGNOSTICS
+  manager_.logMemoryStats("reader_after_shared_release");
+#endif
+}
+
+void SdCardFontSystem::releaseInterfaceFontCaches() {
+#if NOOIR_SD_FONT_DIAGNOSTICS
+  uiManager_.logMemoryStats("sleep_before_interface_release");
+#endif
+  uiManager_.releaseReaderCaches();
+#if NOOIR_SD_FONT_DIAGNOSTICS
+  uiManager_.logMemoryStats("sleep_after_interface_release");
+#endif
+}
+
+void SdCardFontSystem::releaseReaderFontOwner(GfxRenderer& renderer) {
+  manager_.releaseReaderFontOwner(renderer);
+}
+
+void SdCardFontSystem::signalReaderFontLifecycleBoundary() { manager_.beginAllocationRetryBoundary(); }
+
 #if NOOIR_SD_FONT_DIAGNOSTICS
 void SdCardFontSystem::diagnosticCheckpoint(const char* stage) {
   if (!stage) return;

@@ -81,7 +81,7 @@ void ClockWeatherActivity::rebuildLines() {
   lines.emplace_back("Last clock sync: " +
                      syncDateTimeText(WEATHER_STORE.lastClockSyncEpoch, WEATHER_STORE.lastClockSyncDateKey));
 
-  lines.emplace_back("Wi-Fi auto clock: " + std::string(SETTINGS.clockSyncEnabled ? "On" : "Off"));
+  lines.emplace_back("Wi-Fi clock sync: Always on");
   lines.emplace_back("Wi-Fi auto weather: " + std::string(SETTINGS.weatherSyncEnabled ? "On" : "Off"));
   lines.emplace_back("");
   lines.emplace_back("Select Sync now to connect once and refresh.");

@@ -118,13 +118,12 @@ class OptionPopup {
       return true;
     }
 
-    if (input.wasPressed(MappedInputManager::Button::Up) || input.wasPressed(MappedInputManager::Button::Left)) {
+    if (input.wasPressed(MappedInputManager::Button::Up)) {
       selectedIndex = selectedIndex == 0 ? count - 1 : selectedIndex - 1;
       layoutValid = false;
       requestUpdate();
       return true;
-    } else if (input.wasPressed(MappedInputManager::Button::Down) ||
-               input.wasPressed(MappedInputManager::Button::Right)) {
+    } else if (input.wasPressed(MappedInputManager::Button::Down)) {
       selectedIndex = (selectedIndex + 1) % count;
       layoutValid = false;
       requestUpdate();
@@ -166,6 +165,20 @@ class OptionPopup {
   // make the transition unambiguous.
   void dismiss() {
     active = false;
+  }
+
+  // Drop rebuildable popup strings/layout before a memory-sensitive child is
+  // pushed while the owning activity remains on the stack. Selection state is
+  // owned by the activity, so a later show() reconstructs the popup normally.
+  void clear() {
+    active = false;
+    title.clear();
+    std::vector<std::string>().swap(ownedStrings);
+    onSelectCallback = nullptr;
+    std::vector<Rect>().swap(layout.options);
+    layoutValid = false;
+    selectedIndex = 0;
+    firstVisibleIndex = 0;
   }
 
  private:

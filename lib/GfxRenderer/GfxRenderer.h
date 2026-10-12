@@ -17,6 +17,8 @@ class SdCardFont;
 #include <cstring>
 #include <deque>
 #include <map>
+#include <memory>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -83,6 +85,12 @@ class GfxRenderer {
   mutable int _stripY0 = 0;
   mutable int _stripRows = 0;
   mutable bool _stripActive = false;
+
+  // Reusable X4 grayscale strip scratch. The reader reserves this while BLE
+  // is already stopped for heavy setup, so steady-state cached-page renders
+  // do not allocate/free an 8 KB block while NimBLE is resident.
+  std::unique_ptr<uint8_t[]> grayscaleStripScratch_;
+  size_t grayscaleStripScratchSize_ = 0;
 
   // CJK UI font fallback map: primary (built-in, Latin-only) UI font id -> a
   // size-matched SD-card font id that carries CJK glyphs. When a string drawn
@@ -164,6 +172,34 @@ class GfxRenderer {
     sdCardFonts_.erase(fontId);
     fontPointSizes_.erase(fontId);
     arabicFallbackFontMap_.erase(fontId);
+    for (auto it = fallbackFontMap_.begin(); it != fallbackFontMap_.end();) {
+      if (it->first == fontId || it->second == fontId) {
+        it = fallbackFontMap_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+    for (auto it = arabicFallbackFontMap_.begin(); it != arabicFallbackFontMap_.end();) {
+      if (it->second == fontId) {
+        it = arabicFallbackFontMap_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+    for (auto it = arabicFallbackByPointSize_.begin(); it != arabicFallbackByPointSize_.end();) {
+      if (it->second == fontId) {
+        it = arabicFallbackByPointSize_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+    for (auto it = uiFontOverrideMap_.begin(); it != uiFontOverrideMap_.end();) {
+      if (it->second == fontId) {
+        it = uiFontOverrideMap_.erase(it);
+      } else {
+        ++it;
+      }
+    }
   }
   void setFontCacheManager(FontCacheManager* m) { fontCacheManager_ = m; }
   FontCacheManager* getFontCacheManager() const { return fontCacheManager_; }
@@ -176,6 +212,15 @@ class GfxRenderer {
   bool isSdCardFont(int fontId) const { return sdCardFonts_.count(fontId) > 0; }
   bool isUiFontOverride(int fontId) const {
     for (const auto& entry : uiFontOverrideMap_) {
+      if (entry.second == fontId) return true;
+    }
+    return false;
+  }
+  // Point size alone does not make a Reader font a UI owner. Latin-only
+  // families never acquire a CJK fallback mapping, even at 8/10/12 pt.
+  bool isUiFontReferenced(int fontId) const {
+    if (isUiFontOverride(fontId)) return true;
+    for (const auto& entry : fallbackFontMap_) {
       if (entry.second == fontId) return true;
     }
     return false;
@@ -385,6 +430,9 @@ class GfxRenderer {
   // numRows)), bypassing the framebuffer. supportsStripGrayscale() gates use.
   void writeGrayscalePlaneStrip(bool lsbPlane, const uint8_t* scratch, int yStart, int numRows) const;
   bool supportsStripGrayscale() const;
+  bool reserveGrayscaleStripScratch(size_t bytes);
+  uint8_t* getGrayscaleStripScratch(size_t bytes) const;
+  void releaseGrayscaleStripScratch();
   bool storeBwBuffer();    // Returns true if buffer was stored successfully
   void restoreBwBuffer();  // Restore and free the stored buffer
   void cleanupGrayscaleWithFrameBuffer() const;

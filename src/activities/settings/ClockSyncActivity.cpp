@@ -71,7 +71,7 @@ void ClockSyncActivity::runSync() {
     return;
   }
 
-  const ClockWeatherSyncResult result = ClockWeatherSyncService::sync(true, syncWeather, true);
+  const ClockWeatherSyncResult result = ClockWeatherSyncService::sync(true, syncWeather);
 
   // This device action is deliberately one-shot: release the radio as soon
   // as the request is complete rather than keeping Wi-Fi alive while the

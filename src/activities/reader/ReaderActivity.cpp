@@ -204,7 +204,11 @@ void ReaderActivity::onEnter() {
   // second button press cannot be mistaken for a dropped input.
   // Do not carry the optional BLE controller into the synchronous open path.
   // The lifecycle will bring it back after the concrete reader is ready.
-  if (BleHid.isRunning()) bleinput::stop();
+  // Preserve the enabled/wanted Reader return intent even when a previous
+  // activity already left BLE off after a failed admission. The helper is
+  // intentionally idempotent and still performs the full stop when needed.
+  bleinput::stopForReaderResourcePressure();
+  bleinput::signalReaderBleReturnLifecycleEvent("reader_enter");
   showOpeningBookFeedback(renderer, initialBookPath);
   // SD-font registration and cache release mutate renderer-owned maps and
   // font objects. Keep the transition serialized with the render task, while

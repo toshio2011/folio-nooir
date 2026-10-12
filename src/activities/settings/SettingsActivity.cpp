@@ -1,6 +1,7 @@
 #include "SettingsActivity.h"
 
 #include <BoardConfig.h>
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <Logging.h>
@@ -11,6 +12,7 @@
 #include <cstring>
 
 #include "ButtonRemapActivity.h"
+#include "BleInput.h"
 #include "BluetoothSettingsActivity.h"
 #include "ClearCacheActivity.h"
 #include "../home/ToDoListActivity.h"
@@ -33,6 +35,7 @@
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
 #include "components/UITheme.h"
+#include "util/BleMemoryPolicy.h"
 #include "fontIds.h"
 #include "util/QuickActions.h"
 
@@ -62,6 +65,82 @@ SettingsActivity::SettingsActivity(GfxRenderer& renderer, MappedInputManager& ma
 
 SettingsActivity::~SettingsActivity() { logSettingsDiagnostic("destructor"); }
 
+void SettingsActivity::armBluetoothReturn(const char* reason) {
+  const uint32_t epoch = bluetoothLifecycleEpoch.fetch_add(1, std::memory_order_acq_rel) + 1;
+  bluetoothLifecycleState.store(BluetoothLifecycleState::TransitionSensitive, std::memory_order_release);
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+  bluetoothReturnArmed = true;
+  bluetoothTransientFontCachesReleased = false;
+#endif
+  LOG_INF("BLEMEM", "stage=settings_ble_return_armed reason=%.24s epoch=%u free=%u largest=%u",
+          reason ? reason : "event", static_cast<unsigned>(epoch),
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  bleinput::recordDiagnosticEvent("settings_ble_return_armed reason=%.24s epoch=%u", reason ? reason : "event",
+                                  static_cast<unsigned>(epoch));
+  bleinput::requestLifecycleReevaluation();
+}
+
+void SettingsActivity::markBluetoothQuiescent() {
+  auto expected = BluetoothLifecycleState::TransitionSensitive;
+  if (!bluetoothLifecycleState.compare_exchange_strong(expected, BluetoothLifecycleState::ReturnPending,
+                                                       std::memory_order_acq_rel, std::memory_order_acquire))
+    return;
+  const uint32_t epoch = bluetoothLifecycleEpoch.load(std::memory_order_acquire);
+  LOG_INF("BLEMEM", "stage=settings_ble_return_deferred epoch=%u free=%u largest=%u",
+          static_cast<unsigned>(epoch), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+  reclaimStableBluetoothTransientCaches();
+#endif
+  bleinput::recordDiagnosticEvent("settings_ble_return_deferred epoch=%u", static_cast<unsigned>(epoch));
+  bleinput::requestLifecycleReevaluation();
+}
+
+void SettingsActivity::markBluetoothAdmitted() {
+  const BluetoothLifecycleState previous =
+      bluetoothLifecycleState.exchange(BluetoothLifecycleState::StableIdle, std::memory_order_acq_rel);
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+  bluetoothReturnArmed = false;
+  bluetoothTransientFontCachesReleased = false;
+#endif
+  if (previous != BluetoothLifecycleState::StableIdle) {
+    const uint32_t epoch = bluetoothLifecycleEpoch.load(std::memory_order_acquire);
+    LOG_INF("BLEMEM", "stage=settings_ble_stable epoch=%u free=%u largest=%u",
+            static_cast<unsigned>(epoch), static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    bleinput::recordDiagnosticEvent("settings_ble_stable epoch=%u", static_cast<unsigned>(epoch));
+  }
+}
+
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+void SettingsActivity::reclaimStableBluetoothTransientCaches() {
+  if (!bluetoothReturnArmed || bluetoothTransientFontCachesReleased || BleHid.isRunning()) return;
+
+  const size_t freeBefore = ESP.getFreeHeap();
+  const size_t largestBefore = ESP.getMaxAllocHeap();
+  if (freeBefore >= bleinput::kReaderBleStartMinFreeHeap &&
+      largestBefore >= bleinput::kReaderBleStartMinLargestBlock)
+    return;
+
+  bluetoothTransientFontCachesReleased = true;
+  // markBluetoothQuiescent() is called by render(), which already owns the
+  // render lock. Do not acquire a nested RenderLock here.
+  if (auto* fontCache = renderer.getFontCacheManager()) fontCache->releaseTransientFontCaches();
+  const size_t freeAfter = ESP.getFreeHeap();
+  const size_t largestAfter = ESP.getMaxAllocHeap();
+  LOG_INF("BLEMEM",
+          "stage=settings_ble_return_reclaim item=font_decompressor_cache free=%u->%u freed=%u largest=%u->%u gain=%u",
+          static_cast<unsigned>(freeBefore), static_cast<unsigned>(freeAfter),
+          static_cast<unsigned>(freeAfter > freeBefore ? freeAfter - freeBefore : 0),
+          static_cast<unsigned>(largestBefore), static_cast<unsigned>(largestAfter),
+          static_cast<unsigned>(largestAfter > largestBefore ? largestAfter - largestBefore : 0));
+  // Settings has finished its frame. A selected Reader font is not live here
+  // unless Reader is still on the stack; actual UI references are retained by
+  // the manager. In particular, an unreferenced 8 pt font is not a UI owner.
+  if (!activityManager.isReaderActivity()) sdFontSystem.releaseReaderFontOwner(renderer);
+}
+#endif
+
 void SettingsActivity::rebuildSettingsLists() {
   displaySettings.clear();
   readerSettings.clear();
@@ -83,35 +162,44 @@ void SettingsActivity::rebuildSettingsLists() {
     return id == StrId::STR_RECENT_BOOK_LAYOUT || id == StrId::STR_FINISHED_BOOK_LAYOUT;
   };
   const auto isCarouselLayoutSetting = [](const StrId id) { return id == StrId::STR_CAROUSEL_LAYOUT; };
-  for (auto& setting : getSettingsList(&sdFontSystem.registry(), &dictionaries)) {
-    if (setting.category == StrId::STR_NONE_OPT) continue;
-    if (isFolioLayoutSetting(setting.nameId) && !folioNooir) continue;
-    if (isCarouselLayoutSetting(setting.nameId) && !carouselTheme) continue;
-    if (setting.category == StrId::STR_CAT_DISPLAY) {
-      if (setting.nameId == StrId::STR_INTERFACE_FONT) continue;
-      displaySettings.push_back(setting);
-    } else if (setting.category == StrId::STR_CAT_READER) {
-      // Settings merged into "Text Settings"
-      // (they stay in the shared list for the web settings API)
-      if (setting.inTextSettings) continue;
-      readerSettings.push_back(setting);
-    } else if (setting.category == StrId::STR_CAT_CONTROLS) {
-      if (setting.valuePtr == &CrossPointSettings::pwrBtnFootnoteBack &&
-          SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::FOOTNOTES) {
-        continue;
-      }
-      controlsSettings.push_back(setting);
-    } else if (setting.category == StrId::STR_CAT_SYSTEM) {
-      systemSettings.push_back(setting);
-    }
+  auto settings = getSettingsList(&sdFontSystem.registry(), &dictionaries);
+  const auto visibleCategory = [&](const SettingInfo& setting) -> int {
+    if (setting.category == StrId::STR_NONE_OPT) return -1;
+    if (isFolioLayoutSetting(setting.nameId) && !folioNooir) return -1;
+    if (isCarouselLayoutSetting(setting.nameId) && !carouselTheme) return -1;
+    if (setting.category == StrId::STR_CAT_DISPLAY)
+      return setting.nameId == StrId::STR_INTERFACE_FONT ? -1 : 0;
+    if (setting.category == StrId::STR_CAT_READER) return setting.inTextSettings ? -1 : 1;
+    if (setting.category == StrId::STR_CAT_CONTROLS)
+      return setting.valuePtr == &CrossPointSettings::pwrBtnFootnoteBack &&
+                     SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::FOOTNOTES ? -1 : 2;
+    return setting.category == StrId::STR_CAT_SYSTEM ? 3 : -1;
+  };
+  const bool hasFavoriteSleep = !APP_STATE.favoriteSleepImagePath.empty() ||
+      (!APP_STATE.legacySleepImageDisabled && (Storage.exists("/sleep.bmp") || Storage.exists("/sleep.png")));
+  // Reserve once at this explicit list rebuild, including the actions added
+  // below. Move each descriptor from the temporary list instead of deep-copying
+  // its enum strings/vectors and growing four category arenas geometrically.
+  size_t categorySizes[] = {hasFavoriteSleep ? 1U : 0U, 6, BoardConfig::hasTouch() ? 0U : 2U,
+                           9U + (BoardConfig::hasTouch() ? 0U : 1U)};
+#if FREEINK_CAP_BLE_HID_HOST
+  ++categorySizes[3];
+#endif
+  std::vector<SettingInfo>* categories[] = {&displaySettings, &readerSettings, &controlsSettings, &systemSettings};
+  for (const auto& setting : settings) {
+    const int category = visibleCategory(setting);
+    if (category >= 0) ++categorySizes[category];
+  }
+  for (size_t i = 0; i < 4; ++i) categories[i]->reserve(categorySizes[i]);
+  for (auto& setting : settings) {
+    const int category = visibleCategory(setting);
+    if (category >= 0) categories[category]->push_back(std::move(setting));
   }
 
   // Device-only display action. The favorite path lives in CrossPointState,
   // not CrossPointSettings, so it is intentionally kept out of the web
   // settings API and added only when a favorite is actually configured.
-  if (!APP_STATE.favoriteSleepImagePath.empty() ||
-      (!APP_STATE.legacySleepImageDisabled &&
-       (Storage.exists("/sleep.bmp") || Storage.exists("/sleep.png")))) {
+  if (hasFavoriteSleep) {
     displaySettings.push_back(
         SettingInfo::Action(StrId::STR_CLEAR_FAVORITE_SLEEP, SettingAction::ClearFavoriteSleepImage));
   }
@@ -217,7 +305,6 @@ void SettingsActivity::rebuildSettingsLists() {
                               StrId::STR_BLUETOOTH,
 #endif
                               StrId::STR_CLOCK_WEATHER_SYNC,
-                             StrId::STR_CLOCK_SYNC_ENABLED,
                              StrId::STR_WEATHER_SYNC_ENABLED,
                              StrId::STR_OPDS_SERVERS,
                              StrId::STR_KOREADER_SYNC,
@@ -251,6 +338,12 @@ void SettingsActivity::rebuildSettingsLists() {
 }
 
 void SettingsActivity::onEnter() {
+  bluetoothLifecycleState.store(BluetoothLifecycleState::TransitionSensitive, std::memory_order_release);
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+  bluetoothReturnArmed = false;
+  bluetoothTransientFontCachesReleased = false;
+#endif
+  if (SETTINGS.bluetoothEnabled) armBluetoothReturn("activity_enter");
   logSettingsDiagnostic("onEnter_begin");
   Activity::onEnter();
 
@@ -264,6 +357,13 @@ void SettingsActivity::onEnter() {
 
   rebuildSettingsLists();
   logSettingsDiagnostic("onEnter_ready", settingsCount);
+  const std::vector<SettingInfo>* owners[] = {&displaySettings, &readerSettings, &controlsSettings, &systemSettings};
+  for (size_t i = 0; i < 4; ++i) {
+    LOG_INF("SETDIAG", "owner=category_%u ptr=%p size=%u capacity=%u bytes=%u",
+            static_cast<unsigned>(i), static_cast<const void*>(owners[i]->data()),
+            static_cast<unsigned>(owners[i]->size()), static_cast<unsigned>(owners[i]->capacity()),
+            static_cast<unsigned>(owners[i]->capacity() * sizeof(SettingInfo)));
+  }
 
   // Trigger first update
   requestUpdate();
@@ -422,27 +522,41 @@ void SettingsActivity::loop() {
     return;
   }
 
-  buttonNavigator.onNextRelease([this] {
-    selectedSettingIndex = ButtonNavigator::nextIndex(selectedSettingIndex, settingsCount + 1);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPreviousRelease([this] {
+  // Settings follows the device controls directly: Left/Right select a tab and
+  // Up/Down select a row. Do not use NavNext/NavPrevious here; those logical
+  // aliases intentionally serve Reader and can collapse more than one physical
+  // direction into the same action for a BLE page-turn mapping.
+  const auto moveToPreviousRow = [this] {
     selectedSettingIndex = ButtonNavigator::previousIndex(selectedSettingIndex, settingsCount + 1);
     requestUpdate();
-  });
-
-  buttonNavigator.onNextContinuous([this, &hasChangedCategory] {
-    hasChangedCategory = true;
-    selectedCategoryIndex = ButtonNavigator::nextIndex(selectedCategoryIndex, categoryCount);
+  };
+  const auto moveToNextRow = [this] {
+    selectedSettingIndex = ButtonNavigator::nextIndex(selectedSettingIndex, settingsCount + 1);
     requestUpdate();
-  });
-
-  buttonNavigator.onPreviousContinuous([this, &hasChangedCategory] {
+  };
+  const auto moveToPreviousTab = [this, &hasChangedCategory, &applyCategorySelection] {
     hasChangedCategory = true;
     selectedCategoryIndex = ButtonNavigator::previousIndex(selectedCategoryIndex, categoryCount);
+    selectedSettingIndex = 0;
+    applyCategorySelection();
     requestUpdate();
-  });
+  };
+  const auto moveToNextTab = [this, &hasChangedCategory, &applyCategorySelection] {
+    hasChangedCategory = true;
+    selectedCategoryIndex = ButtonNavigator::nextIndex(selectedCategoryIndex, categoryCount);
+    selectedSettingIndex = 0;
+    applyCategorySelection();
+    requestUpdate();
+  };
+
+  buttonNavigator.onRelease({MappedInputManager::Button::Up}, moveToPreviousRow);
+  buttonNavigator.onRelease({MappedInputManager::Button::Down}, moveToNextRow);
+  buttonNavigator.onRelease({MappedInputManager::Button::Left}, moveToPreviousTab);
+  buttonNavigator.onRelease({MappedInputManager::Button::Right}, moveToNextTab);
+  buttonNavigator.onContinuous({MappedInputManager::Button::Up}, moveToPreviousRow);
+  buttonNavigator.onContinuous({MappedInputManager::Button::Down}, moveToNextRow);
+  buttonNavigator.onContinuous({MappedInputManager::Button::Left}, moveToPreviousTab);
+  buttonNavigator.onContinuous({MappedInputManager::Button::Right}, moveToNextTab);
 
   if (hasChangedCategory) {
     selectedSettingIndex = (selectedSettingIndex == 0) ? 0 : 1;
@@ -582,7 +696,12 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
 #if FREEINK_CAP_BLE_HID_HOST
       case SettingAction::Bluetooth:
-        startActivityForResult(std::make_unique<BluetoothSettingsActivity>(renderer, mappedInput), resultHandler);
+        startActivityForResult(
+            std::make_unique<BluetoothSettingsActivity>(renderer, mappedInput), [this](const ActivityResult&) {
+              logSettingsDiagnostic("return_from_child");
+              SETTINGS.saveToFile();
+              armBluetoothReturn("BluetoothSettings");
+            });
         break;
 #endif
       case SettingAction::ClockWeatherSync:
@@ -761,7 +880,10 @@ void SettingsActivity::openQuickActionsPicker() {
 }
 
 void SettingsActivity::render(RenderLock&&) {
-  if (optionPopup.processRender(renderer, mappedInput)) return;
+  if (optionPopup.processRender(renderer, mappedInput)) {
+    markBluetoothQuiescent();
+    return;
+  }
 
   renderer.clearScreen();
 
@@ -861,4 +983,5 @@ void SettingsActivity::render(RenderLock&&) {
 
   // Always use standard refresh for settings screen
   renderer.displayBuffer();
+  markBluetoothQuiescent();
 }

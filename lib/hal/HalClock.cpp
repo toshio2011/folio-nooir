@@ -8,9 +8,12 @@
 #include <sys/time.h>
 #include <time.h>
 
+#include <mutex>
+
 HalClock halClock;  // Singleton instance
 
 void HalClock::begin() {
+  std::lock_guard<std::mutex> lock(_mutex);
   _available = _sdkRtc.begin();
   _systemTimeSynced = false;
   _hasCachedTime = false;
@@ -18,6 +21,7 @@ void HalClock::begin() {
 }
 
 bool HalClock::hasUsableTime() const {
+  std::lock_guard<std::mutex> lock(_mutex);
   if (_available || _hasCachedTime) return true;
   if (!_systemTimeSynced) return false;
   const time_t now = time(nullptr);
@@ -25,7 +29,14 @@ bool HalClock::hasUsableTime() const {
 }
 
 bool HalClock::restoreFromEpoch(const int64_t epoch) {
+  if (!setUtcEpoch(epoch)) return false;
+  LOG_DBG("CLK", "Restored cached system time from %lld", static_cast<long long>(epoch));
+  return true;
+}
+
+bool HalClock::setUtcEpoch(const int64_t epoch) {
   if (epoch <= 100000) return false;
+  std::lock_guard<std::mutex> lock(_mutex);
   const timeval tv{static_cast<time_t>(epoch), 0};
   if (settimeofday(&tv, nullptr) != 0) return false;
   _systemTimeSynced = true;
@@ -36,11 +47,33 @@ bool HalClock::restoreFromEpoch(const int64_t epoch) {
   _cachedHour = static_cast<uint8_t>(timeinfo.tm_hour);
   _cachedMinute = static_cast<uint8_t>(timeinfo.tm_min);
   _hasCachedTime = true;
-  LOG_DBG("CLK", "Restored cached system time from %lld", static_cast<long long>(epoch));
+
+  if (_available) {
+    Rtc::DateTime dt;
+    dt.year = static_cast<uint16_t>(timeinfo.tm_year + 1900);
+    dt.month = static_cast<uint8_t>(timeinfo.tm_mon + 1);
+    dt.day = static_cast<uint8_t>(timeinfo.tm_mday);
+    dt.hour = static_cast<uint8_t>(timeinfo.tm_hour);
+    dt.minute = static_cast<uint8_t>(timeinfo.tm_min);
+    dt.second = static_cast<uint8_t>(timeinfo.tm_sec);
+    dt.weekday = static_cast<uint8_t>(timeinfo.tm_wday);
+    if (!_sdkRtc.set(dt)) LOG_ERR("CLK", "System clock set but RTC write failed");
+  }
   return true;
 }
 
 bool HalClock::getTime(uint8_t& hour, uint8_t& minute) const {
+  std::lock_guard<std::mutex> lock(_mutex);
+  if (_systemTimeSynced) {
+    const time_t now = time(nullptr);
+    if (now > 100000) {
+      struct tm timeinfo;
+      gmtime_r(&now, &timeinfo);
+      hour = static_cast<uint8_t>(timeinfo.tm_hour);
+      minute = static_cast<uint8_t>(timeinfo.tm_min);
+      return true;
+    }
+  }
   if (!_available) {
     if (!_systemTimeSynced) return false;
     const time_t now = time(nullptr);
@@ -77,6 +110,16 @@ bool HalClock::getTime(uint8_t& hour, uint8_t& minute) const {
 }
 
 uint32_t HalClock::getDateKey() const {
+  std::lock_guard<std::mutex> lock(_mutex);
+  if (_systemTimeSynced) {
+    const time_t now = time(nullptr);
+    if (now > 100000) {
+      struct tm timeinfo;
+      gmtime_r(&now, &timeinfo);
+      return static_cast<uint32_t>(timeinfo.tm_year + 1900) * 10000UL +
+             static_cast<uint32_t>(timeinfo.tm_mon + 1) * 100UL + static_cast<uint32_t>(timeinfo.tm_mday);
+    }
+  }
   if (!_available) {
     if (!_systemTimeSynced) return 0;
     const time_t now = time(nullptr);
@@ -128,7 +171,7 @@ bool HalClock::formatTime(char* buf, size_t bufSize, uint8_t utcOffsetQuarterHou
   return true;
 }
 
-bool HalClock::syncFromNTP(const bool stopServiceAfterSync) {
+bool HalClock::syncFromNTP() {
   if (WiFi.status() != WL_CONNECTED) {
     LOG_ERR("CLK", "WiFi not connected, cannot sync NTP");
     return false;
@@ -148,43 +191,24 @@ bool HalClock::syncFromNTP(const bool stopServiceAfterSync) {
     resetTaskWatchdogIfSubscribed();
     if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
       time_t now = time(nullptr);
-      struct tm timeinfo;
-      gmtime_r(&now, &timeinfo);
-
-      Rtc::DateTime dt;
-      dt.year = static_cast<uint16_t>(timeinfo.tm_year + 1900);
-      dt.month = static_cast<uint8_t>(timeinfo.tm_mon + 1);
-      dt.day = static_cast<uint8_t>(timeinfo.tm_mday);
-      dt.hour = static_cast<uint8_t>(timeinfo.tm_hour);
-      dt.minute = static_cast<uint8_t>(timeinfo.tm_min);
-      dt.second = static_cast<uint8_t>(timeinfo.tm_sec);
-      dt.weekday = static_cast<uint8_t>(timeinfo.tm_wday);
-      _systemTimeSynced = true;
-      _lastPollMs = 0;
-      _cachedHour = dt.hour;
-      _cachedMinute = dt.minute;
-      _hasCachedTime = true;
-      if (_available && !_sdkRtc.set(dt)) {
-        LOG_ERR("CLK", "System time synced but RTC write failed");
-      } else {
-        LOG_INF("CLK", _available ? "RTC/system clock set to %04u-%02u-%02u %02u:%02u:%02u UTC"
-                                  : "System clock set to %04u-%02u-%02u %02u:%02u:%02u UTC",
-                dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second);
+      if (setUtcEpoch(now)) {
+        struct tm timeinfo;
+        gmtime_r(&now, &timeinfo);
+        LOG_INF("CLK", "Shared system clock set to %04d-%02d-%02d %02d:%02d:%02d UTC (source=NTP)",
+                timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday, timeinfo.tm_hour, timeinfo.tm_min,
+                timeinfo.tm_sec);
+        synced = true;
       }
-      synced = true;
       break;
     }
     delay(100);
   }
 
-  // Device Settings syncs turn Wi-Fi off as soon as the request completes.
-  // Stop SNTP in that one-shot case; callers that keep Wi-Fi alive (the Web
-  // UI and Wi-Fi-session auto-sync) retain the existing periodic service.
-  if (stopServiceAfterSync && esp_sntp_enabled()) esp_sntp_stop();
-  if (stopServiceAfterSync) {
-    LOG_INF("NETMEM", "stage=ntp_stopped synced=%d free=%u largest=%u", synced ? 1 : 0,
-            static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
-  }
+  // Clock updates are one-shot per Wi-Fi session. Do not leave SNTP polling in
+  // the background after success or timeout, including while Web owns Wi-Fi.
+  if (esp_sntp_enabled()) esp_sntp_stop();
+  LOG_INF("NETMEM", "stage=ntp_stopped synced=%d free=%u largest=%u", synced ? 1 : 0,
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
   if (!synced) LOG_ERR("CLK", "NTP sync timed out");
   return synced;
 }

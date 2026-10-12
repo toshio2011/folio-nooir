@@ -1,5 +1,6 @@
 #include "ReadingStatsActivity.h"
 
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <Logging.h>
@@ -164,6 +165,31 @@ void ReadingStatsActivity::onEnter() {
 
 void ReadingStatsActivity::onExit() {
   logReadingStatsDiagnostic("onExit_begin", snapshot.days.size(), snapshot.books.size(), snapshot.achievements.size());
+
+  const size_t snapshotBeforeFree = ESP.getFreeHeap();
+  const size_t snapshotBeforeLargest = ESP.getMaxAllocHeap();
+  snapshot = {};
+  const size_t snapshotAfterFree = ESP.getFreeHeap();
+  const size_t snapshotAfterLargest = ESP.getMaxAllocHeap();
+  LOG_INF("RSDIAG", "stage=after_snapshot_release free=%u->%u freed=%u largest=%u->%u gain=%u days=%u books=%u achievements=%u",
+          static_cast<unsigned>(snapshotBeforeFree), static_cast<unsigned>(snapshotAfterFree),
+          static_cast<unsigned>(snapshotAfterFree > snapshotBeforeFree ? snapshotAfterFree - snapshotBeforeFree : 0),
+          static_cast<unsigned>(snapshotBeforeLargest), static_cast<unsigned>(snapshotAfterLargest),
+          static_cast<unsigned>(snapshotAfterLargest > snapshotBeforeLargest ? snapshotAfterLargest - snapshotBeforeLargest : 0),
+          static_cast<unsigned>(snapshot.days.size()), static_cast<unsigned>(snapshot.books.size()),
+          static_cast<unsigned>(snapshot.achievements.size()));
+
+  const size_t fontBeforeFree = ESP.getFreeHeap();
+  const size_t fontBeforeLargest = ESP.getMaxAllocHeap();
+  if (auto* fontCache = renderer.getFontCacheManager()) fontCache->releaseTransientFontCaches();
+  const size_t fontAfterFree = ESP.getFreeHeap();
+  const size_t fontAfterLargest = ESP.getMaxAllocHeap();
+  LOG_INF("RSDIAG", "stage=after_stats_font_release free=%u->%u freed=%u largest=%u->%u gain=%u",
+          static_cast<unsigned>(fontBeforeFree), static_cast<unsigned>(fontAfterFree),
+          static_cast<unsigned>(fontAfterFree > fontBeforeFree ? fontAfterFree - fontBeforeFree : 0),
+          static_cast<unsigned>(fontBeforeLargest), static_cast<unsigned>(fontAfterLargest),
+          static_cast<unsigned>(fontAfterLargest > fontBeforeLargest ? fontAfterLargest - fontBeforeLargest : 0));
+
   Activity::onExit();
   logReadingStatsDiagnostic("onExit_end", snapshot.days.size(), snapshot.books.size(), snapshot.achievements.size());
 }

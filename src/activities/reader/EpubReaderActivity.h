@@ -5,6 +5,9 @@
 
 #include <atomic>
 #include <optional>
+#include <span>
+
+#include "util/ReaderRenderBudget.h"
 
 #include "BookmarkEntry.h"
 #include "ClippingEntry.h"
@@ -15,6 +18,8 @@
 #include "ProgressMapper.h"
 #include "activities/Activity.h"
 #include "components/LongOperationIndicator.h"
+
+struct ReaderHighlightWord;
 
 class EpubReaderActivity final : public Activity {
   std::shared_ptr<Epub> epub;
@@ -145,13 +150,36 @@ class EpubReaderActivity final : public Activity {
   // A render request received while the host is being reclaimed is replayed
   // only after the centralized lifecycle reports NimBLE fully stopped.
   bool readerRenderWaitingForBleStop = false;
-  // One cache-release attempt per completed Reader render. It is reset by the
-  // render task and consumed only from the idle main-loop boundary.
+  std::atomic<bool> readerSurvivalStopRequested{false};
+  std::atomic<bool> readerSurvivalReturnHeld{false};
+  size_t cachedRenderObservedPeakBytes = 0;
+  size_t cachedRenderHighlightBytes = 0;
+  size_t cachedRenderStartFree = 0;
+  size_t cachedRenderLowestFree = 0;
+  bool cachedRenderTracking = false;
+  reader_memory::RenderBudget cachedRenderBudget(size_t highlightBytes, bool pageLoaded = false) const;
+  bool cachedRenderPreflight(size_t highlightBytes, bool pageLoaded = false);
+  bool cachedRenderFinalPassPreflight(bool hasHighlights);
+  void requestReaderSurvivalStop(const char* reason, bool replayRender);
+  void sampleCachedRenderHeap();
+  void checkReaderSurvival();
+  // One cache-release attempt per explicit return generation, consumed only
+  // from the idle main-loop boundary, never reset by a cached render.
   bool readerIdleFontCachesReleased = false;
-  // CSS capacity is released at most once for a given Section. A later page
-  // in the same Section must not repeatedly free/rebuild the shared parser.
-  bool readerCssCapacityReleaseAttemptedForSection = false;
-  void releaseIdleReaderFontCachesForBluetooth();
+  // BLE-return cleanup is one-shot for the current BLE return event. A
+  // fragmented heap must not cause a cache purge before every cached page or
+  // Section; a failed attempt remains deferred until BLE lifecycle changes.
+  bool readerBleReturnCleanupAttempted = false;
+  uint32_t readerBleReturnCleanupGeneration = 0;
+  // Armed only by a cold/incomplete-section build, an image/scratch miss, or
+  // the matching replay of an explicit Reader survival stop.
+  // It permits one deep shared-font rescue after normal return cleanup fails,
+  // never as a general cached-page purge.
+  bool readerDeepCacheRescueEligible = false;
+  // Diagnostic reason for the current one-shot deep-rescue arm. The value is
+  // always a string literal owned by the firmware.
+  const char* readerDeepCacheRescueReason = "none";
+  void runBleReturnCleanupIfNeeded();
 #endif
   // Cold/uncached page requests use a short event-loop phase to show the
   // loading line on the already-presented page before synchronous work starts.
@@ -167,7 +195,7 @@ class EpubReaderActivity final : public Activity {
   bool renderContents(std::unique_ptr<Page> page, int orientedMarginTop, int orientedMarginRight,
                       int orientedMarginBottom, int orientedMarginLeft);
   void requestPageRender(bool immediate = false);
-  void renderSavedHighlights(const Page& page, int fontId, int marginLeft, int marginTop);
+  void renderSavedHighlights(const Page& page, int fontId, std::span<const ReaderHighlightWord> words);
   void renderStatusBar() const;
   // Pages laid out per incremental-build pump: on the render path (catching up to the page
   // being shown) and per loop() tick (background build of a large chapter). Kept small so a
@@ -176,27 +204,40 @@ class EpubReaderActivity final : public Activity {
   static constexpr int BACKGROUND_BUILD_PAGES_PER_TICK = 2;
 
   // MEMFIX-PORT: background-build heap floor; portable
-  // Skip background build ticks below this free-heap floor. The parse path grows
+  // Suspend a build episode below this free-heap floor. The parse path grows
   // word vectors of heap strings — throwing allocations that abort() on OOM under
   // -fno-exceptions (field crash: bad_alloc in ParsedText::addWord during a
-  // background tick under heap pressure). The tick is deferrable work:
-  // page-turn transients free up between turns and the build resumes; the render
-  // path still builds the page it actually needs regardless of this floor.
+  // background tick under heap pressure). Persist/release at the gate, then
+  // resume on new reader demand, not on idle ticks. Synchronous builds use the
+  // same gate so a requested page cannot bypass this protection.
   static constexpr size_t BACKGROUND_BUILD_MIN_FREE_HEAP = 32 * 1024;
   // Fragmentation floor for the same gate: a tick passed the free-heap floor at
   // 34.7 KB free but the largest block was ~11 KB, and a parse allocation inside the
   // tick aborted anyway. Free heap says how much memory exists; maxAlloc says whether
-  // any single allocation can actually have it. 16 KB also keeps the advance-table
-  // batch path (16 KB scratch) viable during builds.
+  // any single allocation can actually have it. The historical 16 KB parse
+  // floor stays unchanged; advance-table work now uses a smaller bounded batch.
   static constexpr size_t BACKGROUND_BUILD_MIN_MAX_ALLOC = 16 * 1024;
   // Gate for a background build tick: true when the heap can take parse allocations.
   // Updates buildHeapPaused as a side effect.
   bool buildTickHeapGate();
-  // True while the background build is gated on the heap floors. Lets skipLoopDelay()
-  // return the loop to normal delay/power-saving during the pause: isBuilding() stays
-  // true the whole time, and without this the loop would spin at full CPU speed doing
-  // no build work — indefinitely, if the build context itself keeps the heap low.
+  bool recoverBuildHeapGate();
+  void suspendBuildAtHeapGate();
+  void suspendBuildAtReaderWindow();
+  void suspendBuildAtReaderBoundary(const char* reason, bool releaseSharedReaderCaches);
+  // A suspended partial serves its saved pages. Only a new page/navigation
+  // demand can start its extension again; idle loop passes cannot retry it.
+  bool buildSuspendedAwaitingDemand = false;
+  bool buildSuspendedAtReaderWindow = false;
+  std::atomic<bool> restartHeapSuspendedEmptyBuild{false};
+  int buildSuspendedReaderPage = -1;
+  bool buildHeapFontReclaimAttempted = false;
+  // True after a failed heap gate. The build context is released once and the
+  // loop returns to normal power behavior until explicit demand starts a build.
   bool buildHeapPaused = false;
+  uint8_t buildWaitReason = 0;
+  int buildWaitSpine = -1;
+  int buildWaitReaderPage = -1;
+  int buildWaitPageCount = -1;
   // Heap floor for optional render-adjacent work (idle prewarm). Page
   // deserialization (TextBlock word vectors/strings) and glyph caching allocate
   // through throwing paths that abort() on OOM; skip deferrable work below it.
@@ -287,7 +328,7 @@ class EpubReaderActivity final : public Activity {
   // minutes, so the reader exits before it can finalize and the next open restarts
   // it from page 0. Reverts to normal power behavior the moment the build finishes,
   // and while the build is heap-paused (no work is happening, so spinning at full
-  // speed would only burn battery; the paused gate still retries every loop pass).
+  // speed would only burn battery; the suspended episode does not retry idle).
   bool skipLoopDelay() override { return section && section->isBuilding() && !buildHeapPaused; }
   bool isReaderActivity() const override { return true; }
   bool bluetoothResourceSensitive() const override {
@@ -297,6 +338,7 @@ class EpubReaderActivity final : public Activity {
         (!firstStableRenderComplete.load(std::memory_order_acquire) || !section || section->isBuilding()))
       return true;
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+    if (readerSurvivalStopRequested.load(std::memory_order_acquire)) return true;
     if (readerRenderWaitingForBleStop) return true;
     if (section && section->isPartial() && !partialRebuildStartFailed &&
         section->currentPage + PARTIAL_REBUILD_START_MARGIN >= static_cast<int>(section->pageCount)) return true;
