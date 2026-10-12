@@ -16,7 +16,8 @@
 
 
 # Folio Nooir
-Latest released version: **v1.6.2**.
+Latest released version: **v1.6.2**. The current release-ready development
+checkpoint is **v1.6.4**.
 
 ## Hardware warning
 
@@ -54,6 +55,59 @@ blocked before compilation when `sdl2-config` is unavailable. Real-device
 testing is still recommended. See the complete [native simulator guide](docs/simulator.md)
 for setup, build/run commands, controls, virtual SD-card use, and
 troubleshooting.
+
+## What's new in 1.6.4
+
+The 1.6.4 line is a current stabilization checkpoint focused on long reading
+sessions, memory pressure, EPUB lifecycle cleanup, and experimental BLE remote
+input. It is not a claim of complete physical validation: testing remains
+primarily on the older X4 revision available to the maintainer, and BLE remote
+behavior should still be treated as experimental until it has been exercised
+more broadly.
+
+### Reader and memory stability
+
+- Long-session Reader lifecycle, page-turn, section, and cache cleanup paths
+  have been tightened to reduce retained parser, CSS, font, and render state.
+- EPUB section builds can suspend under memory pressure, persist completed work
+  and their resume point, release build-only memory, and continue later near
+  the reader's current position instead of restarting unnecessarily.
+- Reader recovery follows a safer reclamation ladder: disposable Reader font
+  caches first, then UI fallback/empty capacities, grayscale scratch, and
+  shared Reader font caches only as a last resort.
+- Heap-fragmentation recovery is handled alongside free-heap recovery. The BLE
+  safety floors remain **98,304 bytes of free heap** and **36,852 bytes for the
+  largest allocatable block**.
+- When a render or section build needs room, Reader and BLE now follow an
+  explicit, event-driven stop/reclaim/reconnect lifecycle. Reconnect waits for
+  a safe Reader boundary rather than relying on a polling timer.
+
+### BLE remote input and navigation
+
+- BLE input now tracks press, repeat, release, and held-state transitions
+  explicitly, with real Left/Right/Up/Down semantics instead of collapsing
+  every remote report into a generic page action.
+- Settings navigation follows the same directional model: Left/Right switch
+  tabs and Up/Down move through rows. Popup navigation is isolated so remote
+  input does not leak into the screen underneath it.
+- Navigation actions use the single `NavNext`/`NavPrevious` naming path;
+  duplicate global `PageForward`/`PageBack` aliases have been removed.
+- Yiser remotes receive profile-aware handling for multi-report devices,
+  including safer Confirm/Back transitions, device-profile style differences,
+  and cleanup of reconnect and input state to avoid phantom stale actions.
+
+### Stats, Web, and shared services
+
+- Reading Statistics lifecycle handling has been tightened so screens and
+  cached-cover state are released and reused at the right boundaries.
+- Web activities apply additional memory mitigations around temporary state,
+  repeated requests, and activity transitions.
+- Clock, date, weather, and NTP synchronization now share clearer lifecycle
+  ownership, avoid duplicate work, and coordinate device-started sync with
+  Wi-Fi teardown and cached results.
+- Miscellaneous EPUB/parser/cache fixes improve bounded layout, CSS and image
+  handling, persistence, and cleanup without changing the existing book/cache
+  formats.
 
 ## What's new in 1.6.2
 
