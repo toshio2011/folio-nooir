@@ -36,7 +36,63 @@ The main goal remains simple:
 
 ---
 
-# What's new in 1.6.3
+# Current 1.6.4 development highlights
+
+The latest released version remains **v1.6.3**. The 1.6.4 development line
+continues that feature set with Reader, memory, and remote-input lifecycle work.
+Physical validation is still primarily on the maintainer's older X4, and the
+Bluetooth Page Turner remains Beta.
+
+## Reader and memory stability
+
+- Long-session Reader cleanup has been improved across page rendering, section
+  transitions, fonts, and caches.
+- Under memory pressure, an EPUB section build can pause after saving its
+  completed work and resume point, release temporary parser/CSS/build state,
+  then continue as the reader approaches the unfinished pages.
+- Memory recovery is staged and keeps normal Reader caches warm whenever
+  possible. Rebuildable Reader/UI font caches and grayscale render scratch are
+  reclaimed before shared Reader font state is considered for deeper recovery.
+- Recovery checks both total free heap and the largest available block, so it
+  can respond to fragmentation as well as low free memory. BLE cold starts keep
+  their **98,304-byte free-heap** and **36,852-byte largest-block** floors.
+
+## BLE and Reader lifecycle
+
+- BLE can pause before memory-heavy Reader work and return at safe Reader
+  boundaries after rendering or section completion, when the memory floors are
+  met. Cached/light Reader work can keep BLE running when there is enough
+  headroom.
+- Reader/BLE handoffs are driven by lifecycle events rather than a repeating
+  reconnect timer. Stale reconnect intent and queued input are cleared during
+  activity changes and shutdown.
+
+## Remote input
+
+- Directional remote input preserves Left, Right, Up, and Down as distinct
+  actions. In Settings, Left/Right change tabs and Up/Down move between rows;
+  popups handle their own navigation without passing presses to the screen
+  underneath.
+- `PageForward`/`PageBack` are no longer globally duplicated as
+  `NavNext`/`NavPrevious`, avoiding conflicting page and menu actions.
+- BLE input tracks press, repeat, release, and held states explicitly. Yiser
+  J6 Ring multi-report handling, Confirm/Back transitions, long-Confirm
+  behavior, button mapping, and device profiles have been refined. Reconnects
+  clear stale held state to prevent phantom actions.
+
+## Activity and shared-service cleanup
+
+- Reading Statistics releases screen-owned snapshots and temporary resources at
+  the right lifecycle boundaries. Web activities also clean up temporary
+  network/UI state more carefully and reevaluate BLE after leaving.
+- Clock, date, weather, and NTP synchronization share clearer one-shot
+  lifecycle handling, avoid duplicate work, and retain cached results when a
+  sync is unavailable.
+- Additional EPUB/parser/cache fixes improve section persistence, bounded
+  layout, and cleanup without replacing the established book and cache
+  workflows.
+
+# 1.6.3 release highlights
 
 1.6.3 is a larger stability/performance release focused on **Reader memory management, Bluetooth page-turner support, sleep/Wi-Fi lifecycle work, To-Do polish, and keeping Nooir responsive under heavier books**.
 
@@ -139,7 +195,8 @@ The on-device To-Do screen has been redesigned while keeping the existing storag
 - Wi-Fi teardown and memory diagnostics were tightened.
 - Bluetooth Reader reclaim is suppressed while Wi-Fi mode is active.
 - Web-session Wi-Fi behaviour remains unchanged where the live session must stay available.
-- Further post-Wi-Fi heap recovery work is planned for a future release.
+- Further post-Wi-Fi heap recovery continues in the 1.6.4 development line;
+  Bluetooth can still remain off when its memory safety floors are not met.
 
 ---
 
@@ -182,6 +239,8 @@ The on-device To-Do screen has been redesigned while keeping the existing storag
 - Reader Options shortcuts.
 - Four configurable Reader Quick Action slots, with actions depending on context.
 - Optional touch-reader controls on hardware providing the supported touch interface.
+- Optional SD-card interface font families, selected independently from Reader
+  typography.
 - **Settings Profiles** for saving, applying, and deleting named device-setting snapshots without copying reading data.
 - **Clear Reading Data** clears Recent entries, Book State records, reading statistics, and Folio shelf snapshot while preserving covers/thumbnails, metadata/book cache files, bookmarks, clippings, and highlights.
 - Per-book **Clear Reading Cache** removes generated Reader cache while preserving saved reading position.
@@ -191,8 +250,13 @@ The on-device To-Do screen has been redesigned while keeping the existing storag
 CrossPoint's Reader foundation is retained and extended.
 
 - EPUB, XTC/XTCH, TXT, Markdown, and file-browser workflows.
-- EPUB chapter navigation, footnotes, bookmarks, go-to-percent, auto page turn, screenshots, orientation control, and custom fonts.
+- EPUB chapter and table-of-contents navigation, in-section anchors, footnotes,
+  bookmarks, go-to-percent, auto page turn, screenshots, orientation control,
+  and custom fonts.
 - Improved EPUB CSS handling, HTML tables/cells, images, metadata, and memory safety.
+- Reader text settings include paragraph alignment, embedded EPUB style control,
+  optional language-aware hyphenation, and Focus Reading, which emphasizes the
+  opening part of regular body words.
 - Optional paragraph indents.
 - Improved lists/tables and `<hr>` separators.
 - Lightweight strikethrough/redaction handling.
@@ -319,6 +383,8 @@ When the device is connected to the same network, the built-in web interface pro
 - Rename/move/delete.
 - Folder creation.
 - Image preview.
+- WebDAV-compatible file access, HTTP upload/download, and WebSocket upload
+  progress alongside the browser file manager.
 - Book metadata editing for title, author, synopsis, status, progress, start date, and finish date without rewriting the original book file.
 - Cover management.
 - Reading statistics dashboard at `/stats`.
@@ -411,7 +477,8 @@ https://sync.koreader.rocks:443
 - Browser transfer.
 - Calibre wireless transfer.
 - KOReader Sync.
-- Clock & Weather one-shot sync.
+- Clock & Weather one-shot sync with cached time/date/weather and NTP lifecycle
+  handling.
 - Location/coordinate configuration for weather.
 - GitHub-release OTA support.
 - SD-card firmware update.
@@ -511,8 +578,10 @@ Release firmware:
 
 # Current known limitations / future work
 
-- **Bluetooth Page Turner remains Beta.** More controllers and cleaner mapping/setup are planned.
-- Post-Wi-Fi memory recovery can temporarily prevent Bluetooth from returning until sleep/wake or restart.
+- **Bluetooth Page Turner remains Beta.** Broader controller coverage and
+  physical BLE lifecycle validation are still needed.
+- Post-Wi-Fi BLE recovery remains under development and can be deferred while
+  either memory safety floor is unmet.
 - CBZ is still experimental and high-resolution pages can be slow.
 - PDF/FB2 Reader support is not shipped.
 - X4 Pro / X4 Classic are not officially supported yet.
