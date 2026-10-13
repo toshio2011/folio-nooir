@@ -51,6 +51,8 @@ class FolioNooirTheme final : public LyraTheme {
                       uint32_t middleMinutes, uint16_t finishedCount, bool accumulated) const;
   int featuredFormatBadgeWidth(const GfxRenderer& renderer, const char* path) const;
   void drawFeaturedFormatBadge(const GfxRenderer& renderer, const char* path, int right, int top) const;
+  static int featuredFormatBadgeLabelWidth(const GfxRenderer& renderer, const char* label);
+  static void drawFeaturedFormatBadgeLabel(const GfxRenderer& renderer, const char* label, int right, int top);
   void drawCoverProgress(const GfxRenderer& renderer, int x, int y, int width, uint8_t percent) const;
   void drawCoverProgressBadge(const GfxRenderer& renderer, int x, int y, int width, int height,
                               uint8_t percent) const;

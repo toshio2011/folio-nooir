@@ -13,13 +13,16 @@
 #include <Xtc.h>
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cstdio>
+#include <iterator>
 #include <memory>
 
 #include "MappedInputManager.h"
 #include "BleInput.h"
 #include "RecentBooksStore.h"
 #include "BookStateStore.h"
+#include "BookMetadataOverridesStore.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/home/SynopsisActivity.h"
 #include "activities/home/ReadingStatsActivity.h"
@@ -29,9 +32,12 @@
 #include "activities/reader/EpubReaderClippingListActivity.h"
 #include "activities/RenderLock.h"
 #include "util/BookCacheUtils.h"
+#include "util/BookFormat.h"
+#include "util/StatisticsDate.h"
 #include "util/SynopsisPreview.h"
 #include "util/EpubDiagnostics.h"
 #include "components/UITheme.h"
+#include "components/themes/BookCoverTreatment.h"
 #include "components/themes/folio_nooir/CarouselTheme.h"
 #include "components/themes/folio_nooir/FolioNooirTheme.h"
 #include "util/CoverStackGeometry.h"
@@ -75,6 +81,14 @@ void hashBytes(uint64_t& hash, const void* data, const size_t size) {
   }
 }
 
+uint64_t hashText(const std::string& text) {
+  uint64_t hash = 1469598103934665603ULL;
+  hashBytes(hash, text.data(), text.size());
+  const size_t length = text.size();
+  hashBytes(hash, &length, sizeof(length));
+  return hash;
+}
+
 SpineShelfPlanner::Rect spineShelfBounds(const int pageWidth, const FolioShelfLayout& layout) {
   // Use the actual region below the featured divider and reserve the lower
   // quarter as breathing room above the statistics strip. The planner derives
@@ -97,18 +111,39 @@ SpineShelfPlanner::Rect twoRowSpineBounds(const int pageWidth, const FolioShelfL
   return SpineShelfPlanner::Rect{layout.gridGap, top, std::max(1, pageWidth - layout.gridGap * 2), height};
 }
 
-void drawSpinePlant(const GfxRenderer& renderer, const SpineShelfPlanner::Rect& rect) {
+void drawSpinePlant(const GfxRenderer& renderer, const SpineShelfPlanner::Rect& rect, const uint32_t seed) {
   const int centerX = rect.x + rect.width / 2;
-  const int potWidth = std::max(8, rect.width - 4);
+  const int potWidth = std::max(8, rect.width - 4 - static_cast<int>(seed % 5u));
   const int potX = rect.x + (rect.width - potWidth) / 2;
-  const int potY = rect.y + rect.height - 8;
-  renderer.drawLine(centerX, rect.y + 3, centerX, potY, 2);
-  renderer.drawLine(centerX, rect.y + 9, centerX - 8, rect.y + 5, 2);
-  renderer.drawLine(centerX - 2, rect.y + 14, centerX - 9, rect.y + 12, 2);
-  renderer.drawLine(centerX, rect.y + 12, centerX + 8, rect.y + 8, 2);
-  renderer.drawLine(centerX + 2, rect.y + 17, centerX + 9, rect.y + 15, 2);
-  renderer.fillRect(potX, potY, potWidth, 7);
-  renderer.drawRect(potX, potY, potWidth, 7);
+  const int potHeight = 5 + static_cast<int>((seed >> 4) % 4u);
+  const int potY = rect.y + rect.height - potHeight;
+  const int lean = static_cast<int>((seed >> 8) % 5u) - 2;
+  const int stemX = std::clamp(centerX + lean, rect.x + 2, rect.x + rect.width - 3);
+  renderer.drawLine(centerX, rect.y + 3, stemX, potY, 2);
+  const int availableLeafHeight = std::max(1, potY - rect.y - 5);
+  const int maxLeaves = std::max(2, availableLeafHeight / 3);
+  const int leafCount = std::min(3 + static_cast<int>((seed >> 12) % 4u), maxLeaves);
+  const int leafStep = leafCount > 1 ? availableLeafHeight / (leafCount - 1) : 0;
+  for (int leaf = 0; leaf < leafCount; ++leaf) {
+    const int stemY = std::max(rect.y + 2, potY - 3 - leaf * leafStep);
+    const bool left = ((seed >> (leaf % 16)) & 1u) != 0u;
+    const int leafLength = std::min(std::max(4, rect.width / 3), 5 + static_cast<int>((seed >> (leaf + 2)) % 5u));
+    const int tipX = std::clamp(stemX + (left ? -leafLength : leafLength), rect.x + 2, rect.x + rect.width - 3);
+    const int tipY = std::max(rect.y + 1, stemY - 1 - static_cast<int>((seed >> (leaf + 6)) & 1u));
+    renderer.drawLine(stemX, stemY, tipX, tipY, 2);
+  }
+  if ((seed & 1u) != 0u && potWidth >= 14) {
+    const int topLeft = potX;
+    const int topRight = potX + potWidth - 1;
+    const int bottomLeft = potX + 2;
+    const int bottomRight = potX + potWidth - 3;
+    const int xPoints[] = {topLeft, topRight, bottomRight, bottomLeft};
+    const int yPoints[] = {potY, potY, potY + potHeight - 1, potY + potHeight - 1};
+    renderer.fillPolygon(xPoints, yPoints, 4, true);
+  } else {
+    renderer.fillRect(potX, potY, potWidth, potHeight);
+  }
+  renderer.drawRect(potX, potY, potWidth, potHeight);
 }
 
 int spineFontIdForText(const GfxRenderer& renderer, const char* text) {
@@ -180,6 +215,34 @@ void drawSpineBookDetails(const GfxRenderer& renderer, const SpineShelfPlanner::
         renderer.drawLine(cx + 3, cy, cx, cy + 3, black);
         renderer.drawLine(cx, cy + 3, cx - 3, cy, black);
         renderer.drawLine(cx - 3, cy, cx, cy - 3, black);
+      }
+      break;
+    case SpineShelfPlanner::SpineStyle::LeatherBands:
+      if (rect.width >= 38 && rect.height >= 38) {
+        renderer.drawLine(rect.x + 3, rect.y + 15, right - 2, rect.y + 15, 3, black);
+        renderer.drawLine(rect.x + 3, bottom - 15, right - 2, bottom - 15, 3, black);
+      }
+      break;
+    case SpineShelfPlanner::SpineStyle::CenterLabel:
+      if (rect.width >= 36 && rect.height >= 58) {
+        const int labelHeight = std::min(52, rect.height / 3);
+        const int labelY = rect.y + (rect.height - labelHeight) / 2;
+        renderer.drawRect(rect.x + 4, labelY, rect.width - 8, labelHeight, true);
+        if (rect.width >= 46 && labelHeight >= 24)
+          renderer.drawLine(rect.x + 8, labelY + labelHeight / 2, right - 7, labelY + labelHeight / 2, black);
+      }
+      break;
+    case SpineShelfPlanner::SpineStyle::OldLibrary:
+      if (rect.width >= 40 && rect.height >= 48) {
+        renderer.drawLine(rect.x + 4, rect.y + 8, right - 3, rect.y + 8, black);
+        renderer.drawLine(rect.x + 4, rect.y + 11, right - 3, rect.y + 11, black);
+        renderer.drawLine(rect.x + 4, bottom - 11, right - 3, bottom - 11, black);
+        renderer.drawLine(rect.x + 4, bottom - 8, right - 3, bottom - 8, black);
+        const int centerY = rect.y + rect.height / 2;
+        renderer.drawLine(rect.x + rect.width / 2, centerY - 3, rect.x + rect.width / 2 + 3, centerY, black);
+        renderer.drawLine(rect.x + rect.width / 2 + 3, centerY, rect.x + rect.width / 2, centerY + 3, black);
+        renderer.drawLine(rect.x + rect.width / 2, centerY + 3, rect.x + rect.width / 2 - 3, centerY, black);
+        renderer.drawLine(rect.x + rect.width / 2 - 3, centerY, rect.x + rect.width / 2, centerY - 3, black);
       }
       break;
     case SpineShelfPlanner::SpineStyle::Plain:
@@ -304,7 +367,7 @@ void drawSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::Page& 
   if (books == nullptr) return;
   const auto shelf = SpineShelfPlanner::shelfRect(page, bounds);
   drawSpineShelfFurniture(renderer, shelf, bounds, true);
-  if (page.plant.visible) drawSpinePlant(renderer, page.plant.rect);
+  if (page.plant.visible) drawSpinePlant(renderer, page.plant.rect, page.plant.visualSeed);
 
   for (size_t slotIndex = 0; slotIndex < page.itemCount; ++slotIndex) {
     const auto& slot = page.slots[slotIndex];
@@ -325,7 +388,7 @@ void drawTwoRowSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::
     // original spine treatment but omits long supports that could touch the
     // books below. The lower shelf has the full braced treatment.
     drawSpineShelfFurniture(renderer, shelf, bounds, row == 1);
-    if (page.plants[row].visible) drawSpinePlant(renderer, page.plants[row].rect);
+    if (page.plants[row].visible) drawSpinePlant(renderer, page.plants[row].rect, page.plants[row].visualSeed);
   }
 
   for (size_t slotIndex = 0; slotIndex < page.itemCount; ++slotIndex) {
@@ -616,6 +679,7 @@ const RecentBooksActivity::SpinePageWindow& RecentBooksActivity::spinePageForSel
   const auto& cached = spinePageWindow;
   if (cached.valid && cached.bounds.x == bounds.x && cached.bounds.y == bounds.y &&
       cached.bounds.width == bounds.width && cached.bounds.height == bounds.height &&
+      cached.visualSeed == spineSessionSeed && cached.decorationStyle == SETTINGS.spineDecorationStyle &&
       cached.page.itemCount > 0 && selectorIndex >= cached.page.firstIndex &&
       selectorIndex < cached.page.firstIndex + cached.page.itemCount) {
     return cached;
@@ -623,6 +687,8 @@ const RecentBooksActivity::SpinePageWindow& RecentBooksActivity::spinePageForSel
 
   spinePageWindow = {};
   spinePageWindow.bounds = bounds;
+  spinePageWindow.visualSeed = spineSessionSeed;
+  spinePageWindow.decorationStyle = SETTINGS.spineDecorationStyle;
   size_t rawStart = 0;
   size_t visibleStart = 0;
   size_t previousPageStart = 0;
@@ -637,8 +703,9 @@ const RecentBooksActivity::SpinePageWindow& RecentBooksActivity::spinePageForSel
       if (!isVisibleRecentBook(recentBooks[raw])) continue;
       const auto& book = recentBooks[raw];
       candidateIndexes[candidateCount] = raw;
-      candidateBooks[candidateCount++] =
-          SpineShelfPlanner::Book{book.path.c_str(), book.title.c_str(), book.progressPercent, book.author.c_str()};
+      candidateBooks[candidateCount++] = SpineShelfPlanner::Book{
+          book.path.c_str(), book.title.c_str(), book.progressPercent, book.author.c_str(), spineSessionSeed,
+          SETTINGS.spineDecorationStyle, false};
     }
     if (candidateCount == 0) break;
 
@@ -677,6 +744,7 @@ const RecentBooksActivity::TwoRowSpinePageWindow& RecentBooksActivity::twoRowSpi
   const auto& cached = twoRowSpinePageWindow;
   if (cached.valid && cached.bounds.x == bounds.x && cached.bounds.y == bounds.y &&
       cached.bounds.width == bounds.width && cached.bounds.height == bounds.height &&
+      cached.visualSeed == spineSessionSeed && cached.decorationStyle == SETTINGS.spineDecorationStyle &&
       cached.page.itemCount > 0 && selectorIndex >= cached.page.firstIndex &&
       selectorIndex < cached.page.firstIndex + cached.page.itemCount) {
     return cached;
@@ -684,6 +752,8 @@ const RecentBooksActivity::TwoRowSpinePageWindow& RecentBooksActivity::twoRowSpi
 
   twoRowSpinePageWindow = {};
   twoRowSpinePageWindow.bounds = bounds;
+  twoRowSpinePageWindow.visualSeed = spineSessionSeed;
+  twoRowSpinePageWindow.decorationStyle = SETTINGS.spineDecorationStyle;
   size_t rawStart = 0;
   size_t visibleStart = 0;
   size_t previousPageStart = 0;
@@ -698,8 +768,9 @@ const RecentBooksActivity::TwoRowSpinePageWindow& RecentBooksActivity::twoRowSpi
       if (!isVisibleRecentBook(recentBooks[raw])) continue;
       const auto& book = recentBooks[raw];
       candidateIndexes[candidateCount] = raw;
-      candidateBooks[candidateCount++] =
-          SpineShelfPlanner::Book{book.path.c_str(), book.title.c_str(), book.progressPercent, book.author.c_str()};
+      candidateBooks[candidateCount++] = SpineShelfPlanner::Book{
+          book.path.c_str(), book.title.c_str(), book.progressPercent, book.author.c_str(), spineSessionSeed,
+          SETTINGS.spineDecorationStyle, true};
     }
     if (candidateCount == 0) break;
 
@@ -816,6 +887,14 @@ uint64_t RecentBooksActivity::snapshotKey() const {
   hashBytes(hash, &activeTab, sizeof(activeTab));
   const uint8_t layout = activeBookLayout();
   hashBytes(hash, &layout, sizeof(layout));
+  const uint8_t visualSettings[] = {
+      SETTINGS.coverProgressStyle,       SETTINGS.featuredShowCover,       SETTINGS.featuredShowFileType,
+      SETTINGS.featuredShowAuthor,
+      SETTINGS.featuredShowSynopsis,     SETTINGS.featuredShowStatus,     SETTINGS.featuredShowProgress,
+      SETTINGS.featuredShowStartedDate,  SETTINGS.featuredShowFinishedDate,
+      SETTINGS.featuredShowReadingTime,  SETTINGS.featuredShowSessions,
+  };
+  hashBytes(hash, visualSettings, sizeof(visualSettings));
   for (const auto& book : recentBooks) {
     hashBytes(hash, book.path.data(), book.path.size());
     hashBytes(hash, book.title.data(), book.title.size());
@@ -832,6 +911,72 @@ uint64_t RecentBooksActivity::snapshotKey() const {
     const BookState* state = BOOK_STATES.find(book.path);
     const uint8_t status = state ? static_cast<uint8_t>(state->status) : 0;
     hashBytes(hash, &status, sizeof(status));
+    if (state != nullptr) {
+      hashBytes(hash, &state->progressPercent, sizeof(state->progressPercent));
+      hashBytes(hash, &state->startDate, sizeof(state->startDate));
+      hashBytes(hash, &state->finishDate, sizeof(state->finishDate));
+      hashBytes(hash, &state->readingSeconds, sizeof(state->readingSeconds));
+      hashBytes(hash, &state->readingSessions, sizeof(state->readingSessions));
+    }
+    const BookMetadataOverride* override = BOOK_METADATA_OVERRIDES.find(book.path);
+    const uint8_t hasOverride = override != nullptr;
+    hashBytes(hash, &hasOverride, sizeof(hasOverride));
+    if (override != nullptr) {
+      const size_t titleSize = override->title.size();
+      const size_t authorSize = override->author.size();
+      const size_t synopsisSize = override->synopsis.size();
+      hashBytes(hash, &titleSize, sizeof(titleSize));
+      hashBytes(hash, override->title.data(), override->title.size());
+      hashBytes(hash, &authorSize, sizeof(authorSize));
+      hashBytes(hash, override->author.data(), override->author.size());
+      hashBytes(hash, &synopsisSize, sizeof(synopsisSize));
+      hashBytes(hash, override->synopsis.data(), override->synopsis.size());
+    }
+  }
+  return hash;
+}
+
+uint64_t RecentBooksActivity::snapshotPresentationKey() const {
+  uint64_t hash = 1469598103934665603ULL;
+  const uint8_t settings[] = {
+      SETTINGS.uiTheme, SETTINGS.coverProgressStyle, SETTINGS.featuredShowCover, SETTINGS.featuredShowFileType,
+      SETTINGS.featuredShowAuthor, SETTINGS.featuredShowSynopsis, SETTINGS.featuredShowStatus, SETTINGS.featuredShowProgress,
+      SETTINGS.featuredShowStartedDate, SETTINGS.featuredShowFinishedDate,
+      SETTINGS.featuredShowReadingTime, SETTINGS.featuredShowSessions,
+  };
+  hashBytes(hash, settings, sizeof(settings));
+  const uint8_t layout = activeBookLayout();
+  hashBytes(hash, &layout, sizeof(layout));
+  hashBytes(hash, &activeTab, sizeof(activeTab));
+  if (visibleBookCount > 0 && !recentBooks.empty()) {
+    const RecentBook& selected = recentBooks[selectedRecentIndex()];
+    hashBytes(hash, selected.path.data(), selected.path.size());
+    hashBytes(hash, &selected.progressPercent, sizeof(selected.progressPercent));
+    hashBytes(hash, &selected.readingSeconds, sizeof(selected.readingSeconds));
+    hashBytes(hash, &selected.readingSessions, sizeof(selected.readingSessions));
+    const BookState* state = BOOK_STATES.find(selected.path);
+    if (state != nullptr) {
+      hashBytes(hash, &state->status, sizeof(state->status));
+      hashBytes(hash, &state->progressPercent, sizeof(state->progressPercent));
+      hashBytes(hash, &state->startDate, sizeof(state->startDate));
+      hashBytes(hash, &state->finishDate, sizeof(state->finishDate));
+      hashBytes(hash, &state->readingSeconds, sizeof(state->readingSeconds));
+      hashBytes(hash, &state->readingSessions, sizeof(state->readingSessions));
+    }
+    const BookMetadataOverride* override = BOOK_METADATA_OVERRIDES.find(selected.path);
+    const uint8_t hasOverride = override != nullptr;
+    hashBytes(hash, &hasOverride, sizeof(hasOverride));
+    if (override != nullptr) {
+      const size_t titleSize = override->title.size();
+      const size_t authorSize = override->author.size();
+      const size_t synopsisSize = override->synopsis.size();
+      hashBytes(hash, &titleSize, sizeof(titleSize));
+      hashBytes(hash, override->title.data(), override->title.size());
+      hashBytes(hash, &authorSize, sizeof(authorSize));
+      hashBytes(hash, override->author.data(), override->author.size());
+      hashBytes(hash, &synopsisSize, sizeof(synopsisSize));
+      hashBytes(hash, override->synopsis.data(), override->synopsis.size());
+    }
   }
   return hash;
 }
@@ -862,6 +1007,7 @@ bool RecentBooksActivity::restoreSnapshot() {
   if (loaded) {
     snapshotPageStart = pageStart;
     snapshotSelectorIndex = SIZE_MAX;
+    snapshotPresentationKeyValue = snapshotPresentationKey();
     LOG_DBG("SHELF", "Restored %u-byte Home snapshot", dataSize);
   }
   return loaded;
@@ -890,6 +1036,7 @@ void RecentBooksActivity::writeSnapshot() {
   if (ok) {
     snapshotPageStart = pageStart;
     snapshotSelectorIndex = selectorIndex;
+    snapshotPresentationKeyValue = snapshotPresentationKey();
   } else {
     LOG_ERR("SHELF", "Failed to write Home snapshot");
   }
@@ -1344,6 +1491,9 @@ void RecentBooksActivity::showBookActions() {
 
 void RecentBooksActivity::onEnter() {
   Activity::onEnter();
+  spineSessionSeed = static_cast<uint32_t>(millis()) ^
+                     static_cast<uint32_t>(reinterpret_cast<uintptr_t>(this));
+  invalidateSpinePageWindow();
   statsTransientStateReleased = false;
 
   // Load data
@@ -2314,8 +2464,12 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
       const RecentBook& book = recentBooks[recentIndex];
       const auto& rect = stackSlot.rect;
       drawCover(book, stackSlot, slotIndex);
-      folioPresentation.drawCoverProgressBadge(renderer, rect.x, rect.y, rect.width, rect.height,
-                                               book.progressPercent);
+      const bool selected = stackSlot.itemIndex == selectorIndex;
+      BookCoverTreatment::drawPerspectiveFrame(renderer, rect.x, rect.y, rect.width, rect.height,
+                                               stackSlot.leftHeight, stackSlot.rightHeight, selected);
+      BookCoverTreatment::drawPerspectiveProgress(renderer, rect.x, rect.y, rect.width, rect.height,
+                                                  stackSlot.leftHeight, stackSlot.rightHeight,
+                                                  book.progressPercent, selected);
     }
     const auto& center = stackSlots.back();
     if (center.valid) {
@@ -2548,8 +2702,14 @@ void RecentBooksActivity::renderFolioCarouselShelf(const int shelfTop, const int
     if (recentIndex == SIZE_MAX) continue;
     const RecentBook& book = recentBooks[recentIndex];
     drawCover(book, stackSlot, slotIndex);
-    folioPresentation.drawCoverProgressBadge(renderer, stackSlot.rect.x, stackSlot.rect.y,
-                                             stackSlot.rect.width, stackSlot.rect.height, book.progressPercent);
+    const bool selected = stackSlot.itemIndex == selectorIndex;
+    BookCoverTreatment::drawPerspectiveFrame(renderer, stackSlot.rect.x, stackSlot.rect.y,
+                                             stackSlot.rect.width, stackSlot.rect.height,
+                                             stackSlot.leftHeight, stackSlot.rightHeight, selected);
+    BookCoverTreatment::drawPerspectiveProgress(renderer, stackSlot.rect.x, stackSlot.rect.y,
+                                                stackSlot.rect.width, stackSlot.rect.height,
+                                                stackSlot.leftHeight, stackSlot.rightHeight,
+                                                book.progressPercent, selected);
   }
 
   const auto& center = stackSlots.back();
@@ -2569,6 +2729,18 @@ void RecentBooksActivity::render(RenderLock&&) {
       !carouselHqPreparationActive && !recentCacheWarmupActive) {
     overlayFrameShown = false;
     snapshotRestored = false;
+    lastRenderedSelectorIndex = SIZE_MAX;
+    lastRenderedPageStart = SIZE_MAX;
+    initialRenderPending = true;
+  }
+
+  // A child screen can change visual settings while this shelf remains on the
+  // activity stack. Compare only the compact in-memory presentation key here;
+  // the full book/snapshot key remains reserved for the SD restore path.
+  if (snapshotRestored && snapshotPresentationKeyValue != snapshotPresentationKey()) {
+    snapshotRestored = false;
+    snapshotFastPathUsed = false;
+    snapshotPageStart = SIZE_MAX;
     lastRenderedSelectorIndex = SIZE_MAX;
     lastRenderedPageStart = SIZE_MAX;
     initialRenderPending = true;
@@ -2794,18 +2966,27 @@ void RecentBooksActivity::render(RenderLock&&) {
     const int threeCoverCardWidth = (pageWidth - threeCoverGap * 4) / 3;
     const int detailCoverWidth = std::max(1, threeCoverCardWidth);
     const int detailCoverHeight = detailHeight - 20;
-    renderer.fillRect(detailPadding * 2 + detailCoverWidth, contentTop + 1,
-                      pageWidth - detailPadding * 3 - detailCoverWidth, detailHeight - 2, false);
+    const bool showFeaturedCover = SETTINGS.featuredShowCover != 0;
+    const int detailX = showFeaturedCover ? detailPadding * 2 + detailCoverWidth : detailPadding;
+    const int detailWidth = std::max(1, pageWidth - detailX - detailPadding);
+    renderer.fillRect(detailX, contentTop + 1, detailWidth, detailHeight - 2, false);
     const bool featuredCoverCached = !manualSingleRefresh && renderedFromSnapshot && lastFeaturedPath == selected.path &&
-                                     lastFeaturedCoverPath == selected.coverBmpPath;
-    if (!featuredCoverCached) {
+                                     lastFeaturedCoverPath == selected.coverBmpPath &&
+                                     lastFeaturedCoverVisible == showFeaturedCover;
+    if (showFeaturedCover && !featuredCoverCached) {
       renderer.fillRect(detailPadding, contentTop + 1, detailCoverWidth, detailHeight - 2, false);
     }
     // Use the same 220px source as the Folio shelf cards.  The standalone
     // Carousel still owns the 360px preference; using it here would make the
     // same cover look darker after the separate HQ thumbnail is downsampled.
-    drawCover(selected, detailPadding, contentTop + 7, detailCoverWidth, detailCoverHeight, !featuredCoverCached,
-              false);
+    if (showFeaturedCover) {
+      drawCover(selected, detailPadding, contentTop + 7, detailCoverWidth, detailCoverHeight, !featuredCoverCached,
+                false);
+      BookCoverTreatment::drawFrame(renderer, detailPadding, contentTop + 7, detailCoverWidth, detailCoverHeight,
+                                    false, true);
+      BookCoverTreatment::drawProgress(renderer, detailPadding, contentTop + 7, detailCoverWidth, detailCoverHeight,
+                                       selected.progressPercent, false, true);
+    }
 #if NOOIR_EPUB_DIAGNOSTICS
     if (!lifecycleHomeCoverRecorded) {
       lifecycleHomeCoverRecorded = true;
@@ -2814,48 +2995,263 @@ void RecentBooksActivity::render(RenderLock&&) {
 #endif
     lastFeaturedPath = selected.path;
     lastFeaturedCoverPath = selected.coverBmpPath;
-    const int detailX = detailPadding * 2 + detailCoverWidth;
-    const int detailWidth = pageWidth - detailX - detailPadding;
-    renderer.drawLine(detailX - detailPadding / 2, contentTop + 10, detailX - detailPadding / 2,
-                      contentTop + detailHeight - 10);
-    const int badgeWidth = folioTheme.featuredFormatBadgeWidth(renderer, selected.path.c_str());
-    const int badgeGap = badgeWidth > 0 ? 8 : 0;
-    const int titleWidthLimit = std::max(1, detailWidth - badgeWidth - badgeGap);
-    const std::string title = renderer.truncatedText(UI_12_FONT_ID, selected.title.c_str(), titleWidthLimit);
-    const std::string author = renderer.truncatedText(UI_10_FONT_ID, selected.author.c_str(), detailWidth);
-    renderer.drawText(UI_12_FONT_ID, detailX, contentTop + 20, title.c_str(), true);
-    if (badgeWidth > 0) {
-      folioTheme.drawFeaturedFormatBadge(renderer, selected.path.c_str(), detailX + detailWidth, contentTop + 13);
+    lastFeaturedCoverVisible = showFeaturedCover;
+    if (showFeaturedCover) {
+      renderer.drawLine(detailX - detailPadding / 2, contentTop + 10, detailX - detailPadding / 2,
+                        contentTop + detailHeight - 10);
     }
-    renderer.drawText(UI_10_FONT_ID, detailX, contentTop + 55, author.c_str());
-    const std::string synopsisPreview = SynopsisPreview::firstWords(selected.synopsis);
-    const char* synopsisText = synopsisPreview.empty() ? tr(STR_NO_SYNOPSIS) : synopsisPreview.c_str();
-    const int synopsisY = contentTop + 79;
-    // Keep the state row and progress bar at the bottom of the featured
-    // panel, leaving enough vertical room for five synopsis lines above it.
-    const int progressTextY = contentTop + detailHeight - 37;
-    constexpr int SYNOPSIS_PROGRESS_GAP_PX = 2;
-    const int synopsisLineHeight = std::max(1, renderer.getLineHeight(SMALL_FONT_ID));
-    const int synopsisMaxLines = std::clamp(
-        (progressTextY - synopsisY - SYNOPSIS_PROGRESS_GAP_PX) / synopsisLineHeight, 1, 5);
-    const auto synopsisLines = renderer.wrappedText(SMALL_FONT_ID, synopsisText, detailWidth, synopsisMaxLines);
-    int synopsisDrawY = synopsisY;
-    for (const auto& line : synopsisLines) {
-      renderer.drawText(SMALL_FONT_ID, detailX, synopsisDrawY, line.c_str());
-      synopsisDrawY += synopsisLineHeight;
+    const BookMetadataOverride* metadataOverride = BOOK_METADATA_OVERRIDES.find(selected.path);
+    const std::string& featuredTitle = metadataOverride && !metadataOverride->title.empty()
+                                           ? metadataOverride->title
+                                           : selected.title;
+    const std::string& featuredAuthor = metadataOverride ? metadataOverride->author : selected.author;
+    const std::string& featuredSynopsis = metadataOverride ? metadataOverride->synopsis : selected.synopsis;
+    const BookState* selectedState = BOOK_STATES.find(selected.path);
+    const uint8_t featuredProgress = std::min<uint8_t>(
+        100, std::max<uint8_t>(selected.progressPercent, selectedState ? selectedState->progressPercent : 0));
+    const uint32_t featuredReadingSeconds =
+        std::max<uint32_t>(selected.readingSeconds, selectedState ? selectedState->readingSeconds : 0);
+    const uint32_t featuredReadingMinutes = (featuredReadingSeconds + 30) / 60;
+    const uint16_t featuredReadingSessions =
+        std::max<uint16_t>(selected.readingSessions, selectedState ? selectedState->readingSessions : 0);
+    const uint32_t featuredStartedDate = selectedState ? selectedState->startDate : 0;
+    const uint32_t featuredFinishedDate = selectedState ? selectedState->finishDate : 0;
+    StrId featuredStatusId = featuredProgress >= 100 ? StrId::STR_COMPLETE
+                              : featuredProgress > 0 ? StrId::STR_ONGOING
+                                                     : StrId::STR_NEW;
+    if (selectedState != nullptr) {
+      switch (selectedState->status) {
+        case BookStatus::Finished: featuredStatusId = StrId::STR_COMPLETE; break;
+        case BookStatus::OnHold: featuredStatusId = StrId::STR_ON_HOLD; break;
+        case BookStatus::Reading: featuredStatusId = StrId::STR_ONGOING; break;
+        case BookStatus::New: featuredStatusId = featuredProgress > 0 ? StrId::STR_ONGOING : StrId::STR_NEW; break;
+      }
     }
-    char state[96];
-    const uint32_t readingMinutes = (selected.readingSeconds + 30) / 60;
-    snprintf(state, sizeof(state), "%s - %u%% - %lu min - %u sessions",
-             selected.progressPercent >= 100 ? tr(STR_COMPLETE)
-                                             : (selected.progressPercent > 0 ? tr(STR_ONGOING) : tr(STR_NEW)),
-             selected.progressPercent, static_cast<unsigned long>(readingMinutes), selected.readingSessions);
-    const std::string stateText = renderer.truncatedText(SMALL_FONT_ID, state, detailWidth);
-    renderer.drawText(SMALL_FONT_ID, detailX, progressTextY, stateText.c_str());
-    const int progressY = contentTop + detailHeight - 14;
-    renderer.drawRect(detailX, progressY, detailWidth, 12);
-    const int fill = (detailWidth - 2) * selected.progressPercent / 100;
-    if (fill > 0) renderer.fillRect(detailX + 1, progressY + 1, fill, 10);
+    const uint16_t compactStatusKey = SETTINGS.featuredShowStatus ? static_cast<uint16_t>(featuredStatusId) : 0;
+    const uint8_t compactProgressKey = SETTINGS.featuredShowProgress ? featuredProgress : 0;
+    const uint32_t compactReadingMinutesKey = SETTINGS.featuredShowReadingTime ? featuredReadingMinutes : 0;
+    const uint16_t compactSessionsKey = SETTINGS.featuredShowSessions ? featuredReadingSessions : 0;
+    const uint64_t featuredPathHash = hashText(selected.path);
+    const uint64_t featuredTitleHash = hashText(featuredTitle);
+    const uint64_t featuredAuthorHash = SETTINGS.featuredShowAuthor ? hashText(featuredAuthor) : 0;
+    const uint64_t featuredSynopsisHash = SETTINGS.featuredShowSynopsis ? hashText(featuredSynopsis) : 0;
+    const uint32_t featuredStartedDateKey = SETTINGS.featuredShowStartedDate ? featuredStartedDate : 0;
+    const uint32_t featuredFinishedDateKey = SETTINGS.featuredShowFinishedDate ? featuredFinishedDate : 0;
+
+    uint16_t fieldMask = 0;
+    const uint8_t fieldValues[] = {SETTINGS.featuredShowCover, SETTINGS.featuredShowFileType,
+                                   SETTINGS.featuredShowAuthor, SETTINGS.featuredShowSynopsis, SETTINGS.featuredShowStatus,
+                                   SETTINGS.featuredShowProgress, SETTINGS.featuredShowStartedDate,
+                                   SETTINGS.featuredShowFinishedDate, SETTINGS.featuredShowReadingTime,
+                                   SETTINGS.featuredShowSessions};
+    for (size_t i = 0; i < std::size(fieldValues); ++i) {
+      if (fieldValues[i]) fieldMask |= static_cast<uint16_t>(1u << i);
+    }
+    auto& featuredLayout = featuredTextLayout;
+    const bool featuredLayoutChanged = !featuredLayout.valid || featuredLayout.pathHash != featuredPathHash ||
+                                       featuredLayout.titleHash != featuredTitleHash ||
+                                       featuredLayout.authorHash != featuredAuthorHash ||
+                                       featuredLayout.synopsisHash != featuredSynopsisHash ||
+                                       featuredLayout.status != compactStatusKey ||
+                                       featuredLayout.progress != compactProgressKey ||
+                                       featuredLayout.readingMinutes != compactReadingMinutesKey ||
+                                       featuredLayout.sessions != compactSessionsKey ||
+                                       featuredLayout.startedDate != featuredStartedDateKey ||
+                                       featuredLayout.finishedDate != featuredFinishedDateKey ||
+                                       featuredLayout.fields != fieldMask ||
+                                       featuredLayout.language != SETTINGS.language ||
+                                       featuredLayout.width != detailWidth || featuredLayout.height != detailHeight;
+    if (featuredLayoutChanged) {
+      const bool sameFeaturedPath = featuredLayout.valid && featuredLayout.pathHash == featuredPathHash;
+      const bool cachedFileTypeResolved = sameFeaturedPath && featuredLayout.fileTypeResolved;
+      const char* cachedFileTypeLabel = cachedFileTypeResolved ? featuredLayout.fileTypeLabel : nullptr;
+      const int cachedFileTypeBadgeWidth = cachedFileTypeResolved ? featuredLayout.fileTypeBadgeWidth : 0;
+      featuredLayout = {};
+      featuredLayout.valid = true;
+      featuredLayout.pathHash = featuredPathHash;
+      featuredLayout.titleHash = featuredTitleHash;
+      featuredLayout.authorHash = featuredAuthorHash;
+      featuredLayout.synopsisHash = featuredSynopsisHash;
+      featuredLayout.status = compactStatusKey;
+      featuredLayout.progress = compactProgressKey;
+      featuredLayout.readingMinutes = compactReadingMinutesKey;
+      featuredLayout.sessions = compactSessionsKey;
+      featuredLayout.startedDate = featuredStartedDateKey;
+      featuredLayout.finishedDate = featuredFinishedDateKey;
+      featuredLayout.fields = fieldMask;
+      featuredLayout.language = SETTINGS.language;
+      featuredLayout.width = detailWidth;
+      featuredLayout.height = detailHeight;
+      if (cachedFileTypeResolved) {
+        featuredLayout.fileTypeResolved = true;
+        featuredLayout.fileTypeLabel = cachedFileTypeLabel;
+        featuredLayout.fileTypeBadgeWidth = cachedFileTypeBadgeWidth;
+      } else if (SETTINGS.featuredShowFileType) {
+        featuredLayout.fileTypeResolved = true;
+        featuredLayout.fileTypeLabel = BookFormat::labelForPath(selected.path);
+        featuredLayout.fileTypeBadgeWidth =
+            FolioNooirTheme::featuredFormatBadgeLabelWidth(renderer, featuredLayout.fileTypeLabel);
+      }
+
+      const int titleLineHeight = std::max(1, renderer.getLineHeight(UI_12_FONT_ID));
+      const int smallLineHeight = std::max(1, renderer.getLineHeight(SMALL_FONT_ID));
+      const int textTop = contentTop + 13;
+      const int panelBottom = contentTop + detailHeight - 10;
+      const int usableTextHeight = std::max(0, panelBottom - textTop);
+      const bool showAuthor = SETTINGS.featuredShowAuthor != 0 && !featuredAuthor.empty();
+      const bool showSynopsis = SETTINGS.featuredShowSynopsis != 0;
+      const bool showCompactMetadata = SETTINGS.featuredShowStatus || SETTINGS.featuredShowProgress ||
+                                       SETTINGS.featuredShowReadingTime || SETTINGS.featuredShowSessions;
+      const int compactMetadataHeight = showCompactMetadata
+                                            ? smallLineHeight + 1 + (SETTINGS.featuredShowProgress ? 10 : 0)
+                                            : 0;
+
+      int startedYear = 0;
+      int startedMonth = 0;
+      int startedDay = 0;
+      int finishedYear = 0;
+      int finishedMonth = 0;
+      int finishedDay = 0;
+      const bool showStartedDate = SETTINGS.featuredShowStartedDate &&
+                                   StatisticsDate::split(featuredStartedDate, startedYear, startedMonth, startedDay);
+      const bool showFinishedDate = SETTINGS.featuredShowFinishedDate &&
+                                    StatisticsDate::split(featuredFinishedDate, finishedYear, finishedMonth,
+                                                          finishedDay);
+      const bool showDates = showStartedDate || showFinishedDate;
+      const int dateLineHeight = showDates ? smallLineHeight + 1 : 0;
+      const int authorHeight = showAuthor ? smallLineHeight + 3 : 0;
+      const int supportBelowSynopsisHeight = compactMetadataHeight + dateLineHeight;
+      const bool titleOnly = !showAuthor && !showSynopsis && !showCompactMetadata && !showDates;
+      featuredLayout.titleOnly = titleOnly;
+      const int titleAvailableHeight =
+          std::max(0, usableTextHeight - authorHeight - supportBelowSynopsisHeight -
+                           (showSynopsis ? smallLineHeight : 0));
+      const int titleAvailableLines = titleAvailableHeight / titleLineHeight;
+      const int titleMaxLines = titleOnly ? std::max(1, usableTextHeight / titleLineHeight)
+                                 : showSynopsis ? std::max(1, std::min(2, titleAvailableLines))
+                                                : std::max(1, titleAvailableLines);
+      const int visibleFileTypeBadgeWidth =
+          SETTINGS.featuredShowFileType ? featuredLayout.fileTypeBadgeWidth : 0;
+      const int titleWidth = std::max(1, detailWidth - visibleFileTypeBadgeWidth -
+                                                (visibleFileTypeBadgeWidth > 0 ? 8 : 0));
+      featuredLayout.titleLines = renderer.wrappedText(UI_12_FONT_ID, featuredTitle.c_str(), titleWidth, titleMaxLines);
+      if (featuredLayout.titleLines.empty()) featuredLayout.titleLines.emplace_back(tr(STR_BOOKSHELF));
+
+      if (showAuthor && !featuredAuthor.empty()) {
+        featuredLayout.authorLine = renderer.truncatedText(UI_10_FONT_ID, featuredAuthor.c_str(), detailWidth);
+      }
+
+      if (showCompactMetadata) {
+        char metadata[128] = {};
+        size_t metadataLength = 0;
+        const auto appendComponent = [&metadata, &metadataLength](const char* component) {
+          if (component == nullptr || component[0] == '\0' || metadataLength >= sizeof(metadata) - 1) return;
+          const size_t remaining = sizeof(metadata) - metadataLength;
+          const int written = snprintf(metadata + metadataLength, remaining, "%s%s",
+                                       metadataLength > 0 ? " · " : "", component);
+          if (written > 0) metadataLength += std::min(static_cast<size_t>(written), remaining - 1);
+        };
+        if (SETTINGS.featuredShowStatus) appendComponent(I18N.get(featuredStatusId));
+        char component[32];
+        if (SETTINGS.featuredShowProgress) {
+          snprintf(component, sizeof(component), "%u%%", featuredProgress);
+          appendComponent(component);
+        }
+        if (SETTINGS.featuredShowReadingTime) {
+          snprintf(component, sizeof(component), "%lu %s", static_cast<unsigned long>(featuredReadingMinutes),
+                   tr(STR_MIN_SHORT));
+          appendComponent(component);
+        }
+        if (SETTINGS.featuredShowSessions) {
+          const char* sessionLabel = featuredReadingSessions == 1 ? tr(STR_SESSION_SINGULAR) : tr(STR_SESSION_PLURAL);
+          snprintf(component, sizeof(component), "%u %s", featuredReadingSessions, sessionLabel);
+          appendComponent(component);
+        }
+        if (metadataLength > 0) {
+          featuredLayout.compactMetadataLine = renderer.truncatedText(SMALL_FONT_ID, metadata, detailWidth);
+        }
+      }
+
+      if (showSynopsis) {
+        const int titleHeight = static_cast<int>(featuredLayout.titleLines.size()) * titleLineHeight;
+        const int synopsisTop = textTop + titleHeight + authorHeight;
+        const int synopsisAvailableHeight =
+            std::max(0, panelBottom - synopsisTop - supportBelowSynopsisHeight);
+        const int synopsisMaxLines = synopsisAvailableHeight >= smallLineHeight
+                                         ? 1 + (synopsisAvailableHeight - smallLineHeight) / (smallLineHeight + 1)
+                                         : 0;
+        const std::string synopsisPreview = SynopsisPreview::firstWords(featuredSynopsis);
+        const char* synopsisText = synopsisPreview.empty() ? tr(STR_NO_SYNOPSIS) : synopsisPreview.c_str();
+        if (synopsisMaxLines > 0) {
+          featuredLayout.synopsisLines = renderer.wrappedText(SMALL_FONT_ID, synopsisText, detailWidth,
+                                                               synopsisMaxLines);
+        }
+      }
+
+      if (showDates) {
+        char dates[72];
+        char startText[16] = "-";
+        char finishText[16] = "-";
+        if (showStartedDate)
+          snprintf(startText, sizeof(startText), "%04d-%02d-%02d", startedYear, startedMonth, startedDay);
+        if (showFinishedDate)
+          snprintf(finishText, sizeof(finishText), "%04d-%02d-%02d", finishedYear, finishedMonth, finishedDay);
+        if (showStartedDate && showFinishedDate)
+          snprintf(dates, sizeof(dates), "%s %s · %s %s", tr(STR_STARTED_DATE), startText,
+                   tr(STR_STATS_FINISHED_DATE), finishText);
+        else if (showStartedDate)
+          snprintf(dates, sizeof(dates), "%s %s", tr(STR_STARTED_DATE), startText);
+        else
+          snprintf(dates, sizeof(dates), "%s %s", tr(STR_STATS_FINISHED_DATE), finishText);
+        featuredLayout.dateLine = renderer.truncatedText(SMALL_FONT_ID, dates, detailWidth);
+      }
+    }
+
+    const int titleLineHeight = std::max(1, renderer.getLineHeight(UI_12_FONT_ID));
+    const int smallLineHeight = std::max(1, renderer.getLineHeight(SMALL_FONT_ID));
+    const int panelBottom = contentTop + detailHeight - 10;
+    const int textTop = contentTop + 13;
+    const int usableTextHeight = std::max(0, panelBottom - textTop);
+    const int titleBlockHeight = static_cast<int>(featuredLayout.titleLines.size()) * titleLineHeight;
+    int textY = featuredLayout.titleOnly ? textTop + (usableTextHeight - titleBlockHeight) / 2 : textTop;
+    const int titleTop = textY;
+    for (const auto& line : featuredLayout.titleLines) {
+      if (textY + titleLineHeight > panelBottom) break;
+      renderer.drawText(UI_12_FONT_ID, detailX, textY, line.c_str(), true, EpdFontFamily::BOLD);
+      textY += titleLineHeight;
+    }
+    if (SETTINGS.featuredShowFileType && featuredLayout.fileTypeBadgeWidth > 0 &&
+        titleTop + titleLineHeight <= panelBottom) {
+      FolioNooirTheme::drawFeaturedFormatBadgeLabel(renderer, featuredLayout.fileTypeLabel,
+                                                   detailX + detailWidth, titleTop - 3);
+    }
+    if (!featuredLayout.authorLine.empty() && textY + smallLineHeight <= panelBottom) {
+      renderer.drawText(UI_10_FONT_ID, detailX, textY + 2, featuredLayout.authorLine.c_str());
+      textY += smallLineHeight + 3;
+    }
+    if (SETTINGS.featuredShowSynopsis) {
+      for (const auto& line : featuredLayout.synopsisLines) {
+        if (textY + smallLineHeight > panelBottom) break;
+        renderer.drawText(SMALL_FONT_ID, detailX, textY, line.c_str());
+        textY += smallLineHeight + 1;
+      }
+    }
+
+    if (!featuredLayout.compactMetadataLine.empty() && textY + smallLineHeight <= panelBottom) {
+      renderer.drawText(SMALL_FONT_ID, detailX, textY, featuredLayout.compactMetadataLine.c_str());
+      textY += smallLineHeight + 1;
+      if (SETTINGS.featuredShowProgress && textY + 7 <= panelBottom) {
+        const int progressY = textY + 1;
+        renderer.drawRect(detailX, progressY, detailWidth, 7);
+        const int fill = (detailWidth - 2) * featuredProgress / 100;
+        if (fill > 0) renderer.fillRect(detailX + 1, progressY + 1, fill, 5);
+        textY = progressY + 9;
+      }
+    }
+    if (!featuredLayout.dateLine.empty() && textY + smallLineHeight <= panelBottom) {
+      renderer.drawText(SMALL_FONT_ID, detailX, textY, featuredLayout.dateLine.c_str());
+      textY += smallLineHeight + 1;
+    }
     renderer.drawLine(0, contentTop + detailHeight - 1, pageWidth - 1, contentTop + detailHeight - 1);
 
     if (usesCarouselLayout()) {
@@ -2900,7 +3296,9 @@ void RecentBooksActivity::render(RenderLock&&) {
         }
         const bool refreshCard = !renderedFromSnapshot || (manualSingleRefresh && index == selectorIndex);
         drawCover(book, x, y, cardWidth, coverHeight, refreshCard, false);
-        folioTheme.drawCoverProgressBadge(renderer, x, y, cardWidth, coverHeight, book.progressPercent);
+        BookCoverTreatment::drawFrame(renderer, x, y, cardWidth, coverHeight, index == selectorIndex);
+        BookCoverTreatment::drawProgress(renderer, x, y, cardWidth, coverHeight, book.progressPercent,
+                                         index == selectorIndex);
       }
       const size_t pageCount = (visibleBookCount + gridPageItems - 1) / gridPageItems;
       folioTheme.drawPageIndicator(renderer, layout, selectorIndex / gridPageItems + 1, pageCount);

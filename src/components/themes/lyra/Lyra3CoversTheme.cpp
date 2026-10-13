@@ -10,6 +10,7 @@
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "components/icons/cover.h"
+#include "components/themes/BookCoverTreatment.h"
 #include "fontIds.h"
 
 // Internal constants
@@ -113,6 +114,14 @@ void Lyra3CoversTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
         renderer.drawText(SMALL_FONT_ID, tileX + hPaddingInSelection, currentY, line.c_str(), true);
         currentY += titleLineHeight;
       }
+      const int coverX = tileX + hPaddingInSelection;
+      const int coverY = tileY + hPaddingInSelection;
+      const int coverWidth = tileWidth - 2 * hPaddingInSelection;
+      BookCoverTreatment::drawFrame(renderer, coverX, coverY, coverWidth,
+                                    Lyra3CoversMetrics::values.homeCoverHeight, bookSelected);
+      BookCoverTreatment::drawProgress(renderer, coverX, coverY, coverWidth,
+                                       Lyra3CoversMetrics::values.homeCoverHeight,
+                                       recentBooks[i].progressPercent, bookSelected);
     }
   } else {
     drawEmptyRecents(renderer, rect);

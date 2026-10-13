@@ -2528,6 +2528,7 @@ void CrossPointWebServer::handlePostSettings() {
   body = String();
 
   int applied = 0;
+  bool changed = false;
 
   const auto applySetting = [&](const SettingInfo& s) {
     if (!s.key) return;
@@ -2535,8 +2536,21 @@ void CrossPointWebServer::handlePostSettings() {
 
     switch (s.type) {
       case SettingType::TOGGLE: {
-        const int val = doc[s.key].as<int>() ? 1 : 0;
+        int val = 0;
+        if (strcmp(s.key, "featuredShowFileType") == 0) {
+          if (doc[s.key].is<bool>()) {
+            val = doc[s.key].as<bool>() ? 1 : 0;
+          } else if (doc[s.key].is<int>()) {
+            val = doc[s.key].as<int>();
+          } else {
+            break;
+          }
+          if (val != 0 && val != 1) break;
+        } else {
+          val = doc[s.key].as<int>() ? 1 : 0;
+        }
         if (s.valuePtr) {
+          changed |= SETTINGS.*(s.valuePtr) != val;
           SETTINGS.*(s.valuePtr) = val;
         }
         applied++;
@@ -2547,11 +2561,16 @@ void CrossPointWebServer::handlePostSettings() {
         const int maxVal = s.enumStringValues.empty() ? static_cast<int>(s.enumValues.size())
                                                       : static_cast<int>(s.enumStringValues.size());
         if (val >= 0 && val < maxVal) {
+          const uint8_t previous = s.valueGetter ? s.valueGetter()
+                                                 : (s.valuePtr ? SETTINGS.*(s.valuePtr) : static_cast<uint8_t>(val));
           if (s.valueSetter) {
             s.valueSetter(static_cast<uint8_t>(val));
           } else if (s.valuePtr) {
             SETTINGS.*(s.valuePtr) = static_cast<uint8_t>(val);
           }
+          const uint8_t current = s.valueGetter ? s.valueGetter()
+                                                : (s.valuePtr ? SETTINGS.*(s.valuePtr) : static_cast<uint8_t>(val));
+          changed |= previous != current;
           applied++;
         }
         break;
@@ -2560,6 +2579,7 @@ void CrossPointWebServer::handlePostSettings() {
         const int val = doc[s.key].as<int>();
         if (val >= s.valueRange.min && val <= s.valueRange.max) {
           if (s.valuePtr) {
+            changed |= SETTINGS.*(s.valuePtr) != val;
             SETTINGS.*(s.valuePtr) = static_cast<uint8_t>(val);
           }
           applied++;
@@ -2569,9 +2589,12 @@ void CrossPointWebServer::handlePostSettings() {
       case SettingType::STRING: {
         const std::string val = doc[s.key].as<std::string>();
         if (s.stringSetter) {
+          changed = true;
           s.stringSetter(val);
         } else if (s.stringMaxLen > 0) {
           char* ptr = reinterpret_cast<char*>(&SETTINGS) + s.stringOffset;
+          const size_t copiedLength = std::min(val.size(), s.stringMaxLen - 1);
+          changed |= strncmp(ptr, val.c_str(), copiedLength) != 0 || ptr[copiedLength] != '\0';
           strncpy(ptr, val.c_str(), s.stringMaxLen - 1);
           ptr[s.stringMaxLen - 1] = '\0';
         }
@@ -2597,6 +2620,7 @@ void CrossPointWebServer::handlePostSettings() {
   if (doc["sleepScreen"].is<JsonVariant>()) {
     const int value = doc["sleepScreen"].as<int>();
     if (value >= 0 && value < 14) {
+      const auto previous = SETTINGS.sleepScreen;
       switch (value) {
         case 0: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::DARK; break;
         case 1: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::LIGHT; break;
@@ -2613,6 +2637,7 @@ void CrossPointWebServer::handlePostSettings() {
         case 12: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::READING_CALENDAR_SLEEP; break;
         case 13: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP; break;
       }
+      changed |= SETTINGS.sleepScreen != previous;
       ++applied;
     }
   }
@@ -2623,10 +2648,13 @@ void CrossPointWebServer::handlePostSettings() {
     const int optionCount = static_cast<int>(CrossPointSettings::VISIBLE_BUILTIN_FONT_COUNT + families.size());
     if (value >= 0 && value < optionCount) {
       if (value < CrossPointSettings::VISIBLE_BUILTIN_FONT_COUNT) {
+        changed |= SETTINGS.fontFamily != value || SETTINGS.sdFontFamilyName[0] != '\0';
         SETTINGS.fontFamily = static_cast<uint8_t>(value);
         SETTINGS.sdFontFamilyName[0] = '\0';
       } else {
         const size_t familyIndex = static_cast<size_t>(value - CrossPointSettings::VISIBLE_BUILTIN_FONT_COUNT);
+        changed |= strncmp(SETTINGS.sdFontFamilyName, families[familyIndex].name.c_str(),
+                           sizeof(SETTINGS.sdFontFamilyName)) != 0;
         strncpy(SETTINGS.sdFontFamilyName, families[familyIndex].name.c_str(), sizeof(SETTINGS.sdFontFamilyName) - 1);
         SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
       }
@@ -2637,12 +2665,13 @@ void CrossPointWebServer::handlePostSettings() {
   if (doc["dictionaryFontFamily"].is<JsonVariant>()) {
     const int value = doc["dictionaryFontFamily"].as<int>();
     if (value >= 0 && value < FontSelectionCompatibility::kVisibleDictionaryFontCount) {
+      changed |= SETTINGS.dictionaryFontFamily != value;
       SETTINGS.dictionaryFontFamily = static_cast<uint8_t>(value);
       ++applied;
     }
   }
 
-  SETTINGS.saveToFile();
+  if (changed) SETTINGS.saveToFile();
 
   LOG_DBG("WEB", "[SETTINGS] applied=%d complete free=%lu min=%lu largest=%lu", applied,
           static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),

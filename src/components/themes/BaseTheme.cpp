@@ -16,6 +16,7 @@
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "components/icons/bookmark.h"
+#include "components/themes/BookCoverTreatment.h"
 #include "components/themes/BookProgressFormatter.h"
 #include "fontIds.h"
 
@@ -644,6 +645,12 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
       renderer.drawRect(bookX + 2, bookY + 2, bookWidth - 4, bookHeight - 4);
     } else if (!coverRendered && !bufferRestored) {
       // Selection border already handled above in the no-cover case
+    }
+
+    if (hasContinueReading) {
+      BookCoverTreatment::drawFrame(renderer, bookX, bookY, bookWidth, bookHeight, bookSelected);
+      BookCoverTreatment::drawProgress(renderer, bookX, bookY, bookWidth, bookHeight,
+                                       recentBooks[0].progressPercent, bookSelected);
     }
   }
 

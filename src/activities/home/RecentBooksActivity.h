@@ -121,6 +121,7 @@ class RecentBooksActivity final : public Activity {
   unsigned long recentCacheWarmupNextMs = 0;
   volatile bool recentCacheWarmupPopupRendered = false;
   bool snapshotRestored = false;
+  uint64_t snapshotPresentationKeyValue = 0;
   size_t snapshotPageStart = SIZE_MAX;
   size_t snapshotSelectorIndex = SIZE_MAX;
   struct SpinePageWindow {
@@ -131,6 +132,8 @@ class RecentBooksActivity final : public Activity {
     size_t previousPageStart = 0;
     size_t nextPageStart = 0;
     SpineShelfPlanner::Rect bounds{};
+    uint32_t visualSeed = 0;
+    uint8_t decorationStyle = 0;
     bool valid = false;
   };
   SpinePageWindow spinePageWindow{};
@@ -142,9 +145,12 @@ class RecentBooksActivity final : public Activity {
     size_t previousPageStart = 0;
     size_t nextPageStart = 0;
     SpineShelfPlanner::Rect bounds{};
+    uint32_t visualSeed = 0;
+    uint8_t decorationStyle = 0;
     bool valid = false;
   };
   TwoRowSpinePageWindow twoRowSpinePageWindow{};
+  uint32_t spineSessionSeed = 0;
   // When the persisted frame is still valid (for example after leaving
   // Settings), one panel refresh is enough. The first render can reuse the
   // frame instead of rebuilding all cover/text geometry.
@@ -157,6 +163,33 @@ class RecentBooksActivity final : public Activity {
   // its numeric position in the shelf snapshot.
   std::string lastFeaturedPath;
   std::string lastFeaturedCoverPath;
+  bool lastFeaturedCoverVisible = true;
+  struct FeaturedTextLayout {
+    bool valid = false;
+    bool titleOnly = false;
+    uint64_t pathHash = 0;
+    uint64_t titleHash = 0;
+    uint64_t authorHash = 0;
+    uint64_t synopsisHash = 0;
+    uint32_t readingMinutes = 0;
+    uint32_t startedDate = 0;
+    uint32_t finishedDate = 0;
+    uint16_t sessions = 0;
+    uint16_t status = 0;
+    uint8_t progress = 0;
+    uint16_t fields = 0;
+    uint8_t language = 0;
+    int width = 0;
+    int height = 0;
+    bool fileTypeResolved = false;
+    const char* fileTypeLabel = nullptr;
+    int fileTypeBadgeWidth = 0;
+    std::string authorLine;
+    std::string dateLine;
+    std::vector<std::string> titleLines;
+    std::vector<std::string> synopsisLines;
+    std::string compactMetadataLine;
+  } featuredTextLayout;
   bool overlayFrameShown = false;
   bool snapshotWritePending = false;
   unsigned long snapshotWriteRequestedMs = 0;
@@ -206,6 +239,7 @@ class RecentBooksActivity final : public Activity {
   void showMenu();
   void showBookActions();
   uint64_t snapshotKey() const;
+  uint64_t snapshotPresentationKey() const;
   bool restoreSnapshot();
   void writeSnapshot();
   uint8_t activeBookLayout() const;

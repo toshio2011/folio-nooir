@@ -12,6 +12,7 @@
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "components/icons/cover.h"
+#include "components/themes/BookCoverTreatment.h"
 #include "fontIds.h"
 
 namespace {
@@ -197,6 +198,12 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
     renderer.fillRoundedRect(tileX, imgY + RoundedRaffMetrics::values.homeCoverHeight, tileWidth,
                              tileHeight - (imgY - tileY + RoundedRaffMetrics::values.homeCoverHeight), kRowRadius,
                              false, false, true, true, Color::LightGray);
+    const int coverX = tileX + (tileWidth - coverWidth) / 2;
+    BookCoverTreatment::drawFrame(renderer, coverX, imgY, coverWidth,
+                                  RoundedRaffMetrics::values.homeCoverHeight, selectorIndex == 0);
+    BookCoverTreatment::drawProgress(renderer, coverX, imgY, coverWidth,
+                                     RoundedRaffMetrics::values.homeCoverHeight, book.progressPercent,
+                                     selectorIndex == 0);
   } else {
     renderer.fillRoundedRect(tileX, tileY, tileWidth, tileHeight, kRowRadius, Color::LightGray);
     renderer.drawCenteredText(kTitleFontId, rect.y + rect.height / 2 - renderer.getLineHeight(kTitleFontId) / 2,

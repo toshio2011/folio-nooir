@@ -36,6 +36,11 @@ struct Book {
   const char* title = nullptr;
   uint8_t progressPercent = 0;
   const char* author = nullptr;
+  // Per-activity seed and preference are supplied by the caller. They affect
+  // appearance only; fixed default values preserve deterministic host use.
+  uint32_t visualSeed = 0;
+  uint8_t decorationStyle = 0;
+  bool compact = false;
 };
 
 struct Rect {
@@ -57,6 +62,7 @@ struct Slot {
 struct Plant {
   bool visible = false;
   Rect rect{};
+  uint32_t visualSeed = 0;
 };
 
 enum class SpineStyle : uint8_t {
@@ -66,6 +72,9 @@ enum class SpineStyle : uint8_t {
   InsetDivider = 3,
   DoubleRules = 4,
   Ornament = 5,
+  LeatherBands = 6,
+  CenterLabel = 7,
+  OldLibrary = 8,
 };
 enum class SpineTone : uint8_t { White = 0, LightGray = 1, DarkGray = 2 };
 

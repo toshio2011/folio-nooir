@@ -150,7 +150,7 @@ Page pageAtStart(const Book* books, const size_t bookCount, const size_t start, 
     const int plantHeight = std::min(34, std::max(18, bounds.height / 4));
     if (largestGapRight - largestGapLeft >= plantWidth + 8 && plantHeight + SHELF_BOTTOM_GAP < bounds.height) {
       const int plantX = largestGapLeft + (largestGapRight - largestGapLeft - plantWidth) / 2;
-      result.plant = Plant{true, Rect{plantX, bottom - plantHeight, plantWidth, plantHeight}};
+      result.plant = Plant{true, Rect{plantX, bottom - plantHeight, plantWidth, plantHeight}, seed};
     }
   }
 
@@ -269,7 +269,7 @@ TwoRowPage twoRowPageAtStart(const Book* books, const size_t bookCount, const si
       if (gap >= plantWidth + 8 && availablePlantHeight >= plantHeight) {
         const int plantX = useLeft ? left + (gap - plantWidth) / 2
                                     : groupRightAfter + (gap - plantWidth) / 2;
-        result.plants[row] = Plant{true, Rect{plantX, geometry.shelfY - plantHeight, plantWidth, plantHeight}};
+        result.plants[row] = Plant{true, Rect{plantX, geometry.shelfY - plantHeight, plantWidth, plantHeight}, seed};
       }
     }
   }
@@ -300,6 +300,8 @@ uint32_t stableHash(const Book& book, const size_t itemIndex) {
   }
   hash ^= static_cast<uint32_t>(itemIndex + 1);
   hash *= 16777619u;
+  hash ^= book.visualSeed;
+  hash *= 16777619u;
   return hash;
 }
 
@@ -328,7 +330,26 @@ int bookHeight(const Book& book, const Rect& bounds) {
 }
 
 SpineStyle styleFor(const Book& book) {
-  return static_cast<SpineStyle>(stableHash(book, 3) % 6u);
+  const uint32_t hash = stableHash(book, 3);
+  const uint32_t roll = hash & 7u;
+  if (book.decorationStyle == 1) {
+    if (roll < 5u) return SpineStyle::Plain;
+    return static_cast<SpineStyle>(1u + ((hash >> 3) % 3u));
+  }
+  if (book.decorationStyle == 2) {
+    if (roll == 0u) return SpineStyle::Plain;
+    uint8_t style = static_cast<uint8_t>(1u + ((hash >> 3) % 8u));
+    if (book.compact && style > static_cast<uint8_t>(SpineStyle::InsetDivider)) {
+      style = static_cast<uint8_t>(1u + ((style - 1u) % 3u));
+    }
+    return static_cast<SpineStyle>(style);
+  }
+  if (roll < 3u) return SpineStyle::Plain;
+  uint8_t style = static_cast<uint8_t>(1u + ((hash >> 3) % 8u));
+  if (book.compact && style > static_cast<uint8_t>(SpineStyle::InsetDivider)) {
+    style = static_cast<uint8_t>(1u + ((style - 1u) % 3u));
+  }
+  return static_cast<SpineStyle>(style);
 }
 
 SpineTone toneFor(const Book& book) {

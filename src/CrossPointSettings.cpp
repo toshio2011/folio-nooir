@@ -298,6 +298,76 @@ bool CrossPointSettings::fromJsonForProfile(JsonVariantConst doc, const bool pre
     }
   }
 
+  // Profiles created before the visual fields existed receive the 1.6.4
+  // presentation defaults. This keeps each old profile independent from the
+  // profile that happened to be active immediately before it was selected.
+  if (preserveMissingManualFields) {
+    if (doc["coverProgressStyle"].isNull()) coverProgressStyle = COVER_PROGRESS_BOOKMARK;
+    if (doc["spineDecorationStyle"].isNull()) spineDecorationStyle = SPINE_DECORATION_BALANCED;
+    if (doc["featuredShowCover"].isNull()) featuredShowCover = 1;
+    if (doc["featuredShowAuthor"].isNull()) featuredShowAuthor = 1;
+    if (doc["featuredShowSynopsis"].isNull()) featuredShowSynopsis = 1;
+    if (doc["featuredShowStatus"].isNull()) featuredShowStatus = 1;
+    if (doc["featuredShowProgress"].isNull()) featuredShowProgress = 1;
+    if (doc["featuredShowStartedDate"].isNull()) featuredShowStartedDate = 0;
+    if (doc["featuredShowFinishedDate"].isNull()) featuredShowFinishedDate = 0;
+    if (doc["featuredShowReadingTime"].isNull()) featuredShowReadingTime = 1;
+    if (doc["featuredShowSessions"].isNull()) featuredShowSessions = 1;
+  }
+
+  // File Type restores the compact 1.6.4 Featured badge. Missing profile or
+  // settings keys always migrate to visible, even when applying an older
+  // profile over a device where the current value had been turned off.
+  const auto storedFeaturedFileType = doc["featuredShowFileType"];
+  if (storedFeaturedFileType.isNull()) {
+    featuredShowFileType = 1;
+    needsResave = true;
+  } else if (storedFeaturedFileType.is<bool>()) {
+    featuredShowFileType = storedFeaturedFileType.as<bool>() ? 1 : 0;
+  } else if (storedFeaturedFileType.is<int>()) {
+    const int value = storedFeaturedFileType.as<int>();
+    if (value == 0 || value == 1) {
+      featuredShowFileType = static_cast<uint8_t>(value);
+    } else {
+      featuredShowFileType = 1;
+      needsResave = true;
+    }
+  } else {
+    featuredShowFileType = 1;
+    needsResave = true;
+  }
+
+  const auto hasInvalidInteger = [&doc](const char* key, const int minimum, const int maximum) {
+    if (doc[key].isNull()) return false;
+    if (!doc[key].is<int>()) return true;
+    const int value = doc[key].as<int>();
+    return value < minimum || value > maximum;
+  };
+  if (hasInvalidInteger("coverProgressStyle", 0, COVER_PROGRESS_STYLE_COUNT - 1)) {
+    coverProgressStyle = COVER_PROGRESS_BOOKMARK;
+    needsResave = true;
+  }
+  if (hasInvalidInteger("spineDecorationStyle", 0, SPINE_DECORATION_STYLE_COUNT - 1)) {
+    spineDecorationStyle = SPINE_DECORATION_BALANCED;
+    needsResave = true;
+  }
+  const auto validateFeaturedToggle = [&hasInvalidInteger, &needsResave](const char* key, uint8_t& value,
+                                                                         const uint8_t fallback) {
+    if (hasInvalidInteger(key, 0, 1)) {
+      value = fallback;
+      needsResave = true;
+    }
+  };
+  validateFeaturedToggle("featuredShowCover", featuredShowCover, 1);
+  validateFeaturedToggle("featuredShowAuthor", featuredShowAuthor, 1);
+  validateFeaturedToggle("featuredShowSynopsis", featuredShowSynopsis, 1);
+  validateFeaturedToggle("featuredShowStatus", featuredShowStatus, 1);
+  validateFeaturedToggle("featuredShowProgress", featuredShowProgress, 1);
+  validateFeaturedToggle("featuredShowStartedDate", featuredShowStartedDate, 0);
+  validateFeaturedToggle("featuredShowFinishedDate", featuredShowFinishedDate, 0);
+  validateFeaturedToggle("featuredShowReadingTime", featuredShowReadingTime, 1);
+  validateFeaturedToggle("featuredShowSessions", featuredShowSessions, 1);
+
   // Sleep screen is dynamically presented to hide the legacy Cover + Custom
   // option, so load its persisted value explicitly. Keep the old 8+ migration
   // for settings files written before the current sleep-mode layout marker.

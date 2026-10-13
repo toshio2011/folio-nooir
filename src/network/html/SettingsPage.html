@@ -501,11 +501,37 @@
         pwrBtnFootnoteBackRow.style.display = 'none';
       }
     }
+
+    const theme = getControlValue('uiTheme');
+    const recentLayout = getControlValue('recentBookLayout');
+    const finishedLayout = getControlValue('finishedBookLayout');
+    const isFolio = theme === 4;
+    const isCarousel = theme === 5;
+    const spineLayouts = [4, 5];
+    const spineIsUsed = isFolio && (spineLayouts.includes(recentLayout) || spineLayouts.includes(finishedLayout));
+    const coverIsUsed = !isFolio || !spineLayouts.includes(recentLayout) || !spineLayouts.includes(finishedLayout) ||
+      getControlValue('featuredShowCover') === 1;
+    const setVisible = function(key, visible) {
+      const row = document.getElementById('row-setting-' + key);
+      if (row) row.style.display = visible ? '' : 'none';
+    };
+
+    setVisible('carouselLayout', isCarousel);
+    setVisible('recentBookLayout', isFolio);
+    setVisible('finishedBookLayout', isFolio);
+    setVisible('coverProgressStyle', coverIsUsed);
+    setVisible('spineDecorationStyle', spineIsUsed);
+    ['featuredShowCover', 'featuredShowFileType', 'featuredShowAuthor', 'featuredShowSynopsis', 'featuredShowStatus',
+     'featuredShowProgress', 'featuredShowStartedDate', 'featuredShowFinishedDate',
+     'featuredShowReadingTime', 'featuredShowSessions'].forEach(function(key) {
+      setVisible(key, isFolio);
+    });
   }
 
   function handleSettingChanged(key) {
     syncQuickResumeTimeoutForSleepScreen(key === 'sleepScreen', key === 'quickResumeSleepScreen');
-    if (key === 'shortPwrBtn') {
+    if (key === 'shortPwrBtn' || key === 'uiTheme' || key === 'recentBookLayout' || key === 'finishedBookLayout' ||
+        key === 'featuredShowCover') {
       updateSettingsVisibility();
     }
     markChanged();

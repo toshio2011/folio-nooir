@@ -29,7 +29,10 @@ bool hasCurrentRc1ProfileShape(JsonVariantConst profile) {
       "sleepModeLayoutVersion", "uiScalePercent",          "recentBookLayout",
       "finishedBookLayout",     "statusBarPercentageFormat", "lineSpacing",
       "quickActionSlot1",       "quickActionSlot2",        "quickActionSlot3",
-      "quickActionSlot4",
+      "quickActionSlot4",       "coverProgressStyle",      "spineDecorationStyle",
+      "featuredShowCover",      "featuredShowFileType",   "featuredShowAuthor",      "featuredShowSynopsis",
+      "featuredShowStatus",     "featuredShowProgress",    "featuredShowStartedDate",
+      "featuredShowFinishedDate", "featuredShowReadingTime", "featuredShowSessions",
   };
   for (const char* key : requiredCurrentKeys) {
     if (profile[key].isNull()) return false;

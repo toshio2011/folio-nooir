@@ -274,6 +274,23 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     CAROUSEL_LAYOUT_COUNT
   };
 
+  enum COVER_PROGRESS_STYLE {
+    COVER_PROGRESS_NONE = 0,
+    COVER_PROGRESS_PERCENTAGE = 1,
+    COVER_PROGRESS_BOOKMARK = 2,
+    COVER_PROGRESS_LIBRARY_LABEL = 3,
+    COVER_PROGRESS_READING_STRIP = 4,
+    COVER_PROGRESS_CORNER_BADGE = 5,
+    COVER_PROGRESS_STYLE_COUNT
+  };
+
+  enum SPINE_DECORATION_STYLE {
+    SPINE_DECORATION_BALANCED = 0,
+    SPINE_DECORATION_SUBTLE = 1,
+    SPINE_DECORATION_EXPRESSIVE = 2,
+    SPINE_DECORATION_STYLE_COUNT
+  };
+
   // Image rendering in EPUB reader
   enum IMAGE_RENDERING { IMAGES_DISPLAY = 0, IMAGES_PLACEHOLDER = 1, IMAGES_SUPPRESS = 2, IMAGE_RENDERING_COUNT };
 
@@ -438,6 +455,22 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t finishedBookLayout = FOLIO_LAYOUT_GRID;
   // The standalone Carousel theme defaults to its existing 5-cover layout.
   uint8_t carouselLayout = CAROUSEL_LAYOUT_FIVE_COVER;
+  // Shared cover marker. Bookmark remains the default used by the 1.6.4
+  // Folio shelf; older profiles missing this key keep the same presentation.
+  uint8_t coverProgressStyle = COVER_PROGRESS_BOOKMARK;
+  uint8_t spineDecorationStyle = SPINE_DECORATION_BALANCED;
+  // Title remains mandatory. These toggles control flexible Featured fields
+  // without changing the card's existing Home footprint.
+  uint8_t featuredShowCover = 1;
+  uint8_t featuredShowFileType = 1;
+  uint8_t featuredShowAuthor = 1;
+  uint8_t featuredShowSynopsis = 1;
+  uint8_t featuredShowStatus = 1;
+  uint8_t featuredShowProgress = 1;
+  uint8_t featuredShowStartedDate = 0;
+  uint8_t featuredShowFinishedDate = 0;
+  uint8_t featuredShowReadingTime = 1;
+  uint8_t featuredShowSessions = 1;
   // UI text scale. Folio Nooir keeps its shelf text and geometry fixed so the
   // featured book and Recent/Finished/library grid remain stable.
   uint8_t uiScalePercent = 100;

@@ -32,6 +32,7 @@
 #include "SettingsList.h"
 #include "StatusBarSettingsActivity.h"
 #include "TextSettingsActivity.h"
+#include "VisualPreviewActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
 #include "components/UITheme.h"
@@ -162,9 +163,29 @@ void SettingsActivity::rebuildSettingsLists() {
     return id == StrId::STR_RECENT_BOOK_LAYOUT || id == StrId::STR_FINISHED_BOOK_LAYOUT;
   };
   const auto isCarouselLayoutSetting = [](const StrId id) { return id == StrId::STR_CAROUSEL_LAYOUT; };
+  const auto isVisualPreviewSetting = [](const StrId id) {
+    switch (id) {
+      case StrId::STR_COVER_PROGRESS_STYLE:
+      case StrId::STR_FEATURED_SHOW_COVER:
+      case StrId::STR_FEATURED_SHOW_FILE_TYPE:
+      case StrId::STR_FEATURED_SHOW_AUTHOR:
+      case StrId::STR_FEATURED_SHOW_SYNOPSIS:
+      case StrId::STR_FEATURED_SHOW_STATUS:
+      case StrId::STR_FEATURED_SHOW_PROGRESS:
+      case StrId::STR_FEATURED_SHOW_STARTED:
+      case StrId::STR_FEATURED_SHOW_FINISHED:
+      case StrId::STR_FEATURED_SHOW_READING_TIME:
+      case StrId::STR_FEATURED_SHOW_SESSIONS:
+      case StrId::STR_SPINE_DECORATION:
+        return true;
+      default:
+        return false;
+    }
+  };
   auto settings = getSettingsList(&sdFontSystem.registry(), &dictionaries);
   const auto visibleCategory = [&](const SettingInfo& setting) -> int {
     if (setting.category == StrId::STR_NONE_OPT) return -1;
+    if (isVisualPreviewSetting(setting.nameId)) return -1;
     if (isFolioLayoutSetting(setting.nameId) && !folioNooir) return -1;
     if (isCarouselLayoutSetting(setting.nameId) && !carouselTheme) return -1;
     if (setting.category == StrId::STR_CAT_DISPLAY)
@@ -180,7 +201,7 @@ void SettingsActivity::rebuildSettingsLists() {
   // Reserve once at this explicit list rebuild, including the actions added
   // below. Move each descriptor from the temporary list instead of deep-copying
   // its enum strings/vectors and growing four category arenas geometrically.
-  size_t categorySizes[] = {hasFavoriteSleep ? 1U : 0U, 6, BoardConfig::hasTouch() ? 0U : 2U,
+  size_t categorySizes[] = {1U + (hasFavoriteSleep ? 1U : 0U), 6, BoardConfig::hasTouch() ? 0U : 2U,
                            9U + (BoardConfig::hasTouch() ? 0U : 1U)};
 #if FREEINK_CAP_BLE_HID_HOST
   ++categorySizes[3];
@@ -203,6 +224,7 @@ void SettingsActivity::rebuildSettingsLists() {
     displaySettings.push_back(
         SettingInfo::Action(StrId::STR_CLEAR_FAVORITE_SLEEP, SettingAction::ClearFavoriteSleepImage));
   }
+  displaySettings.push_back(SettingInfo::Action(StrId::STR_VISUAL_PREVIEW, SettingAction::VisualPreview));
 
   // Append device-only ACTION items
   if (!BoardConfig::hasTouch()) {
@@ -266,6 +288,7 @@ void SettingsActivity::rebuildSettingsLists() {
                               StrId::STR_CAROUSEL_LAYOUT,
                               StrId::STR_RECENT_BOOK_LAYOUT,
                               StrId::STR_FINISHED_BOOK_LAYOUT,
+                              StrId::STR_VISUAL_PREVIEW,
                               StrId::STR_UI_SCALE,
                               StrId::STR_HIDE_BATTERY,
                               StrId::STR_REFRESH_FREQ,
@@ -712,6 +735,9 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       case SettingAction::SettingsProfiles:
         startActivityForResult(std::make_unique<SettingsProfilesActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::VisualPreview:
+        startActivityForResult(std::make_unique<VisualPreviewActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::ClearFavoriteSleepImage:
         APP_STATE.favoriteSleepImagePath.clear();

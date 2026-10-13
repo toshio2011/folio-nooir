@@ -34,6 +34,7 @@ enum class SettingAction {
   ClockWeatherSync,
   ToDoList,
   SettingsProfiles,
+  VisualPreview,
   ClearFavoriteSleepImage,
   QuickActions,
 };

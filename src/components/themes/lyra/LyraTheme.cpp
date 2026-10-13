@@ -25,6 +25,7 @@
 #include "components/icons/library.h"
 #include "components/icons/recent.h"
 #include "components/icons/settings2.h"
+#include "components/themes/BookCoverTreatment.h"
 #include "components/icons/text24.h"
 #include "components/icons/transfer.h"
 #include "components/icons/wifi.h"
@@ -581,6 +582,11 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
       titleY += renderer.getLineHeight(UI_10_FONT_ID) / 2;
       renderer.drawText(UI_10_FONT_ID, textX, titleY, author.c_str(), true);
     }
+    BookCoverTreatment::drawFrame(renderer, tileX + hPaddingInSelection, tileY + hPaddingInSelection,
+                                  coverWidth, LyraMetrics::values.homeCoverHeight, bookSelected);
+    BookCoverTreatment::drawProgress(renderer, tileX + hPaddingInSelection, tileY + hPaddingInSelection,
+                                     coverWidth, LyraMetrics::values.homeCoverHeight, book.progressPercent,
+                                     bookSelected);
   } else {
     drawEmptyRecents(renderer, rect);
   }
