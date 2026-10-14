@@ -29,6 +29,18 @@ inline constexpr std::size_t kHeapPoisonLargestBlockOverhead = 0;
 inline constexpr std::size_t kReaderBleStartMinLargestBlock =
     kReaderBleLogicalMinLargestBlock - kHeapPoisonLargestBlockOverhead;
 
+// Physical Reader traces show a small admission cliff around 97--98 KiB free
+// even when the heap is still one large, healthy region (about 59--65 KiB).
+// Permit only a 2 KiB soft margin, and only at a confirmed quiescent EPUB
+// return boundary. The strong 56 KiB logical largest-block floor rejects
+// fragmented heaps. These do not change the global cold-start floors above.
+inline constexpr std::size_t kReaderBleQuiescentReturnFreeHeapMargin = 2 * 1024;
+inline constexpr std::size_t kReaderBleQuiescentReturnMinFreeHeap =
+    kReaderBleStartMinFreeHeap - kReaderBleQuiescentReturnFreeHeapMargin;
+inline constexpr std::size_t kReaderBleQuiescentReturnLogicalMinLargestBlock = 56 * 1024;
+inline constexpr std::size_t kReaderBleQuiescentReturnMinLargestBlock =
+    kReaderBleQuiescentReturnLogicalMinLargestBlock - kHeapPoisonLargestBlockOverhead;
+
 // Connected Reader renders need a separate, lower runtime policy than cold BLE
 // admission. Physical traces put connected idle around 29--32 KiB free, while a
 // cached/light render can consume more than 10 KiB and fragment the largest
@@ -50,6 +62,18 @@ constexpr bool readerBleCachedRenderHeadroomSafe(const std::size_t freeHeap, con
 
 constexpr bool readerBleStartMemoryAdmitted(const std::size_t freeHeap, const std::size_t largestBlock) {
   return freeHeap >= kReaderBleStartMinFreeHeap && largestBlock >= kReaderBleStartMinLargestBlock;
+}
+
+// `quiescentEpubReturn` must come from the activity/lifecycle gate: the current
+// activity is EpubReader, its pending Reader return is enabled, rendering is
+// idle, and no build or resource-sensitive work is active. Entry, settings,
+// other Reader formats, and all heavy render/build/image phases use the strict
+// global policy above.
+constexpr bool readerBleStartMemoryAdmittedForQuiescentEpubReturn(
+    const std::size_t freeHeap, const std::size_t largestBlock, const bool quiescentEpubReturn) {
+  return readerBleStartMemoryAdmitted(freeHeap, largestBlock) ||
+         (quiescentEpubReturn && freeHeap >= kReaderBleQuiescentReturnMinFreeHeap &&
+          largestBlock >= kReaderBleQuiescentReturnMinLargestBlock);
 }
 
 // The Reader-return purge is deliberately narrower than ordinary BLE
