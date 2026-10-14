@@ -361,6 +361,11 @@ void SettingsActivity::rebuildSettingsLists() {
 }
 
 void SettingsActivity::onEnter() {
+  // Settings always uses the global front-button assignments. A Reader can
+  // leave its reader-specific mapping active while an activity transition is
+  // being prepared, so establish the screen's input context before accepting
+  // input or drawing button hints.
+  mappedInput.setReaderMappingMode(false);
   bluetoothLifecycleState.store(BluetoothLifecycleState::TransitionSensitive, std::memory_order_release);
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
   bluetoothReturnArmed = false;
@@ -394,6 +399,7 @@ void SettingsActivity::onEnter() {
 
 void SettingsActivity::onExit() {
   logSettingsDiagnostic("onExit_begin");
+  mappedInput.setReaderMappingMode(false);
   Activity::onExit();
 
   UITheme::getInstance().reload();  // Re-apply theme in case it was changed
@@ -545,10 +551,10 @@ void SettingsActivity::loop() {
     return;
   }
 
-  // Settings follows the device controls directly: Left/Right select a tab and
-  // Up/Down select a row. Do not use NavNext/NavPrevious here; those logical
-  // aliases intentionally serve Reader and can collapse more than one physical
-  // direction into the same action for a BLE page-turn mapping.
+  // The front direction buttons move through setting rows, while the side
+  // rocker changes tabs. Keep Settings on the explicit physical-style logical
+  // buttons here instead of NavNext/NavPrevious: those aliases combine front
+  // and side inputs for list and Reader navigation.
   const auto moveToPreviousRow = [this] {
     selectedSettingIndex = ButtonNavigator::previousIndex(selectedSettingIndex, settingsCount + 1);
     requestUpdate();
@@ -572,14 +578,14 @@ void SettingsActivity::loop() {
     requestUpdate();
   };
 
-  buttonNavigator.onRelease({MappedInputManager::Button::Up}, moveToPreviousRow);
-  buttonNavigator.onRelease({MappedInputManager::Button::Down}, moveToNextRow);
-  buttonNavigator.onRelease({MappedInputManager::Button::Left}, moveToPreviousTab);
-  buttonNavigator.onRelease({MappedInputManager::Button::Right}, moveToNextTab);
-  buttonNavigator.onContinuous({MappedInputManager::Button::Up}, moveToPreviousRow);
-  buttonNavigator.onContinuous({MappedInputManager::Button::Down}, moveToNextRow);
-  buttonNavigator.onContinuous({MappedInputManager::Button::Left}, moveToPreviousTab);
-  buttonNavigator.onContinuous({MappedInputManager::Button::Right}, moveToNextTab);
+  buttonNavigator.onRelease({MappedInputManager::Button::Left}, moveToPreviousRow);
+  buttonNavigator.onRelease({MappedInputManager::Button::Right}, moveToNextRow);
+  buttonNavigator.onRelease({MappedInputManager::Button::Up}, moveToPreviousTab);
+  buttonNavigator.onRelease({MappedInputManager::Button::Down}, moveToNextTab);
+  buttonNavigator.onContinuous({MappedInputManager::Button::Left}, moveToPreviousRow);
+  buttonNavigator.onContinuous({MappedInputManager::Button::Right}, moveToNextRow);
+  buttonNavigator.onContinuous({MappedInputManager::Button::Up}, moveToPreviousTab);
+  buttonNavigator.onContinuous({MappedInputManager::Button::Down}, moveToNextTab);
 
   if (hasChangedCategory) {
     selectedSettingIndex = (selectedSettingIndex == 0) ? 0 : 1;
