@@ -9,6 +9,10 @@ TEST(HomeSnapshotPolicy, SupportsBothPersistentGridSizes) {
   EXPECT_TRUE(HomeSnapshotPolicy::isSupportedPageSize(8));
   EXPECT_FALSE(HomeSnapshotPolicy::isSupportedPageSize(1));
   EXPECT_FALSE(HomeSnapshotPolicy::isSupportedPageSize(4));
+  EXPECT_FALSE(HomeSnapshotPolicy::isSupportedPageCapacity(0));
+  EXPECT_TRUE(HomeSnapshotPolicy::isSupportedPageCapacity(HomeSnapshotPolicy::SPINE_ONE_ROW_MAX_PAGE_ITEMS));
+  EXPECT_TRUE(HomeSnapshotPolicy::isSupportedPageCapacity(HomeSnapshotPolicy::SPINE_TWO_ROW_MAX_PAGE_ITEMS));
+  EXPECT_FALSE(HomeSnapshotPolicy::isSupportedPageCapacity(HomeSnapshotPolicy::SPINE_TWO_ROW_MAX_PAGE_ITEMS + 1));
   EXPECT_TRUE(HomeSnapshotPolicy::pageSizeMatches(3, 3));
   EXPECT_TRUE(HomeSnapshotPolicy::pageSizeMatches(8, 8));
   EXPECT_FALSE(HomeSnapshotPolicy::pageSizeMatches(3, 8));
@@ -25,6 +29,9 @@ TEST(HomeSnapshotPolicy, PagesSelectionByTheActiveGridSize) {
   EXPECT_TRUE(HomeSnapshotPolicy::pageSelectionMatches(5, 3, 3, 6));
   EXPECT_TRUE(HomeSnapshotPolicy::pageSelectionMatches(7, 0, 8, 9));
   EXPECT_FALSE(HomeSnapshotPolicy::pageSelectionMatches(9, 8, 8, 9));
+  EXPECT_TRUE(HomeSnapshotPolicy::pageRangeMatches(8, 5, 10, 20));
+  EXPECT_TRUE(HomeSnapshotPolicy::pageRangeMatches(27, 18, 10, 40));
+  EXPECT_FALSE(HomeSnapshotPolicy::pageRangeMatches(28, 18, 10, 40));
 }
 
 TEST(HomeSnapshotPolicy, SeparatesStructuralRebuildFromDynamicPatch) {

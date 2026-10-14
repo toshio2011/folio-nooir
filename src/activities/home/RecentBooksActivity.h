@@ -126,9 +126,10 @@ class RecentBooksActivity final : public Activity {
   volatile bool recentCacheWarmupPopupRendered = false;
   bool snapshotRestored = false;
   uint64_t snapshotPresentationKeyValue = 0;
-  std::array<uint64_t, BOOKS_PER_PAGE> snapshotBookVisualKeys{};
+  std::array<uint64_t, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> snapshotBookVisualKeys{};
   bool snapshotDynamicNeedsPatch = false;
   size_t snapshotPageStart = SIZE_MAX;
+  size_t snapshotPageItems = 0;
   size_t snapshotSelectorIndex = SIZE_MAX;
   struct SpinePageWindow {
     std::array<SpineShelfPlanner::Book, SpineShelfPlanner::MAX_BOOKS> books{};
@@ -252,14 +253,15 @@ class RecentBooksActivity final : public Activity {
   uint64_t bookDynamicKey(const RecentBook& book) const;
   uint64_t bookCoverVisualKey(const RecentBook& book) const;
   uint64_t snapshotDynamicKey() const;
-  void captureSnapshotVisualState(size_t pageStart);
+  uint64_t featuredVisualKey() const;
+  void captureSnapshotVisualState(size_t pageStart, size_t pageItems);
   void drawSnapshotSelectionOutline(const FolioShelfLayout& layout, size_t index, bool selected);
+  bool currentSnapshotPageInfo(size_t& pageStart, size_t& pageItems);
   bool restoreSnapshot();
   void writeSnapshot();
   void writeSnapshotNavigationState();
   uint8_t activeBookLayout() const;
   bool usesPersistentHomeSnapshot() const;
-  size_t snapshotPageItemCount() const;
   bool usesCarouselLayout() const;
   bool usesSpineLayout() const;
   bool usesThreeCoverGrid() const;
