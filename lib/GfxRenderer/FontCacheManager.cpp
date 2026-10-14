@@ -11,6 +11,22 @@
 
 #include "../../src/util/EpubDiagnostics.h"
 
+namespace {
+size_t utf8SafePrefixLength(const char* text, const size_t limit) {
+  if (!text) return 0;
+  size_t length = std::min(strlen(text), limit);
+  while (length > 0 && (static_cast<unsigned char>(text[length]) & 0xC0) == 0x80) --length;
+  return length;
+}
+
+size_t utf8EncodedLength(const uint32_t cp) {
+  if (cp <= 0x7F) return 1;
+  if (cp <= 0x7FF) return 2;
+  if (cp <= 0xFFFF) return 3;
+  return 4;
+}
+}  // namespace
+
 FontCacheManager::FontCacheManager(const std::map<int, EpdFontFamily>& fontMap,
                                    const std::map<int, SdCardFont*>& sdCardFonts, GfxRenderer* renderer)
     : fontMap_(fontMap), sdCardFonts_(sdCardFonts), renderer_(renderer) {}
@@ -45,14 +61,54 @@ void FontCacheManager::releaseSdFontCaches() {
   EpubDiagnostics::record("sd_font_release_end");
 }
 
+void FontCacheManager::setReaderCacheBudget(const uint16_t pageGlyphLimit, const size_t scanTextBytesPerFont) {
+  const uint16_t boundedGlyphLimit = std::clamp<uint16_t>(pageGlyphLimit, 1, FontDecompressor::MAX_PAGE_GLYPHS);
+  const size_t boundedTextBytes = std::clamp<size_t>(scanTextBytesPerFont, 256, MAX_SCAN_TEXT_BYTES);
+  scanFontLimit_ = MAX_SCAN_FONTS;
+  scanTextByteLimit_ = boundedTextBytes;
+  if (fontDecompressor_) fontDecompressor_->setPageGlyphLimit(boundedGlyphLimit);
+}
+
+size_t FontCacheManager::releaseReaderPressureState() {
+  scanFontLimit_ = MAX_SCAN_FONTS;
+  scanTextByteLimit_ = MAX_SCAN_TEXT_BYTES;
+  scanMode_ = ScanMode::None;
+  scanEntryCount_ = 0;
+  clearAdmissionHook();
+
+  size_t releasedScanCapacity = 0;
+  for (auto& entry : scanEntries_) {
+    releasedScanCapacity += entry.text.capacity();
+    std::string empty;
+    entry.text.swap(empty);
+    entry.fontId = -1;
+    memset(entry.styleCounts, 0, sizeof(entry.styleCounts));
+  }
+
+  if (fontDecompressor_) fontDecompressor_->setPageGlyphLimit(FontDecompressor::MAX_PAGE_GLYPHS);
+  return releasedScanCapacity;
+}
+
+uint32_t FontCacheManager::largestAllocationRequestBytes() const {
+  return fontDecompressor_ ? fontDecompressor_->getStats().largestAllocationRequestBytes : 0;
+}
+
+uint32_t FontCacheManager::failedAllocationCount() const {
+  return fontDecompressor_ ? fontDecompressor_->getStats().failedAllocationCount : 0;
+}
+
 void FontCacheManager::prewarmCache(int fontId, const char* utf8Text, uint8_t styleMask) {
+  (void)prewarmCacheForScope(fontId, utf8Text, styleMask);
+}
+
+bool FontCacheManager::prewarmCacheForScope(int fontId, const char* utf8Text, uint8_t styleMask) {
   EpubDiagnostics::record("font_prepare_start", -1, -1, 0, utf8Text ? strlen(utf8Text) : 0, styleMask);
   // SD card font prewarm path: prewarm all requested styles in one call
   auto it = sdCardFonts_.find(fontId);
   if (it != sdCardFonts_.end()) {
     if (!it->second) {
       LOG_ERR("FCM", "prewarmCache(SD): null font for fontId=%d; using normal fallback", fontId);
-      return;
+      return true;
     }
     int missed = it->second->prewarm(utf8Text, styleMask);
     EpubDiagnostics::record("font_prepare_end", -1, -1, 0, utf8Text ? strlen(utf8Text) : 0, styleMask, 0,
@@ -65,18 +121,19 @@ void FontCacheManager::prewarmCache(int fontId, const char* utf8Text, uint8_t st
     } else if (missed > 0) {
       LOG_DBG("FCM", "prewarmCache(SD): %d glyph(s) not found (styleMask=0x%02X)", missed, styleMask);
     }
-    return;
+    return true;
   }
 
   // Standard compressed font prewarm path: loop over all requested styles
-  if (!fontDecompressor_ || fontMap_.count(fontId) == 0) return;
+  if (!fontDecompressor_ || fontMap_.count(fontId) == 0) return true;
 
   for (uint8_t i = 0; i < 4; i++) {
     if (!(styleMask & (1 << i))) continue;
     auto style = static_cast<EpdFontFamily::Style>(i);
     const EpdFontData* data = fontMap_.at(fontId).getData(style);
     if (!data || !data->groups) continue;
-    int missed = fontDecompressor_->prewarmCache(data, utf8Text);
+    int missed = fontDecompressor_->prewarmCache(data, utf8Text, admissionHook_, admissionContext_);
+    if (missed == -2) return false;
     EpubDiagnostics::record("font_prepare_end", -1, -1, 0, utf8Text ? strlen(utf8Text) : 0, i, 0,
                             missed < 0 ? 0 : 1);
     if (missed < 0) {
@@ -87,6 +144,7 @@ void FontCacheManager::prewarmCache(int fontId, const char* utf8Text, uint8_t st
       LOG_DBG("FCM", "prewarmCache: %d glyph(s) not cached for style %d", missed, i);
     }
   }
+  return true;
 }
 
 void FontCacheManager::logStats(const char* label) {
@@ -109,14 +167,14 @@ FontCacheManager::ScanEntry* FontCacheManager::findOrCreateScanEntry(const int f
   for (uint8_t i = 0; i < scanEntryCount_; ++i) {
     if (scanEntries_[i].fontId == fontId) return &scanEntries_[i];
   }
-  if (scanEntryCount_ >= MAX_SCAN_FONTS) {
+  if (scanEntryCount_ >= scanFontLimit_) {
     LOG_DBG("FCM", "Prewarm scan font cap reached; skipping font %d", fontId);
     return nullptr;
   }
   auto& entry = scanEntries_[scanEntryCount_++];
   entry.fontId = fontId;
   entry.text.clear();
-  entry.text.reserve(2048);
+  entry.text.reserve(std::min<size_t>(2048, scanTextByteLimit_));
   memset(entry.styleCounts, 0, sizeof(entry.styleCounts));
   return &entry;
 }
@@ -125,8 +183,8 @@ void FontCacheManager::recordText(const char* text, const int fontId, const EpdF
   if (!text) return;
   auto* entry = findOrCreateScanEntry(fontId);
   if (!entry) return;
-  const size_t remaining = entry->text.size() < MAX_SCAN_TEXT_BYTES ? MAX_SCAN_TEXT_BYTES - entry->text.size() : 0;
-  if (remaining > 0) entry->text.append(text, std::min(strlen(text), remaining));
+  const size_t remaining = entry->text.size() < scanTextByteLimit_ ? scanTextByteLimit_ - entry->text.size() : 0;
+  if (remaining > 0) entry->text.append(text, utf8SafePrefixLength(text, remaining));
   const uint8_t baseStyle = static_cast<uint8_t>(style) & 0x03;
   const unsigned char* p = reinterpret_cast<const unsigned char*>(text);
   uint32_t cpCount = 0;
@@ -139,7 +197,7 @@ void FontCacheManager::recordText(const char* text, const int fontId, const EpdF
 
 void FontCacheManager::recordCodepoint(const uint32_t cp, const int fontId, const EpdFontFamily::Style style) {
   auto* entry = findOrCreateScanEntry(fontId);
-  if (!entry || entry->text.size() >= MAX_SCAN_TEXT_BYTES) return;
+  if (!entry || scanTextByteLimit_ - std::min(scanTextByteLimit_, entry->text.size()) < utf8EncodedLength(cp)) return;
   utf8AppendCodepoint(cp, entry->text);
   const uint8_t baseStyle = static_cast<uint8_t>(style) & 0x03;
   entry->styleCounts[baseStyle]++;
@@ -160,7 +218,7 @@ FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager) : manage
   }
 }
 
-void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
+bool FontCacheManager::PrewarmScope::endScanAndPrewarm() {
   unsigned long totalBytes = 0;
   for (uint8_t i = 0; i < manager_->scanEntryCount_; ++i) {
     totalBytes += manager_->scanEntries_[i].text.size();
@@ -175,15 +233,41 @@ void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
       if (entry.styleCounts[i] > 0) styleMask |= (1 << i);
     }
     if (styleMask == 0) styleMask = 1;
-    manager_->prewarmCache(entry.fontId, entry.text.c_str(), styleMask);
+    if (!manager_->prewarmCacheForScope(entry.fontId, entry.text.c_str(), styleMask)) {
+      for (auto& skipped : manager_->scanEntries_) {
+        std::string empty;
+        skipped.text.swap(empty);
+        skipped.fontId = -1;
+        memset(skipped.styleCounts, 0, sizeof(skipped.styleCounts));
+      }
+      manager_->scanEntryCount_ = 0;
+      manager_->scanMode_ = ScanMode::None;
+      manager_->clearCache();
+      manager_->clearAdmissionHook();
+      active_ = false;
+      return false;
+    }
     entry.text.clear();
   }
   manager_->scanEntryCount_ = 0;
+  manager_->clearAdmissionHook();
+  return true;
+}
+
+void FontCacheManager::PrewarmScope::setAdmissionHook(const PrewarmAdmissionHook hook, void* context) {
+  if (!manager_ || !active_) return;
+  manager_->admissionHook_ = hook;
+  manager_->admissionContext_ = context;
+}
+
+void FontCacheManager::clearAdmissionHook() {
+  admissionHook_ = nullptr;
+  admissionContext_ = nullptr;
 }
 
 FontCacheManager::PrewarmScope::~PrewarmScope() {
   if (active_) {
-    endScanAndPrewarm();  // no-op if already called (scan entries are empty)
+    (void)endScanAndPrewarm();  // no-op if already called (scan entries are empty)
     manager_->clearCache();
   }
 }

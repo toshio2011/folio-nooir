@@ -23,6 +23,13 @@ struct StarPoint {
   int y = 0;
 };
 
+struct StarBounds {
+  int x = 0;
+  int y = 0;
+  int width = 0;
+  int height = 0;
+};
+
 inline std::array<StarPoint, 10> starOutline(const int starSize) {
   return {{{starSize / 2, 0},
            {starSize * 62 / 100, starSize * 34 / 100},
@@ -63,8 +70,43 @@ inline StarRow centeredStarRow(const int screenWidth, const int screenHeight, co
                     (screenHeight - fitted.starSize) / 2, fitted.starSize, fitted.spacing);
 }
 
+// Fit the complete five-star row inside a caller-owned content rectangle and
+// the actual framebuffer. Horizontal centering is optional so metadata rows
+// can reserve a label on the left while picker screens center the stars.
+inline StarRow fitStarRowInBounds(const int screenWidth, const int screenHeight, const StarBounds bounds,
+                                 const int requestedStarSize, const int requestedSpacing,
+                                 const bool centerHorizontally = false) {
+  if (screenWidth < kMaximum * 5 || screenHeight < 5 || requestedStarSize < 5) return {};
+  const long long requestedRight = static_cast<long long>(bounds.x) + bounds.width;
+  const long long requestedBottom = static_cast<long long>(bounds.y) + bounds.height;
+  const int left = static_cast<int>(std::clamp<long long>(bounds.x, 0, screenWidth));
+  const int top = static_cast<int>(std::clamp<long long>(bounds.y, 0, screenHeight));
+  const int right = static_cast<int>(std::clamp<long long>(requestedRight, 0, screenWidth));
+  const int bottom = static_cast<int>(std::clamp<long long>(requestedBottom, 0, screenHeight));
+  const int availableWidth = right - left;
+  const int availableHeight = bottom - top;
+  if (availableWidth < kMaximum * 5 || availableHeight < 5) return {};
+
+  const int maxSpacing = (availableWidth - kMaximum * 5) / (kMaximum - 1);
+  const int spacing = std::clamp(requestedSpacing, 0, maxSpacing);
+  const int starSize = std::min({requestedStarSize, availableHeight,
+                                 (availableWidth - (kMaximum - 1) * spacing) / kMaximum});
+  if (starSize < 5) return {};
+  const int rowWidth = kMaximum * starSize + (kMaximum - 1) * spacing;
+  const int x = centerHorizontally ? left + (availableWidth - rowWidth) / 2 : left;
+  const int y = top + (availableHeight - starSize) / 2;
+  return {x, y, starSize, spacing, rowWidth};
+}
+
+inline StarRow centeredStarRowInBounds(const int screenWidth, const int screenHeight, const StarBounds bounds,
+                                       const int requestedStarSize, const int requestedSpacing) {
+  return fitStarRowInBounds(screenWidth, screenHeight, bounds, requestedStarSize, requestedSpacing, true);
+}
+
 // Draws five small outline or filled stars using renderer primitives only.
 void drawStars(const GfxRenderer& renderer, int x, int y, uint8_t rating, int starSize = 14, int spacing = 4,
                int selectedValue = -1);
+void drawStarsInBounds(const GfxRenderer& renderer, StarBounds bounds, uint8_t rating, int starSize = 14,
+                       int spacing = 4, int selectedValue = -1, bool centerHorizontally = false);
 
 }  // namespace BookRating

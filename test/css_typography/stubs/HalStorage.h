@@ -11,7 +11,8 @@ class HalFile {
   size_t size() const { return 0; }
   size_t write(const void*, size_t size) { return size; }
   size_t write(uint8_t) { return 1; }
-  void close() {}
+  void flush() {}
+  bool close() { return true; }
   bool isOpen() const { return false; }
   operator bool() const { return false; }
 };
@@ -25,6 +26,7 @@ class HalStorage {
 
   bool exists(const char*) { return false; }
   bool remove(const char*) { return true; }
+  bool rename(const char*, const char*) { return true; }
   bool openFileForRead(const char*, const std::string&, HalFile&) { return false; }
   bool openFileForWrite(const char*, const std::string&, HalFile&) { return false; }
 };

@@ -39,6 +39,8 @@ static bool lifecycleFirstUsableRecorded = false;
 #endif
 
 #if FREEINK_CAP_BLE_HID_HOST
+static constexpr unsigned long BLUETOOTH_NOTIFICATION_DURATION_MS = 2400;
+
 static void logActivityHeapShape(const char* stage) {
   LOG_INF("HEAPSHAPE", "stage=%s free=%u largest=%u min=%u internal8=%u/%u dma8=%u/%u",
           stage ? stage : "unknown", static_cast<unsigned>(ESP.getFreeHeap()),
@@ -123,10 +125,22 @@ void ActivityManager::renderTaskLoop() {
       bool showBluetoothNotification = false;
       taskENTER_CRITICAL(&activityManagerSpinlock);
       if (hasBluetoothNotification && !isReaderActivity()) {
-        strncpy(bluetoothNotification, pendingBluetoothNotification, sizeof(bluetoothNotification) - 1);
+        strncpy(visibleBluetoothNotification, pendingBluetoothNotification,
+                sizeof(visibleBluetoothNotification) - 1);
+        visibleBluetoothNotification[sizeof(visibleBluetoothNotification) - 1] = '\0';
         pendingBluetoothNotification[0] = '\0';
         hasBluetoothNotification = false;
-        showBluetoothNotification = true;
+        bluetoothNotificationVisible = visibleBluetoothNotification[0] != '\0';
+        bluetoothNotificationShownAt = millis();
+      }
+      if (bluetoothNotificationVisible && !isReaderActivity()) {
+        if (millis() - bluetoothNotificationShownAt < BLUETOOTH_NOTIFICATION_DURATION_MS) {
+          strncpy(bluetoothNotification, visibleBluetoothNotification, sizeof(bluetoothNotification) - 1);
+          showBluetoothNotification = bluetoothNotification[0] != '\0';
+        } else {
+          bluetoothNotificationVisible = false;
+          visibleBluetoothNotification[0] = '\0';
+        }
       }
       taskEXIT_CRITICAL(&activityManagerSpinlock);
       if (showBluetoothNotification) GUI.drawPopup(renderer, bluetoothNotification, true);
@@ -147,6 +161,40 @@ void ActivityManager::renderTaskLoop() {
 }
 
 void ActivityManager::loop() {
+#if FREEINK_CAP_BLE_HID_HOST
+  bool bluetoothToastActive = false;
+  unsigned long bluetoothToastShownAt = 0;
+  taskENTER_CRITICAL(&activityManagerSpinlock);
+  bluetoothToastActive = bluetoothNotificationVisible;
+  bluetoothToastShownAt = bluetoothNotificationShownAt;
+  taskEXIT_CRITICAL(&activityManagerSpinlock);
+  if (bluetoothToastActive) {
+    const bool timedOut = millis() - bluetoothToastShownAt >= BLUETOOTH_NOTIFICATION_DURATION_MS;
+    bool mappedButtonActive = mappedInput.wasAnyPressed() || mappedInput.wasAnyReleased();
+    if (!mappedButtonActive) {
+      for (uint8_t index = 0; index < MappedInputManager::kButtonCount; ++index) {
+        if (mappedInput.isPressed(static_cast<MappedInputManager::Button>(index))) {
+          mappedButtonActive = true;
+          break;
+        }
+      }
+    }
+    if (timedOut || mappedButtonActive) {
+      bool dismissed = false;
+      taskENTER_CRITICAL(&activityManagerSpinlock);
+      if (bluetoothNotificationVisible &&
+          ((timedOut && bluetoothNotificationShownAt == bluetoothToastShownAt) || mappedButtonActive)) {
+        bluetoothNotificationVisible = false;
+        visibleBluetoothNotification[0] = '\0';
+        dismissed = true;
+      }
+      taskEXIT_CRITICAL(&activityManagerSpinlock);
+      // Queue the normal activity redraw so the popup disappears, then let the
+      // same mapped input continue through the activity loop below.
+      if (dismissed) requestUpdate();
+    }
+  }
+#endif
   const bool sleepTransitionPending = pendingActivity && pendingActivity->name == "Sleep";
   if (suppressRestoredReaderInput && !sleepTransitionPending) {
     const auto button = [this](const MappedInputManager::Button input) {

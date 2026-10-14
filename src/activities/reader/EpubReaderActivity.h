@@ -146,6 +146,17 @@ class EpubReaderActivity final : public Activity {
   // Set when the lazy extension start failed, so loop() doesn't retry (and log) every
   // tick; the blocking extension in render() remains the fallback past the watermark.
   bool partialRebuildStartFailed = false;
+  reader_memory::PressureTier readerMemoryPressureTier = reader_memory::PressureTier::Normal;
+  bool readerCacheBudgetInitialized = false;
+  uint8_t healthyReaderRenderCount = 0;
+  size_t readerRenderMinFreeBytes = 0;
+  size_t readerRecentMinFreeBytes = 0;
+  size_t readerLargestRenderRequestBytes = 0;
+  bool readerLastRenderAllocationFailed = false;
+  bool readerRenderWindowPressure = false;
+  bool readerRenderImageOrGrayWork = false;
+  void sampleReaderFreeHeap();
+  void updateReaderMemoryPressure(bool successfulRender);
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
   // A render request received while the host is being reclaimed is replayed
   // only after the centralized lifecycle reports NimBLE fully stopped.
@@ -153,6 +164,7 @@ class EpubReaderActivity final : public Activity {
   std::atomic<bool> readerSurvivalStopRequested{false};
   std::atomic<bool> readerSurvivalReturnHeld{false};
   size_t cachedRenderObservedPeakBytes = 0;
+  size_t cachedRenderLargestRequestThisRender = 0;
   size_t cachedRenderHighlightBytes = 0;
   size_t cachedRenderStartFree = 0;
   size_t cachedRenderLowestFree = 0;
@@ -160,6 +172,7 @@ class EpubReaderActivity final : public Activity {
   reader_memory::RenderBudget cachedRenderBudget(size_t highlightBytes, bool pageLoaded = false) const;
   bool cachedRenderPreflight(size_t highlightBytes, bool pageLoaded = false);
   bool cachedRenderFinalPassPreflight(bool hasHighlights);
+  static bool admitReaderFontPrewarm(void* context, size_t requiredFreeBytes, size_t requiredLargestBlock);
   void requestReaderSurvivalStop(const char* reason, bool replayRender);
   void sampleCachedRenderHeap();
   void checkReaderSurvival();

@@ -6,9 +6,8 @@
 
 namespace BookRating {
 
-void drawStars(const GfxRenderer& renderer, const int x, const int y, const uint8_t rating, const int starSize,
-               const int spacing, const int selectedValue) {
-  const StarRow row = fitStarRow(renderer.getScreenWidth(), renderer.getScreenHeight(), x, y, starSize, spacing);
+namespace {
+void drawFittedStars(const GfxRenderer& renderer, const StarRow& row, const uint8_t rating, const int selectedValue) {
   if (row.starSize < 5) return;
   const uint8_t boundedRating = std::min<uint8_t>(rating, kMaximum);
   const auto outline = starOutline(row.starSize);
@@ -33,6 +32,21 @@ void drawStars(const GfxRenderer& renderer, const int x, const int y, const uint
       renderer.drawRect(starX, row.y, row.starSize, row.starSize);
     }
   }
+}
+}  // namespace
+
+void drawStars(const GfxRenderer& renderer, const int x, const int y, const uint8_t rating, const int starSize,
+               const int spacing, const int selectedValue) {
+  const StarRow row = fitStarRow(renderer.getScreenWidth(), renderer.getScreenHeight(), x, y, starSize, spacing);
+  drawFittedStars(renderer, row, rating, selectedValue);
+}
+
+void drawStarsInBounds(const GfxRenderer& renderer, const StarBounds bounds, const uint8_t rating,
+                       const int starSize, const int spacing, const int selectedValue,
+                       const bool centerHorizontally) {
+  const StarRow row = fitStarRowInBounds(renderer.getScreenWidth(), renderer.getScreenHeight(), bounds,
+                                         starSize, spacing, centerHorizontally);
+  drawFittedStars(renderer, row, rating, selectedValue);
 }
 
 }  // namespace BookRating

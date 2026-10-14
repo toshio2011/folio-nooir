@@ -794,10 +794,15 @@ void ReadingStatsActivity::renderBookDetail() {
   const int ratingTop = top + 210;
   const bool ratingSelected = bookDetailAction == BookDetailAction::Rating;
   renderer.drawRect(detailX + 2, ratingTop - 8, detailWidth - 4, 40, ratingSelected ? 2 : 1, true);
-  renderer.drawText(SMALL_FONT_ID, detailX + 10, ratingTop - 2, tr(STR_BOOK_RATING), true, EpdFontFamily::BOLD);
+  const std::string ratingLabel = renderer.truncatedText(SMALL_FONT_ID, tr(STR_BOOK_RATING),
+                                                         std::max(1, detailWidth / 2));
+  renderer.drawText(SMALL_FONT_ID, detailX + 10, ratingTop - 2, ratingLabel.c_str(), true, EpdFontFamily::BOLD);
+  const int labelWidth = renderer.getTextWidth(SMALL_FONT_ID, ratingLabel.c_str());
+  const int starX = detailX + 10 + labelWidth + 6;
+  const int starRight = detailX + detailWidth - 8;
   const int ratingStarSize = std::clamp(detailWidth / 12, 8, 12);
-  BookRating::drawStars(renderer, detailX + 10, ratingTop + 12, book.rating, ratingStarSize,
-                        std::max(2, ratingStarSize / 4));
+  BookRating::drawStarsInBounds(renderer, {starX, ratingTop + 8, std::max(0, starRight - starX), 20},
+                                book.rating, ratingStarSize, std::max(2, ratingStarSize / 4));
 
   const int statsTop = top + 250;
   renderer.drawLine(side, statsTop - 16, side + width, statsTop - 16);

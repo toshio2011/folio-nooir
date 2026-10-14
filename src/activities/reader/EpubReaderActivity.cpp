@@ -436,6 +436,15 @@ void EpubReaderActivity::onEnter() {
   restartHeapSuspendedEmptyBuild.store(false, std::memory_order_release);
   sectionFailureKind = SectionFailureKind::None;
   failedSectionSpineIndex = -1;
+  readerMemoryPressureTier = reader_memory::PressureTier::Normal;
+  readerCacheBudgetInitialized = false;
+  healthyReaderRenderCount = 0;
+  readerRenderMinFreeBytes = 0;
+  readerRecentMinFreeBytes = 0;
+  readerLargestRenderRequestBytes = 0;
+  readerLastRenderAllocationFailed = false;
+  readerRenderWindowPressure = false;
+  readerRenderImageOrGrayWork = false;
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
   readerRenderWaitingForBleStop = false;
   readerDeepCacheRescueEligible = false;
@@ -443,6 +452,7 @@ void EpubReaderActivity::onEnter() {
   readerSurvivalStopRequested.store(false, std::memory_order_release);
   readerSurvivalReturnHeld.store(false, std::memory_order_release);
   cachedRenderObservedPeakBytes = 0;
+  cachedRenderLargestRequestThisRender = 0;
   cachedRenderHighlightBytes = 0;
   cachedRenderTracking = false;
 #endif
@@ -660,8 +670,19 @@ void EpubReaderActivity::onExit() {
   firstStableRenderComplete.store(false, std::memory_order_release);
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
   readerRenderWaitingForBleStop = false;
+  readerSurvivalStopRequested.store(false, std::memory_order_release);
+  readerSurvivalReturnHeld.store(false, std::memory_order_release);
+  readerIdleFontCachesReleased = false;
+  readerBleReturnCleanupAttempted = false;
+  readerBleReturnCleanupGeneration = 0;
   readerDeepCacheRescueEligible = false;
   readerDeepCacheRescueReason = "reader_exit_reset";
+  cachedRenderTracking = false;
+  cachedRenderObservedPeakBytes = 0;
+  cachedRenderLargestRequestThisRender = 0;
+  cachedRenderHighlightBytes = 0;
+  cachedRenderStartFree = 0;
+  cachedRenderLowestFree = 0;
 #endif
   pendingPageTurns.clear();
   qualityRecoveryPending.store(false, std::memory_order_release);
@@ -750,6 +771,20 @@ void EpubReaderActivity::onExit() {
 #if FREEINK_CAP_BLE_HID_HOST
   logExitHeap("after_reader_shared_cache_release");
 #endif
+  auto* fontCache = renderer.getFontCacheManager();
+  const size_t scanCapacityBeforeRelease = fontCache ? fontCache->releaseReaderPressureState() : 0;
+  readerMemoryPressureTier = reader_memory::PressureTier::Normal;
+  readerCacheBudgetInitialized = false;
+  healthyReaderRenderCount = 0;
+  readerRenderMinFreeBytes = 0;
+  readerRecentMinFreeBytes = 0;
+  readerLargestRenderRequestBytes = 0;
+  readerLastRenderAllocationFailed = false;
+  readerRenderWindowPressure = false;
+  readerRenderImageOrGrayWork = false;
+  LOG_INF("MEM", "reader_exit stage=pressure_state_reset scan_capacity=%u free=%u largest=%u",
+          static_cast<unsigned>(scanCapacityBeforeRelease), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
 #if NOOIR_EPUB_DIAGNOSTICS
   EpubDiagnostics::phaseRecord("reader_exit_cleanup_complete");
 #endif
@@ -774,20 +809,108 @@ void EpubReaderActivity::failSectionEpisode(const SectionFailureKind kind, const
   bleinput::requestLifecycleReevaluation();
 }
 
+void EpubReaderActivity::sampleReaderFreeHeap() {
+  const size_t freeHeap = ESP.getFreeHeap();
+  if (readerRenderMinFreeBytes == 0 || freeHeap < readerRenderMinFreeBytes) readerRenderMinFreeBytes = freeHeap;
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+  if (cachedRenderTracking) cachedRenderLowestFree = std::min(cachedRenderLowestFree, freeHeap);
+#endif
+}
+
+void EpubReaderActivity::updateReaderMemoryPressure(const bool successfulRender) {
+  const auto previousTier = readerMemoryPressureTier;
+  const reader_memory::PressureObservation observation{
+      ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
+      successfulRender && readerRenderMinFreeBytes > 0 ? readerRenderMinFreeBytes : readerRecentMinFreeBytes,
+      readerLargestRenderRequestBytes, readerRenderWindowPressure,
+      readerLastRenderAllocationFailed, readerRenderImageOrGrayWork};
+  const auto observedTier = reader_memory::classifyPressure(observation);
+  if (successfulRender && static_cast<uint8_t>(observedTier) < static_cast<uint8_t>(readerMemoryPressureTier)) {
+    if (healthyReaderRenderCount < UINT8_MAX) ++healthyReaderRenderCount;
+  } else if (static_cast<uint8_t>(observedTier) >= static_cast<uint8_t>(readerMemoryPressureTier)) {
+    healthyReaderRenderCount = 0;
+  }
+  const auto nextTier = reader_memory::advancePressureTier(
+      readerMemoryPressureTier, observedTier, healthyReaderRenderCount);
+  if (static_cast<uint8_t>(nextTier) < static_cast<uint8_t>(readerMemoryPressureTier)) {
+    healthyReaderRenderCount = 0;
+  }
+  readerMemoryPressureTier = nextTier;
+
+  if (successfulRender) {
+    readerRecentMinFreeBytes = readerRenderMinFreeBytes > 0 ? readerRenderMinFreeBytes : ESP.getFreeHeap();
+    readerRenderMinFreeBytes = 0;
+  }
+
+  if (!readerCacheBudgetInitialized || readerMemoryPressureTier != previousTier) {
+    const auto budget = reader_memory::cacheBudgetFor(readerMemoryPressureTier);
+    if (auto* fontCache = renderer.getFontCacheManager()) {
+      fontCache->setReaderCacheBudget(budget.pageGlyphLimit, budget.scanTextBytesPerFont);
+    }
+    readerCacheBudgetInitialized = true;
+    LOG_INF("BLEMEM", "stage=reader_pressure tier=%u observed=%u free=%u largest=%u recent_min=%u group_request=%u "
+                      "window=%d allocation_failure=%d image_gray=%d cache_glyphs=%u scan_bytes=%u",
+            static_cast<unsigned>(readerMemoryPressureTier), static_cast<unsigned>(observedTier),
+            static_cast<unsigned>(observation.freeBytes), static_cast<unsigned>(observation.largestBlock),
+            static_cast<unsigned>(observation.recentMinFreeBytes),
+            static_cast<unsigned>(observation.largestRenderRequestBytes), observation.readerWindowPressure ? 1 : 0,
+            observation.renderAllocationFailed ? 1 : 0, observation.imageOrGrayscaleWork ? 1 : 0,
+            static_cast<unsigned>(budget.pageGlyphLimit), static_cast<unsigned>(budget.scanTextBytesPerFont));
+  }
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+  if (previousTier == reader_memory::PressureTier::Heavy &&
+      readerMemoryPressureTier != reader_memory::PressureTier::Heavy &&
+      !BleHid.isRunning() && bleinput::readerBleReturnPending()) {
+    bleinput::signalReaderBleReturnLifecycleEvent("reader_pressure_recovered");
+  }
+#endif
+}
+
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
 reader_memory::RenderBudget EpubReaderActivity::cachedRenderBudget(const size_t highlightBytes,
                                                                  const bool pageLoaded) const {
   const size_t stripBytes = renderer.supportsStripGrayscale()
       ? static_cast<size_t>(renderer.getDisplayWidthBytes()) * READER_GRAYSCALE_STRIP_ROWS : 0;
+  const auto cacheBudget = reader_memory::cacheBudgetFor(readerMemoryPressureTier);
   return reader_memory::cachedRenderBudget(
-      FontCacheManager::MAX_SCAN_FONTS * FontCacheManager::MAX_SCAN_TEXT_BYTES,
+      FontCacheManager::MAX_SCAN_FONTS * cacheBudget.scanTextBytesPerFont,
       SdCardFont::MAX_PAGE_GLYPHS * sizeof(uint32_t), stripBytes,
-      SdCardFont::MAX_PAGE_GLYPHS * sizeof(EpdGlyph), highlightBytes,
-      cachedRenderObservedPeakBytes, pageLoaded);
+      cacheBudget.pageGlyphLimit * sizeof(EpdGlyph), highlightBytes,
+      cachedRenderObservedPeakBytes, readerLargestRenderRequestBytes, pageLoaded);
 }
 
 void EpubReaderActivity::sampleCachedRenderHeap() {
-  if (cachedRenderTracking) cachedRenderLowestFree = std::min(cachedRenderLowestFree, size_t(ESP.getFreeHeap()));
+  sampleReaderFreeHeap();
+  if (cachedRenderTracking) {
+    if (auto* fontCache = renderer.getFontCacheManager()) {
+      cachedRenderLargestRequestThisRender =
+          std::max(cachedRenderLargestRequestThisRender, static_cast<size_t>(fontCache->largestAllocationRequestBytes()));
+    }
+  }
+}
+
+bool EpubReaderActivity::admitReaderFontPrewarm(void* const context, const size_t requiredFreeBytes,
+                                                 const size_t requiredLargestBlock) {
+  auto* self = static_cast<EpubReaderActivity*>(context);
+  if (!self) return false;
+  const size_t request = requiredLargestBlock > reader_memory::kLargestBlockMargin
+                            ? requiredLargestBlock - reader_memory::kLargestBlockMargin
+                            : requiredLargestBlock;
+  self->readerLargestRenderRequestBytes = std::max(self->readerLargestRenderRequestBytes, request);
+  self->updateReaderMemoryPressure(false);
+  const size_t freeHeap = ESP.getFreeHeap();
+  const size_t largest = ESP.getMaxAllocHeap();
+  const bool safe = freeHeap >= requiredFreeBytes && largest >= requiredLargestBlock;
+  LOG_INF("HEAPSHAPE", "stage=font_group_preflight free=%u largest=%u request=%u required=%u/%u tier=%u action=%s",
+          static_cast<unsigned>(freeHeap), static_cast<unsigned>(largest), static_cast<unsigned>(request),
+          static_cast<unsigned>(requiredFreeBytes), static_cast<unsigned>(requiredLargestBlock),
+          static_cast<unsigned>(self->readerMemoryPressureTier),
+          safe ? "prewarm" : (BleHid.isRunning() ? "yield_ble" : "fallback"));
+  if (!safe && BleHid.isRunning()) {
+    self->requestReaderSurvivalStop("font_group_preflight", true);
+    return false;
+  }
+  return true;
 }
 
 void EpubReaderActivity::requestReaderSurvivalStop(const char* reason, const bool replayRender) {
@@ -861,9 +984,20 @@ void EpubReaderActivity::checkReaderSurvival() {
 #endif
 
 void EpubReaderActivity::reportReaderQuiescent(const char* reason) {
+  const bool completedRender = reason && strcmp(reason, "render_complete") == 0;
+  if (completedRender) {
+    sampleReaderFreeHeap();
+    if (auto* fontCache = renderer.getFontCacheManager()) {
+        readerLargestRenderRequestBytes = std::max(
+            readerLargestRenderRequestBytes,
+            std::max(static_cast<size_t>(fontCache->largestAllocationRequestBytes()), cachedRenderLargestRequestThisRender));
+      readerLastRenderAllocationFailed = fontCache->failedAllocationCount() > 0;
+    }
+  }
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
-  if (reason && strcmp(reason, "render_complete") == 0) checkReaderSurvival();
+  if (completedRender) checkReaderSurvival();
 #endif
+  if (completedRender) updateReaderMemoryPressure(true);
   if (bluetoothResourceSensitive()) return;
   LOG_INF("ERS", "reader_quiescent reason=%.20s spine=%d page=%d free=%u largest=%u", reason ? reason : "stable",
           currentSpineIndex, section ? section->currentPage : nextPageNumber,
@@ -2792,19 +2926,25 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
   const bool deepRenderWorkIdle = !activityManager.hasPendingRenderWork();
   const bool deepStopRequestClear = !readerSurvivalStopRequested.load(std::memory_order_acquire);
   const bool deepReplayHoldClear = !readerSurvivalReturnHeld.load(std::memory_order_acquire);
+  const bool deepReaderResetReason = readerDeepCacheRescueReason &&
+                                     strcmp(readerDeepCacheRescueReason, "reader_enter_reset") == 0;
+  const bool deepSafe = returnPending && deepQuiescent && deepSectionBuildIdle && deepRenderStable &&
+                        deepRenderLockFree && deepRenderWorkIdle && deepStopRequestClear && deepReplayHoldClear &&
+                        !readerRenderWaitingForBleStop;
+  const bool deepEligible = readerDeepCacheRescueEligible || (deepReaderResetReason && deepSafe);
   LOG_INF("BLEMEM",
           "reader_deep_reclaim_eligibility generation=%u owner=reader_shared_font_caches eligible=%d "
           "reason=%.24s pending=%d quiescent=%d section_building=%d render_stable=%d render_lock=%d "
           "render_work=%d resource_sensitive=%d stop_requested=%d return_held=%d render_waiting=%d "
           "cheaper_failed=%d free=%u largest=%u",
-          static_cast<unsigned>(returnGeneration), readerDeepCacheRescueEligible ? 1 : 0,
+          static_cast<unsigned>(returnGeneration), deepEligible ? 1 : 0,
           readerDeepCacheRescueReason ? readerDeepCacheRescueReason : "none", returnPending ? 1 : 0,
           deepQuiescent ? 1 : 0, deepSectionBuildIdle ? 0 : 1, deepRenderStable ? 1 : 0,
           deepRenderLockFree ? 0 : 1, deepRenderWorkIdle ? 0 : 1, deepQuiescent ? 0 : 1,
           deepStopRequestClear ? 0 : 1, deepReplayHoldClear ? 0 : 1,
           readerRenderWaitingForBleStop ? 1 : 0, deepAdmissionNeeded ? 1 : 0,
           static_cast<unsigned>(deepBeforeFree), static_cast<unsigned>(deepBeforeLargest));
-  if (readerDeepCacheRescueEligible && deepAdmissionNeeded) {
+  if (deepEligible && deepSafe && deepAdmissionNeeded) {
     {
       RenderLock cleanupLock;
       sdFontSystem.releaseReaderCaches();
@@ -2830,7 +2970,7 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
             "reader_ble_reclaim generation=%u stage=3 item=reader_shared_font_caches skipped=%s "
             "free_before=%u free_after=%u largest_before=%u largest_after=%u admission=0",
             static_cast<unsigned>(returnGeneration),
-            readerDeepCacheRescueEligible ? "not_needed" : "not_eligible",
+            deepEligible && !deepAdmissionNeeded ? "not_needed" : (deepSafe ? "not_eligible" : "unsafe"),
             static_cast<unsigned>(deepBeforeFree), static_cast<unsigned>(deepBeforeFree),
             static_cast<unsigned>(deepBeforeLargest), static_cast<unsigned>(deepBeforeLargest));
   }
@@ -2883,6 +3023,12 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   if (!epub) {
     return;
   }
+  readerRenderMinFreeBytes = 0;
+  readerRenderWindowPressure = buildSuspendedAtReaderWindow || buildSuspendedAwaitingDemand || buildHeapPaused;
+  readerRenderImageOrGrayWork = false;
+  readerLastRenderAllocationFailed = false;
+  sampleReaderFreeHeap();
+  updateReaderMemoryPressure(false);
   if (restartHeapSuspendedEmptyBuild.exchange(false, std::memory_order_acq_rel)) {
     section.reset();
     nextPageNumber = 0;
@@ -2897,6 +3043,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     return;
   }
   cachedRenderTracking = false;
+  cachedRenderLargestRequestThisRender = 0;
   const bool cachedSection = section && !section->isBuilding() && !bluetoothResourceSensitive();
   if (cachedSection) {
     if (!cachedRenderPreflight(cachedRenderHighlightBytes)) return;
@@ -3447,6 +3594,10 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const int fontId = SETTINGS.getReaderFontId();
   const bool guideDots = SETTINGS.guideDots != 0;
   const bool pageNeedsImageDecode = page->hasImagesNeedingDecode();
+  readerRenderImageOrGrayWork = pageNeedsImageDecode || page->hasImages() || SETTINGS.textAntiAliasing;
+  readerRenderWindowPressure = buildSuspendedAtReaderWindow || buildSuspendedAwaitingDemand || buildHeapPaused;
+  sampleReaderFreeHeap();
+  updateReaderMemoryPressure(false);
   // Clippings elsewhere in the book do not require a word arena for this
   // spine. Preserve the existing page/reflow matching below for relevant clips.
   const bool spineHasClippings = std::any_of(cachedClippings.begin(), cachedClippings.end(), [this](const auto& clip) {
@@ -3541,10 +3692,20 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const unsigned long fontScanStart = millis();
   EpubDiagnostics::record("font_scan_start", diagnosticSpine, diagnosticPage);
   auto scope = fcm->createPrewarmScope();
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+  scope.setAdmissionHook(&EpubReaderActivity::admitReaderFontPrewarm, this);
+#endif
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop, guideDots);  // scan pass
   EpubDiagnostics::record("font_scan_end", diagnosticSpine, diagnosticPage, millis() - fontScanStart);
   const unsigned long fontPrewarmStart = millis();
-  scope.endScanAndPrewarm();
+  if (!scope.endScanAndPrewarm()) return false;
+  sampleReaderFreeHeap();
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+  if (auto* fontCache = renderer.getFontCacheManager()) {
+    cachedRenderLargestRequestThisRender =
+        std::max(cachedRenderLargestRequestThisRender, static_cast<size_t>(fontCache->largestAllocationRequestBytes()));
+  }
+#endif
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
   sampleCachedRenderHeap();
   if (!pageNeedsImageDecode && !cachedRenderFinalPassPreflight(!highlightWords.empty())) return false;

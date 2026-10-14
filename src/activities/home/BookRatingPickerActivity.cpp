@@ -12,10 +12,19 @@
 #include "util/BookRating.h"
 
 namespace {
+BookRating::StarBounds pickerStarBounds(const GfxRenderer& renderer) {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int top = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing + 10;
+  const int bottom = renderer.getScreenHeight() - metrics.buttonHintsHeight - metrics.verticalSpacing - 54;
+  return {metrics.contentSidePadding, top, renderer.getScreenWidth() - metrics.contentSidePadding * 2,
+          std::max(0, bottom - top)};
+}
+
 BookRating::StarRow pickerStarRow(const GfxRenderer& renderer) {
+  const auto bounds = pickerStarBounds(renderer);
   const int starSize = std::clamp(renderer.getScreenWidth() / 24, 16, 28);
-  return BookRating::centeredStarRow(renderer.getScreenWidth(), renderer.getScreenHeight(), starSize,
-                                     std::max(8, starSize / 3));
+  return BookRating::centeredStarRowInBounds(renderer.getScreenWidth(), renderer.getScreenHeight(), bounds, starSize,
+                                              std::max(8, starSize / 3));
 }
 }  // namespace
 
@@ -104,7 +113,8 @@ void BookRatingPickerActivity::render(RenderLock&&) {
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight},
                  tr(STR_BOOK_RATING));
   const BookRating::StarRow row = pickerStarRow(renderer);
-  BookRating::drawStars(renderer, row.x, row.y, selectedRating_, row.starSize, row.spacing, selectedRating_);
+  BookRating::drawStarsInBounds(renderer, pickerStarBounds(renderer), selectedRating_, row.starSize, row.spacing,
+                                selectedRating_, true);
   renderer.drawCenteredText(UI_10_FONT_ID, row.y + row.starSize + 28,
                             (std::to_string(selectedRating_) + " / 5").c_str());
   const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));

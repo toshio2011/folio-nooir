@@ -2,12 +2,17 @@
 
 #include <InflateReader.h>
 
+#include <cstddef>
+#include <cstdint>
+
 #include "EpdFontData.h"
 
 class FontDecompressor {
  public:
   static constexpr uint16_t MAX_PAGE_GLYPHS = 512;
   static constexpr uint8_t MAX_PAGE_SLOTS = 8;  // Four styles for primary + Arabic fallback families
+  using PrewarmAdmissionHook = bool (*)(void* context, std::size_t requiredFreeBytes,
+                                        std::size_t requiredLargestBlock);
 
   FontDecompressor() = default;
   ~FontDecompressor();
@@ -25,7 +30,9 @@ class FontDecompressor {
   // Pre-scan UTF-8 text and extract needed glyph bitmaps into a flat page buffer.
   // Each group is decompressed once into a temp buffer; only needed glyphs are kept.
   // Returns the number of glyphs that couldn't be loaded (0 on full success).
-  int prewarmCache(const EpdFontData* fontData, const char* utf8Text);
+  int prewarmCache(const EpdFontData* fontData, const char* utf8Text,
+                   PrewarmAdmissionHook admissionHook = nullptr, void* admissionContext = nullptr);
+  void setPageGlyphLimit(uint16_t limit);
 
   struct Stats {
     uint32_t cacheHits = 0;
@@ -36,6 +43,8 @@ class FontDecompressor {
     uint32_t pageGlyphsBytes = 0;  // pageGlyphs lookup table allocation
     uint32_t hotGroupBytes = 0;    // current hot group allocation
     uint32_t peakTempBytes = 0;    // largest temp buffer in prewarm
+    uint32_t largestAllocationRequestBytes = 0;
+    uint32_t failedAllocationCount = 0;
     uint32_t getBitmapTimeUs = 0;  // cumulative getBitmap time (micros)
     uint32_t getBitmapCalls = 0;   // number of getBitmap calls
   };
@@ -78,9 +87,22 @@ class FontDecompressor {
   // Valid until the next getBitmap() call. Same ownership/OOM contract as hotGroup.
   uint8_t* hotGlyphBuf = nullptr;
   uint32_t hotGlyphBufCapacity = 0;
+  uint16_t pageGlyphLimit_ = MAX_PAGE_GLYPHS;
+  struct FailedGroup {
+    const EpdFontData* fontData = nullptr;
+    uint16_t groupIndex = UINT16_MAX;
+    uint32_t requestedBytes = 0;
+  };
+  static constexpr uint8_t MAX_FAILED_GROUPS = 32;
+  FailedGroup failedGroups_[MAX_FAILED_GROUPS] = {};
+  uint8_t failedGroupCount_ = 0;
+  bool suppressFurtherFailureLogs_ = false;
 
   // Grow (never shrink) an owned buffer to at least `needed` bytes; false on OOM, buffer freed.
   static bool ensureCapacity(uint8_t*& buf, uint32_t& capacity, uint32_t needed);
+  void recordAllocationRequest(uint32_t bytes);
+  bool groupFailed(const EpdFontData* fontData, uint16_t groupIndex) const;
+  void rememberFailedGroup(const EpdFontData* fontData, uint16_t groupIndex, uint32_t requestedBytes);
 
   void freePageBuffer();
   void freeHotGroup();

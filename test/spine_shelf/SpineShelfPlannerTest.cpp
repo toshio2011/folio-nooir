@@ -190,7 +190,7 @@ TEST(SpineShelfPlanner, BindingStylesAreStableAndBounded) {
     const auto first = SpineShelfPlanner::styleFor(book);
     const auto second = SpineShelfPlanner::styleFor(book);
     EXPECT_EQ(first, second);
-    EXPECT_LE(static_cast<uint8_t>(first), static_cast<uint8_t>(SpineShelfPlanner::SpineStyle::Ornament));
+    EXPECT_LE(static_cast<uint8_t>(first), static_cast<uint8_t>(SpineShelfPlanner::SpineStyle::OldLibrary));
   }
 }
 

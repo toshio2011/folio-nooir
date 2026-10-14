@@ -90,6 +90,9 @@ class ActivityManager {
 #if FREEINK_CAP_BLE_HID_HOST
   char pendingBluetoothNotification[64] = {};
   bool hasBluetoothNotification = false;
+  char visibleBluetoothNotification[64] = {};
+  bool bluetoothNotificationVisible = false;
+  unsigned long bluetoothNotificationShownAt = 0;
 #endif
 
  public:

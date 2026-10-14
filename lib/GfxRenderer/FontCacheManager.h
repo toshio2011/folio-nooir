@@ -2,6 +2,7 @@
 
 #include <EpdFontFamily.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -14,6 +15,7 @@ class FontCacheManager {
  public:
   static constexpr uint8_t MAX_SCAN_FONTS = 2;
   static constexpr size_t MAX_SCAN_TEXT_BYTES = 4096;
+  using PrewarmAdmissionHook = bool (*)(void* context, size_t requiredFreeBytes, size_t requiredLargestBlock);
   FontCacheManager(const std::map<int, EpdFontFamily>& fontMap, const std::map<int, SdCardFont*>& sdCardFonts,
                    GfxRenderer* renderer = nullptr);
 
@@ -26,6 +28,14 @@ class FontCacheManager {
   // Drop disposable SD-font glyph/mini-cache state while retaining the
   // persistent coverage and advance metadata used by Nooir's layout path.
   void releaseSdFontCaches();
+  // Runtime pressure only changes rebuildable per-page font caches. Both
+  // Arabic/primary scan slots remain available at every tier.
+  void setReaderCacheBudget(uint16_t pageGlyphLimit, size_t scanTextBytesPerFont);
+  // Restore the process-wide prewarm limits and free scan strings retained by
+  // the Reader's last prewarm scope. Call at the Reader exit boundary.
+  size_t releaseReaderPressureState();
+  uint32_t largestAllocationRequestBytes() const;
+  uint32_t failedAllocationCount() const;
   void prewarmCache(int fontId, const char* utf8Text, uint8_t styleMask = 0x0F);
   void logStats(const char* label = "render");
   void resetStats();
@@ -43,7 +53,8 @@ class FontCacheManager {
    public:
     explicit PrewarmScope(FontCacheManager& manager);
     ~PrewarmScope();
-    void endScanAndPrewarm();
+    bool endScanAndPrewarm();
+    void setAdmissionHook(PrewarmAdmissionHook hook, void* context);
     PrewarmScope(PrewarmScope&& other) noexcept;
     PrewarmScope& operator=(PrewarmScope&&) = delete;
     PrewarmScope(const PrewarmScope&) = delete;
@@ -70,6 +81,12 @@ class FontCacheManager {
   };
   ScanEntry scanEntries_[MAX_SCAN_FONTS];
   uint8_t scanEntryCount_ = 0;
+  uint8_t scanFontLimit_ = MAX_SCAN_FONTS;
+  size_t scanTextByteLimit_ = MAX_SCAN_TEXT_BYTES;
+  PrewarmAdmissionHook admissionHook_ = nullptr;
+  void* admissionContext_ = nullptr;
 
   ScanEntry* findOrCreateScanEntry(int fontId);
+  bool prewarmCacheForScope(int fontId, const char* utf8Text, uint8_t styleMask);
+  void clearAdmissionHook();
 };

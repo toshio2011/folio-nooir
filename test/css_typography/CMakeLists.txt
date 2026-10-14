@@ -6,6 +6,8 @@ add_executable(CssTypographyTest
 target_include_directories(CssTypographyTest PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/stubs
   ${REPO_ROOT}/lib/Epub/Epub/css
+  ${REPO_ROOT}/lib/Epub/Epub
+  ${REPO_ROOT}/lib/Epub
 )
 
 target_link_libraries(CssTypographyTest PRIVATE

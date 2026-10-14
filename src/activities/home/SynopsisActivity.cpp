@@ -30,8 +30,44 @@ const char* statusText(const BookStatus status, const uint8_t progress) {
   return tr(STR_STATS_STATUS_NEW);
 }
 
-int infoPanelHeight(const GfxRenderer& renderer) {
-  return std::min(132, std::max(96, renderer.getScreenHeight() / 7));
+struct InfoRow {
+  int top = -1;
+  int height = 0;
+};
+
+struct InfoRows {
+  int panelHeight = 0;
+  int textRowHeight = 0;
+  InfoRow format;
+  InfoRow status;
+  InfoRow progressDetails;
+  InfoRow progressBar;
+  InfoRow rating;
+};
+
+InfoRows makeInfoRows(const GfxRenderer& renderer, const bool showFormat) {
+  InfoRows rows{};
+  rows.textRowHeight = std::max(1, renderer.getLineHeight(SMALL_FONT_ID)) + 2;
+  int cursor = 6;
+  if (showFormat) {
+    rows.format = {cursor, rows.textRowHeight};
+    cursor += rows.textRowHeight;
+  }
+  rows.status = {cursor, rows.textRowHeight};
+  cursor += rows.textRowHeight;
+  rows.progressDetails = {cursor, rows.textRowHeight};
+  cursor += rows.textRowHeight + 4;
+  rows.progressBar = {cursor, 8};
+  cursor += rows.progressBar.height + 4;
+  rows.rating = {cursor, 22};
+  rows.panelHeight = std::max(96, cursor + rows.rating.height + 6);
+  return rows;
+}
+
+int infoPanelTop(const GfxRenderer& renderer, const int titleY, const bool hasAuthor) {
+  const int titleHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  const int authorHeight = hasAuthor ? renderer.getLineHeight(UI_10_FONT_ID) : 0;
+  return titleY + titleHeight + authorHeight + (hasAuthor ? 8 : 6);
 }
 
 }  // namespace
@@ -40,7 +76,11 @@ void SynopsisActivity::buildLines() {
   renderer.setUiScaleTextEnabled(true);
   lines.clear();
   const std::string plainText = htmlToPlainText(synopsis);
-  const int width = renderer.getScreenWidth() - 24;
+  const int side = UITheme::getInstance().getMetrics().contentSidePadding;
+  // Leave a small ink margin beyond the measured advance width. Some fallback
+  // glyphs have a wider bitmap than their advance and can otherwise write past
+  // the logical right edge on the 480-pixel portrait layout.
+  const int width = std::max(1, renderer.getScreenWidth() - side * 2 - 12);
   size_t start = 0;
 
   // Keep block-level HTML structure (paragraphs, headings, list items and
@@ -118,11 +158,10 @@ int SynopsisActivity::synopsisTop() const {
   if (bookPath.empty()) return oldTop;
 
   const int titleY = metrics.topPadding + 18;
-  const int titleHeight = renderer.getLineHeight(UI_12_FONT_ID);
-  const int authorHeight = renderer.getLineHeight(UI_10_FONT_ID);
-  const int infoTop = titleY + titleHeight + authorHeight + 10;
-  const int infoHeight = infoPanelHeight(renderer);
-  return infoTop + infoHeight + 18;
+  const bool showFormat = BookFormat::labelForPath(bookPath.c_str()) != nullptr;
+  const InfoRows rows = makeInfoRows(renderer, showFormat);
+  const int infoTop = infoPanelTop(renderer, titleY, !author.empty());
+  return infoTop + rows.panelHeight + 12;
 }
 
 void SynopsisActivity::movePage(const int direction) {
@@ -161,7 +200,7 @@ void SynopsisActivity::loop() {
   }
   if (!bookPath.empty() && mappedInput.wasReleased(MappedInputManager::Button::Right)) {
     ratingFocused = false;
-    requestUpdate();
+    movePage(1);
     return;
   }
   if (!bookPath.empty() && ratingFocused && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
@@ -196,19 +235,23 @@ void SynopsisActivity::render(RenderLock&&) {
   const int side = metrics.contentSidePadding;
   const int width = renderer.getScreenWidth() - side * 2;
   const int titleY = metrics.topPadding + 18;
+  // Match the width measurement to the bold draw style and retain ink margin
+  // so fallback glyphs cannot cross the logical framebuffer edge.
+  const int safeTitleWidth = std::max(1, width - 12);
   renderer.drawText(UI_12_FONT_ID, side, titleY,
-                    renderer.truncatedText(UI_12_FONT_ID, title.c_str(), width).c_str(), true,
-                    EpdFontFamily::BOLD);
+                    renderer.truncatedText(UI_12_FONT_ID, title.c_str(), safeTitleWidth, EpdFontFamily::BOLD).c_str(),
+                    true, EpdFontFamily::BOLD);
   if (!author.empty()) {
     renderer.drawText(UI_10_FONT_ID, side, titleY + renderer.getLineHeight(UI_12_FONT_ID),
-                      renderer.truncatedText(UI_10_FONT_ID, author.c_str(), width).c_str());
+                      renderer.truncatedText(UI_10_FONT_ID, author.c_str(), safeTitleWidth).c_str());
   }
 
   if (!bookPath.empty()) {
-    const int titleHeight = renderer.getLineHeight(UI_12_FONT_ID);
-    const int infoTop = titleY + titleHeight + renderer.getLineHeight(UI_10_FONT_ID) + 10;
-    const int infoHeight = infoPanelHeight(renderer);
-    const int coverWidth = std::min(104, std::max(76, width / 3));
+    const char* format = BookFormat::labelForPath(bookPath.c_str());
+    const InfoRows rows = makeInfoRows(renderer, format != nullptr);
+    const int infoTop = infoPanelTop(renderer, titleY, !author.empty());
+    const int infoHeight = rows.panelHeight;
+    const int coverWidth = std::min(104, std::max(54, width / 4));
     const int detailX = side + coverWidth + 14;
     const int detailWidth = std::max(1, width - coverWidth - 14);
     const std::string thumb = UITheme::getCoverThumbPath(coverBmpPath, 220);
@@ -243,48 +286,78 @@ void SynopsisActivity::render(RenderLock&&) {
       renderer.drawRect(side, infoTop, coverWidth, infoHeight);
     }
 
-    const char* format = BookFormat::labelForPath(bookPath.c_str());
-    if (format != nullptr) renderer.drawText(SMALL_FONT_ID, detailX, infoTop + 12, format, true);
-    renderer.drawText(SMALL_FONT_ID, detailX, infoTop + 12 + renderer.getLineHeight(SMALL_FONT_ID),
-                      statusText(status, progressPercent));
-    char progress[32];
-    snprintf(progress, sizeof(progress), "%u%%", progressPercent);
-    renderer.drawText(SMALL_FONT_ID, detailX, infoTop + 12 + renderer.getLineHeight(SMALL_FONT_ID) * 2, progress);
-    char reading[64];
-    snprintf(reading, sizeof(reading), "%lu min - %u sessions",
-             static_cast<unsigned long>((readingSeconds + 30) / 60), readingSessions);
-    const std::string readingText = renderer.truncatedText(SMALL_FONT_ID, reading, detailWidth);
-    renderer.drawText(SMALL_FONT_ID, detailX, infoTop + 12 + renderer.getLineHeight(SMALL_FONT_ID) * 3,
-                      readingText.c_str());
-    const int ratingRowHeight = 20;
-    const int ratingTop = infoTop + infoHeight - ratingRowHeight;
-    const int progressY = ratingTop - 12;
-    renderer.drawRect(detailX, progressY, detailWidth, 10);
-    const int fill = (detailWidth - 2) * progressPercent / 100;
-    if (fill > 0) renderer.fillRect(detailX + 1, progressY + 1, fill, 8);
-    renderer.drawRect(detailX, ratingTop, detailWidth, ratingRowHeight, ratingFocused ? 2 : 1, true);
-    renderer.drawText(SMALL_FONT_ID, detailX + 6, ratingTop + 4, tr(STR_BOOK_RATING));
+    const auto drawRowText = [this, detailX, detailWidth, infoTop](const InfoRow& row, const char* text,
+                                                                   const bool bold) {
+      if (row.top < 0 || row.height <= 0 || !text || !text[0]) return;
+      const int baseline = infoTop + row.top + (row.height - renderer.getLineHeight(SMALL_FONT_ID)) / 2;
+      const std::string fitted = renderer.truncatedText(SMALL_FONT_ID, text, detailWidth,
+                                                        bold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+      renderer.drawText(SMALL_FONT_ID, detailX, baseline, fitted.c_str(), bold);
+    };
+    if (format) drawRowText(rows.format, format, true);
+    drawRowText(rows.status, statusText(status, progressPercent), false);
+    char progressDetails[64]{};
+    size_t progressDetailsLength = 0;
+    const auto appendProgressDetail = [&progressDetails, &progressDetailsLength](const char* value) {
+      if (!value || !value[0] || progressDetailsLength >= sizeof(progressDetails) - 1) return;
+      const char* separator = progressDetailsLength == 0 ? "" : " · ";
+      const size_t remaining = sizeof(progressDetails) - progressDetailsLength;
+      const int written = snprintf(progressDetails + progressDetailsLength, remaining, "%s%s", separator, value);
+      if (written > 0) {
+        progressDetailsLength = std::min(static_cast<size_t>(written), remaining - 1) + progressDetailsLength;
+      }
+    };
+    char progress[8];
+    snprintf(progress, sizeof(progress), "%u%%", static_cast<unsigned>(std::min<uint8_t>(progressPercent, 100)));
+    appendProgressDetail(progress);
+    if (readingSeconds > 0) {
+      char minutes[24];
+      snprintf(minutes, sizeof(minutes), "%lu min",
+               static_cast<unsigned long>((static_cast<uint64_t>(readingSeconds) + 30) / 60));
+      appendProgressDetail(minutes);
+    }
+    if (readingSessions > 0) {
+      char sessions[24];
+      snprintf(sessions, sizeof(sessions), "%u sessions", static_cast<unsigned>(readingSessions));
+      appendProgressDetail(sessions);
+    }
+    drawRowText(rows.progressDetails, progressDetails, false);
+    const int progressY = infoTop + rows.progressBar.top;
+    renderer.drawRect(detailX, progressY, detailWidth, rows.progressBar.height);
+    const int fill = std::max(0, detailWidth - 2) * std::min<uint8_t>(progressPercent, 100) / 100;
+    if (fill > 0) renderer.fillRect(detailX + 1, progressY + 1, fill, rows.progressBar.height - 2);
+    const int ratingTop = infoTop + rows.rating.top;
+    renderer.drawRect(detailX, ratingTop, detailWidth, rows.rating.height, ratingFocused ? 2 : 1, true);
+    const int labelY = ratingTop + (rows.rating.height - renderer.getLineHeight(SMALL_FONT_ID)) / 2;
+    const int starSize = std::clamp(rows.rating.height - 6, 5, 10);
+    const int minimumStarWidth = BookRating::kMaximum * 5 + (BookRating::kMaximum - 1);
+    const int labelMaxWidth = std::max(1, detailWidth - minimumStarWidth - 18);
+    const std::string ratingLabel = renderer.truncatedText(SMALL_FONT_ID, tr(STR_BOOK_RATING), labelMaxWidth);
+    renderer.drawText(SMALL_FONT_ID, detailX + 5, labelY, ratingLabel.c_str());
     const BookState* state = BOOK_STATES.find(bookPath);
     const uint8_t rating = state == nullptr ? 0 : state->rating;
-    const int labelWidth = renderer.getTextWidth(SMALL_FONT_ID, tr(STR_BOOK_RATING));
-    const int starSize = std::clamp((detailWidth - labelWidth - 24) / 7, 5, 10);
-    const int starGap = std::max(1, starSize / 5);
-    BookRating::drawStars(renderer, detailX + 6 + labelWidth + 6,
-                          ratingTop + (ratingRowHeight - starSize) / 2, rating, starSize, starGap);
-    renderer.drawLine(side, infoTop + infoHeight + 8, side + width, infoTop + infoHeight + 8);
+    const int starsX = detailX + 5 + renderer.getTextWidth(SMALL_FONT_ID, ratingLabel.c_str()) + 6;
+    const int starsRight = detailX + detailWidth - 4;
+    BookRating::drawStarsInBounds(renderer, {starsX, ratingTop + 3, std::max(0, starsRight - starsX),
+                                             rows.rating.height - 6},
+                                  rating, starSize, std::max(1, starSize / 5));
+    renderer.drawLine(side, infoTop + infoHeight + 6, side + width - 1, infoTop + infoHeight + 6);
   }
 
   const int top = synopsisTop();
   const int bottom = renderer.getScreenHeight() - metrics.buttonHintsHeight - metrics.verticalSpacing;
   const int lineHeight = renderer.getLineHeight(SMALL_FONT_ID);
   const size_t pageLines = static_cast<size_t>(std::max(1, (bottom - top) / lineHeight));
+  const int safeTextWidth = std::max(1, renderer.getScreenWidth() - side * 2 - 12);
   for (size_t row = 0; row < pageLines && firstLine + row < lines.size(); ++row) {
-    renderer.drawText(SMALL_FONT_ID, side, top + static_cast<int>(row) * lineHeight, lines[firstLine + row].c_str());
+    const std::string fitted = renderer.truncatedText(SMALL_FONT_ID, lines[firstLine + row].c_str(), safeTextWidth);
+    renderer.drawText(SMALL_FONT_ID, side, top + static_cast<int>(row) * lineHeight, fitted.c_str());
   }
 
   const char* confirmLabel = !bookPath.empty() && ratingFocused ? tr(STR_SELECT) : "";
   const char* previousLabel = bookPath.empty() ? tr(STR_DIR_LEFT) : tr(STR_BOOK_RATING);
-  const char* nextLabel = bookPath.empty() ? tr(STR_DIR_RIGHT) : tr(STR_READ_FULL_SYNOPSIS);
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, previousLabel, nextLabel);  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  const char* nextLabel = bookPath.empty() ? tr(STR_DIR_RIGHT) : tr(STR_NEXT_PAGE);
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, previousLabel, nextLabel);
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }

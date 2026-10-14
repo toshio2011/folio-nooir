@@ -68,6 +68,14 @@ VisualPreviewActivity::VisualPreviewActivity(GfxRenderer& renderer, MappedInputM
 
 void VisualPreviewActivity::onEnter() {
   Activity::onEnter();
+  for (size_t index = 0; index < featuredPreview_.size(); ++index) {
+    featuredPreview_[index] = SETTINGS.*kFeaturedFieldSettings[index] ? 1 : 0;
+  }
+  coverProgressPreview_ = SETTINGS.coverProgressStyle;
+  recentLayoutPreview_ = SETTINGS.recentBookLayout;
+  finishedLayoutPreview_ = SETTINGS.finishedBookLayout;
+  spineAppearancePreview_ = SETTINGS.spineAppearanceMode;
+  spineDecorationPreview_ = SETTINGS.spineDecorationStyle;
   selectedRow_ = 0;
   requestUpdate();
 }
@@ -98,14 +106,34 @@ void VisualPreviewActivity::selectTab(const int index) {
 }
 
 void VisualPreviewActivity::showEnumPicker(const StrId title, const StrId* values, const size_t count,
-                                           const uint8_t current, uint8_t CrossPointSettings::*setting) {
+                                           const uint8_t current, const PreviewEnumField field) {
   const int initial = current < count ? current : 0;
-  optionPopup_.show(title, values, static_cast<int>(count), initial, [this, setting](const int index) {
-    if (SETTINGS.*setting == index) return;
-    SETTINGS.*setting = static_cast<uint8_t>(index);
-    SETTINGS.saveToFile();
-    requestUpdate();
-  });
+  optionPopup_.show(title, values, static_cast<int>(count), initial,
+                    [this, field](const int index) { commitEnumPreview(field, static_cast<uint8_t>(index)); });
+  requestUpdate();
+}
+
+void VisualPreviewActivity::commitEnumPreview(const PreviewEnumField field, const uint8_t value) {
+  uint8_t* previewValue = nullptr;
+  uint8_t CrossPointSettings::*setting = nullptr;
+  switch (field) {
+    case PreviewEnumField::CoverProgress:
+      previewValue = &coverProgressPreview_;
+      setting = &CrossPointSettings::coverProgressStyle;
+      break;
+    case PreviewEnumField::SpineAppearance:
+      previewValue = &spineAppearancePreview_;
+      setting = &CrossPointSettings::spineAppearanceMode;
+      break;
+    case PreviewEnumField::SpineDecoration:
+      previewValue = &spineDecorationPreview_;
+      setting = &CrossPointSettings::spineDecorationStyle;
+      break;
+  }
+  if (!previewValue || !setting || *previewValue == value) return;
+  *previewValue = value;
+  SETTINGS.*setting = value;
+  SETTINGS.saveToFile();
   requestUpdate();
 }
 
@@ -113,7 +141,8 @@ void VisualPreviewActivity::activateRow() {
   if (tab_ == Tab::Featured) {
     if (selectedRow_ >= std::size(kFeaturedFieldSettings)) return;
     const auto setting = kFeaturedFieldSettings[selectedRow_];
-    SETTINGS.*setting = SETTINGS.*setting ? 0 : 1;
+    featuredPreview_[selectedRow_] = featuredPreview_[selectedRow_] ? 0 : 1;
+    SETTINGS.*setting = featuredPreview_[selectedRow_];
     SETTINGS.saveToFile();
     requestUpdate();
     return;
@@ -121,7 +150,7 @@ void VisualPreviewActivity::activateRow() {
 
   if (tab_ == Tab::Cover) {
     showEnumPicker(StrId::STR_COVER_PROGRESS_STYLE, kCoverProgressOptions, std::size(kCoverProgressOptions),
-                   SETTINGS.coverProgressStyle, &CrossPointSettings::coverProgressStyle);
+                   coverProgressPreview_, PreviewEnumField::CoverProgress);
     return;
   }
 
@@ -131,12 +160,14 @@ void VisualPreviewActivity::activateRow() {
       requestUpdate();
       break;
     case 1: {
-      uint8_t& layout = spineTarget_ == 0 ? SETTINGS.recentBookLayout : SETTINGS.finishedBookLayout;
-      const uint8_t next = layout == CrossPointSettings::FOLIO_LAYOUT_SPINE
+      uint8_t& previewLayout = spineTarget_ == 0 ? recentLayoutPreview_ : finishedLayoutPreview_;
+      uint8_t& settingLayout = spineTarget_ == 0 ? SETTINGS.recentBookLayout : SETTINGS.finishedBookLayout;
+      const uint8_t next = previewLayout == CrossPointSettings::FOLIO_LAYOUT_SPINE
                                ? CrossPointSettings::FOLIO_LAYOUT_TWO_ROW_SPINE
                                : CrossPointSettings::FOLIO_LAYOUT_SPINE;
-      if (layout != next) {
-        layout = next;
+      if (previewLayout != next) {
+        previewLayout = next;
+        settingLayout = next;
         SETTINGS.saveToFile();
       }
       requestUpdate();
@@ -144,13 +175,13 @@ void VisualPreviewActivity::activateRow() {
     }
     case 2:
       showEnumPicker(StrId::STR_SPINE_APPEARANCE, kSpineAppearanceOptions,
-                     std::size(kSpineAppearanceOptions), SETTINGS.spineAppearanceMode,
-                     &CrossPointSettings::spineAppearanceMode);
+                     std::size(kSpineAppearanceOptions), spineAppearancePreview_,
+                     PreviewEnumField::SpineAppearance);
       break;
     case 3:
       showEnumPicker(StrId::STR_SPINE_DECORATION, kSpineDecorationOptions,
-                     std::size(kSpineDecorationOptions), SETTINGS.spineDecorationStyle,
-                     &CrossPointSettings::spineDecorationStyle);
+                     std::size(kSpineDecorationOptions), spineDecorationPreview_,
+                     PreviewEnumField::SpineDecoration);
       break;
     case 4:
       // Preview-only randomness. The real shelf uses a stable book-derived
@@ -264,7 +295,7 @@ void VisualPreviewActivity::renderFeatured(const int x, const int y, const int w
   renderer.fillRect(x, y, width, height, false);
   renderer.drawRect(x, y, width, height, true);
   const int inset = 10;
-  const int coverWidth = SETTINGS.featuredShowCover ? std::min(112, (width - inset * 3) / 3) : 0;
+  const int coverWidth = featuredPreview_[0] ? std::min(112, (width - inset * 3) / 3) : 0;
   const int coverHeight = std::min(height - inset * 2, 176);
   if (coverWidth > 0) {
     const int coverX = x + inset;
@@ -278,7 +309,7 @@ void VisualPreviewActivity::renderFeatured(const int x, const int y, const int w
 
   const int textX = coverWidth > 0 ? x + inset * 2 + coverWidth : x + inset;
   const int textWidth = std::max(1, x + width - inset - textX);
-  const int badgeWidth = SETTINGS.featuredShowFileType
+  const int badgeWidth = featuredPreview_[1]
                              ? FolioNooirTheme::featuredFormatBadgeLabelWidth(renderer, "EPUB")
                              : 0;
   const int titleWidth = std::max(1, textWidth - badgeWidth - (badgeWidth > 0 ? 8 : 0));
@@ -288,14 +319,14 @@ void VisualPreviewActivity::renderFeatured(const int x, const int y, const int w
   const int textTop = y + inset + 2;
   const int panelBottom = y + height - 2;
   const int usableTextHeight = std::max(0, panelBottom - textTop);
-  const bool showAuthor = SETTINGS.featuredShowAuthor != 0;
-  const bool showSynopsis = SETTINGS.featuredShowSynopsis != 0;
-  const bool showCompactMetadata = SETTINGS.featuredShowStatus || SETTINGS.featuredShowProgress ||
-                                   SETTINGS.featuredShowReadingTime || SETTINGS.featuredShowSessions;
-  const bool showDates = SETTINGS.featuredShowStartedDate || SETTINGS.featuredShowFinishedDate;
+  const bool showAuthor = featuredPreview_[2] != 0;
+  const bool showSynopsis = featuredPreview_[3] != 0;
+  const bool showCompactMetadata = featuredPreview_[4] || featuredPreview_[5] || featuredPreview_[8] ||
+                                   featuredPreview_[9];
+  const bool showDates = featuredPreview_[6] || featuredPreview_[7];
   const int authorHeight = showAuthor ? renderer.getLineHeight(UI_10_FONT_ID) + 3 : 0;
   const int metadataHeight = showCompactMetadata
-                                 ? metadataLineHeight + (SETTINGS.featuredShowProgress ? 10 : 0)
+                                 ? metadataLineHeight + (featuredPreview_[5] ? 10 : 0)
                                  : 0;
   const int datesHeight = showDates ? metadataLineHeight : 0;
   const bool titleOnly = !showAuthor && !showSynopsis && !showCompactMetadata && !showDates;
@@ -352,13 +383,13 @@ void VisualPreviewActivity::renderFeatured(const int x, const int y, const int w
       const int written = snprintf(compactMetadata + length, remaining, "%s%s", length > 0 ? " · " : "", component);
       if (written > 0) length += std::min(static_cast<size_t>(written), remaining - 1);
     };
-    if (SETTINGS.featuredShowStatus) appendComponent("Ongoing");
-    if (SETTINGS.featuredShowProgress) appendComponent("62%");
-    if (SETTINGS.featuredShowReadingTime) appendComponent("43 min");
-    if (SETTINGS.featuredShowSessions) appendComponent("22 sessions");
+    if (featuredPreview_[4]) appendComponent("Ongoing");
+    if (featuredPreview_[5]) appendComponent("62%");
+    if (featuredPreview_[8]) appendComponent("43 min");
+    if (featuredPreview_[9]) appendComponent("22 sessions");
     renderer.drawText(SMALL_FONT_ID, textX, cursorY, compactMetadata);
     cursorY += metadataLineHeight;
-    if (SETTINGS.featuredShowProgress && cursorY + 7 <= panelBottom) {
+    if (featuredPreview_[5] && cursorY + 7 <= panelBottom) {
       const int progressY = cursorY + 1;
       renderer.drawRect(textX, progressY, textWidth, 7);
       const int fillWidth = std::max(0, textWidth - 2) * 62 / 100;
@@ -367,9 +398,9 @@ void VisualPreviewActivity::renderFeatured(const int x, const int y, const int w
     }
   }
   if (showDates && cursorY + smallLineHeight <= panelBottom) {
-    const char* dates = SETTINGS.featuredShowStartedDate && SETTINGS.featuredShowFinishedDate
+    const char* dates = featuredPreview_[6] && featuredPreview_[7]
                             ? "Started 2026-02-14 · Finished 2026-10-02"
-                            : (SETTINGS.featuredShowStartedDate ? "Started · 2026-02-14" : "Finished · 2026-10-02");
+                            : (featuredPreview_[6] ? "Started · 2026-02-14" : "Finished · 2026-10-02");
     const std::string fitted = renderer.truncatedText(SMALL_FONT_ID, dates, textWidth);
     renderer.drawText(SMALL_FONT_ID, textX, cursorY, fitted.c_str());
     cursorY += metadataLineHeight;
@@ -386,8 +417,8 @@ void VisualPreviewActivity::renderCover(const int x, const int y, const int widt
   renderer.drawCenteredText(UI_10_FONT_ID, coverY + coverHeight / 2, "SAMPLE COVER", true);
   BookCoverTreatment::drawFrame(renderer, coverX, coverY, coverWidth, coverHeight, true, true);
   BookCoverTreatment::drawProgress(renderer, coverX, coverY, coverWidth, coverHeight, 62, true, true);
-  const StrId choice = kCoverProgressOptions[SETTINGS.coverProgressStyle < std::size(kCoverProgressOptions)
-                                                ? SETTINGS.coverProgressStyle
+  const StrId choice = kCoverProgressOptions[coverProgressPreview_ < std::size(kCoverProgressOptions)
+                                                ? coverProgressPreview_
                                                 : CrossPointSettings::COVER_PROGRESS_BOOKMARK];
   const char* label = I18N.get(choice);
   renderer.drawCenteredText(UI_10_FONT_ID, y + height - 18, label, true);
@@ -396,11 +427,11 @@ void VisualPreviewActivity::renderCover(const int x, const int y, const int widt
 void VisualPreviewActivity::renderSpine(const int x, const int y, const int width, const int height) {
   renderer.fillRect(x, y, width, height, false);
   renderer.drawRect(x, y, width, height, true);
-  const uint8_t layout = spineTarget_ == 0 ? SETTINGS.recentBookLayout : SETTINGS.finishedBookLayout;
+  const uint8_t layout = spineTarget_ == 0 ? recentLayoutPreview_ : finishedLayoutPreview_;
   const bool twoRows = layout == CrossPointSettings::FOLIO_LAYOUT_TWO_ROW_SPINE;
   const int rowCount = twoRows ? 2 : 1;
-  const uint8_t appearance = SETTINGS.spineAppearanceMode < CrossPointSettings::SPINE_APPEARANCE_MODE_COUNT
-                                 ? SETTINGS.spineAppearanceMode
+  const uint8_t appearance = spineAppearancePreview_ < CrossPointSettings::SPINE_APPEARANCE_MODE_COUNT
+                                 ? spineAppearancePreview_
                                  : CrossPointSettings::SPINE_APPEARANCE_ALL_SPINES;
   const int rowHeight = (height - 24) / rowCount;
   const int margin = 16;
@@ -443,8 +474,8 @@ void VisualPreviewActivity::renderSpine(const int x, const int y, const int widt
 
       uint32_t styleRoll = (hash >> 16) & 7u;
       if (coverFace) styleRoll = 0;
-      if (SETTINGS.spineDecorationStyle == CrossPointSettings::SPINE_DECORATION_SUBTLE && styleRoll < 5) styleRoll = 0;
-      if (SETTINGS.spineDecorationStyle == CrossPointSettings::SPINE_DECORATION_BALANCED && styleRoll < 3)
+      if (spineDecorationPreview_ == CrossPointSettings::SPINE_DECORATION_SUBTLE && styleRoll < 5) styleRoll = 0;
+      if (spineDecorationPreview_ == CrossPointSettings::SPINE_DECORATION_BALANCED && styleRoll < 3)
         styleRoll = 0;
       if (styleRoll != 0) {
         switch ((hash >> 20) % 4u) {
@@ -511,7 +542,7 @@ void VisualPreviewActivity::renderControls(const int x, const int y, const int w
       const int cellH = std::max(18, rowHeight - 4);
       renderer.drawRect(cellX, cellY, cellWidth - 8, cellH,
                         selectedRow_ == i ? 2 : 1, true);
-      const bool enabled = SETTINGS.*(kFeaturedFieldSettings[i]) != 0;
+      const bool enabled = featuredPreview_[i] != 0;
       char label[96];
       snprintf(label, sizeof(label), "%s %s", enabled ? "[x]" : "[ ]", I18N.get(kFeaturedFieldLabels[i]));
       const std::string fitted = renderer.truncatedText(UI_10_FONT_ID, label, cellWidth - 18);
@@ -531,12 +562,12 @@ void VisualPreviewActivity::renderControls(const int x, const int y, const int w
     const char* title = "";
     if (tab_ == Tab::Cover) {
       title = tr(STR_COVER_PROGRESS_STYLE);
-      const uint8_t style = SETTINGS.coverProgressStyle < std::size(kCoverProgressOptions)
-                                ? SETTINGS.coverProgressStyle
+      const uint8_t style = coverProgressPreview_ < std::size(kCoverProgressOptions)
+                                ? coverProgressPreview_
                                 : CrossPointSettings::COVER_PROGRESS_BOOKMARK;
       snprintf(value, sizeof(value), "%s: %s", title, I18N.get(kCoverProgressOptions[style]));
     } else {
-      const uint8_t layout = spineTarget_ == 0 ? SETTINGS.recentBookLayout : SETTINGS.finishedBookLayout;
+      const uint8_t layout = spineTarget_ == 0 ? recentLayoutPreview_ : finishedLayoutPreview_;
       const bool twoRows = layout == CrossPointSettings::FOLIO_LAYOUT_TWO_ROW_SPINE;
       if (row == 0) {
         title = tr(STR_PREVIEW_TARGET);
@@ -547,14 +578,14 @@ void VisualPreviewActivity::renderControls(const int x, const int y, const int w
         snprintf(value, sizeof(value), "%s: %s", title,
                  I18N.get(twoRows ? StrId::STR_LAYOUT_TWO_ROW_SPINE : StrId::STR_LAYOUT_SPINE));
       } else if (row == 2) {
-        const uint8_t appearance = SETTINGS.spineAppearanceMode < std::size(kSpineAppearanceOptions)
-                                      ? SETTINGS.spineAppearanceMode
+        const uint8_t appearance = spineAppearancePreview_ < std::size(kSpineAppearanceOptions)
+                                      ? spineAppearancePreview_
                                       : CrossPointSettings::SPINE_APPEARANCE_ALL_SPINES;
         title = tr(STR_SPINE_APPEARANCE);
         snprintf(value, sizeof(value), "%s: %s", title, I18N.get(kSpineAppearanceOptions[appearance]));
       } else if (row == 3) {
-        const uint8_t style = SETTINGS.spineDecorationStyle < std::size(kSpineDecorationOptions)
-                                  ? SETTINGS.spineDecorationStyle
+        const uint8_t style = spineDecorationPreview_ < std::size(kSpineDecorationOptions)
+                                  ? spineDecorationPreview_
                                   : CrossPointSettings::SPINE_DECORATION_BALANCED;
         title = tr(STR_SPINE_DECORATION);
         snprintf(value, sizeof(value), "%s: %s", title, I18N.get(kSpineDecorationOptions[style]));

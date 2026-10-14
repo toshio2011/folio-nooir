@@ -744,7 +744,11 @@ void SettingsActivity::toggleCurrentSetting() {
         startActivityForResult(std::make_unique<SettingsProfilesActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::VisualPreview:
-        startActivityForResult(std::make_unique<VisualPreviewActivity>(renderer, mappedInput), resultHandler);
+        startActivityForResult(std::make_unique<VisualPreviewActivity>(renderer, mappedInput),
+                               [this](const ActivityResult&) {
+                                 logSettingsDiagnostic("return_from_child");
+                                 requestUpdate();
+                               });
         break;
       case SettingAction::ClearFavoriteSleepImage:
         APP_STATE.favoriteSleepImagePath.clear();

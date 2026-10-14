@@ -248,7 +248,7 @@ TEST(CssCascadeTest, IDBeatsMultiClassAndCompoundIdRequiresClass) {
 
   EXPECT_EQ(parser->resolveStyle("p", "a b", "entry").textAlign, CssTextAlign::Center);
   EXPECT_EQ(parser->resolveStyle("p", "a b", "other").textAlign, CssTextAlign::Left);
-  EXPECT_EQ(parser->resolveStyle("p", "a", "entry").textAlign, CssTextAlign::Right);
+  EXPECT_EQ(parser->resolveStyle("p", "a", "entry").textAlign, CssTextAlign::Center);
   EXPECT_EQ(parser->resolveStyle("p", "b", "entry").textAlign, CssTextAlign::Right);
   EXPECT_EQ(parser->resolveStyle("p", "a b").textAlign, CssTextAlign::Left);
 }

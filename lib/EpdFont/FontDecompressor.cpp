@@ -4,6 +4,7 @@
 #include <Logging.h>
 #include <Utf8.h>
 
+#include <algorithm>
 #include <cstdlib>
 
 #include "../../src/util/EpubDiagnostics.h"
@@ -23,6 +24,37 @@ void FontDecompressor::deinit() {
 void FontDecompressor::clearCache() {
   freePageBuffer();
   freeHotGroup();
+  failedGroupCount_ = 0;
+  suppressFurtherFailureLogs_ = false;
+  for (auto& failed : failedGroups_) failed = {};
+}
+
+void FontDecompressor::setPageGlyphLimit(const uint16_t limit) {
+  const uint16_t bounded = std::clamp<uint16_t>(limit, 1, MAX_PAGE_GLYPHS);
+  if (pageGlyphLimit_ == bounded) return;
+  pageGlyphLimit_ = bounded;
+  clearCache();
+}
+
+void FontDecompressor::recordAllocationRequest(const uint32_t bytes) {
+  stats.largestAllocationRequestBytes = std::max(stats.largestAllocationRequestBytes, bytes);
+}
+
+bool FontDecompressor::groupFailed(const EpdFontData* fontData, const uint16_t groupIndex) const {
+  for (uint8_t i = 0; i < failedGroupCount_; ++i) {
+    if (failedGroups_[i].fontData == fontData && failedGroups_[i].groupIndex == groupIndex) return true;
+  }
+  return false;
+}
+
+void FontDecompressor::rememberFailedGroup(const EpdFontData* fontData, const uint16_t groupIndex,
+                                          const uint32_t requestedBytes) {
+  if (groupFailed(fontData, groupIndex)) return;
+  if (failedGroupCount_ >= MAX_FAILED_GROUPS) {
+    suppressFurtherFailureLogs_ = true;
+    return;
+  }
+  failedGroups_[failedGroupCount_++] = {fontData, groupIndex, requestedBytes};
 }
 
 void FontDecompressor::freePageBuffer() {
@@ -188,6 +220,11 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     return nullptr;
   }
 
+  if (groupFailed(fontData, groupIndex)) {
+    stats.getBitmapTimeUs += micros() - tStart;
+    return nullptr;
+  }
+
   // Check if hot group already has this group decompressed — if not, decompress it
   if (!(hotGroup != nullptr && hotGroupFont == fontData && hotGroupIndex == groupIndex)) {
     stats.cacheMisses++;
@@ -196,13 +233,19 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     // ensureCapacity may free the buffer, so the cached-group identity dies with it either way.
     hotGroupFont = nullptr;
     hotGroupIndex = UINT16_MAX;
+    recordAllocationRequest(group.uncompressedSize);
     if (!ensureCapacity(hotGroup, hotGroupCapacity, group.uncompressedSize)) {
-      LOG_ERR("FDC", "Failed to allocate %u bytes for hot group %u", group.uncompressedSize, groupIndex);
+      ++stats.failedAllocationCount;
+      rememberFailedGroup(fontData, groupIndex, group.uncompressedSize);
+      if (!suppressFurtherFailureLogs_)
+        LOG_ERR("FDC", "Failed to allocate %u bytes for hot group %u; memoized for this render",
+                group.uncompressedSize, groupIndex);
       stats.getBitmapTimeUs += micros() - tStart;
       return nullptr;
     }
 
     if (!decompressGroup(fontData, groupIndex, hotGroup, group.uncompressedSize)) {
+      rememberFailedGroup(fontData, groupIndex, group.uncompressedSize);
       stats.getBitmapTimeUs += micros() - tStart;
       return nullptr;
     }
@@ -215,7 +258,9 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
   }
 
   // Compact just the requested glyph from byte-aligned data into scratch buffer
+  recordAllocationRequest(glyph->dataLength);
   if (!ensureCapacity(hotGlyphBuf, hotGlyphBufCapacity, glyph->dataLength)) {
+    ++stats.failedAllocationCount;
     LOG_ERR("FDC", "Failed to allocate %u bytes for glyph scratch", (unsigned)glyph->dataLength);
     stats.getBitmapTimeUs += micros() - tStart;
     return nullptr;
@@ -255,7 +300,8 @@ int32_t FontDecompressor::findGlyphIndex(const EpdFontData* fontData, uint32_t c
   return -1;
 }
 
-int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8Text) {
+int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8Text,
+                                   const PrewarmAdmissionHook admissionHook, void* admissionContext) {
   EpubDiagnostics::Scope diagnostics("fdc_prewarm_start", "fdc_prewarm_end");
   if (!fontData || !fontData->groups || !utf8Text) return 0;
 
@@ -269,6 +315,7 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
   // Step 1: Collect unique glyph indices needed for this page
   uint32_t neededGlyphs[MAX_PAGE_GLYPHS];
   uint16_t glyphCount = 0;
+  const uint16_t glyphLimit = std::min<uint16_t>(pageGlyphLimit_, MAX_PAGE_GLYPHS);
   bool glyphCapWarned = false;
 
   const unsigned char* p = reinterpret_cast<const unsigned char*>(utf8Text);
@@ -288,11 +335,11 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
       }
     }
     if (!found) {
-      if (glyphCount < MAX_PAGE_GLYPHS) {
+      if (glyphCount < glyphLimit) {
         neededGlyphs[glyphCount++] = static_cast<uint32_t>(glyphIdx);
       } else if (!glyphCapWarned) {
         LOG_DBG("FDC", "Glyph cap (%u) reached during prewarm; excess glyphs will use hot-group fallback",
-                MAX_PAGE_GLYPHS);
+                glyphLimit);
         glyphCapWarned = true;
       }
     }
@@ -301,7 +348,7 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
   // Add ligature output glyphs: if both input codepoints of a ligature pair are
   // in the needed set, the output glyph will be queried during rendering.
   if (fontData->ligaturePairs && fontData->ligaturePairCount > 0) {
-    for (uint32_t li = 0; li < fontData->ligaturePairCount && glyphCount < MAX_PAGE_GLYPHS; li++) {
+    for (uint32_t li = 0; li < fontData->ligaturePairCount && glyphCount < glyphLimit; li++) {
       uint32_t leftCp = fontData->ligaturePairs[li].pair >> 16;
       uint32_t rightCp = fontData->ligaturePairs[li].pair & 0xFFFF;
 
@@ -365,14 +412,31 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
 
   stats.uniqueGroupsAccessed = groupCount;
 
+  uint32_t largestGroupRequest = 0;
+  for (uint8_t g = 0; g < groupCount; ++g) {
+    largestGroupRequest = std::max(largestGroupRequest, fontData->groups[neededGroups[g]].uncompressedSize);
+  }
+  const uint32_t glyphTableBytes = glyphCount * sizeof(PageGlyphEntry);
+  const uint32_t requiredLargestBlock = std::max({totalBytes, glyphTableBytes, largestGroupRequest}) + 64;
+  const size_t requiredFreeBytes = static_cast<size_t>(totalBytes) + glyphTableBytes + largestGroupRequest + 2048;
+  recordAllocationRequest(totalBytes);
+  recordAllocationRequest(glyphTableBytes);
+  recordAllocationRequest(largestGroupRequest);
+  if (admissionHook && !admissionHook(admissionContext, requiredFreeBytes, requiredLargestBlock)) {
+    return -2;  // The caller will replay this page after yielding its competing heap owner.
+  }
+
   // Step 3: Allocate page buffer and lookup table for this slot
+  recordAllocationRequest(totalBytes);
   slot.buffer = static_cast<uint8_t*>(malloc(totalBytes));
+  recordAllocationRequest(glyphTableBytes);
   slot.glyphs = static_cast<PageGlyphEntry*>(malloc(glyphCount * sizeof(PageGlyphEntry)));
   EpubDiagnostics::record("fdc_page_buffer_alloc", -1, -1, 0, totalBytes, glyphCount, totalBytes,
                           slot.buffer ? 1 : 0);
   EpubDiagnostics::record("fdc_page_glyph_table_alloc", -1, -1, 0, glyphCount * sizeof(PageGlyphEntry), glyphCount,
                           glyphCount * sizeof(PageGlyphEntry), slot.glyphs ? 1 : 0);
   if (!slot.buffer || !slot.glyphs) {
+    ++stats.failedAllocationCount;
     LOG_ERR("FDC", "Failed to allocate page buffer (%u bytes, %u glyphs)", totalBytes, glyphCount);
     free(slot.buffer);
     free(slot.glyphs);
@@ -481,9 +545,12 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
     const EpdFontGroup& group = fontData->groups[groupIdx];
 
     auto* tempBuf = static_cast<uint8_t*>(malloc(group.uncompressedSize));
+    recordAllocationRequest(group.uncompressedSize);
     EpubDiagnostics::record("fdc_group_buffer_alloc", -1, -1, 0, group.uncompressedSize, 1,
                             group.uncompressedSize, tempBuf ? 1 : 0);
     if (!tempBuf) {
+      ++stats.failedAllocationCount;
+      rememberFailedGroup(fontData, groupIdx, group.uncompressedSize);
       LOG_ERR("FDC", "Failed to allocate temp buffer (%u bytes) for group %u", group.uncompressedSize, groupIdx);
       missed++;
       continue;

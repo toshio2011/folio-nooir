@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "src/util/BleMemoryPolicy.h"
+#include "src/util/ReaderRenderBudget.h"
 
 TEST(BleMemoryPolicy, RequiresBothGlobalColdStartFloors) {
   EXPECT_TRUE(bleinput::readerBleStartMemoryAdmitted(96 * 1024, 36 * 1024));
@@ -78,4 +79,48 @@ TEST(BleMemoryPolicy, HealthyConnectedRenderLeavesCachesUntouched) {
 TEST(BleMemoryPolicy, MarginalConnectedRenderRequestsBoundedReclaim) {
   EXPECT_TRUE(bleinput::readerBleCachedRenderNeedsReclaim(true, true, 32 * 1024, 26 * 1024));
   EXPECT_TRUE(bleinput::readerBleCachedRenderNeedsReclaim(true, true, 40 * 1024, 18 * 1024));
+}
+
+TEST(ReaderRenderBudget, LargeRequestIsConstrainedWithHeadroomAndHeavyWhenBleConsumesIt) {
+  const reader_memory::PressureObservation healthy{
+      100 * 1024, 72 * 1024, 80 * 1024, 32635, false, false, false};
+  const reader_memory::PressureObservation starved{
+      32 * 1024, 28660, 14 * 1024, 32635, false, false, false};
+
+  EXPECT_EQ(reader_memory::classifyPressure(healthy), reader_memory::PressureTier::Constrained);
+  EXPECT_EQ(reader_memory::classifyPressure(starved), reader_memory::PressureTier::Heavy);
+}
+
+TEST(ReaderRenderBudget, WindowPressureAndAllocationFailureAreHeavy) {
+  reader_memory::PressureObservation observation{90 * 1024, 64 * 1024, 60 * 1024, 0, true, false, false};
+  EXPECT_EQ(reader_memory::classifyPressure(observation), reader_memory::PressureTier::Heavy);
+  observation.readerWindowPressure = false;
+  observation.renderAllocationFailed = true;
+  EXPECT_EQ(reader_memory::classifyPressure(observation), reader_memory::PressureTier::Heavy);
+}
+
+TEST(ReaderRenderBudget, CacheBudgetsShrinkByTierAndRecoveryIsHysteretic) {
+  const auto normal = reader_memory::cacheBudgetFor(reader_memory::PressureTier::Normal);
+  const auto constrained = reader_memory::cacheBudgetFor(reader_memory::PressureTier::Constrained);
+  const auto heavy = reader_memory::cacheBudgetFor(reader_memory::PressureTier::Heavy);
+  EXPECT_GT(normal.pageGlyphLimit, constrained.pageGlyphLimit);
+  EXPECT_GT(constrained.pageGlyphLimit, heavy.pageGlyphLimit);
+  EXPECT_GT(normal.scanTextBytesPerFont, constrained.scanTextBytesPerFont);
+  EXPECT_GT(constrained.scanTextBytesPerFont, heavy.scanTextBytesPerFont);
+
+  EXPECT_EQ(reader_memory::advancePressureTier(reader_memory::PressureTier::Heavy,
+                                               reader_memory::PressureTier::Normal, 1),
+            reader_memory::PressureTier::Heavy);
+  EXPECT_EQ(reader_memory::advancePressureTier(reader_memory::PressureTier::Heavy,
+                                               reader_memory::PressureTier::Normal, 2),
+            reader_memory::PressureTier::Constrained);
+}
+
+TEST(ReaderRenderBudget, PreflightIncludesMeasuredContiguousRequestAndSafetyMargin) {
+  const auto required = reader_memory::cachedRenderBudget(
+      2 * 4096, 512 * sizeof(uint32_t), 0, 384 * 16, 0, 0, 32635, false);
+
+  EXPECT_GE(required.largestBlock, 32635 + reader_memory::kLargestBlockMargin);
+  EXPECT_FALSE(reader_memory::renderAdmitted(required.freeBytes, 30000, required));
+  EXPECT_TRUE(reader_memory::renderAdmitted(required.freeBytes, required.largestBlock, required));
 }

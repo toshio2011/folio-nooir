@@ -24,6 +24,7 @@
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "BleInput.h"
 #include "RecentBooksStore.h"
 #include "StatisticsSnapshot.h"
 #include "ToDoStore.h"
@@ -44,6 +45,11 @@ enum class OverlayOpenFailure : uint8_t { None, Allocation, Open };
 OverlayOpenFailure overlayOpenFailure = OverlayOpenFailure::None;
 uint8_t sleepAssetLogCount = 0;
 constexpr uint8_t MAX_SLEEP_ASSET_LOGS = 18;
+constexpr size_t SLEEP_PNG_HEADROOM_BYTES = 16 * 1024;
+constexpr size_t SLEEP_PNG_REQUIRED_CONTIGUOUS_BYTES = sizeof(PNG);
+constexpr size_t SLEEP_PNG_MINIMUM_FREE_BYTES = SLEEP_PNG_REQUIRED_CONTIGUOUS_BYTES + SLEEP_PNG_HEADROOM_BYTES;
+bool sleepPngPreflightComplete = false;
+bool sleepPngAllocationAllowed = false;
 
 void logSleepAsset(const char* stage, const char* path, const char* reason = nullptr) {
   if (sleepAssetLogCount >= MAX_SLEEP_ASSET_LOGS) return;
@@ -83,6 +89,61 @@ void releaseSleepBoundaryCaches(GfxRenderer& renderer) {
   LOG_INF("SLPMEM", "stage=boundary_ready free=%u->%u largest=%u->%u",
           static_cast<unsigned>(startFree), static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(startLargest), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+}
+
+size_t sleepPngLargestBlock() { return heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT); }
+
+size_t sleepPngDefaultFree() { return heap_caps_get_free_size(MALLOC_CAP_DEFAULT); }
+
+bool sleepPngHeapFits() {
+  return sleepPngLargestBlock() >= SLEEP_PNG_REQUIRED_CONTIGUOUS_BYTES &&
+         sleepPngDefaultFree() >= SLEEP_PNG_MINIMUM_FREE_BYTES;
+}
+
+void logSleepPngPreflight(const char* stage) {
+  LOG_INF("SLPMEM",
+          "stage=%s free=%u largest=%u required_contiguous=%u min_total=%u row_buffer=%u default=%u/%u "
+          "internal8=%u/%u remaining_rebuildable=activity_transients:none,reader_parser_epub:none,renderer_fonts_glyphs_image_cache_gray_scratch:none "
+          "persistent_reading_state:retained",
+          stage ? stage : "sleep_png_preflight", static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()),
+          static_cast<unsigned>(SLEEP_PNG_REQUIRED_CONTIGUOUS_BYTES),
+          static_cast<unsigned>(SLEEP_PNG_MINIMUM_FREE_BYTES), static_cast<unsigned>(PNG_MAX_BUFFERED_PIXELS),
+          static_cast<unsigned>(sleepPngDefaultFree()), static_cast<unsigned>(sleepPngLargestBlock()),
+          static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+          static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+}
+
+void prepareSleepPngDecode(GfxRenderer& renderer) {
+  sleepPngPreflightComplete = true;
+  logSleepPngPreflight("sleep_png_preflight");
+  if (!sleepPngHeapFits()) {
+    LOG_INF("SLPMEM", "stage=sleep_png_release_retry action=release_rebuildable_once required_contiguous=%u",
+            static_cast<unsigned>(SLEEP_PNG_REQUIRED_CONTIGUOUS_BYTES));
+    // The outgoing activity has already been destroyed. This single, fixed
+    // pass releases the remaining safe renderer/font/image scratch owners.
+    releaseSleepBoundaryCaches(renderer);
+    logSleepPngPreflight("sleep_png_preflight_after_release");
+  }
+  sleepPngAllocationAllowed = sleepPngHeapFits();
+  LOG_INF("SLPMEM", "stage=sleep_png_preflight_result allowed=%d free=%u largest=%u required_contiguous=%u",
+          sleepPngAllocationAllowed ? 1 : 0, static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()),
+          static_cast<unsigned>(SLEEP_PNG_REQUIRED_CONTIGUOUS_BYTES));
+}
+
+bool sleepPngDecodeAvailable(const char* path) {
+  if (!sleepPngPreflightComplete || !sleepPngAllocationAllowed) {
+    logSleepAsset("sleep_asset_alloc_fail", path, "sleep_png_preflight_blocked");
+    return false;
+  }
+  if (!sleepPngHeapFits()) {
+    sleepPngAllocationAllowed = false;
+    logSleepPngPreflight("sleep_png_heap_became_insufficient");
+    logSleepAsset("sleep_asset_alloc_fail", path, "sleep_png_heap_became_insufficient");
+    return false;
+  }
+  return true;
 }
 
 struct SleepRenderCompletion {
@@ -549,15 +610,33 @@ void drawClippingSleepCard(GfxRenderer& renderer, const std::string& text, const
 }  // namespace
 
 void SleepActivity::onEnter() {
+#if FREEINK_CAP_BLE_HID_HOST
+  const bool bleWasRunning = BleHid.isRunning();
+  const bool bleWasConnecting = BleHid.isConnecting();
+  bleinput::clearReaderBleReturnPending();
+  bleinput::clearReAdmissionPending();
+  bleinput::stop();
+  // Clear again after end() so an old Reader return/admission intent cannot
+  // remain armed across the sleep boundary.
+  bleinput::clearReaderBleReturnPending();
+  bleinput::clearReAdmissionPending();
+  LOG_INF("SLEEP", "ble_quiesced running=%d->%d connecting=%d->%d reader_return=%d readmission=%d",
+          bleWasRunning ? 1 : 0, BleHid.isRunning() ? 1 : 0, bleWasConnecting ? 1 : 0,
+          BleHid.isConnecting() ? 1 : 0, bleinput::readerBleReturnPending() ? 1 : 0,
+          bleinput::reAdmissionPending() ? 1 : 0);
+#endif
   EpubDiagnostics::Scope diagnostics("sleep_render_start", "sleep_render_end");
   Activity::onEnter();
   sleepAssetLogCount = 0;
+  sleepPngPreflightComplete = false;
+  sleepPngAllocationAllowed = false;
   SleepRenderCompletion completion{renderer};
   // Sleep is a hard heap-recovery boundary. Reader::onExit performs its own
   // ordered teardown, but sleep can also be entered from RecentBooks, Settings,
   // or other screens; release only rebuildable renderer/font owners here,
   // before PNGdec requests its large contiguous decoder object.
   releaseSleepBoundaryCaches(renderer);
+  prepareSleepPngDecode(renderer);
   LOG_INF("SLP", "sleep_asset_selected mode=%u free=%u largest=%u",
           static_cast<unsigned>(SETTINGS.sleepScreen), static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(ESP.getMaxAllocHeap()));
@@ -820,6 +899,7 @@ bool SleepActivity::renderOverlaySleepScreen() const {
   // confirms that it actually contains transparency. Opaque favorites are
   // skipped so they cannot hide the reader page/cover; the random transparent
   // pool remains the fallback.
+  if (!sleepPngDecodeAvailable("overlay_candidates")) return false;
   if (!APP_STATE.favoriteSleepImagePath.empty() &&
       FsHelpers::hasPngExtension(APP_STATE.favoriteSleepImagePath) &&
       Storage.exists(APP_STATE.favoriteSleepImagePath.c_str())) {
@@ -840,6 +920,8 @@ bool SleepActivity::renderOverlaySleepScreen() const {
               APP_STATE.favoriteSleepImagePath.c_str());
     }
   }
+
+  if (!sleepPngDecodeAvailable("overlay_candidates")) return false;
 
   const auto candidates = findOverlayPngCandidates();
   if (candidates.empty()) {
@@ -866,6 +948,7 @@ bool SleepActivity::renderOverlaySleepScreen() const {
     const size_t start = static_cast<size_t>(random(static_cast<long>(pool.size())));
     for (size_t offset = 0; offset < pool.size(); ++offset) {
       const auto& path = pool[(start + offset) % pool.size()];
+      if (!sleepPngDecodeAvailable(path.c_str())) break;
       logSleepAsset("sleep_asset_candidate", path.c_str(), "overlay_pool");
       bool hasTransparency = false;
       const bool probed = renderOverlayPngPass(path, GfxRenderer::BW, &hasTransparency, false);
@@ -948,6 +1031,7 @@ std::string SleepActivity::findOverlayPngPath() const {
 
 bool SleepActivity::renderOverlayPngPass(const std::string& path, const GfxRenderer::RenderMode mode,
                                          bool* transparencyDetected, const bool drawPixels) const {
+  if (!sleepPngDecodeAvailable(path.c_str())) return false;
   auto png = makeUniqueNoThrow<PNG>();
   if (!png) {
     // PNGdec embeds its zlib state, two scanline buffers, palette, and file
@@ -965,6 +1049,7 @@ bool SleepActivity::renderOverlayPngPass(const std::string& path, const GfxRende
             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_8BIT)),
             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_8BIT)),
             static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    sleepPngAllocationAllowed = false;
     logSleepAsset("sleep_asset_alloc_fail", path.c_str(), "png_decoder");
     return false;
   }
@@ -1029,13 +1114,7 @@ bool SleepActivity::renderOverlayPngPass(const std::string& path, const GfxRende
 }
 
 bool SleepActivity::renderOverlayPng(const std::string& path, const bool allowOpaque) const {
-  constexpr size_t PNG_DECODER_APPROX_SIZE = 44 * 1024;
-  constexpr size_t MIN_FREE_HEAP_FOR_PNG = PNG_DECODER_APPROX_SIZE + 16 * 1024;
-  if (ESP.getFreeHeap() < MIN_FREE_HEAP_FOR_PNG) {
-    logSleepAsset("sleep_asset_alloc_fail", path.c_str(), "minimum_heap");
-    LOG_ERR("SLP", "Not enough heap for page overlay PNG");
-    return false;
-  }
+  if (!sleepPngDecodeAvailable(path.c_str())) return false;
 
   bool transparencyDetected = false;
 
@@ -1146,6 +1225,11 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
 
+  if (!sleepPngDecodeAvailable(overlayPath.c_str())) {
+    renderBitmapSleepScreen(bitmap);
+    return;
+  }
+
   // Find a usable transparent image before touching the display. This avoids
   // repeatedly refreshing a cover when a random PNG is opaque or invalid.
   auto candidates = findOverlayPngCandidates();
@@ -1163,6 +1247,7 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
   std::string selectedPath;
   for (size_t offset = 0; offset < candidates.size(); ++offset) {
     const std::string& candidate = candidates[(start + offset) % candidates.size()];
+    if (!sleepPngDecodeAvailable(candidate.c_str())) break;
     bool transparencyDetected = false;
     if (!renderOverlayPngPass(candidate, GfxRenderer::BW, &transparencyDetected, false) || !transparencyDetected) {
       LOG_DBG("SLP", "Skipping opaque cover overlay PNG: %s", candidate.c_str());
@@ -1381,6 +1466,10 @@ void SleepActivity::renderCoverOverlaySleepScreen() const {
   // Always use the most recent/current book as the background. The overlay is
   // then composited above that cover, whether sleep was entered from Reader
   // or from the bookshelf.
+  if (!sleepPngDecodeAvailable("cover_overlay_candidates")) {
+    renderCoverSleepScreen();
+    return;
+  }
   renderCoverSleepScreen({}, findOverlayPngPath());
 }
 
