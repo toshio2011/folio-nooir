@@ -594,7 +594,8 @@ void VisualPreviewActivity::render(RenderLock&&) {
   }
   renderControls(4, controlTop, pageWidth - 8, controlHeight);
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  GUI.drawSideButtonHints(renderer, tr(STR_STATS_PREVIOUS_TAB), tr(STR_STATS_NEXT_TAB));
   renderer.displayBuffer();
 }

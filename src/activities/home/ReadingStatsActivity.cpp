@@ -223,8 +223,11 @@ void ReadingStatsActivity::switchTab(const int direction) {
 
 void ReadingStatsActivity::moveSelection(const int direction) {
   if (bookDetail) {
-    bookDetailAction = bookDetailAction == BookDetailAction::Rating ? BookDetailAction::Dates : BookDetailAction::Rating;
-    requestUpdate();
+    const BookDetailAction nextAction = direction < 0 ? BookDetailAction::Rating : BookDetailAction::Dates;
+    if (bookDetailAction != nextAction) {
+      bookDetailAction = nextAction;
+      requestUpdate();
+    }
     return;
   }
   switch (activeTab) {
