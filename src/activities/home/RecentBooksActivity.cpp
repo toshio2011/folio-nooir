@@ -418,48 +418,42 @@ void drawSpineShelfFurniture(const GfxRenderer& renderer, const SpineShelfPlanne
   }
 }
 
+void drawSpineSlotFocusOutline(const GfxRenderer& renderer, const SpineShelfPlanner::Rect& rect,
+                               const bool selected) {
+  if (rect.width <= 2 || rect.height <= 2) return;
+
+  // The book's own bottom border meets the shelf and closes this three-sided
+  // outline. Keep the focus stroke one pixel outside the cached slot so it can
+  // be erased with white strokes without redrawing the book face, thumbnail,
+  // or shelf. One pixel also fits the tight gap in the two-row layout.
+  const int left = rect.x - 1;
+  const int right = rect.x + rect.width;
+  const int top = rect.y - 1;
+  const int bottom = rect.y + rect.height - 1;
+  renderer.drawLine(left, top, right, top, selected);
+  renderer.drawLine(left, top, left, bottom, selected);
+  renderer.drawLine(right, top, right, bottom, selected);
+}
+
 void drawSpinePageSelectionMarker(const GfxRenderer& renderer, const SpineShelfPlanner::Page& page,
-                                 const SpineShelfPlanner::Book* books, const size_t index,
-                                 const SpineShelfPlanner::Rect& bounds, const bool selected) {
-  if (books == nullptr) return;
+                                 const size_t index, const bool selected) {
   for (size_t slotIndex = 0; slotIndex < page.itemCount; ++slotIndex) {
     const auto& slot = page.slots[slotIndex];
     if (slot.itemIndex != index || slot.itemIndex < page.firstIndex ||
         slot.itemIndex - page.firstIndex >= SpineShelfPlanner::MAX_BOOKS) continue;
-    const auto shelf = SpineShelfPlanner::shelfRect(page, bounds);
-    if (!selected) {
-      drawSpineShelfFurniture(renderer, shelf, bounds, true);
-      return;
-    }
-    const int center = slot.rect.x + slot.rect.width / 2;
-    const int markerY = shelf.y + 2;
-    renderer.drawLine(center - 2, markerY, center, markerY + 2, false);
-    renderer.drawLine(center, markerY + 2, center + 2, markerY, false);
+    drawSpineSlotFocusOutline(renderer, slot.rect, selected);
     return;
   }
 }
 
 void drawTwoRowSpinePageSelectionMarker(const GfxRenderer& renderer, const SpineShelfPlanner::TwoRowPage& page,
-                                       const SpineShelfPlanner::Book* books, const size_t index,
-                                       const SpineShelfPlanner::Rect& bounds, const bool selected) {
-  if (books == nullptr) return;
+                                       const size_t index, const bool selected) {
   for (size_t slotIndex = 0; slotIndex < page.itemCount; ++slotIndex) {
     const auto& slot = page.slots[slotIndex];
     if (slot.itemIndex != index || slot.itemIndex < page.firstIndex ||
         slot.itemIndex - page.firstIndex >= SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY) continue;
-    for (size_t row = 0; row < 2; ++row) {
-      const auto shelf = SpineShelfPlanner::twoRowShelfRect(page, bounds, row);
-      if (shelf.width <= 0 || slot.rect.y + slot.rect.height != shelf.y) continue;
-      if (!selected) {
-        drawSpineShelfFurniture(renderer, shelf, bounds, row == 1);
-        return;
-      }
-      const int center = slot.rect.x + slot.rect.width / 2;
-      const int markerY = shelf.y + 2;
-      renderer.drawLine(center - 2, markerY, center, markerY + 2, false);
-      renderer.drawLine(center, markerY + 2, center + 2, markerY, false);
-      return;
-    }
+    drawSpineSlotFocusOutline(renderer, slot.rect, selected);
+    return;
   }
 }
 
@@ -1265,13 +1259,13 @@ void RecentBooksActivity::drawSnapshotSelectionOutline(const FolioShelfLayout& l
   if (usesSpineLayout()) {
     const auto bounds = spineShelfBounds(renderer.getScreenWidth(), layout);
     const auto& window = spinePageForSelection(bounds);
-    drawSpinePageSelectionMarker(renderer, window.page, window.books.data(), index, bounds, selected);
+    drawSpinePageSelectionMarker(renderer, window.page, index, selected);
     return;
   }
   if (usesTwoRowSpineLayout()) {
     const auto bounds = twoRowSpineBounds(renderer.getScreenWidth(), layout);
     const auto& window = twoRowSpinePageForSelection(bounds);
-    drawTwoRowSpinePageSelectionMarker(renderer, window.page, window.books.data(), index, bounds, selected);
+    drawTwoRowSpinePageSelectionMarker(renderer, window.page, index, selected);
     return;
   }
   if (usesThreeCoverGrid()) {
