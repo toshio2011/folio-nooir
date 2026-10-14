@@ -21,6 +21,17 @@ TEST(BleMemoryPolicy, ContaminatedLowFreeHeapIsDeferred) {
   EXPECT_FALSE(bleinput::readerBleStartMemoryAdmitted(85000, 65524));
 }
 
+TEST(BleMemoryPolicy, AnyReaderRenderWorkDefersBleAdmission) {
+  // The application ORs RenderLock with pending/in-flight render work. The
+  // current child activity has no bypass when a Reader remains on the stack.
+  EXPECT_FALSE(bleinput::readerBleAdmissionRenderWorkSafe(true, true));
+  EXPECT_TRUE(bleinput::readerBleAdmissionRenderWorkSafe(true, false));
+}
+
+TEST(BleMemoryPolicy, NonReaderRenderWorkKeepsExistingBleAdmissionBehavior) {
+  EXPECT_TRUE(bleinput::readerBleAdmissionRenderWorkSafe(false, true));
+}
+
 TEST(BleMemoryPolicy, QuiescentEpubReturnHasSmallContextGatedMargin) {
   static_assert(bleinput::kReaderBleStartMinFreeHeap == 96 * 1024);
   static_assert(bleinput::kReaderBleQuiescentReturnFreeHeapMargin == 2 * 1024);

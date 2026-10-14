@@ -403,11 +403,10 @@ bool connectionAdmissionAllowed() {
     return false;
 
   const bool readerContext = activityManager.isReaderActivity();
-  const bool lightweightReaderChild = readerContext && activityManager.bluetoothRenderSafe();
   const bool resourceSensitive = activityManager.bluetoothResourceSensitive();
-  if (resourceSensitive ||
-      (readerContext && !lightweightReaderChild &&
-       (RenderLock::peek() || activityManager.hasPendingRenderWork())))
+  const bool readerRenderWorkPending =
+      readerContext && (RenderLock::peek() || activityManager.hasPendingRenderWork());
+  if (resourceSensitive || !readerBleAdmissionRenderWorkSafe(readerContext, readerRenderWorkPending))
     return false;
   // The heap floors admit a cold NimBLE host start, not a connection on a host
   // that already owns its memory. Keep Reader contexts on their existing

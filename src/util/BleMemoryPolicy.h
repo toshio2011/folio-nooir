@@ -64,6 +64,13 @@ constexpr bool readerBleStartMemoryAdmitted(const std::size_t freeHeap, const st
   return freeHeap >= kReaderBleStartMinFreeHeap && largestBlock >= kReaderBleStartMinLargestBlock;
 }
 
+// Any render-lock or queued/in-flight render blocks BLE admission while a
+// Reader is current or on the activity stack. A lightweight child activity
+// does not waive the Reader's pending render boundary.
+constexpr bool readerBleAdmissionRenderWorkSafe(const bool readerContext, const bool renderWorkPending) {
+  return !readerContext || !renderWorkPending;
+}
+
 // `quiescentEpubReturn` must come from the activity/lifecycle gate: the current
 // activity is EpubReader, its pending Reader return is enabled, rendering is
 // idle, and no build or resource-sensitive work is active. Entry, settings,
