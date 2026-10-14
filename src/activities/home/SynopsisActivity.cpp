@@ -12,9 +12,12 @@
 #include <limits>
 
 #include "BookStateStore.h"
+#include "BookMetadataOverridesStore.h"
+#include "BookRatingPickerActivity.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/BookRating.h"
 #include "util/BookFormat.h"
 #include "util/HtmlToPlainText.h"
 
@@ -59,15 +62,22 @@ void SynopsisActivity::buildLines() {
 
 void SynopsisActivity::onEnter() {
   Activity::onEnter();
+  bool hasMetadataOverride = false;
   if (!bookPath.empty()) {
     // Callers provide the already-loaded Recent/Library metadata.  Book Info
     // deliberately does not scan the full Recent history just to hydrate one
     // selected book.
     if (const BookState* state = BOOK_STATES.find(bookPath)) {
       status = state->status;
-      progressPercent = state->progressPercent;
-      readingSeconds = state->readingSeconds;
-      readingSessions = state->readingSessions;
+      progressPercent = std::max(progressPercent, state->progressPercent);
+      readingSeconds = std::max(readingSeconds, state->readingSeconds);
+      readingSessions = std::max(readingSessions, state->readingSessions);
+    }
+    if (const BookMetadataOverride* overrideData = BOOK_METADATA_OVERRIDES.find(bookPath)) {
+      if (!overrideData->title.empty()) title = overrideData->title;
+      author = overrideData->author;
+      synopsis = overrideData->synopsis;
+      hasMetadataOverride = true;
     }
     if (progressPercent >= 100) {
       status = BookStatus::Finished;
@@ -81,7 +91,7 @@ void SynopsisActivity::onEnter() {
   // reload the EPUB metadata and replace the preview when a complete OPF
   // description is available. This also handles short previews that were
   // truncated at a paragraph boundary.
-  if (FsHelpers::hasEpubExtension(bookPath)) {
+  if (!hasMetadataOverride && FsHelpers::hasEpubExtension(bookPath)) {
     Epub epub(bookPath, "/.crosspoint");
     if (epub.loadMetadataOnly() && !epub.getDescription().empty()) {
       synopsis = epub.getDescription();
@@ -128,6 +138,13 @@ void SynopsisActivity::movePage(const int direction) {
 void SynopsisActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     finish();
+    return;
+  }
+  if (!bookPath.empty() && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    const BookState* state = BOOK_STATES.find(bookPath);
+    const uint8_t rating = state == nullptr ? 0 : state->rating;
+    startActivityForResult(std::make_unique<BookRatingPickerActivity>(renderer, mappedInput, bookPath, rating),
+                           [this](const ActivityResult&) { requestUpdate(); });
     return;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Up) ||
@@ -219,6 +236,12 @@ void SynopsisActivity::render(RenderLock&&) {
     renderer.drawRect(detailX, progressY, detailWidth, 10);
     const int fill = (detailWidth - 2) * progressPercent / 100;
     if (fill > 0) renderer.fillRect(detailX + 1, progressY + 1, fill, 8);
+    const int ratingY = infoTop + 12 + renderer.getLineHeight(SMALL_FONT_ID) * 4;
+    renderer.drawText(SMALL_FONT_ID, detailX, ratingY, tr(STR_BOOK_RATING));
+    const BookState* state = BOOK_STATES.find(bookPath);
+    const uint8_t rating = state == nullptr ? 0 : state->rating;
+    const int labelWidth = renderer.getTextWidth(SMALL_FONT_ID, tr(STR_BOOK_RATING));
+    BookRating::drawStars(renderer, detailX + labelWidth + 6, ratingY - 1, rating, 10, 2);
     renderer.drawLine(side, infoTop + infoHeight + 8, side + width, infoTop + infoHeight + 8);
   }
 
@@ -230,7 +253,8 @@ void SynopsisActivity::render(RenderLock&&) {
     renderer.drawText(SMALL_FONT_ID, side, top + static_cast<int>(row) * lineHeight, lines[firstLine + row].c_str());
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), bookPath.empty() ? "" : tr(STR_SELECT), tr(STR_DIR_UP),
+                                            tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }

@@ -4,6 +4,7 @@
 
 #include "HalClock.h"
 #include "Logging.h"
+#include "util/StatisticsDate.h"
 
 void BookStateStore::toJson(JsonDocument& doc) const {
   JsonArray array = doc["books"].to<JsonArray>();
@@ -18,6 +19,7 @@ void BookStateStore::toJson(JsonDocument& doc) const {
     item["readingSeconds"] = book.readingSeconds;
     item["sessions"] = book.readingSessions;
     item["pagesTurned"] = book.pagesTurned;
+    item["rating"] = book.rating;
   }
 }
 
@@ -38,6 +40,7 @@ bool BookStateStore::fromJson(JsonVariantConst doc) {
     state.readingSeconds = item["readingSeconds"] | 0;
     state.readingSessions = item["sessions"] | 0;
     state.pagesTurned = item["pagesTurned"] | 0;
+    state.rating = std::min<uint8_t>(item["rating"] | 0, 5);
     books.push_back(std::move(state));
   }
   return true;
@@ -96,6 +99,41 @@ bool BookStateStore::updateEditable(const std::string& path, const BookStatus st
   return true;
 }
 
+bool BookStateStore::updateDates(const std::string& path, const uint32_t startDate, const uint32_t finishDate,
+                                 const uint32_t lastReadDate) {
+  if (path.empty()) return false;
+
+  BookState& state = ensure(path);
+  const bool validStart = startDate == state.startDate || startDate == 0 || StatisticsDate::isValid(startDate);
+  const bool validFinish = finishDate == state.finishDate || finishDate == 0 || StatisticsDate::isValid(finishDate);
+  const bool validLastRead =
+      lastReadDate == state.lastOpenedDate || lastReadDate == 0 || StatisticsDate::isValid(lastReadDate);
+  if (!validStart || !validFinish || !validLastRead) return false;
+  if (state.startDate == startDate && state.finishDate == finishDate && state.lastOpenedDate == lastReadDate)
+    return true;
+  state.startDate = startDate;
+  state.finishDate = finishDate;
+  state.lastOpenedDate = lastReadDate;
+  if (!saveToFile()) {
+    LOG_ERR("BST", "Failed to save edited book dates: %s", path.c_str());
+    return false;
+  }
+  return true;
+}
+
+bool BookStateStore::updateRating(const std::string& path, const uint8_t rating) {
+  if (path.empty()) return false;
+  BookState& state = ensure(path);
+  const uint8_t boundedRating = std::min<uint8_t>(rating, 5);
+  if (state.rating == boundedRating) return true;
+  state.rating = boundedRating;
+  if (!saveToFile()) {
+    LOG_ERR("BST", "Failed to save book rating: %s", path.c_str());
+    return false;
+  }
+  return true;
+}
+
 void BookStateStore::setStatus(const std::string& path, const BookStatus status) {
   BookState& state = ensure(path);
   const uint32_t today = halClock.getDateKey();
@@ -115,8 +153,11 @@ void BookStateStore::setStatus(const std::string& path, const BookStatus status)
 void BookStateStore::reset(const std::string& path) {
   BookState& state = ensure(path);
   const std::string savedPath = state.path;
+  // Reading progress can be reset without discarding the user's book rating.
+  const uint8_t savedRating = state.rating;
   state = BookState{};
   state.path = savedPath;
+  state.rating = savedRating;
   saveToFile();
 }
 

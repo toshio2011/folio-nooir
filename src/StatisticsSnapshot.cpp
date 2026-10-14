@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "RecentBooksStore.h"
+#include "BookMetadataOverridesStore.h"
 #include "util/StatisticsDate.h"
 
 namespace {
@@ -38,6 +39,10 @@ StatisticsBookSnapshot makeBook(const BookState* state, const RecentBook* recent
   book.path = path;
   book.title = recent && !recent->title.empty() ? recent->title : filenameFromPath(path);
   book.author = recent ? recent->author : std::string{};
+  if (const BookMetadataOverride* overrideData = BOOK_METADATA_OVERRIDES.find(path)) {
+    if (!overrideData->title.empty()) book.title = overrideData->title;
+    book.author = overrideData->author;
+  }
   book.coverTemplatePath = recent ? recent->coverBmpPath : std::string{};
   book.progress = std::max<uint8_t>(state ? state->progressPercent : 0, recent ? recent->progressPercent : 0);
   book.status = normalizedStatus(state ? state->status : BookStatus::New, book.progress);
@@ -48,6 +53,7 @@ StatisticsBookSnapshot makeBook(const BookState* state, const RecentBook* recent
     book.startDate = state->startDate;
     book.finishDate = state->finishDate;
     book.lastOpenedDate = state->lastOpenedDate;
+    book.rating = state->rating;
   }
   return book;
 }

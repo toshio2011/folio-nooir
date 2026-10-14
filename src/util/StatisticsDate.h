@@ -9,5 +9,6 @@ bool isValid(uint32_t dateKey);
 int daysInMonth(int year, int month);
 int64_t ordinal(uint32_t dateKey);
 int weekdayMondayFirst(uint32_t dateKey);
+uint32_t addDays(uint32_t dateKey, int days);
 
 }  // namespace StatisticsDate
