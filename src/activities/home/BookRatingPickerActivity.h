@@ -18,6 +18,7 @@ class BookRatingPickerActivity final : public Activity {
   std::string bookPath_;
   uint8_t originalRating_ = 0;
   uint8_t selectedRating_ = 0;
+  bool ignoreInitialConfirm = false;
 
   void adjust(int direction);
   void saveAndClose();

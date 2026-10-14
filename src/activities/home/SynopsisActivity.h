@@ -45,4 +45,6 @@ class SynopsisActivity final : public Activity {
   uint16_t readingSessions = 0;
   std::vector<std::string> lines;
   size_t firstLine = 0;
+  bool ratingFocused = false;
+  bool ignoreInitialConfirm = false;
 };

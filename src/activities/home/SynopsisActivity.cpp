@@ -30,6 +30,10 @@ const char* statusText(const BookStatus status, const uint8_t progress) {
   return tr(STR_STATS_STATUS_NEW);
 }
 
+int infoPanelHeight(const GfxRenderer& renderer) {
+  return std::min(132, std::max(96, renderer.getScreenHeight() / 7));
+}
+
 }  // namespace
 
 void SynopsisActivity::buildLines() {
@@ -62,6 +66,9 @@ void SynopsisActivity::buildLines() {
 
 void SynopsisActivity::onEnter() {
   Activity::onEnter();
+  ignoreInitialConfirm = mappedInput.isPressed(MappedInputManager::Button::Confirm) ||
+                         mappedInput.wasReleased(MappedInputManager::Button::Confirm);
+  ratingFocused = false;
   bool hasMetadataOverride = false;
   if (!bookPath.empty()) {
     // Callers provide the already-loaded Recent/Library metadata.  Book Info
@@ -114,7 +121,7 @@ int SynopsisActivity::synopsisTop() const {
   const int titleHeight = renderer.getLineHeight(UI_12_FONT_ID);
   const int authorHeight = renderer.getLineHeight(UI_10_FONT_ID);
   const int infoTop = titleY + titleHeight + authorHeight + 10;
-  const int infoHeight = std::min(132, std::max(96, renderer.getScreenHeight() / 7));
+  const int infoHeight = infoPanelHeight(renderer);
   return infoTop + infoHeight + 18;
 }
 
@@ -136,11 +143,28 @@ void SynopsisActivity::movePage(const int direction) {
 }
 
 void SynopsisActivity::loop() {
+  if (ignoreInitialConfirm) {
+    if (!mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+        !mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      ignoreInitialConfirm = false;
+    }
+    return;
+  }
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     finish();
     return;
   }
-  if (!bookPath.empty() && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (!bookPath.empty() && mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+    ratingFocused = true;
+    requestUpdate();
+    return;
+  }
+  if (!bookPath.empty() && mappedInput.wasReleased(MappedInputManager::Button::Right)) {
+    ratingFocused = false;
+    requestUpdate();
+    return;
+  }
+  if (!bookPath.empty() && ratingFocused && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     const BookState* state = BOOK_STATES.find(bookPath);
     const uint8_t rating = state == nullptr ? 0 : state->rating;
     startActivityForResult(std::make_unique<BookRatingPickerActivity>(renderer, mappedInput, bookPath, rating),
@@ -183,7 +207,7 @@ void SynopsisActivity::render(RenderLock&&) {
   if (!bookPath.empty()) {
     const int titleHeight = renderer.getLineHeight(UI_12_FONT_ID);
     const int infoTop = titleY + titleHeight + renderer.getLineHeight(UI_10_FONT_ID) + 10;
-    const int infoHeight = std::min(132, std::max(96, renderer.getScreenHeight() / 7));
+    const int infoHeight = infoPanelHeight(renderer);
     const int coverWidth = std::min(104, std::max(76, width / 3));
     const int detailX = side + coverWidth + 14;
     const int detailWidth = std::max(1, width - coverWidth - 14);
@@ -232,16 +256,21 @@ void SynopsisActivity::render(RenderLock&&) {
     const std::string readingText = renderer.truncatedText(SMALL_FONT_ID, reading, detailWidth);
     renderer.drawText(SMALL_FONT_ID, detailX, infoTop + 12 + renderer.getLineHeight(SMALL_FONT_ID) * 3,
                       readingText.c_str());
-    const int progressY = infoTop + infoHeight - 14;
+    const int ratingRowHeight = 20;
+    const int ratingTop = infoTop + infoHeight - ratingRowHeight;
+    const int progressY = ratingTop - 12;
     renderer.drawRect(detailX, progressY, detailWidth, 10);
     const int fill = (detailWidth - 2) * progressPercent / 100;
     if (fill > 0) renderer.fillRect(detailX + 1, progressY + 1, fill, 8);
-    const int ratingY = infoTop + 12 + renderer.getLineHeight(SMALL_FONT_ID) * 4;
-    renderer.drawText(SMALL_FONT_ID, detailX, ratingY, tr(STR_BOOK_RATING));
+    renderer.drawRect(detailX, ratingTop, detailWidth, ratingRowHeight, ratingFocused ? 2 : 1, true);
+    renderer.drawText(SMALL_FONT_ID, detailX + 6, ratingTop + 4, tr(STR_BOOK_RATING));
     const BookState* state = BOOK_STATES.find(bookPath);
     const uint8_t rating = state == nullptr ? 0 : state->rating;
     const int labelWidth = renderer.getTextWidth(SMALL_FONT_ID, tr(STR_BOOK_RATING));
-    BookRating::drawStars(renderer, detailX + labelWidth + 6, ratingY - 1, rating, 10, 2);
+    const int starSize = std::clamp((detailWidth - labelWidth - 24) / 7, 5, 10);
+    const int starGap = std::max(1, starSize / 5);
+    BookRating::drawStars(renderer, detailX + 6 + labelWidth + 6,
+                          ratingTop + (ratingRowHeight - starSize) / 2, rating, starSize, starGap);
     renderer.drawLine(side, infoTop + infoHeight + 8, side + width, infoTop + infoHeight + 8);
   }
 
@@ -253,8 +282,8 @@ void SynopsisActivity::render(RenderLock&&) {
     renderer.drawText(SMALL_FONT_ID, side, top + static_cast<int>(row) * lineHeight, lines[firstLine + row].c_str());
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), bookPath.empty() ? "" : tr(STR_SELECT), tr(STR_DIR_UP),
-                                            tr(STR_DIR_DOWN));
+  const char* confirmLabel = !bookPath.empty() && ratingFocused ? tr(STR_SELECT) : "";
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }

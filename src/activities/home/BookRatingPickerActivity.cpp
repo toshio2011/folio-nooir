@@ -11,6 +11,14 @@
 #include "fontIds.h"
 #include "util/BookRating.h"
 
+namespace {
+BookRating::StarRow pickerStarRow(const GfxRenderer& renderer) {
+  const int starSize = std::clamp(renderer.getScreenWidth() / 24, 16, 28);
+  return BookRating::centeredStarRow(renderer.getScreenWidth(), renderer.getScreenHeight(), starSize,
+                                     std::max(8, starSize / 3));
+}
+}  // namespace
+
 BookRatingPickerActivity::BookRatingPickerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                                    std::string bookPath, const uint8_t currentRating)
     : Activity("BookRatingPicker", renderer, mappedInput),
@@ -20,6 +28,8 @@ BookRatingPickerActivity::BookRatingPickerActivity(GfxRenderer& renderer, Mapped
 
 void BookRatingPickerActivity::onEnter() {
   Activity::onEnter();
+  ignoreInitialConfirm = mappedInput.isPressed(MappedInputManager::Button::Confirm) ||
+                         mappedInput.wasReleased(MappedInputManager::Button::Confirm);
   renderer.setUiScaleTextEnabled(true);
   requestUpdate();
 }
@@ -45,6 +55,13 @@ void BookRatingPickerActivity::cancelAndClose() {
 }
 
 void BookRatingPickerActivity::loop() {
+  if (ignoreInitialConfirm) {
+    if (!mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+        !mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      ignoreInitialConfirm = false;
+    }
+    return;
+  }
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     cancelAndClose();
     return;
@@ -67,16 +84,14 @@ void BookRatingPickerActivity::loop() {
   int x = 0;
   int y = 0;
   if (!mappedInput.wasScreenTapped(x, y)) return;
-  const int starSize = std::clamp(renderer.getScreenWidth() / 24, 16, 28);
-  const int gap = std::max(8, starSize / 3);
-  const int rowWidth = BookRating::kMaximum * starSize + (BookRating::kMaximum - 1) * gap;
-  const int rowX = (renderer.getScreenWidth() - rowWidth) / 2;
-  const int rowY = renderer.getScreenHeight() / 2 - starSize / 2;
-  if (y >= rowY - 12 && y < rowY + starSize + 12 && x >= rowX - gap && x < rowX + rowWidth + gap) {
-    if (x < rowX) {
+  const BookRating::StarRow row = pickerStarRow(renderer);
+  if (row.starSize >= 5 && y >= row.y - 12 && y < row.y + row.starSize + 12 && x >= row.x - row.spacing &&
+      x < row.x + row.width + row.spacing) {
+    if (x < row.x) {
       selectedRating_ = 0;
     } else {
-      const int index = std::clamp((x - rowX) / (starSize + gap), 0, static_cast<int>(BookRating::kMaximum) - 1);
+      const int index =
+          std::clamp((x - row.x) / (row.starSize + row.spacing), 0, static_cast<int>(BookRating::kMaximum) - 1);
       selectedRating_ = static_cast<uint8_t>(index + 1);
     }
     requestUpdate();
@@ -88,13 +103,9 @@ void BookRatingPickerActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight},
                  tr(STR_BOOK_RATING));
-  const int starSize = std::clamp(renderer.getScreenWidth() / 24, 16, 28);
-  const int gap = std::max(8, starSize / 3);
-  const int rowWidth = BookRating::kMaximum * starSize + (BookRating::kMaximum - 1) * gap;
-  const int rowX = (renderer.getScreenWidth() - rowWidth) / 2;
-  const int rowY = renderer.getScreenHeight() / 2 - starSize / 2;
-  BookRating::drawStars(renderer, rowX, rowY, selectedRating_, starSize, gap, selectedRating_);
-  renderer.drawCenteredText(UI_10_FONT_ID, rowY + starSize + 28,
+  const BookRating::StarRow row = pickerStarRow(renderer);
+  BookRating::drawStars(renderer, row.x, row.y, selectedRating_, row.starSize, row.spacing, selectedRating_);
+  renderer.drawCenteredText(UI_10_FONT_ID, row.y + row.starSize + 28,
                             (std::to_string(selectedRating_) + " / 5").c_str());
   const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

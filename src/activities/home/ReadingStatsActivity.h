@@ -31,6 +31,7 @@ class ReadingStatsActivity final : public Activity {
   bool calendarEntry = false;
   bool directBookEntry = false;
   bool bookDetail = false;
+  bool ignoreInitialConfirm = false;
   BookDetailAction bookDetailAction = BookDetailAction::Rating;
   Tab activeTab = Tab::Overview;
   StatisticsSnapshot snapshot;

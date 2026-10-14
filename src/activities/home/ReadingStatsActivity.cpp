@@ -154,6 +154,8 @@ ReadingStatsActivity::~ReadingStatsActivity() { logReadingStatsDiagnostic("destr
 void ReadingStatsActivity::onEnter() {
   logReadingStatsDiagnostic("onEnter_begin");
   Activity::onEnter();
+  ignoreInitialConfirm = mappedInput.isPressed(MappedInputManager::Button::Confirm) ||
+                         mappedInput.wasReleased(MappedInputManager::Button::Confirm);
   renderer.setUiScaleTextEnabled(true);
   snapshot = StatisticsSnapshot::build();
   logReadingStatsDiagnostic("snapshot_built", snapshot.days.size(), snapshot.books.size(), snapshot.achievements.size());
@@ -296,6 +298,13 @@ void ReadingStatsActivity::openBookDates() {
 }
 
 void ReadingStatsActivity::loop() {
+  if (ignoreInitialConfirm) {
+    if (!mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+        !mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      ignoreInitialConfirm = false;
+    }
+    return;
+  }
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     if (bookDetail && !directBookEntry) {
       bookDetail = false;
@@ -366,10 +375,10 @@ void ReadingStatsActivity::handleTap(const int x, const int y) {
     const int tableBottom = statsTop + tableRowHeight * 4;
     if (y >= ratingTop - 8 && y < statsTop - 6) {
       bookDetailAction = BookDetailAction::Rating;
-      handleConfirm();
+      requestUpdate();
     } else if (y >= statsTop + tableRowHeight * 2 && y < tableBottom) {
       bookDetailAction = BookDetailAction::Dates;
-      handleConfirm();
+      requestUpdate();
     }
     return;
   }

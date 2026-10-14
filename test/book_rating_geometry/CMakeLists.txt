@@ -1,0 +1,4 @@
+add_executable(book_rating_geometry_test BookRatingGeometryTest.cpp)
+target_link_libraries(book_rating_geometry_test PRIVATE crosspoint_test_common GTest::gtest_main)
+include(GoogleTest)
+gtest_discover_tests(book_rating_geometry_test)
