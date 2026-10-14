@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstring>
 #include <cstdlib>
 
@@ -361,4 +362,76 @@ TEST(SpineShelfPlanner, TwoRowShelfPaginatesAndPreservesHitSelection) {
     EXPECT_TRUE(rect.contains(rect.x, rect.y));
     EXPECT_FALSE(rect.contains(rect.x + rect.width, rect.y));
   }
+}
+
+TEST(SpineShelfPlanner, OneRowAppearanceModesKeepSpineAndCoverGeometrySeparate) {
+  auto input = books();
+  const Rect bounds{0, 0, 480, 300};
+  const Page spines = SpineShelfPlanner::pageForSelection(input.data(), input.size(), 0, bounds);
+  ASSERT_GT(spines.itemCount, 0);
+  for (size_t i = 0; i < spines.itemCount; ++i) EXPECT_FALSE(spines.slots[i].cover);
+
+  for (auto& book : input) book.appearance = SpineShelfPlanner::Appearance::CoversOnly;
+  const Page covers = SpineShelfPlanner::pageForSelection(input.data(), input.size(), 0, bounds);
+  ASSERT_GT(covers.itemCount, 0);
+  EXPECT_LT(covers.itemCount, spines.itemCount);
+  for (size_t i = 0; i < covers.itemCount; ++i) {
+    EXPECT_TRUE(covers.slots[i].cover);
+    const auto& rect = covers.slots[i].rect;
+    EXPECT_LE(std::abs(rect.width * 3 - rect.height * 2), 3);
+  }
+
+  for (auto& book : input) book.appearance = SpineShelfPlanner::Appearance::SpinesAndCovers;
+  const Page mixed = SpineShelfPlanner::pageForSelection(input.data(), input.size(), 0, bounds);
+  bool sawSpine = false;
+  bool sawCover = false;
+  for (size_t i = 0; i < mixed.itemCount; ++i) {
+    sawCover = sawCover || mixed.slots[i].cover;
+    sawSpine = sawSpine || !mixed.slots[i].cover;
+  }
+  EXPECT_TRUE(sawSpine);
+  EXPECT_TRUE(sawCover);
+}
+
+TEST(SpineShelfPlanner, TwoRowAppearanceModesPreserveBothRowsAndCoverFallbackGeometry) {
+  std::array<Book, 24> input{};
+  std::array<std::array<char, 12>, 24> keys{};
+  for (size_t i = 0; i < input.size(); ++i) {
+    std::snprintf(keys[i].data(), keys[i].size(), "book-%zu", i);
+    input[i] = {keys[i].data(), "UTF-8 — café", 23, "Author"};
+  }
+  const Rect bounds{0, 0, 480, 300};
+  const auto spines = SpineShelfPlanner::twoRowPageForSelection(input.data(), input.size(), 0, bounds);
+  ASSERT_GT(spines.itemCount, 0);
+  for (size_t i = 0; i < spines.itemCount; ++i) EXPECT_FALSE(spines.slots[i].cover);
+
+  // A null prepared-thumbnail path models an unavailable cached cover. The
+  // planner still produces bounded, selectable face-out slots; rendering owns
+  // the placeholder fallback and never needs to inspect the book source.
+  for (auto& book : input) book.appearance = SpineShelfPlanner::Appearance::CoversOnly;
+  const auto covers = SpineShelfPlanner::twoRowPageForSelection(input.data(), input.size(), 0, bounds);
+  ASSERT_GT(covers.itemCount, 0);
+  EXPECT_LT(covers.itemCount, spines.itemCount);
+  for (size_t i = 0; i < covers.itemCount; ++i) {
+    EXPECT_TRUE(covers.slots[i].cover);
+    const auto& rect = covers.slots[i].rect;
+    EXPECT_LE(std::abs(rect.width * 3 - rect.height * 2), 3);
+    EXPECT_GT(rect.x, bounds.x - 1);
+    EXPECT_LT(rect.x + rect.width, bounds.x + bounds.width + 1);
+  }
+
+  for (auto& book : input) book.appearance = SpineShelfPlanner::Appearance::SpinesAndCovers;
+  const auto mixed = SpineShelfPlanner::twoRowPageForSelection(input.data(), input.size(), 0, bounds);
+  const auto repeatedMixed = SpineShelfPlanner::twoRowPageForSelection(input.data(), input.size(), 0, bounds);
+  bool sawMixedSpine = false;
+  bool sawMixedCover = false;
+  ASSERT_EQ(mixed.itemCount, repeatedMixed.itemCount);
+  for (size_t i = 0; i < mixed.itemCount; ++i) {
+    EXPECT_EQ(mixed.slots[i].cover, repeatedMixed.slots[i].cover);
+    EXPECT_EQ(mixed.slots[i].rect.x, repeatedMixed.slots[i].rect.x);
+    sawMixedCover = sawMixedCover || mixed.slots[i].cover;
+    sawMixedSpine = sawMixedSpine || !mixed.slots[i].cover;
+  }
+  EXPECT_TRUE(sawMixedSpine);
+  EXPECT_TRUE(sawMixedCover);
 }

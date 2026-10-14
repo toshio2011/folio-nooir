@@ -177,6 +177,7 @@ void SettingsActivity::rebuildSettingsLists() {
       case StrId::STR_FEATURED_SHOW_READING_TIME:
       case StrId::STR_FEATURED_SHOW_SESSIONS:
       case StrId::STR_SPINE_DECORATION:
+      case StrId::STR_SPINE_APPEARANCE:
         return true;
       default:
         return false;

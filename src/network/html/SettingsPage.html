@@ -521,6 +521,7 @@
     setVisible('finishedBookLayout', isFolio);
     setVisible('coverProgressStyle', coverIsUsed);
     setVisible('spineDecorationStyle', spineIsUsed);
+    setVisible('spineAppearanceMode', spineIsUsed);
     ['featuredShowCover', 'featuredShowFileType', 'featuredShowAuthor', 'featuredShowSynopsis', 'featuredShowStatus',
      'featuredShowProgress', 'featuredShowStartedDate', 'featuredShowFinishedDate',
      'featuredShowReadingTime', 'featuredShowSessions'].forEach(function(key) {
@@ -531,7 +532,7 @@
   function handleSettingChanged(key) {
     syncQuickResumeTimeoutForSleepScreen(key === 'sleepScreen', key === 'quickResumeSleepScreen');
     if (key === 'shortPwrBtn' || key === 'uiTheme' || key === 'recentBookLayout' || key === 'finishedBookLayout' ||
-        key === 'featuredShowCover') {
+        key === 'featuredShowCover' || key === 'spineAppearanceMode') {
       updateSettingsVisibility();
     }
     markChanged();

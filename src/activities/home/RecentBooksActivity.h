@@ -127,6 +127,7 @@ class RecentBooksActivity final : public Activity {
   struct SpinePageWindow {
     std::array<SpineShelfPlanner::Book, SpineShelfPlanner::MAX_BOOKS> books{};
     SpineShelfPlanner::Page page{};
+    mutable std::array<bool, SpineShelfPlanner::MAX_BOOKS> thumbnailUnavailable{};
     size_t pageNumber = 0;
     size_t pageCount = 0;
     size_t previousPageStart = 0;
@@ -134,12 +135,14 @@ class RecentBooksActivity final : public Activity {
     SpineShelfPlanner::Rect bounds{};
     uint32_t visualSeed = 0;
     uint8_t decorationStyle = 0;
+    uint8_t appearanceMode = CrossPointSettings::SPINE_APPEARANCE_ALL_SPINES;
     bool valid = false;
   };
   SpinePageWindow spinePageWindow{};
   struct TwoRowSpinePageWindow {
     std::array<SpineShelfPlanner::Book, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> books{};
     SpineShelfPlanner::TwoRowPage page{};
+    mutable std::array<bool, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> thumbnailUnavailable{};
     size_t pageNumber = 0;
     size_t pageCount = 0;
     size_t previousPageStart = 0;
@@ -147,10 +150,14 @@ class RecentBooksActivity final : public Activity {
     SpineShelfPlanner::Rect bounds{};
     uint32_t visualSeed = 0;
     uint8_t decorationStyle = 0;
+    uint8_t appearanceMode = CrossPointSettings::SPINE_APPEARANCE_ALL_SPINES;
     bool valid = false;
   };
   TwoRowSpinePageWindow twoRowSpinePageWindow{};
-  uint32_t spineSessionSeed = 0;
+  // Stable across Home reconstruction so the same book keeps its geometry,
+  // tone, decoration, and mixed-mode face-out choice when a framebuffer
+  // snapshot is restored.
+  uint32_t spineSessionSeed = 0x51A1E5EDu;
   // When the persisted frame is still valid (for example after leaving
   // Settings), one panel refresh is enough. The first render can reuse the
   // frame instead of rebuilding all cover/text geometry.

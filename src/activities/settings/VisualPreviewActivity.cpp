@@ -35,6 +35,9 @@ constexpr StrId kCoverProgressOptions[] = {
 constexpr StrId kSpineDecorationOptions[] = {
     StrId::STR_SPINE_BALANCED, StrId::STR_SPINE_SUBTLE, StrId::STR_SPINE_EXPRESSIVE,
 };
+constexpr StrId kSpineAppearanceOptions[] = {
+    StrId::STR_SPINE_ALL_SPINES, StrId::STR_SPINE_SPINES_AND_COVERS, StrId::STR_SPINE_COVERS_ONLY,
+};
 constexpr StrId kPreviewTabs[] = {StrId::STR_FEATURED, StrId::STR_COVER, StrId::STR_SPINE};
 
 uint32_t sampleHash(const uint32_t seed, const uint32_t index) {
@@ -73,14 +76,14 @@ int VisualPreviewActivity::rowCount() const {
   switch (tab_) {
     case Tab::Featured: return static_cast<int>(std::size(kFeaturedFieldLabels));
     case Tab::Cover: return 1;
-    case Tab::Spine: return 4;
+    case Tab::Spine: return 5;
   }
   return 0;
 }
 
 int VisualPreviewActivity::previewPanelHeight(const int availableHeight) const {
-  const int controlReserve = tab_ == Tab::Featured ? 150 : (tab_ == Tab::Cover ? 54 : 140);
-  const int maxPreviewHeight = tab_ == Tab::Cover ? 250 : 200;
+  const int controlReserve = tab_ == Tab::Featured ? 150 : (tab_ == Tab::Cover ? 54 : 166);
+  const int maxPreviewHeight = tab_ == Tab::Cover ? 250 : 190;
   return std::max(80, std::min(maxPreviewHeight, availableHeight - controlReserve - 8));
 }
 
@@ -140,12 +143,17 @@ void VisualPreviewActivity::activateRow() {
       break;
     }
     case 2:
+      showEnumPicker(StrId::STR_SPINE_APPEARANCE, kSpineAppearanceOptions,
+                     std::size(kSpineAppearanceOptions), SETTINGS.spineAppearanceMode,
+                     &CrossPointSettings::spineAppearanceMode);
+      break;
+    case 3:
       showEnumPicker(StrId::STR_SPINE_DECORATION, kSpineDecorationOptions,
                      std::size(kSpineDecorationOptions), SETTINGS.spineDecorationStyle,
                      &CrossPointSettings::spineDecorationStyle);
       break;
-    case 3:
-      // Preview-only randomness. The real shelf uses a separate entry-session
+    case 4:
+      // Preview-only randomness. The real shelf uses a stable book-derived
       // seed, and no generated shelf state is ever written to settings.
       rerollSeed_ += 0x9E3779B9u;
       requestUpdate();
@@ -391,6 +399,9 @@ void VisualPreviewActivity::renderSpine(const int x, const int y, const int widt
   const uint8_t layout = spineTarget_ == 0 ? SETTINGS.recentBookLayout : SETTINGS.finishedBookLayout;
   const bool twoRows = layout == CrossPointSettings::FOLIO_LAYOUT_TWO_ROW_SPINE;
   const int rowCount = twoRows ? 2 : 1;
+  const uint8_t appearance = SETTINGS.spineAppearanceMode < CrossPointSettings::SPINE_APPEARANCE_MODE_COUNT
+                                 ? SETTINGS.spineAppearanceMode
+                                 : CrossPointSettings::SPINE_APPEARANCE_ALL_SPINES;
   const int rowHeight = (height - 24) / rowCount;
   const int margin = 16;
 
@@ -407,18 +418,31 @@ void VisualPreviewActivity::renderSpine(const int x, const int y, const int widt
       const int gap = twoRows ? 3 : 4;
       const int targetWidth = twoRows ? 35 : 42;
       const int variation = twoRows ? 9 : 16;
-      const int bookWidth = std::min(targetWidth + static_cast<int>(hash % variation) - variation / 2,
-                                     bookLimit - cursor - 2);
-      if (bookWidth < 12) break;
       const int availableHeight = std::max(24, rowHeight - 28);
       const int heightVariation = std::max(1, availableHeight / 5);
       const int bookHeight = std::max(24, availableHeight - static_cast<int>((hash >> 8) % heightVariation));
+      const bool coverFace = appearance == CrossPointSettings::SPINE_APPEARANCE_COVERS_ONLY ||
+                             (appearance == CrossPointSettings::SPINE_APPEARANCE_SPINES_AND_COVERS &&
+                              sampleHash(0x43E219u, static_cast<uint32_t>(book + row * 17)) % 4u == 0u);
+      const int faceWidth = std::max(targetWidth, bookHeight * 2 / 3);
+      const int plannedWidth = coverFace ? faceWidth : targetWidth + static_cast<int>(hash % variation) - variation / 2;
+      const int bookWidth = std::min(plannedWidth, bookLimit - cursor - 2);
+      if (bookWidth < 12) break;
       const int bookY = shelfY - bookHeight;
       const Color tone = (hash & 7u) == 0u ? Color::DarkGray : ((hash & 3u) == 0u ? Color::LightGray : Color::White);
       renderer.fillRectDither(cursor, bookY, bookWidth, bookHeight, tone);
       renderer.drawRect(cursor, bookY, bookWidth, bookHeight, true);
 
+      if (coverFace) {
+        const char* coverTitle = book % 2 == 0 ? "LANTERN" : "FIELD NOTES";
+        const std::string fitted = renderer.truncatedText(UI_10_FONT_ID, coverTitle, std::max(1, bookWidth - 6));
+        const int textWidth = renderer.getTextWidth(UI_10_FONT_ID, fitted.c_str());
+        renderer.drawText(UI_10_FONT_ID, cursor + (bookWidth - textWidth) / 2,
+                          bookY + bookHeight / 2, fitted.c_str(), true);
+      }
+
       uint32_t styleRoll = (hash >> 16) & 7u;
+      if (coverFace) styleRoll = 0;
       if (SETTINGS.spineDecorationStyle == CrossPointSettings::SPINE_DECORATION_SUBTLE && styleRoll < 5) styleRoll = 0;
       if (SETTINGS.spineDecorationStyle == CrossPointSettings::SPINE_DECORATION_BALANCED && styleRoll < 3)
         styleRoll = 0;
@@ -439,10 +463,10 @@ void VisualPreviewActivity::renderSpine(const int x, const int y, const int widt
         }
       }
       const char* sampleTitle = book % 2 == 0 ? "LANTERN" : "FIELD NOTES";
-      if (!twoRows && bookWidth >= 22 && bookHeight >= 78) {
+      if (!coverFace && !twoRows && bookWidth >= 22 && bookHeight >= 78) {
         renderer.drawTextRotated90CW(SMALL_FONT_ID, cursor + bookWidth / 2, bookY + bookHeight / 2 + 23,
                                      sampleTitle, true);
-      } else if (twoRows && bookWidth >= 32) {
+      } else if (!coverFace && twoRows && bookWidth >= 32) {
         renderer.drawCenteredText(SMALL_FONT_ID, bookY + bookHeight / 2, book % 2 == 0 ? "LN" : "FN", true);
       }
       cursor += bookWidth + gap;
@@ -523,6 +547,12 @@ void VisualPreviewActivity::renderControls(const int x, const int y, const int w
         snprintf(value, sizeof(value), "%s: %s", title,
                  I18N.get(twoRows ? StrId::STR_LAYOUT_TWO_ROW_SPINE : StrId::STR_LAYOUT_SPINE));
       } else if (row == 2) {
+        const uint8_t appearance = SETTINGS.spineAppearanceMode < std::size(kSpineAppearanceOptions)
+                                      ? SETTINGS.spineAppearanceMode
+                                      : CrossPointSettings::SPINE_APPEARANCE_ALL_SPINES;
+        title = tr(STR_SPINE_APPEARANCE);
+        snprintf(value, sizeof(value), "%s: %s", title, I18N.get(kSpineAppearanceOptions[appearance]));
+      } else if (row == 3) {
         const uint8_t style = SETTINGS.spineDecorationStyle < std::size(kSpineDecorationOptions)
                                   ? SETTINGS.spineDecorationStyle
                                   : CrossPointSettings::SPINE_DECORATION_BALANCED;

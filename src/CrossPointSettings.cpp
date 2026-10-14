@@ -304,6 +304,7 @@ bool CrossPointSettings::fromJsonForProfile(JsonVariantConst doc, const bool pre
   if (preserveMissingManualFields) {
     if (doc["coverProgressStyle"].isNull()) coverProgressStyle = COVER_PROGRESS_BOOKMARK;
     if (doc["spineDecorationStyle"].isNull()) spineDecorationStyle = SPINE_DECORATION_BALANCED;
+    if (doc["spineAppearanceMode"].isNull()) spineAppearanceMode = SPINE_APPEARANCE_ALL_SPINES;
     if (doc["featuredShowCover"].isNull()) featuredShowCover = 1;
     if (doc["featuredShowAuthor"].isNull()) featuredShowAuthor = 1;
     if (doc["featuredShowSynopsis"].isNull()) featuredShowSynopsis = 1;
@@ -349,6 +350,10 @@ bool CrossPointSettings::fromJsonForProfile(JsonVariantConst doc, const bool pre
   }
   if (hasInvalidInteger("spineDecorationStyle", 0, SPINE_DECORATION_STYLE_COUNT - 1)) {
     spineDecorationStyle = SPINE_DECORATION_BALANCED;
+    needsResave = true;
+  }
+  if (hasInvalidInteger("spineAppearanceMode", 0, SPINE_APPEARANCE_MODE_COUNT - 1)) {
+    spineAppearanceMode = SPINE_APPEARANCE_ALL_SPINES;
     needsResave = true;
   }
   const auto validateFeaturedToggle = [&hasInvalidInteger, &needsResave](const char* key, uint8_t& value,

@@ -291,6 +291,13 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     SPINE_DECORATION_STYLE_COUNT
   };
 
+  enum SPINE_APPEARANCE_MODE {
+    SPINE_APPEARANCE_ALL_SPINES = 0,
+    SPINE_APPEARANCE_SPINES_AND_COVERS = 1,
+    SPINE_APPEARANCE_COVERS_ONLY = 2,
+    SPINE_APPEARANCE_MODE_COUNT
+  };
+
   // Image rendering in EPUB reader
   enum IMAGE_RENDERING { IMAGES_DISPLAY = 0, IMAGES_PLACEHOLDER = 1, IMAGES_SUPPRESS = 2, IMAGE_RENDERING_COUNT };
 
@@ -459,6 +466,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Folio shelf; older profiles missing this key keep the same presentation.
   uint8_t coverProgressStyle = COVER_PROGRESS_BOOKMARK;
   uint8_t spineDecorationStyle = SPINE_DECORATION_BALANCED;
+  uint8_t spineAppearanceMode = SPINE_APPEARANCE_ALL_SPINES;
   // Title remains mandatory. These toggles control flexible Featured fields
   // without changing the card's existing Home footprint.
   uint8_t featuredShowCover = 1;

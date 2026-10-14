@@ -252,7 +252,63 @@ void drawSpineBookDetails(const GfxRenderer& renderer, const SpineShelfPlanner::
 }
 
 void drawSpineBook(const GfxRenderer& renderer, const SpineShelfPlanner::Book& book,
-                   const SpineShelfPlanner::Rect& rect, const bool selected) {
+                   const SpineShelfPlanner::Rect& rect, const bool selected, const bool coverFace,
+                   bool& thumbnailUnavailable) {
+  if (coverFace) {
+    renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
+    bool drewCover = false;
+    if (!thumbnailUnavailable && book.coverBmpPath != nullptr && *book.coverBmpPath != '\0') {
+      // Spine appearance modes only read the already-prepared 220px thumbnail.
+      // They never open the book source, ask a format parser for its cover, or
+      // create a missing thumbnail while the user moves the selection.
+      const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, FolioNooirTheme::COVER_HEIGHT);
+      HalFile file;
+      if (Storage.openFileForRead("SHELF", thumbPath, file)) {
+        Bitmap bitmap(file);
+        if (bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() > 0 && bitmap.getHeight() > 0) {
+          const int innerWidth = std::max(1, rect.width - 6);
+          const int innerHeight = std::max(1, rect.height - 6);
+          const float scale = std::min(static_cast<float>(innerWidth) / bitmap.getWidth(),
+                                       static_cast<float>(innerHeight) / bitmap.getHeight());
+          const int drawWidth = std::max(1, static_cast<int>(bitmap.getWidth() * scale));
+          const int drawHeight = std::max(1, static_cast<int>(bitmap.getHeight() * scale));
+          renderer.drawBitmap(bitmap, rect.x + (rect.width - drawWidth) / 2,
+                              rect.y + (rect.height - drawHeight) / 2, drawWidth, drawHeight);
+          drewCover = true;
+        } else {
+          thumbnailUnavailable = true;
+        }
+      } else {
+        thumbnailUnavailable = true;
+      }
+    } else {
+      thumbnailUnavailable = true;
+    }
+
+    if (!drewCover) {
+      // A fixed, title-label placeholder keeps Covers Only readable when a
+      // thumbnail is missing without repeating text measurement on navigation.
+      renderer.fillRectDither(rect.x + 2, rect.y + 2, std::max(1, rect.width - 4),
+                              std::max(1, rect.height - 4), Color::LightGray);
+      const int labelWidth = std::max(4, rect.width - 12 - static_cast<int>(SpineShelfPlanner::stableHash(book) % 9u));
+      const int labelX = rect.x + (rect.width - labelWidth) / 2;
+      const int labelY = rect.y + rect.height / 3;
+      renderer.drawRect(labelX, labelY, labelWidth, std::max(14, rect.height / 4), true);
+      renderer.drawLine(labelX + 4, labelY + 5, labelX + labelWidth - 5, labelY + 5, true);
+      renderer.drawLine(labelX + 4, labelY + 10, labelX + std::max(4, labelWidth * 2 / 3), labelY + 10, true);
+    }
+
+    renderer.drawRect(rect.x, rect.y, rect.width, rect.height, selected ? 2 : 1, true);
+    if (selected && rect.width > 10 && rect.height > 10) {
+      renderer.drawRect(rect.x + 3, rect.y + 3, rect.width - 6, rect.height - 6, true);
+    }
+    if (book.progressPercent > 0 && book.progressPercent < 100) {
+      const int progressWidth = std::max(2, (rect.width - 8) * book.progressPercent / 100);
+      renderer.fillRect(rect.x + 4, rect.y + rect.height - 5, progressWidth, 2, true);
+    }
+    return;
+  }
+
   char title[40];
   char author[32];
   const bool titleReady = SpineShelfPlanner::makeBookTitle(title, sizeof(title), book, rect);
@@ -363,7 +419,7 @@ void drawSpineShelfFurniture(const GfxRenderer& renderer, const SpineShelfPlanne
 
 void drawSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::Page& page,
                     const SpineShelfPlanner::Book* books, const size_t selectedIndex,
-                    const SpineShelfPlanner::Rect& bounds) {
+                    const SpineShelfPlanner::Rect& bounds, bool* thumbnailUnavailable) {
   if (books == nullptr) return;
   const auto shelf = SpineShelfPlanner::shelfRect(page, bounds);
   drawSpineShelfFurniture(renderer, shelf, bounds, true);
@@ -373,13 +429,14 @@ void drawSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::Page& 
     const auto& slot = page.slots[slotIndex];
     if (slot.itemIndex < page.firstIndex || slot.itemIndex - page.firstIndex >= SpineShelfPlanner::MAX_BOOKS) continue;
     const size_t localIndex = slot.itemIndex - page.firstIndex;
-    drawSpineBook(renderer, books[localIndex], slot.rect, slot.itemIndex == selectedIndex);
+    drawSpineBook(renderer, books[localIndex], slot.rect, slot.itemIndex == selectedIndex, slot.cover,
+                  thumbnailUnavailable[localIndex]);
   }
 }
 
 void drawTwoRowSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::TwoRowPage& page,
                           const SpineShelfPlanner::Book* books, const size_t selectedIndex,
-                          const SpineShelfPlanner::Rect& bounds) {
+                          const SpineShelfPlanner::Rect& bounds, bool* thumbnailUnavailable) {
   if (books == nullptr) return;
   for (size_t row = 0; row < 2; ++row) {
     const auto shelf = SpineShelfPlanner::twoRowShelfRect(page, bounds, row);
@@ -395,7 +452,8 @@ void drawTwoRowSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::
     const auto& slot = page.slots[slotIndex];
     if (slot.itemIndex < page.firstIndex || slot.itemIndex - page.firstIndex >= SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY) continue;
     const size_t localIndex = slot.itemIndex - page.firstIndex;
-    drawSpineBook(renderer, books[localIndex], slot.rect, slot.itemIndex == selectedIndex);
+    drawSpineBook(renderer, books[localIndex], slot.rect, slot.itemIndex == selectedIndex, slot.cover,
+                  thumbnailUnavailable[localIndex]);
   }
 }
 }  // namespace
@@ -680,15 +738,18 @@ const RecentBooksActivity::SpinePageWindow& RecentBooksActivity::spinePageForSel
   if (cached.valid && cached.bounds.x == bounds.x && cached.bounds.y == bounds.y &&
       cached.bounds.width == bounds.width && cached.bounds.height == bounds.height &&
       cached.visualSeed == spineSessionSeed && cached.decorationStyle == SETTINGS.spineDecorationStyle &&
+      cached.appearanceMode == SETTINGS.spineAppearanceMode &&
       cached.page.itemCount > 0 && selectorIndex >= cached.page.firstIndex &&
       selectorIndex < cached.page.firstIndex + cached.page.itemCount) {
     return cached;
   }
 
   spinePageWindow = {};
+  spinePageWindow.thumbnailUnavailable.fill(false);
   spinePageWindow.bounds = bounds;
   spinePageWindow.visualSeed = spineSessionSeed;
   spinePageWindow.decorationStyle = SETTINGS.spineDecorationStyle;
+  spinePageWindow.appearanceMode = SETTINGS.spineAppearanceMode;
   size_t rawStart = 0;
   size_t visibleStart = 0;
   size_t previousPageStart = 0;
@@ -705,7 +766,8 @@ const RecentBooksActivity::SpinePageWindow& RecentBooksActivity::spinePageForSel
       candidateIndexes[candidateCount] = raw;
       candidateBooks[candidateCount++] = SpineShelfPlanner::Book{
           book.path.c_str(), book.title.c_str(), book.progressPercent, book.author.c_str(), spineSessionSeed,
-          SETTINGS.spineDecorationStyle, false};
+          SETTINGS.spineDecorationStyle, false,
+          static_cast<SpineShelfPlanner::Appearance>(SETTINGS.spineAppearanceMode), book.coverBmpPath.c_str()};
     }
     if (candidateCount == 0) break;
 
@@ -745,15 +807,18 @@ const RecentBooksActivity::TwoRowSpinePageWindow& RecentBooksActivity::twoRowSpi
   if (cached.valid && cached.bounds.x == bounds.x && cached.bounds.y == bounds.y &&
       cached.bounds.width == bounds.width && cached.bounds.height == bounds.height &&
       cached.visualSeed == spineSessionSeed && cached.decorationStyle == SETTINGS.spineDecorationStyle &&
+      cached.appearanceMode == SETTINGS.spineAppearanceMode &&
       cached.page.itemCount > 0 && selectorIndex >= cached.page.firstIndex &&
       selectorIndex < cached.page.firstIndex + cached.page.itemCount) {
     return cached;
   }
 
   twoRowSpinePageWindow = {};
+  twoRowSpinePageWindow.thumbnailUnavailable.fill(false);
   twoRowSpinePageWindow.bounds = bounds;
   twoRowSpinePageWindow.visualSeed = spineSessionSeed;
   twoRowSpinePageWindow.decorationStyle = SETTINGS.spineDecorationStyle;
+  twoRowSpinePageWindow.appearanceMode = SETTINGS.spineAppearanceMode;
   size_t rawStart = 0;
   size_t visibleStart = 0;
   size_t previousPageStart = 0;
@@ -770,7 +835,8 @@ const RecentBooksActivity::TwoRowSpinePageWindow& RecentBooksActivity::twoRowSpi
       candidateIndexes[candidateCount] = raw;
       candidateBooks[candidateCount++] = SpineShelfPlanner::Book{
           book.path.c_str(), book.title.c_str(), book.progressPercent, book.author.c_str(), spineSessionSeed,
-          SETTINGS.spineDecorationStyle, true};
+          SETTINGS.spineDecorationStyle, true,
+          static_cast<SpineShelfPlanner::Appearance>(SETTINGS.spineAppearanceMode), book.coverBmpPath.c_str()};
     }
     if (candidateCount == 0) break;
 
@@ -895,11 +961,29 @@ uint64_t RecentBooksActivity::snapshotKey() const {
       SETTINGS.featuredShowReadingTime,  SETTINGS.featuredShowSessions,
   };
   hashBytes(hash, visualSettings, sizeof(visualSettings));
+  const bool spineSnapshot = usesSpineLayout() || usesTwoRowSpineLayout();
+  if (spineSnapshot) {
+    hashBytes(hash, &SETTINGS.spineAppearanceMode, sizeof(SETTINGS.spineAppearanceMode));
+    hashBytes(hash, &SETTINGS.spineDecorationStyle, sizeof(SETTINGS.spineDecorationStyle));
+    hashBytes(hash, &spineSessionSeed, sizeof(spineSessionSeed));
+  }
   for (const auto& book : recentBooks) {
     hashBytes(hash, book.path.data(), book.path.size());
     hashBytes(hash, book.title.data(), book.title.size());
     hashBytes(hash, book.author.data(), book.author.size());
     hashBytes(hash, book.coverBmpPath.data(), book.coverBmpPath.size());
+    if (spineSnapshot) {
+      // The saved shelf pixels contain book faces, title/author labels, and
+      // progress bars. The featured panel and stats strip are redrawn after
+      // restore, so reading-time/session counters do not invalidate the whole
+      // Spine frame.
+      hashBytes(hash, &book.progressPercent, sizeof(book.progressPercent));
+      const BookState* state = BOOK_STATES.find(book.path);
+      const uint8_t status = state ? static_cast<uint8_t>(state->status) : 0;
+      hashBytes(hash, &status, sizeof(status));
+      if (state != nullptr) hashBytes(hash, &state->progressPercent, sizeof(state->progressPercent));
+      continue;
+    }
     hashBytes(hash, book.synopsis.data(), book.synopsis.size());
     hashBytes(hash, &book.progressPercent, sizeof(book.progressPercent));
     hashBytes(hash, &book.readingSeconds, sizeof(book.readingSeconds));
@@ -947,7 +1031,34 @@ uint64_t RecentBooksActivity::snapshotPresentationKey() const {
   hashBytes(hash, settings, sizeof(settings));
   const uint8_t layout = activeBookLayout();
   hashBytes(hash, &layout, sizeof(layout));
+  const bool spineSnapshot = usesSpineLayout() || usesTwoRowSpineLayout();
+  if (spineSnapshot) {
+    hashBytes(hash, &SETTINGS.spineAppearanceMode, sizeof(SETTINGS.spineAppearanceMode));
+    hashBytes(hash, &SETTINGS.spineDecorationStyle, sizeof(SETTINGS.spineDecorationStyle));
+    hashBytes(hash, &spineSessionSeed, sizeof(spineSessionSeed));
+  }
   hashBytes(hash, &activeTab, sizeof(activeTab));
+  if (spineSnapshot) {
+    // Spine selection changes repaint only the featured panel and its small
+    // selection marker. Keep the selected book's visible shelf fields in the
+    // key so progress/status changes invalidate the frame, while reading
+    // counters remain outside it.
+    hashBytes(hash, &visibleBookCount, sizeof(visibleBookCount));
+    if (visibleBookCount > 0 && !recentBooks.empty()) {
+      const RecentBook& selected = recentBooks[selectedRecentIndex()];
+      hashBytes(hash, selected.path.data(), selected.path.size());
+      hashBytes(hash, selected.title.data(), selected.title.size());
+      hashBytes(hash, selected.author.data(), selected.author.size());
+      hashBytes(hash, selected.coverBmpPath.data(), selected.coverBmpPath.size());
+      hashBytes(hash, &selected.progressPercent, sizeof(selected.progressPercent));
+      const BookState* state = BOOK_STATES.find(selected.path);
+      const uint8_t status = state ? static_cast<uint8_t>(state->status) : 0;
+      hashBytes(hash, &status, sizeof(status));
+      if (state != nullptr) hashBytes(hash, &state->progressPercent, sizeof(state->progressPercent));
+    }
+    return hash;
+  }
+
   if (visibleBookCount > 0 && !recentBooks.empty()) {
     const RecentBook& selected = recentBooks[selectedRecentIndex()];
     hashBytes(hash, selected.path.data(), selected.path.size());
@@ -1491,8 +1602,6 @@ void RecentBooksActivity::showBookActions() {
 
 void RecentBooksActivity::onEnter() {
   Activity::onEnter();
-  spineSessionSeed = static_cast<uint32_t>(millis()) ^
-                     static_cast<uint32_t>(reinterpret_cast<uintptr_t>(this));
   invalidateSpinePageWindow();
   statsTransientStateReleased = false;
 
@@ -2737,7 +2846,9 @@ void RecentBooksActivity::render(RenderLock&&) {
   // A child screen can change visual settings while this shelf remains on the
   // activity stack. Compare only the compact in-memory presentation key here;
   // the full book/snapshot key remains reserved for the SD restore path.
-  if (snapshotRestored && snapshotPresentationKeyValue != snapshotPresentationKey()) {
+  const bool spineLayoutForKey = usesSpineLayout() || usesTwoRowSpineLayout();
+  const bool spineSelectionMoved = spineLayoutForKey && selectorIndex != snapshotSelectorIndex;
+  if (snapshotRestored && snapshotPresentationKeyValue != snapshotPresentationKey() && !spineSelectionMoved) {
     snapshotRestored = false;
     snapshotFastPathUsed = false;
     snapshotPageStart = SIZE_MAX;
@@ -3261,13 +3372,15 @@ void RecentBooksActivity::render(RenderLock&&) {
       renderer.fillRect(0, layout.gridTop, pageWidth, layout.gridHeight, false);
       const SpineShelfPlanner::Rect bounds = spineShelfBounds(pageWidth, layout);
       const auto& spineWindow = spinePageForSelection(bounds);
-      drawSpineShelf(renderer, spineWindow.page, spineWindow.books.data(), selectorIndex, bounds);
+      drawSpineShelf(renderer, spineWindow.page, spineWindow.books.data(), selectorIndex, bounds,
+                     spineWindow.thumbnailUnavailable.data());
       folioTheme.drawPageIndicator(renderer, layout, spineWindow.pageNumber, spineWindow.pageCount);
     } else if (twoRowSpineLayout) {
       renderer.fillRect(0, layout.gridTop, pageWidth, layout.gridHeight, false);
       const SpineShelfPlanner::Rect bounds = twoRowSpineBounds(pageWidth, layout);
       const auto& spineWindow = twoRowSpinePageForSelection(bounds);
-      drawTwoRowSpineShelf(renderer, spineWindow.page, spineWindow.books.data(), selectorIndex, bounds);
+      drawTwoRowSpineShelf(renderer, spineWindow.page, spineWindow.books.data(), selectorIndex, bounds,
+                           spineWindow.thumbnailUnavailable.data());
       folioTheme.drawPageIndicator(renderer, layout, spineWindow.pageNumber, spineWindow.pageCount);
     } else {
       const int columns = threeCoverGrid ? 3 : layout.columns;
@@ -3414,6 +3527,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     snapshotRestored = true;
     snapshotPageStart = currentPageStart;
     snapshotSelectorIndex = selectorIndex;
+    if (spineLayout || twoRowSpineLayout) snapshotPresentationKeyValue = snapshotPresentationKey();
   } else {
     snapshotRestored = false;
     snapshotPageStart = SIZE_MAX;
