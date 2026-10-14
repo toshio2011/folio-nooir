@@ -19,6 +19,10 @@ struct FolioShelfLayout;
 
 class RecentBooksActivity final : public Activity {
  private:
+  static constexpr int BOOKS_PER_PAGE = 8;
+  static constexpr int BOOKSHELF_COVER_HEIGHT = 220;
+  static constexpr int CAROUSEL_HQ_COVER_HEIGHT = 360;
+
   ButtonNavigator buttonNavigator;
   OptionPopup menuPopup;
   OptionPopup bookActionsPopup;
@@ -122,6 +126,8 @@ class RecentBooksActivity final : public Activity {
   volatile bool recentCacheWarmupPopupRendered = false;
   bool snapshotRestored = false;
   uint64_t snapshotPresentationKeyValue = 0;
+  std::array<uint64_t, BOOKS_PER_PAGE> snapshotBookVisualKeys{};
+  bool snapshotDynamicNeedsPatch = false;
   size_t snapshotPageStart = SIZE_MAX;
   size_t snapshotSelectorIndex = SIZE_MAX;
   struct SpinePageWindow {
@@ -201,10 +207,6 @@ class RecentBooksActivity final : public Activity {
   bool swallowBookConfirmRelease = false;
   bool swallowBookBackRelease = false;
 
-  static constexpr int BOOKS_PER_PAGE = 8;
-  static constexpr int BOOKSHELF_COVER_HEIGHT = 220;
-  static constexpr int CAROUSEL_HQ_COVER_HEIGHT = 360;
-
   // Data loading
   void loadRecentBooks(bool renderLockHeld = false);
   void markStatsReturnFrameReady();
@@ -240,8 +242,13 @@ class RecentBooksActivity final : public Activity {
   void showBookActions();
   uint64_t snapshotKey() const;
   uint64_t snapshotPresentationKey() const;
+  uint64_t bookDynamicKey(const RecentBook& book) const;
+  uint64_t bookCoverVisualKey(const RecentBook& book) const;
+  uint64_t snapshotDynamicKey() const;
+  void captureSnapshotVisualState(size_t pageStart);
   bool restoreSnapshot();
   void writeSnapshot();
+  void writeSnapshotNavigationState();
   uint8_t activeBookLayout() const;
   bool usesCarouselLayout() const;
   bool usesSpineLayout() const;
