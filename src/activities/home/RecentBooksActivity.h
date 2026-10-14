@@ -253,10 +253,13 @@ class RecentBooksActivity final : public Activity {
   uint64_t bookCoverVisualKey(const RecentBook& book) const;
   uint64_t snapshotDynamicKey() const;
   void captureSnapshotVisualState(size_t pageStart);
+  void drawSnapshotSelectionOutline(const FolioShelfLayout& layout, size_t index, bool selected);
   bool restoreSnapshot();
   void writeSnapshot();
   void writeSnapshotNavigationState();
   uint8_t activeBookLayout() const;
+  bool usesPersistentHomeSnapshot() const;
+  size_t snapshotPageItemCount() const;
   bool usesCarouselLayout() const;
   bool usesSpineLayout() const;
   bool usesThreeCoverGrid() const;

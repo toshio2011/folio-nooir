@@ -1,0 +1,5 @@
+add_executable(home_snapshot_policy_test HomeSnapshotPolicyTest.cpp)
+target_link_libraries(home_snapshot_policy_test PRIVATE GTest::gtest_main crosspoint_test_common)
+
+include(GoogleTest)
+gtest_discover_tests(home_snapshot_policy_test)
