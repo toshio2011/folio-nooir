@@ -293,8 +293,8 @@ bool MappedInputManager::bleEdge(const bool* edges, const Button button) const {
   if (!SETTINGS.bluetoothEnabled) return false;
 
   // A decoded BLE event has one canonical physical-style owner. Keep semantic
-  // aliases narrow and context-bound: Settings consumes Left/Right as tabs and
-  // Up/Down as rows, while Reader may reinterpret its side buttons as
+  // aliases narrow and context-bound: Settings consumes Left/Right as rows and
+  // Up/Down as tabs, while Reader may reinterpret its side buttons as
   // PageBack/PageForward according to the configured side layout. Never alias
   // PageForward to NavNext (or PageBack to NavPrevious) globally; that was the
   // source of duplicate navigation actions.
