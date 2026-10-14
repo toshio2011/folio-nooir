@@ -39,6 +39,8 @@ BookDatePickerActivity::BookDatePickerActivity(GfxRenderer& renderer, MappedInpu
 
 void BookDatePickerActivity::onEnter() {
   Activity::onEnter();
+  ignoreInitialConfirm = mappedInput.isPressed(MappedInputManager::Button::Confirm) ||
+                         mappedInput.wasReleased(MappedInputManager::Button::Confirm);
   renderer.setUiScaleTextEnabled(true);
   requestUpdate();
 }
@@ -77,6 +79,13 @@ void BookDatePickerActivity::cancelAndClose() {
 }
 
 void BookDatePickerActivity::loop() {
+  if (ignoreInitialConfirm) {
+    if (!mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+        !mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      ignoreInitialConfirm = false;
+    }
+    return;
+  }
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     cancelAndClose();
     return;

@@ -20,6 +20,7 @@ class BookDatePickerActivity final : public Activity {
   uint32_t selectedDates_[3] = {};
   uint32_t todayDate_ = 0;
   uint8_t selectedField_ = 0;
+  bool ignoreInitialConfirm = false;
 
   void selectField(int direction);
   void adjustDate(int direction);
