@@ -29,7 +29,7 @@ bool hasCurrentRc1ProfileShape(JsonVariantConst profile) {
       "sleepModeLayoutVersion", "uiScalePercent",          "recentBookLayout",
       "finishedBookLayout",     "statusBarPercentageFormat", "lineSpacing",
       "quickActionSlot1",       "quickActionSlot2",        "quickActionSlot3",
-      "quickActionSlot4",       "coverProgressStyle",      "spineDecorationStyle",
+      "quickActionSlot4",       "coverProgressStyle",      "spineDecorationStyle", "spineAppearanceMode",
       "featuredShowCover",      "featuredShowFileType",   "featuredShowAuthor",      "featuredShowSynopsis",
       "featuredShowStatus",     "featuredShowProgress",    "featuredShowStartedDate",
       "featuredShowFinishedDate", "featuredShowReadingTime", "featuredShowSessions",

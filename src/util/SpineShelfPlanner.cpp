@@ -8,6 +8,19 @@ namespace {
 
 constexpr int kShelfInset = 2;
 
+bool isCoverFace(const Book& book) {
+  switch (book.appearance) {
+    case Appearance::SpinesAndCovers:
+      // Key-based composition remains stable when the selected page changes.
+      return (stableHash(book) & 0x03u) == 0u;
+    case Appearance::CoversOnly:
+      return true;
+    case Appearance::AllSpines:
+    default:
+      return false;
+  }
+}
+
 bool isContinuation(const unsigned char byte) { return (byte & 0xC0u) == 0x80u; }
 
 size_t sequenceLength(const unsigned char lead) {
@@ -120,7 +133,8 @@ Page pageAtStart(const Book* books, const size_t bookCount, const size_t start, 
     if (result.itemCount == 0) width = std::max(1, std::min(width, remaining));
     if (width <= 0) break;
     const int height = bookHeight(books[index], bounds);
-    result.slots[result.itemCount] = Slot{index, Rect{cursor, bottom - height, width, height}};
+    result.slots[result.itemCount] =
+        Slot{index, Rect{cursor, bottom - height, width, height}, isCoverFace(books[index])};
     ++result.itemCount;
     cursor += width + BOOK_GAP;
   }
@@ -200,6 +214,10 @@ int twoRowBookHeight(const Book& book, const Rect& bounds) {
 
 int twoRowBookWidth(const Book& book, const Rect& bounds) {
   const int available = std::max(1, bounds.width - kShelfInset * 2);
+  if (isCoverFace(book)) {
+    const int coverWidth = std::max(TWO_ROW_MIN_BOOK_WIDTH, twoRowBookHeight(book, bounds) * 2 / 3);
+    return std::min(coverWidth, available);
+  }
   const int width = TWO_ROW_MIN_BOOK_WIDTH +
                     static_cast<int>(stableHash(book, 19) % static_cast<uint32_t>(TWO_ROW_MAX_BOOK_WIDTH -
                                                                                    TWO_ROW_MIN_BOOK_WIDTH + 1));
@@ -229,7 +247,7 @@ TwoRowPage twoRowPageAtStart(const Book* books, const size_t bookCount, const si
       if (width <= 0) break;
       const int height = twoRowBookHeight(books[index], bounds);
       result.slots[result.itemCount] =
-          Slot{index, Rect{cursor, geometry.shelfY - height, width, height}};
+          Slot{index, Rect{cursor, geometry.shelfY - height, width, height}, isCoverFace(books[index])};
       ++result.itemCount;
       ++rowCount;
       ++index;
@@ -307,6 +325,10 @@ uint32_t stableHash(const Book& book, const size_t itemIndex) {
 
 int bookWidth(const Book& book, const Rect& bounds) {
   const int available = std::max(1, bounds.width - kShelfInset * 2);
+  if (isCoverFace(book)) {
+    const int coverWidth = std::max(MIN_BOOK_WIDTH, bookHeight(book, bounds) * 2 / 3);
+    return std::min(coverWidth, available);
+  }
   const int width = MIN_BOOK_WIDTH +
                     static_cast<int>(stableHash(book, 1) % static_cast<uint32_t>(MAX_BOOK_WIDTH - MIN_BOOK_WIDTH + 1));
   if (available <= MIN_BOOK_WIDTH) return available;

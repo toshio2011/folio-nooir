@@ -31,16 +31,20 @@ constexpr int TWO_ROW_BOTTOM_GAP = 32;
 // page-local safety ceiling, not a visible-book/page-size rule.
 constexpr size_t TWO_ROW_SLOT_CAPACITY = 28;
 
+enum class Appearance : uint8_t { AllSpines = 0, SpinesAndCovers = 1, CoversOnly = 2 };
+
 struct Book {
   const char* key = nullptr;
   const char* title = nullptr;
   uint8_t progressPercent = 0;
   const char* author = nullptr;
-  // Per-activity seed and preference are supplied by the caller. They affect
+  // Stable caller seed and preference are supplied by the caller. They affect
   // appearance only; fixed default values preserve deterministic host use.
   uint32_t visualSeed = 0;
   uint8_t decorationStyle = 0;
   bool compact = false;
+  Appearance appearance = Appearance::AllSpines;
+  const char* coverBmpPath = nullptr;
 };
 
 struct Rect {
@@ -57,6 +61,7 @@ struct Rect {
 struct Slot {
   size_t itemIndex = 0;
   Rect rect{};
+  bool cover = false;
 };
 
 struct Plant {
