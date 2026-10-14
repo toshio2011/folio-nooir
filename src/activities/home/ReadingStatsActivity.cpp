@@ -307,12 +307,20 @@ void ReadingStatsActivity::loop() {
     }
     return;
   }
-  if (!bookDetail && mappedInput.wasReleased(MappedInputManager::Button::Left)) {
-    switchTab(-1);
+  if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+    if (bookDetail) {
+      moveSelection(-1);
+    } else {
+      switchTab(-1);
+    }
     return;
   }
-  if (!bookDetail && mappedInput.wasReleased(MappedInputManager::Button::Right)) {
-    switchTab(1);
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
+    if (bookDetail) {
+      moveSelection(1);
+    } else {
+      switchTab(1);
+    }
     return;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
@@ -877,11 +885,12 @@ void ReadingStatsActivity::render(RenderLock&&) {
     }
   }
 
-  const char* confirm = !bookDetail && activeTab == Tab::Books
-                            ? tr(STR_STATS_DETAILS)
-                            : (!bookDetail && activeTab == Tab::Calendar ? tr(STR_STATS_NEXT_ACTIVE_DAY) : "");
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirm, bookDetail ? "" : tr(STR_STATS_PREVIOUS_TAB),
-                                             bookDetail ? "" : tr(STR_STATS_NEXT_TAB));
+  const char* confirm = bookDetail ? tr(STR_SELECT)
+                                   : (activeTab == Tab::Books ? tr(STR_STATS_DETAILS)
+                                      : activeTab == Tab::Calendar ? tr(STR_STATS_NEXT_ACTIVE_DAY) : "");
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirm,
+                                             bookDetail ? tr(STR_BOOK_RATING) : tr(STR_STATS_PREVIOUS_TAB),
+                                             bookDetail ? tr(STR_BOOK_DATES) : tr(STR_STATS_NEXT_TAB));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }

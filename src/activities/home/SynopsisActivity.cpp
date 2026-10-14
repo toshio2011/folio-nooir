@@ -253,8 +253,9 @@ void SynopsisActivity::render(RenderLock&&) {
     renderer.drawText(SMALL_FONT_ID, side, top + static_cast<int>(row) * lineHeight, lines[firstLine + row].c_str());
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), bookPath.empty() ? "" : tr(STR_SELECT), tr(STR_DIR_UP),
-                                            tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), !bookPath.empty() && ratingFocused ? tr(STR_SELECT) : "",
+                                            bookPath.empty() ? tr(STR_DIR_LEFT) : tr(STR_BOOK_RATING),
+                                            bookPath.empty() ? tr(STR_DIR_RIGHT) : tr(STR_READ_FULL_SYNOPSIS));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }
