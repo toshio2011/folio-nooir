@@ -2539,6 +2539,13 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
     return;
   }
 
+  // The activity/lifecycle checks above establish the only context allowed to
+  // use the small soft margin. Keep all normal admission sites on the strict
+  // global helper; this wrapper is local to the one-shot idle return cleanup.
+  const auto readerBleReturnAdmitted = [](const size_t freeHeap, const size_t largestBlock) {
+    return bleinput::readerBleStartMemoryAdmittedForQuiescentEpubReturn(freeHeap, largestBlock, true);
+  };
+
   // Existing idle cleanup: release only disposable Reader font state. It
   // leaves coverage, persistent layout data, the current section, and the
   // current page's navigation state intact.
@@ -2558,6 +2565,22 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
     LOG_INF("BLEMEM", "reader_ble_reclaim result=%s generation=%u pending=%d", result ? result : "?",
             static_cast<unsigned>(returnGeneration), pending ? 1 : 0);
   };
+
+  // Admit a healthy idle return before dropping any Reader caches. If the
+  // soft floor already passes, the upcoming stable-page render keeps its
+  // prepared font state and the normal render preflight remains responsible
+  // for yielding BLE before later heavy work.
+  const size_t freeBeforeCleanup = ESP.getFreeHeap();
+  const size_t largestBeforeCleanup = ESP.getMaxAllocHeap();
+  if (readerBleReturnAdmitted(freeBeforeCleanup, largestBeforeCleanup)) {
+    bleinput::allowReaderBleReturnRetry();
+    logReaderBleReclaimResult("admit_before_cleanup", false);
+    LOG_INF("BLEMEM", "stage=reader_ble_return_cleanup result=not_needed free=%u largest=%u",
+            static_cast<unsigned>(freeBeforeCleanup), static_cast<unsigned>(largestBeforeCleanup));
+    bleinput::requestLifecycleReevaluation();
+    return;
+  }
+
   if (!readerIdleFontCachesReleased) {
     const size_t freeBefore = ESP.getFreeHeap();
     const size_t largestBefore = ESP.getMaxAllocHeap();
@@ -2576,7 +2599,7 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
             static_cast<unsigned>(largestBefore), static_cast<unsigned>(largestAfter),
             static_cast<unsigned>(largestAfter > largestBefore ? largestAfter - largestBefore : 0));
     logReaderBleReclaim(1, "reader_disposable_font_caches", freeBefore, freeAfter, largestBefore, largestAfter,
-                        bleinput::readerBleStartMemoryAdmitted(freeAfter, largestAfter));
+                        readerBleReturnAdmitted(freeAfter, largestAfter));
     EpubDiagnostics::record("reader_idle_ble_cache_release_after", currentSpineIndex,
                             section->currentPage, 0, freeBefore,
                             freeBefore > freeAfter ? freeBefore - freeAfter : 0, 1);
@@ -2585,7 +2608,7 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
 
   const size_t freeBeforeReturn = ESP.getFreeHeap();
   const size_t largestBeforeReturn = ESP.getMaxAllocHeap();
-  const bool admissionPasses = bleinput::readerBleStartMemoryAdmitted(freeBeforeReturn, largestBeforeReturn);
+  const bool admissionPasses = readerBleReturnAdmitted(freeBeforeReturn, largestBeforeReturn);
   if (admissionPasses) {
     bleinput::allowReaderBleReturnRetry();
     logReaderBleReclaimResult("admit", false);
@@ -2608,16 +2631,18 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
   const char* failureShape = freeFloorFailed && largestFloorFailed
                                  ? "free_and_fragmented"
                                  : (freeFloorFailed ? "free_floor" : "fragmented");
-  LOG_INF("BLEMEM", "stage=reader_ble_return_cleanup result=run reason=%s free=%u largest=%u floors=%u/%u",
+  LOG_INF("BLEMEM", "stage=reader_ble_return_cleanup result=run reason=%s free=%u largest=%u floors=%u/%u soft=%u/%u",
           failureShape, static_cast<unsigned>(freeBeforeReturn), static_cast<unsigned>(largestBeforeReturn),
           static_cast<unsigned>(bleinput::kReaderBleStartMinFreeHeap),
-          static_cast<unsigned>(bleinput::kReaderBleStartMinLargestBlock));
+          static_cast<unsigned>(bleinput::kReaderBleStartMinLargestBlock),
+          static_cast<unsigned>(bleinput::kReaderBleQuiescentReturnMinFreeHeap),
+          static_cast<unsigned>(bleinput::kReaderBleQuiescentReturnMinLargestBlock));
 
   const auto admitReaderBleIfReady = [&](const unsigned stage, const char* item,
                                          const size_t freeBefore, const size_t largestBefore) {
     const size_t freeHeap = ESP.getFreeHeap();
     const size_t largest = ESP.getMaxAllocHeap();
-    const bool admitted = bleinput::readerBleStartMemoryAdmitted(freeHeap, largest);
+    const bool admitted = readerBleReturnAdmitted(freeHeap, largest);
     logReaderBleReclaim(stage, item, freeBefore, freeHeap, largestBefore, largest, admitted);
     LOG_INF("BLEMEM", "stage=reader_ble_return_cleanup level=1 check=%s result=%s free=%u largest=%u",
             item ? item : "?", admitted ? "admit" : "continue", static_cast<unsigned>(freeHeap),
@@ -2723,7 +2748,7 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
       const size_t scratchAfterFree = ESP.getFreeHeap();
       const size_t scratchAfterLargest = ESP.getMaxAllocHeap();
       const bool level2Admitted =
-          bleinput::readerBleStartMemoryAdmitted(scratchAfterFree, scratchAfterLargest);
+          readerBleReturnAdmitted(scratchAfterFree, scratchAfterLargest);
       LOG_INF("BLEMEM",
               "stage=reader_ble_return_cleanup level=2 item=grayscale_strip_scratch ptr=%p bytes=%u released=1 free=%u->%u largest=%u->%u admitted=%d",
               scratch, static_cast<unsigned>(scratchBytes), static_cast<unsigned>(scratchBeforeFree),
@@ -2759,7 +2784,7 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
   const size_t deepBeforeLargest = ESP.getMaxAllocHeap();
   bool deepReleased = false;
   const bool deepAdmissionNeeded =
-      !bleinput::readerBleStartMemoryAdmitted(deepBeforeFree, deepBeforeLargest);
+      !readerBleReturnAdmitted(deepBeforeFree, deepBeforeLargest);
   const bool deepQuiescent = !bluetoothResourceSensitive();
   const bool deepSectionBuildIdle = section && !section->isBuilding();
   const bool deepRenderStable = firstStableRenderComplete.load(std::memory_order_acquire);
@@ -2799,7 +2824,7 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
             static_cast<unsigned>(deepAfterLargest > deepBeforeLargest ? deepAfterLargest - deepBeforeLargest : 0));
     logReaderBleReclaim(3, "reader_shared_font_caches", deepBeforeFree, deepAfterFree,
                         deepBeforeLargest, deepAfterLargest,
-                        bleinput::readerBleStartMemoryAdmitted(deepAfterFree, deepAfterLargest));
+                        readerBleReturnAdmitted(deepAfterFree, deepAfterLargest));
   } else {
     LOG_INF("BLEMEM",
             "reader_ble_reclaim generation=%u stage=3 item=reader_shared_font_caches skipped=%s "
@@ -2813,7 +2838,7 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
   // This is the single admission recheck for the return cleanup.
   const size_t freeAfterReturn = deepAfterFree;
   const size_t largestAfterReturn = deepAfterLargest;
-  const bool admitted = bleinput::readerBleStartMemoryAdmitted(freeAfterReturn, largestAfterReturn);
+  const bool admitted = readerBleReturnAdmitted(freeAfterReturn, largestAfterReturn);
   LOG_INF("BLEMEM", "stage=reader_ble_return_cleanup result=%s free=%u->%u freed=%u largest=%u->%u gain=%u pending=%d",
           admitted ? "admit" : "defer", static_cast<unsigned>(freeBeforeReturn),
           static_cast<unsigned>(freeAfterReturn),

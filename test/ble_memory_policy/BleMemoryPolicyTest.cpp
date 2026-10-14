@@ -21,6 +21,40 @@ TEST(BleMemoryPolicy, ContaminatedLowFreeHeapIsDeferred) {
   EXPECT_FALSE(bleinput::readerBleStartMemoryAdmitted(85000, 65524));
 }
 
+TEST(BleMemoryPolicy, AnyReaderRenderWorkDefersBleAdmission) {
+  // The application ORs RenderLock with pending/in-flight render work. The
+  // current child activity has no bypass when a Reader remains on the stack.
+  EXPECT_FALSE(bleinput::readerBleAdmissionRenderWorkSafe(true, true));
+  EXPECT_TRUE(bleinput::readerBleAdmissionRenderWorkSafe(true, false));
+}
+
+TEST(BleMemoryPolicy, NonReaderRenderWorkKeepsExistingBleAdmissionBehavior) {
+  EXPECT_TRUE(bleinput::readerBleAdmissionRenderWorkSafe(false, true));
+}
+
+TEST(BleMemoryPolicy, QuiescentEpubReturnHasSmallContextGatedMargin) {
+  static_assert(bleinput::kReaderBleStartMinFreeHeap == 96 * 1024);
+  static_assert(bleinput::kReaderBleQuiescentReturnFreeHeapMargin == 2 * 1024);
+
+  // The observed ~97.8 KiB / ~59 KiB healthy idle shape may return BLE only
+  // when the caller has already established the narrow quiescent EPUB gate.
+  EXPECT_TRUE(bleinput::readerBleStartMemoryAdmittedForQuiescentEpubReturn(97756, 60000, true));
+  EXPECT_FALSE(bleinput::readerBleStartMemoryAdmittedForQuiescentEpubReturn(97756, 60000, false));
+}
+
+TEST(BleMemoryPolicy, QuiescentEpubMarginStillRejectsLowOrFragmentedHeap) {
+  EXPECT_FALSE(bleinput::readerBleStartMemoryAdmittedForQuiescentEpubReturn(
+      bleinput::kReaderBleQuiescentReturnMinFreeHeap - 1,
+      bleinput::kReaderBleQuiescentReturnMinLargestBlock, true));
+  EXPECT_FALSE(bleinput::readerBleStartMemoryAdmittedForQuiescentEpubReturn(97756, 50000, true));
+  EXPECT_FALSE(bleinput::readerBleStartMemoryAdmittedForQuiescentEpubReturn(109420, 26612, true));
+}
+
+TEST(BleMemoryPolicy, StrictReaderAdmissionIsUnchangedByQuiescentMargin) {
+  EXPECT_FALSE(bleinput::readerBleStartMemoryAdmitted(97756, 60000));
+  EXPECT_TRUE(bleinput::readerBleStartMemoryAdmittedForQuiescentEpubReturn(98304, 60000, false));
+}
+
 TEST(BleMemoryPolicy, ReaderReturnCleanupRequiresEveryLifecycleGate) {
   EXPECT_TRUE(bleinput::readerBleReturnCleanupAllowed(true, true, true, true, true, false, false));
   EXPECT_FALSE(bleinput::readerBleReturnCleanupAllowed(false, true, true, true, true, false, false));

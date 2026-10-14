@@ -403,20 +403,25 @@ bool connectionAdmissionAllowed() {
     return false;
 
   const bool readerContext = activityManager.isReaderActivity();
-  const bool lightweightReaderChild = readerContext && activityManager.bluetoothRenderSafe();
-  if (activityManager.bluetoothResourceSensitive() ||
-      (readerContext && !lightweightReaderChild &&
-       (RenderLock::peek() || activityManager.hasPendingRenderWork())))
+  const bool resourceSensitive = activityManager.bluetoothResourceSensitive();
+  const bool readerRenderWorkPending =
+      readerContext && (RenderLock::peek() || activityManager.hasPendingRenderWork());
+  if (resourceSensitive || !readerBleAdmissionRenderWorkSafe(readerContext, readerRenderWorkPending))
     return false;
   // The heap floors admit a cold NimBLE host start, not a connection on a host
   // that already owns its memory. Keep Reader contexts on their existing
   // pressure policy above; an initialized host does not pay the cold-start
   // floor a second time merely because NimBLE itself consumed startup headroom.
   if (BleHid.isRunning()) return true;
-  // Every cold start, including a start after a true Reader exit, passes the
-  // same memory floors. Stable Reader coexistence has no below-floor exception.
-  return readerBleStartMemoryAdmitted(static_cast<size_t>(ESP.getFreeHeap()),
-                                      static_cast<size_t>(ESP.getMaxAllocHeap()));
+  // Every cold start still uses the strict global floors except a confirmed
+  // idle EPUB return. This margin is unavailable to Reader entry, builds,
+  // renders, image/grayscale work, other Reader formats, and Settings.
+  const bool quiescentEpubReturn =
+      readerContext && activityManager.isCurrentReaderActivity() &&
+      strcmp(activityManager.currentActivityName(), "EpubReader") == 0 && readerBleReturnPending() &&
+      !resourceSensitive && !RenderLock::peek() && !activityManager.hasPendingRenderWork();
+  return readerBleStartMemoryAdmittedForQuiescentEpubReturn(
+      static_cast<size_t>(ESP.getFreeHeap()), static_cast<size_t>(ESP.getMaxAllocHeap()), quiescentEpubReturn);
 #else
   // Keep the existing BLE-off stub behavior; callers still receive the
   // normal begin/connect failure from the capability-safe host stubs.
