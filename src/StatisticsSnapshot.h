@@ -47,6 +47,7 @@ struct StatisticsBookSnapshot {
   uint32_t startDate = 0;
   uint32_t finishDate = 0;
   uint32_t lastOpenedDate = 0;
+  uint8_t rating = 0;
   bool coverChecked = false;
   bool coverAvailable = false;
 };

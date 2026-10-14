@@ -51,4 +51,24 @@ int weekdayMondayFirst(const uint32_t dateKey) {
   return weekday;
 }
 
+uint32_t addDays(const uint32_t dateKey, const int days) {
+  const int64_t absoluteDay = ordinal(dateKey);
+  if (absoluteDay < 0) return 0;
+
+  const int64_t shiftedDay = absoluteDay + days;
+  if (shiftedDay < 0) return 0;
+  const int64_t era = shiftedDay / 146097;
+  const unsigned dayOfEra = static_cast<unsigned>(shiftedDay - era * 146097);
+  const unsigned yearOfEra =
+      (dayOfEra - dayOfEra / 1460 + dayOfEra / 36524 - dayOfEra / 146096) / 365;
+  int year = static_cast<int>(yearOfEra + era * 400);
+  const unsigned dayOfYear = dayOfEra - (365 * yearOfEra + yearOfEra / 4 - yearOfEra / 100);
+  const unsigned monthPrime = (5 * dayOfYear + 2) / 153;
+  const unsigned day = dayOfYear - (153 * monthPrime + 2) / 5 + 1;
+  const int month = static_cast<int>(monthPrime) + (monthPrime < 10 ? 3 : -9);
+  year += month <= 2;
+  if (year < 1 || year > 9999) return 0;
+  return static_cast<uint32_t>(year * 10000 + month * 100 + static_cast<int>(day));
+}
+
 }  // namespace StatisticsDate

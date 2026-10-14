@@ -8,10 +8,16 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <memory>
 
+#include "BookDatePickerActivity.h"
+#include "BookRatingPickerActivity.h"
+#include "BookStateStore.h"
+#include "HalClock.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/BookRating.h"
 #include "util/StatisticsCover.h"
 #include "util/StatisticsDate.h"
 
@@ -157,6 +163,7 @@ void ReadingStatsActivity::onEnter() {
     activeTab = Tab::Books;
     selectedBook = snapshot.ensureFallbackBook(entryBookPath);
     bookDetail = true;
+    bookDetailAction = BookDetailAction::Rating;
   }
   initializeCalendar();
   logReadingStatsDiagnostic("onEnter_ready", snapshot.days.size(), snapshot.books.size(), snapshot.achievements.size());
@@ -214,8 +221,7 @@ void ReadingStatsActivity::switchTab(const int direction) {
 
 void ReadingStatsActivity::moveSelection(const int direction) {
   if (bookDetail) {
-    if (directBookEntry || snapshot.books.empty()) return;
-    selectedBook = wrapSelection(selectedBook, snapshot.books.size(), direction);
+    bookDetailAction = bookDetailAction == BookDetailAction::Rating ? BookDetailAction::Dates : BookDetailAction::Rating;
     requestUpdate();
     return;
   }
@@ -241,13 +247,52 @@ void ReadingStatsActivity::moveSelection(const int direction) {
 }
 
 void ReadingStatsActivity::handleConfirm() {
-  if (bookDetail) return;
+  if (bookDetail) {
+    if (bookDetailAction == BookDetailAction::Rating) openBookRating();
+    else openBookDates();
+    return;
+  }
   if (activeTab == Tab::Books && !snapshot.books.empty()) {
     bookDetail = true;
+    bookDetailAction = BookDetailAction::Rating;
     requestUpdate();
   } else if (activeTab == Tab::Calendar) {
     cycleCalendarDay();
   }
+}
+
+void ReadingStatsActivity::openBookRating() {
+  if (snapshot.books.empty()) return;
+  const auto& book = snapshot.books[selectedBook];
+  startActivityForResult(std::make_unique<BookRatingPickerActivity>(renderer, mappedInput, book.path, book.rating),
+                         [this, path = book.path](const ActivityResult& result) {
+                           if (result.isCancelled) return;
+                           const BookState* state = BOOK_STATES.find(path);
+                           if (state != nullptr) {
+                             if (StatisticsBookSnapshot* book = snapshot.findBook(path)) book->rating = state->rating;
+                           }
+                           requestUpdate();
+                         });
+}
+
+void ReadingStatsActivity::openBookDates() {
+  if (snapshot.books.empty()) return;
+  const auto& book = snapshot.books[selectedBook];
+  startActivityForResult(
+      std::make_unique<BookDatePickerActivity>(renderer, mappedInput, book.path, book.startDate, book.finishDate,
+                                               book.lastOpenedDate, halClock.getDateKey()),
+      [this, path = book.path](const ActivityResult& result) {
+        if (result.isCancelled) return;
+        const BookState* state = BOOK_STATES.find(path);
+        if (state != nullptr) {
+          if (StatisticsBookSnapshot* book = snapshot.findBook(path)) {
+            book->startDate = state->startDate;
+            book->finishDate = state->finishDate;
+            book->lastOpenedDate = state->lastOpenedDate;
+          }
+        }
+        requestUpdate();
+      });
 }
 
 void ReadingStatsActivity::loop() {
@@ -312,7 +357,22 @@ void ReadingStatsActivity::handleTap(const int x, const int y) {
     requestUpdate();
     return;
   }
-  if (bookDetail) return;
+  if (bookDetail) {
+    const auto& metrics = UITheme::getInstance().getMetrics();
+    const int detailTop = metrics.topPadding + metrics.headerHeight + 12;
+    const int ratingTop = detailTop + 210;
+    const int statsTop = detailTop + 250;
+    const int tableRowHeight = std::max(32, (contentBottom() - statsTop - 4) / 4);
+    const int tableBottom = statsTop + tableRowHeight * 4;
+    if (y >= ratingTop - 8 && y < statsTop - 6) {
+      bookDetailAction = BookDetailAction::Rating;
+      handleConfirm();
+    } else if (y >= statsTop + tableRowHeight * 2 && y < tableBottom) {
+      bookDetailAction = BookDetailAction::Dates;
+      handleConfirm();
+    }
+    return;
+  }
   if (activeTab == Tab::Calendar && calendarMonth != 0) {
     const int side = UITheme::getInstance().getMetrics().contentSidePadding;
     const int gridTop = contentTop() + 62;
@@ -711,9 +771,21 @@ void ReadingStatsActivity::renderBookDetail() {
   renderer.drawRect(detailX, barY, detailWidth, 14);
   if (book.progress > 0) renderer.fillRect(detailX + 2, barY + 2, (detailWidth - 4) * book.progress / 100, 10);
 
-  const int statsTop = top + 258;
+  const int ratingTop = top + 210;
+  const bool ratingSelected = bookDetailAction == BookDetailAction::Rating;
+  renderer.drawRect(detailX + 2, ratingTop - 8, detailWidth - 4, 40, ratingSelected ? 2 : 1, true);
+  renderer.drawText(SMALL_FONT_ID, detailX + 10, ratingTop - 2, tr(STR_BOOK_RATING), true, EpdFontFamily::BOLD);
+  const int ratingStarSize = std::clamp(detailWidth / 12, 8, 12);
+  BookRating::drawStars(renderer, detailX + 10, ratingTop + 12, book.rating, ratingStarSize,
+                        std::max(2, ratingStarSize / 4));
+
+  const int statsTop = top + 250;
   renderer.drawLine(side, statsTop - 16, side + width, statsTop - 16);
   const int columnWidth = width / 2;
+  const int rowHeight = std::max(32, (contentBottom() - statsTop - 4) / 4);
+  if (bookDetailAction == BookDetailAction::Dates) {
+    renderer.drawRect(side + 2, statsTop + rowHeight * 2, width - 4, rowHeight * 2 - 2, 2, true);
+  }
   const char* labels[] = {tr(STR_STATS_READING_TIME), tr(STR_SESSIONS), tr(STR_PAGES), tr(STR_STATS_STATUS),
                           tr(STR_STATS_STARTED), tr(STR_STATS_FINISHED_DATE), tr(STR_STATS_LAST_READ)};
   const std::string values[] = {durationText(book.readingSeconds), std::to_string(book.sessions),
@@ -723,10 +795,10 @@ void ReadingStatsActivity::renderBookDetail() {
     const int row = i / 2;
     const int col = i % 2;
     const int x = side + col * columnWidth;
-    const int cellY = statsTop + row * 80;
-    if (col > 0) renderer.drawLine(x, cellY + 4, x, cellY + 68);
-    renderer.drawText(SMALL_FONT_ID, x + 10, cellY + 8, labels[i], true, EpdFontFamily::BOLD);
-    renderer.drawText(UI_10_FONT_ID, x + 10, cellY + 36,
+    const int cellY = statsTop + row * rowHeight;
+    if (col > 0) renderer.drawLine(x, cellY + 4, x, cellY + rowHeight - 4);
+    renderer.drawText(SMALL_FONT_ID, x + 10, cellY + 1, labels[i], true, EpdFontFamily::BOLD);
+    renderer.drawText(UI_10_FONT_ID, x + 10, cellY + 17,
                       renderer.truncatedText(UI_10_FONT_ID, values[i].c_str(), columnWidth - 20).c_str());
   }
 }

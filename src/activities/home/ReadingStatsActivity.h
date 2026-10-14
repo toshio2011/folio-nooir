@@ -12,6 +12,7 @@
 class ReadingStatsActivity final : public Activity {
  public:
   enum class Tab : uint8_t { Overview, Calendar, Books, Achievements };
+  enum class BookDetailAction : uint8_t { Rating, Dates };
 
   ReadingStatsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string bookPath = {},
                        bool calendarMode = false);
@@ -30,6 +31,7 @@ class ReadingStatsActivity final : public Activity {
   bool calendarEntry = false;
   bool directBookEntry = false;
   bool bookDetail = false;
+  BookDetailAction bookDetailAction = BookDetailAction::Rating;
   Tab activeTab = Tab::Overview;
   StatisticsSnapshot snapshot;
   size_t selectedBook = 0;
@@ -48,6 +50,8 @@ class ReadingStatsActivity final : public Activity {
   void switchTab(int direction);
   void moveSelection(int direction);
   void handleConfirm();
+  void openBookRating();
+  void openBookDates();
   void handleTap(int x, int y);
   void initializeCalendar();
   void prepareCalendarMonth(bool preserveDay = false);

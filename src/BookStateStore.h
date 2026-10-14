@@ -19,6 +19,7 @@ struct BookState {
   uint32_t readingSeconds = 0;
   uint16_t readingSessions = 0;
   uint32_t pagesTurned = 0;
+  uint8_t rating = 0;
 };
 
 class BookStateStore : public PersistableStore<BookStateStore> {
@@ -41,6 +42,8 @@ class BookStateStore : public PersistableStore<BookStateStore> {
   // otherwise kept exactly as supplied so users can correct dates manually.
   bool updateEditable(const std::string& path, BookStatus status, uint8_t progress, uint32_t startDate,
                       uint32_t finishDate);
+  bool updateDates(const std::string& path, uint32_t startDate, uint32_t finishDate, uint32_t lastReadDate);
+  bool updateRating(const std::string& path, uint8_t rating);
   void setStatus(const std::string& path, BookStatus status);
   void reset(const std::string& path);
   bool removeByPath(const std::string& path);
