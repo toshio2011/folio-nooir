@@ -283,7 +283,8 @@ void SynopsisActivity::render(RenderLock&&) {
   }
 
   const char* confirmLabel = !bookPath.empty() && ratingFocused ? tr(STR_SELECT) : "";
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  const char* previousLabel = bookPath.empty() ? tr(STR_DIR_LEFT) : tr(STR_BOOK_RATING);
+  const char* nextLabel = bookPath.empty() ? tr(STR_DIR_RIGHT) : tr(STR_READ_FULL_SYNOPSIS);
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, previousLabel, nextLabel);  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }

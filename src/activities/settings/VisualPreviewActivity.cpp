@@ -228,11 +228,11 @@ void VisualPreviewActivity::loop() {
   const int currentTabIndex = currentTab == tabKinds_.end()
                                   ? 0
                                   : static_cast<int>(std::distance(tabKinds_.begin(), currentTab));
-  if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
     selectTab((currentTabIndex + tabCount - 1) % tabCount);
     return;
   }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
     selectTab((currentTabIndex + 1) % tabCount);
     return;
   }
@@ -249,10 +249,10 @@ void VisualPreviewActivity::loop() {
                                            : (rows > 0 ? controlHeight / rows : 0);
   if (handleTouch(controlTop, controlHeight, columns, rowHeight)) return;
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
     selectedRow_ = selectedRow_ == 0 ? static_cast<uint8_t>(rowCount() - 1) : selectedRow_ - 1;
     requestUpdate();
-  } else if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
+  } else if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
     selectedRow_ = static_cast<uint8_t>((selectedRow_ + 1) % std::max(1, rowCount()));
     requestUpdate();
   } else if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
