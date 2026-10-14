@@ -33,6 +33,7 @@
 #include "activities/RenderLock.h"
 #include "util/BookCacheUtils.h"
 #include "util/BookFormat.h"
+#include "util/HomeSnapshotPolicy.h"
 #include "util/StatisticsDate.h"
 #include "util/SynopsisPreview.h"
 #include "util/EpubDiagnostics.h"
@@ -52,7 +53,7 @@ constexpr char FOLIO_HOME_SNAPSHOT[] = "/.crosspoint/folio_home.bin";
 // back the post-boot hitch this activity was designed to avoid.
 constexpr char RECENT_CACHE_BOOTSTRAP_MARKER[] = "/.crosspoint/recent_cache_bootstrap_v1";
 constexpr uint32_t FOLIO_HOME_MAGIC = 0x464E484D;  // "FNHM"
-constexpr uint16_t FOLIO_HOME_VERSION = 5;
+constexpr uint16_t FOLIO_HOME_VERSION = 6;
 // Manual cover refresh is the only path that may decode a source image. Keep
 // it bounded for X3/X4, but allow normal high-quality covers (the old 512 KiB
 // limit rejected many perfectly usable 2 MiB JPEGs before the converter could
@@ -937,6 +938,15 @@ bool RecentBooksActivity::usesFourByTwoGrid() const {
          activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_GRID;
 }
 
+bool RecentBooksActivity::usesPersistentHomeSnapshot() const {
+  return usesFourByTwoGrid() || usesThreeCoverGrid();
+}
+
+size_t RecentBooksActivity::snapshotPageItemCount() const {
+  return usesThreeCoverGrid() ? HomeSnapshotPolicy::THREE_COVER_PAGE_ITEMS
+                              : HomeSnapshotPolicy::FOUR_BY_TWO_PAGE_ITEMS;
+}
+
 int RecentBooksActivity::activePageItems() const {
   if (usesThreeCoverGrid()) return 3;
   if (usesCarouselLayout()) return 1;
@@ -1158,7 +1168,7 @@ uint64_t RecentBooksActivity::snapshotDynamicKey() const {
 void RecentBooksActivity::captureSnapshotVisualState(const size_t pageStart) {
   snapshotBookVisualKeys.fill(0);
   size_t visibleIndex = 0;
-  const size_t pageEnd = pageStart + snapshotBookVisualKeys.size();
+  const size_t pageEnd = pageStart + snapshotPageItemCount();
   for (const auto& book : recentBooks) {
     if (!isVisibleRecentBook(book)) continue;
     if (visibleIndex >= pageStart && visibleIndex < pageEnd) {
@@ -1170,8 +1180,36 @@ void RecentBooksActivity::captureSnapshotVisualState(const size_t pageStart) {
   snapshotDynamicNeedsPatch = false;
 }
 
+void RecentBooksActivity::drawSnapshotSelectionOutline(const FolioShelfLayout& layout, const size_t index,
+                                                       const bool selected) {
+  if (index >= visibleBookCount) return;
+  if (usesThreeCoverGrid()) {
+    constexpr int gap = 10;
+    constexpr int columns = 3;
+    const int pageWidth = renderer.getScreenWidth();
+    const int cardWidth = (pageWidth - gap * (columns + 1)) / columns;
+    const int coverHeight = std::min(layout.gridHeight - 20, cardWidth * 3 / 2);
+    const size_t slot = index % HomeSnapshotPolicy::THREE_COVER_PAGE_ITEMS;
+    const int x = gap + static_cast<int>(slot) * (cardWidth + gap);
+    const int y = layout.gridTop + std::max(0, (layout.gridHeight - coverHeight) / 2);
+    renderer.drawRect(x - 3, y - 3, cardWidth + 6, coverHeight + 6, selected);
+    return;
+  }
+  if (!usesFourByTwoGrid()) return;
+
+  const int columns = std::max(1, layout.columns);
+  const int gap = layout.gridGap;
+  const int cardWidth = layout.cardWidth;
+  const int cardHeight = layout.cardHeight;
+  const size_t slot = index % HomeSnapshotPolicy::FOUR_BY_TWO_PAGE_ITEMS;
+  const int x = gap + static_cast<int>(slot % static_cast<size_t>(columns)) * (cardWidth + gap);
+  const int y = layout.gridTop + static_cast<int>(slot / static_cast<size_t>(columns)) * cardHeight;
+  const int coverHeight = std::max(40, std::min(cardHeight - 27, cardWidth * 3 / 2));
+  renderer.drawRect(x - 3, y - 3, cardWidth + 6, coverHeight + 6, selected);
+}
+
 bool RecentBooksActivity::restoreSnapshot() {
-  if (!usesFourByTwoGrid() || !renderer.hasFrameBuffer()) return false;
+  if (!usesPersistentHomeSnapshot() || !renderer.hasFrameBuffer()) return false;
   HalFile file;
   if (!Storage.openFileForRead("SHELF", FOLIO_HOME_SNAPSHOT, file)) return false;
 
@@ -1180,6 +1218,7 @@ bool RecentBooksActivity::restoreSnapshot() {
   uint16_t width = 0;
   uint16_t height = 0;
   uint32_t dataSize = 0;
+  uint8_t pageItems = 0;
   uint64_t key = 0;
   uint32_t pageStart = 0;
   uint32_t restoredSelectorIndex = 0;
@@ -1190,11 +1229,13 @@ bool RecentBooksActivity::restoreSnapshot() {
   std::array<uint64_t, BOOKS_PER_PAGE> bookVisualKeys{};
   if (file.read(&magic, sizeof(magic)) != sizeof(magic) || file.read(&version, sizeof(version)) != sizeof(version) ||
       file.read(&width, sizeof(width)) != sizeof(width) || file.read(&height, sizeof(height)) != sizeof(height) ||
-      file.read(&dataSize, sizeof(dataSize)) != sizeof(dataSize) || file.read(&key, sizeof(key)) != sizeof(key)) {
+      file.read(&dataSize, sizeof(dataSize)) != sizeof(dataSize) || file.read(&pageItems, sizeof(pageItems)) != sizeof(pageItems) ||
+      file.read(&key, sizeof(key)) != sizeof(key)) {
     return false;
   }
   if (magic != FOLIO_HOME_MAGIC || version != FOLIO_HOME_VERSION || width != renderer.getScreenWidth() ||
       height != renderer.getScreenHeight() || dataSize != renderer.getBufferSize() ||
+      !HomeSnapshotPolicy::pageSizeMatches(pageItems, snapshotPageItemCount()) ||
       file.read(&pageStart, sizeof(pageStart)) != sizeof(pageStart) ||
       file.read(&restoredSelectorIndex, sizeof(restoredSelectorIndex)) != sizeof(restoredSelectorIndex) ||
       file.read(&restoredTab, sizeof(restoredTab)) != sizeof(restoredTab) ||
@@ -1210,7 +1251,7 @@ bool RecentBooksActivity::restoreSnapshot() {
   rebuildVisibleBooks();
   bool sameVisiblePage = restoredVisibleBookCount == visibleBookCount;
   size_t visibleIndex = 0;
-  const size_t restoredPageEnd = static_cast<size_t>(pageStart) + BOOKS_PER_PAGE;
+  const size_t restoredPageEnd = static_cast<size_t>(pageStart) + pageItems;
   for (const auto& book : recentBooks) {
     if (!sameVisiblePage) break;
     if (!isVisibleRecentBook(book)) continue;
@@ -1222,13 +1263,21 @@ bool RecentBooksActivity::restoreSnapshot() {
     ++visibleIndex;
     if (visibleIndex >= restoredPageEnd) break;
   }
-  if (!sameVisiblePage || key != snapshotKey() || restoredSelectorIndex >= visibleBookCount ||
-      (restoredSelectorIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE != pageStart) {
+  const uint64_t currentStructuralKey = snapshotKey();
+  if (!sameVisiblePage || key != currentStructuralKey ||
+      !HomeSnapshotPolicy::pageSelectionMatches(restoredSelectorIndex, pageStart, pageItems, visibleBookCount)) {
     activeTab = originalTab;
     rebuildVisibleBooks();
     selectorIndex = 0;
     return false;
   }
+  // The selected book is part of the dynamic signature because the featured
+  // panel can change when navigation state is saved without rewriting pixels.
+  // Compare against the persisted selection, not the transient pre-restore
+  // selector left by the previous activity instance.
+  selectorIndex = restoredSelectorIndex;
+  const auto restoreAction = HomeSnapshotPolicy::classifyRestore(
+      key, currentStructuralKey, dynamicKey, snapshotDynamicKey());
   const bool loaded = file.read(renderer.getFrameBuffer(), dataSize) == static_cast<int>(dataSize);
   if (loaded) {
     selectorIndex = restoredSelectorIndex;
@@ -1236,7 +1285,7 @@ bool RecentBooksActivity::restoreSnapshot() {
     snapshotSelectorIndex = selectorIndex;
     snapshotPresentationKeyValue = snapshotPresentationKey();
     snapshotBookVisualKeys = bookVisualKeys;
-    snapshotDynamicNeedsPatch = dynamicKey != snapshotDynamicKey();
+    snapshotDynamicNeedsPatch = restoreAction == HomeSnapshotPolicy::RestoreAction::PatchDynamic;
     const RecentBook& selected = recentBooks[selectedRecentIndex()];
     lastFeaturedPath = selected.path;
     lastFeaturedCoverPath = selected.coverBmpPath;
@@ -1251,7 +1300,7 @@ bool RecentBooksActivity::restoreSnapshot() {
 }
 
 void RecentBooksActivity::writeSnapshot() {
-  if (!renderer.hasFrameBuffer()) return;
+  if (!usesPersistentHomeSnapshot() || !renderer.hasFrameBuffer()) return;
   Storage.ensureDirectoryExists("/.crosspoint");
   HalFile file;
   if (!Storage.openFileForWrite("SHELF", FOLIO_HOME_SNAPSHOT, file)) return;
@@ -1260,8 +1309,9 @@ void RecentBooksActivity::writeSnapshot() {
   const uint16_t width = static_cast<uint16_t>(renderer.getScreenWidth());
   const uint16_t height = static_cast<uint16_t>(renderer.getScreenHeight());
   const uint32_t dataSize = renderer.getBufferSize();
+  const uint8_t pageItems = static_cast<uint8_t>(snapshotPageItemCount());
   const uint64_t key = snapshotKey();
-  const uint32_t pageStart = static_cast<uint32_t>((selectorIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE);
+  const uint32_t pageStart = static_cast<uint32_t>(HomeSnapshotPolicy::pageStartForSelection(selectorIndex, pageItems));
   const uint64_t dynamicKey = snapshotDynamicKey();
   const uint32_t savedSelectorIndex = static_cast<uint32_t>(selectorIndex);
   const uint8_t savedTab = activeTab;
@@ -1269,7 +1319,7 @@ void RecentBooksActivity::writeSnapshot() {
   std::array<uint64_t, BOOKS_PER_PAGE> bookPathKeys{};
   std::array<uint64_t, BOOKS_PER_PAGE> bookVisualKeys{};
   size_t visibleIndex = 0;
-  const size_t pageEnd = static_cast<size_t>(pageStart) + bookPathKeys.size();
+  const size_t pageEnd = static_cast<size_t>(pageStart) + pageItems;
   for (const auto& book : recentBooks) {
     if (!isVisibleRecentBook(book)) continue;
     if (visibleIndex >= pageStart && visibleIndex < pageEnd) {
@@ -1284,6 +1334,7 @@ void RecentBooksActivity::writeSnapshot() {
                   file.write(&width, sizeof(width)) == sizeof(width) &&
                   file.write(&height, sizeof(height)) == sizeof(height) &&
                   file.write(&dataSize, sizeof(dataSize)) == sizeof(dataSize) &&
+                  file.write(&pageItems, sizeof(pageItems)) == sizeof(pageItems) &&
                   file.write(&key, sizeof(key)) == sizeof(key) &&
                   file.write(&pageStart, sizeof(pageStart)) == sizeof(pageStart) &&
                   file.write(&savedSelectorIndex, sizeof(savedSelectorIndex)) == sizeof(savedSelectorIndex) &&
@@ -1305,6 +1356,7 @@ void RecentBooksActivity::writeSnapshot() {
 }
 
 void RecentBooksActivity::writeSnapshotNavigationState() {
+  if (!usesPersistentHomeSnapshot()) return;
   HalFile file = Storage.open(FOLIO_HOME_SNAPSHOT, O_RDWR);
   if (!file) return;
 
@@ -1313,22 +1365,25 @@ void RecentBooksActivity::writeSnapshotNavigationState() {
   uint16_t width = 0;
   uint16_t height = 0;
   uint32_t dataSize = 0;
+  uint8_t pageItems = 0;
   uint64_t key = 0;
   if (file.read(&magic, sizeof(magic)) != sizeof(magic) || file.read(&version, sizeof(version)) != sizeof(version) ||
       file.read(&width, sizeof(width)) != sizeof(width) || file.read(&height, sizeof(height)) != sizeof(height) ||
-      file.read(&dataSize, sizeof(dataSize)) != sizeof(dataSize) || file.read(&key, sizeof(key)) != sizeof(key) ||
+      file.read(&dataSize, sizeof(dataSize)) != sizeof(dataSize) || file.read(&pageItems, sizeof(pageItems)) != sizeof(pageItems) ||
+      file.read(&key, sizeof(key)) != sizeof(key) ||
       magic != FOLIO_HOME_MAGIC || version != FOLIO_HOME_VERSION || width != renderer.getScreenWidth() ||
-      height != renderer.getScreenHeight() || dataSize != renderer.getBufferSize() || key != snapshotKey()) {
+      height != renderer.getScreenHeight() || dataSize != renderer.getBufferSize() ||
+      !HomeSnapshotPolicy::pageSizeMatches(pageItems, snapshotPageItemCount()) || key != snapshotKey()) {
     return;
   }
   uint32_t storedPageStart = 0;
   if (file.read(&storedPageStart, sizeof(storedPageStart)) != sizeof(storedPageStart) ||
-      storedPageStart != (selectorIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE) {
+      storedPageStart != HomeSnapshotPolicy::pageStartForSelection(selectorIndex, pageItems)) {
     return;
   }
 
   const size_t selectorOffset = sizeof(magic) + sizeof(version) + sizeof(width) + sizeof(height) + sizeof(dataSize) +
-                                sizeof(key) + sizeof(uint32_t);
+                                sizeof(pageItems) + sizeof(key) + sizeof(uint32_t);
   if (!file.seek(selectorOffset)) return;
   const uint32_t savedSelectorIndex = static_cast<uint32_t>(selectorIndex);
   const uint8_t savedTab = activeTab;
@@ -1874,7 +1929,7 @@ void RecentBooksActivity::onExit() {
           static_cast<unsigned>(recentBooks.capacity() * sizeof(RecentBook)), static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(ESP.getMaxAllocHeap()));
 #endif
-  if (usesFourByTwoGrid() && visibleBookCount > 0) writeSnapshotNavigationState();
+  if (usesPersistentHomeSnapshot() && visibleBookCount > 0) writeSnapshotNavigationState();
   Activity::onExit();
   // This activity is leaving permanently. Release the rebuildable book-vector
   // allocation before invalidating thumbnail sources so the outgoing shelf's
@@ -2004,7 +2059,7 @@ void RecentBooksActivity::loop() {
   const bool spineLayout = usesSpineLayout();
   const bool twoRowSpineLayout = usesTwoRowSpineLayout();
   const bool standaloneCarousel = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::CAROUSEL;
-  const bool snapshotLayout = usesFourByTwoGrid();
+  const bool snapshotLayout = usesPersistentHomeSnapshot();
   const bool threeCoverGrid = usesThreeCoverGrid();
   FolioShelfLayout layout{};
   if (carouselTheme) {
@@ -2030,28 +2085,12 @@ void RecentBooksActivity::loop() {
     // panel refresh.
     bool focusOutlineErased = false;
     if (visibleBookCount > 0) {
-      const int columns = layout.columns;
-      const int gap = layout.gridGap;
-      const int cardWidth = layout.cardWidth;
-      const int cardHeight = layout.cardHeight;
-      const size_t slot = selectorIndex % BOOKS_PER_PAGE;
-      const int x = gap + static_cast<int>(slot % columns) * (cardWidth + gap);
-      const int y = layout.gridTop + static_cast<int>(slot / columns) * cardHeight;
-      const int coverHeight = std::max(40, std::min(cardHeight - 27, cardWidth * 3 / 2));
-      renderer.drawRect(x - 3, y - 3, cardWidth + 6, coverHeight + 6, false);
+      drawSnapshotSelectionOutline(layout, selectorIndex, false);
       focusOutlineErased = true;
     }
     writeSnapshot();
     if (focusOutlineErased && visibleBookCount > 0) {
-      const int columns = layout.columns;
-      const int gap = layout.gridGap;
-      const int cardWidth = layout.cardWidth;
-      const int cardHeight = layout.cardHeight;
-      const size_t slot = selectorIndex % BOOKS_PER_PAGE;
-      const int x = gap + static_cast<int>(slot % columns) * (cardWidth + gap);
-      const int y = layout.gridTop + static_cast<int>(slot / columns) * cardHeight;
-      const int coverHeight = std::max(40, std::min(cardHeight - 27, cardWidth * 3 / 2));
-      renderer.drawRect(x - 3, y - 3, cardWidth + 6, coverHeight + 6);
+      drawSnapshotSelectionOutline(layout, selectorIndex, true);
     }
   }
 
@@ -3042,8 +3081,9 @@ void RecentBooksActivity::render(RenderLock&&) {
   // activity stack. Compare only the compact in-memory presentation key here;
   // the full book/snapshot key remains reserved for the SD restore path.
   const bool spineLayoutForKey = usesSpineLayout() || usesTwoRowSpineLayout();
-  const bool spineSelectionMoved = spineLayoutForKey && selectorIndex != snapshotSelectorIndex;
-  if (snapshotRestored && snapshotPresentationKeyValue != snapshotPresentationKey() && !spineSelectionMoved) {
+  const bool selectionMoved = selectorIndex != snapshotSelectorIndex && activeTab == lastRenderedTab &&
+                              (usesPersistentHomeSnapshot() || spineLayoutForKey);
+  if (snapshotRestored && snapshotPresentationKeyValue != snapshotPresentationKey() && !selectionMoved) {
     snapshotRestored = false;
     snapshotFastPathUsed = false;
     snapshotDynamicNeedsPatch = false;
@@ -3064,12 +3104,11 @@ void RecentBooksActivity::render(RenderLock&&) {
   }
 
   const bool threeCoverGrid = usesThreeCoverGrid();
+  const bool fourByTwoGrid = usesFourByTwoGrid();
   const bool spineLayout = usesSpineLayout();
   const bool twoRowSpineLayout = usesTwoRowSpineLayout();
-  const bool snapshotLayout = usesFourByTwoGrid();
-  // Grid3 can reuse the current in-memory frame on the same page, but it does
-  // not participate in the persisted 4x2 snapshot file or its focus outline.
-  const bool frameReuseLayout = snapshotLayout || threeCoverGrid;
+  const bool snapshotLayout = fourByTwoGrid || threeCoverGrid;
+  const bool frameReuseLayout = snapshotLayout;
   bool renderedFromSnapshot = frameReuseLayout && snapshotRestored;
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
@@ -3079,24 +3118,16 @@ void RecentBooksActivity::render(RenderLock&&) {
   // Settings and other non-library screens do not change the shelf data. If
   // the persisted frame matches the current book state, show that frame once
   // and add only the focus outline. This avoids a second full shelf rebuild
-  // (cover decoding, synopsis wrapping, and eight-card geometry) on return.
-  // The snapshot key includes presentation/progress fields, so a reader exit
-  // or cache update invalidates this path automatically.
+  // (cover decoding, synopsis wrapping, and grid geometry) on return.
+  // Structural changes require a rebuild; dynamic progress and reading-state
+  // changes take the targeted patch path before this fast return is allowed.
   if (snapshotLayout && renderedFromSnapshot &&
       initialRenderPending && !snapshotFastPathUsed && !overlayFrameShown && !menuPopup.isActive() &&
       !bookActionsPopup.isActive() && !retrievingBookCache && !recentCacheWarmupActive && !manualSingleRefresh &&
       !snapshotDynamicNeedsPatch && snapshotPageStart == currentPageStart && visibleBookCount > 0) {
     const auto& folioTheme = static_cast<const FolioNooirTheme&>(GUI);
     const FolioShelfLayout layout = folioTheme.shelfLayout(renderer, metrics);
-    const int columns = layout.columns;
-    const int gap = layout.gridGap;
-    const int cardWidth = layout.cardWidth;
-    const int cardHeight = layout.cardHeight;
-    const size_t slot = selectorIndex % BOOKS_PER_PAGE;
-    const int x = gap + static_cast<int>(slot % columns) * (cardWidth + gap);
-    const int y = layout.gridTop + static_cast<int>(slot / columns) * cardHeight;
-    const int coverHeight = std::max(40, std::min(cardHeight - 27, cardWidth * 3 / 2));
-    renderer.drawRect(x - 3, y - 3, cardWidth + 6, coverHeight + 6);
+    drawSnapshotSelectionOutline(layout, selectorIndex, true);
     renderer.displayBuffer();
     markStatsReturnFrameReady();
     snapshotFastPathUsed = true;
@@ -3173,19 +3204,6 @@ void RecentBooksActivity::render(RenderLock&&) {
 
   const auto& folioTheme = static_cast<const FolioNooirTheme&>(GUI);
   const FolioShelfLayout layout = folioTheme.shelfLayout(renderer, metrics);
-  auto drawThreeCoverSelection = [&](const size_t index, const bool selected) {
-    if (!threeCoverGrid || index >= visibleBookCount) return;
-    const size_t pageStart = (selectorIndex / gridPageItems) * gridPageItems;
-    if (index < pageStart || index >= pageStart + gridPageItems) return;
-    const int gap = 10;
-    const int columns = 3;
-    const int cardWidth = (pageWidth - gap * (columns + 1)) / columns;
-    const int coverHeight = std::min(layout.gridHeight - 20, cardWidth * 3 / 2);
-    const int slot = static_cast<int>(index - pageStart);
-    const int x = gap + (slot % columns) * (cardWidth + gap);
-    const int y = layout.gridTop + std::max(0, (layout.gridHeight - coverHeight) / 2);
-    renderer.drawRect(x - 3, y - 3, cardWidth + 6, coverHeight + 6, selected);
-  };
   folioTheme.drawShelfTabs(renderer, layout, activeTab);
   folioTheme.drawShelfBattery(renderer, layout, metrics);
 
@@ -3279,7 +3297,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     const int detailX = showFeaturedCover ? detailPadding * 2 + detailCoverWidth : detailPadding;
     const int detailWidth = std::max(1, pageWidth - detailX - detailPadding);
     renderer.fillRect(detailX, contentTop + 1, detailWidth, detailHeight - 2, false);
-    const size_t selectedSlot = selectorIndex % BOOKS_PER_PAGE;
+    const size_t selectedSlot = selectorIndex % static_cast<size_t>(gridPageItems);
     const bool selectedCoverProgressChanged = snapshotLayout && renderedFromSnapshot &&
                                               selectedSlot < snapshotBookVisualKeys.size() &&
                                               snapshotBookVisualKeys[selectedSlot] != bookCoverVisualKey(selected);
@@ -3642,10 +3660,6 @@ void RecentBooksActivity::render(RenderLock&&) {
       folioTheme.drawPageIndicator(renderer, layout, selectorIndex / gridPageItems + 1, pageCount);
     }
 
-    if (threeCoverGrid && !renderedFromSnapshot) {
-      drawThreeCoverSelection(selectorIndex, true);
-    }
-
   }
   drawStats();
 
@@ -3653,19 +3667,7 @@ void RecentBooksActivity::render(RenderLock&&) {
   // the previous focus outline instead of restoring the whole SD snapshot.
   if (snapshotLayout && renderedFromSnapshot && lastRenderedSelectorIndex != SIZE_MAX &&
       lastRenderedSelectorIndex != selectorIndex && lastRenderedPageStart == currentPageStart) {
-    const int columns = layout.columns;
-    const int gap = layout.gridGap;
-    const int cardWidth = layout.cardWidth;
-    const int cardHeight = layout.cardHeight;
-    const size_t oldSlot = lastRenderedSelectorIndex % BOOKS_PER_PAGE;
-    const int oldX = gap + static_cast<int>(oldSlot % columns) * (cardWidth + gap);
-    const int oldY = layout.gridTop + static_cast<int>(oldSlot / columns) * cardHeight;
-    const int oldCoverHeight = std::max(40, std::min(cardHeight - 27, cardWidth * 3 / 2));
-    renderer.drawRect(oldX - 3, oldY - 3, cardWidth + 6, oldCoverHeight + 6, false);
-  } else if (threeCoverGrid && renderedFromSnapshot && lastRenderedSelectorIndex != SIZE_MAX &&
-             lastRenderedSelectorIndex != selectorIndex && lastRenderedPageStart == currentPageStart) {
-    drawThreeCoverSelection(lastRenderedSelectorIndex, false);
-    drawThreeCoverSelection(selectorIndex, true);
+    drawSnapshotSelectionOutline(layout, lastRenderedSelectorIndex, false);
   }
 
   // Persist the base frame before adding the current selection outline. The
@@ -3679,17 +3681,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     snapshotRestored = false;
     snapshotPageStart = SIZE_MAX;
   }
-  if (snapshotLayout && visibleBookCount > 0) {
-    const int columns = layout.columns;
-    const int gap = layout.gridGap;
-    const int cardWidth = layout.cardWidth;
-    const int cardHeight = layout.cardHeight;
-    const size_t slot = selectorIndex % BOOKS_PER_PAGE;
-    const int x = gap + static_cast<int>(slot % columns) * (cardWidth + gap);
-    const int y = layout.gridTop + static_cast<int>(slot / columns) * cardHeight;
-    const int coverHeight = std::max(40, std::min(cardHeight - 27, cardWidth * 3 / 2));
-    renderer.drawRect(x - 3, y - 3, cardWidth + 6, coverHeight + 6);
-  }
+  if (snapshotLayout && visibleBookCount > 0) drawSnapshotSelectionOutline(layout, selectorIndex, true);
 
   if (menuPopup.processRender(renderer, mappedInput)) {
     overlayFrameShown = true;
