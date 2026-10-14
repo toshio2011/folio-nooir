@@ -52,7 +52,7 @@ constexpr char FOLIO_HOME_SNAPSHOT[] = "/.crosspoint/folio_home.bin";
 // back the post-boot hitch this activity was designed to avoid.
 constexpr char RECENT_CACHE_BOOTSTRAP_MARKER[] = "/.crosspoint/recent_cache_bootstrap_v1";
 constexpr uint32_t FOLIO_HOME_MAGIC = 0x464E484D;  // "FNHM"
-constexpr uint16_t FOLIO_HOME_VERSION = 3;
+constexpr uint16_t FOLIO_HOME_VERSION = 5;
 // Manual cover refresh is the only path that may decode a source image. Keep
 // it bounded for X3/X4, but allow normal high-quality covers (the old 512 KiB
 // limit rejected many perfectly usable 2 MiB JPEGs before the converter could
@@ -884,6 +884,9 @@ uint64_t RecentBooksActivity::snapshotKey() const {
   const int height = renderer.getScreenHeight();
   hashBytes(hash, &width, sizeof(width));
   hashBytes(hash, &height, sizeof(height));
+  hashBytes(hash, &SETTINGS.uiTheme, sizeof(SETTINGS.uiTheme));
+  hashBytes(hash, &SETTINGS.orientation, sizeof(SETTINGS.orientation));
+  hashBytes(hash, &SETTINGS.uiScalePercent, sizeof(SETTINGS.uiScalePercent));
   hashBytes(hash, &activeTab, sizeof(activeTab));
   const uint8_t layout = activeBookLayout();
   hashBytes(hash, &layout, sizeof(layout));
@@ -895,42 +898,31 @@ uint64_t RecentBooksActivity::snapshotKey() const {
       SETTINGS.featuredShowReadingTime,  SETTINGS.featuredShowSessions,
   };
   hashBytes(hash, visualSettings, sizeof(visualSettings));
+  hashBytes(hash, &SETTINGS.language, sizeof(SETTINGS.language));
+  hashBytes(hash, &SETTINGS.hideBatteryPercentage, sizeof(SETTINGS.hideBatteryPercentage));
+  const size_t bookCount = recentBooks.size();
+  hashBytes(hash, &bookCount, sizeof(bookCount));
   for (const auto& book : recentBooks) {
-    hashBytes(hash, book.path.data(), book.path.size());
-    hashBytes(hash, book.title.data(), book.title.size());
-    hashBytes(hash, book.author.data(), book.author.size());
-    hashBytes(hash, book.coverBmpPath.data(), book.coverBmpPath.size());
-    hashBytes(hash, book.synopsis.data(), book.synopsis.size());
-    hashBytes(hash, &book.progressPercent, sizeof(book.progressPercent));
-    hashBytes(hash, &book.readingSeconds, sizeof(book.readingSeconds));
-    hashBytes(hash, &book.lastSessionSeconds, sizeof(book.lastSessionSeconds));
-    hashBytes(hash, &book.dailyReadingSeconds, sizeof(book.dailyReadingSeconds));
-    hashBytes(hash, &book.dailyReadingDateKey, sizeof(book.dailyReadingDateKey));
-    hashBytes(hash, &book.readingSessions, sizeof(book.readingSessions));
-    hashBytes(hash, &book.pagesTurned, sizeof(book.pagesTurned));
-    const BookState* state = BOOK_STATES.find(book.path);
-    const uint8_t status = state ? static_cast<uint8_t>(state->status) : 0;
-    hashBytes(hash, &status, sizeof(status));
-    if (state != nullptr) {
-      hashBytes(hash, &state->progressPercent, sizeof(state->progressPercent));
-      hashBytes(hash, &state->startDate, sizeof(state->startDate));
-      hashBytes(hash, &state->finishDate, sizeof(state->finishDate));
-      hashBytes(hash, &state->readingSeconds, sizeof(state->readingSeconds));
-      hashBytes(hash, &state->readingSessions, sizeof(state->readingSessions));
-    }
+    const uint64_t pathHash = hashText(book.path);
+    const uint64_t titleHash = hashText(book.title);
+    const uint64_t authorHash = hashText(book.author);
+    const uint64_t coverHash = hashText(book.coverBmpPath);
+    const uint64_t synopsisHash = hashText(book.synopsis);
+    hashBytes(hash, &pathHash, sizeof(pathHash));
+    hashBytes(hash, &titleHash, sizeof(titleHash));
+    hashBytes(hash, &authorHash, sizeof(authorHash));
+    hashBytes(hash, &coverHash, sizeof(coverHash));
+    hashBytes(hash, &synopsisHash, sizeof(synopsisHash));
     const BookMetadataOverride* override = BOOK_METADATA_OVERRIDES.find(book.path);
     const uint8_t hasOverride = override != nullptr;
     hashBytes(hash, &hasOverride, sizeof(hasOverride));
     if (override != nullptr) {
-      const size_t titleSize = override->title.size();
-      const size_t authorSize = override->author.size();
-      const size_t synopsisSize = override->synopsis.size();
-      hashBytes(hash, &titleSize, sizeof(titleSize));
-      hashBytes(hash, override->title.data(), override->title.size());
-      hashBytes(hash, &authorSize, sizeof(authorSize));
-      hashBytes(hash, override->author.data(), override->author.size());
-      hashBytes(hash, &synopsisSize, sizeof(synopsisSize));
-      hashBytes(hash, override->synopsis.data(), override->synopsis.size());
+      const uint64_t overrideTitleHash = hashText(override->title);
+      const uint64_t overrideAuthorHash = hashText(override->author);
+      const uint64_t overrideSynopsisHash = hashText(override->synopsis);
+      hashBytes(hash, &overrideTitleHash, sizeof(overrideTitleHash));
+      hashBytes(hash, &overrideAuthorHash, sizeof(overrideAuthorHash));
+      hashBytes(hash, &overrideSynopsisHash, sizeof(overrideSynopsisHash));
     }
   }
   return hash;
@@ -940,45 +932,133 @@ uint64_t RecentBooksActivity::snapshotPresentationKey() const {
   uint64_t hash = 1469598103934665603ULL;
   const uint8_t settings[] = {
       SETTINGS.uiTheme, SETTINGS.coverProgressStyle, SETTINGS.featuredShowCover, SETTINGS.featuredShowFileType,
-      SETTINGS.featuredShowAuthor, SETTINGS.featuredShowSynopsis, SETTINGS.featuredShowStatus, SETTINGS.featuredShowProgress,
-      SETTINGS.featuredShowStartedDate, SETTINGS.featuredShowFinishedDate,
-      SETTINGS.featuredShowReadingTime, SETTINGS.featuredShowSessions,
+      SETTINGS.featuredShowAuthor, SETTINGS.featuredShowSynopsis, SETTINGS.featuredShowStatus,
+      SETTINGS.featuredShowProgress, SETTINGS.featuredShowStartedDate, SETTINGS.featuredShowFinishedDate,
+      SETTINGS.featuredShowReadingTime, SETTINGS.featuredShowSessions, SETTINGS.hideBatteryPercentage,
+      SETTINGS.orientation,
   };
   hashBytes(hash, settings, sizeof(settings));
+  hashBytes(hash, &SETTINGS.language, sizeof(SETTINGS.language));
+  hashBytes(hash, &SETTINGS.uiScalePercent, sizeof(SETTINGS.uiScalePercent));
   const uint8_t layout = activeBookLayout();
   hashBytes(hash, &layout, sizeof(layout));
   hashBytes(hash, &activeTab, sizeof(activeTab));
+  const int width = renderer.getScreenWidth();
+  const int height = renderer.getScreenHeight();
+  hashBytes(hash, &width, sizeof(width));
+  hashBytes(hash, &height, sizeof(height));
   if (visibleBookCount > 0 && !recentBooks.empty()) {
     const RecentBook& selected = recentBooks[selectedRecentIndex()];
-    hashBytes(hash, selected.path.data(), selected.path.size());
-    hashBytes(hash, &selected.progressPercent, sizeof(selected.progressPercent));
-    hashBytes(hash, &selected.readingSeconds, sizeof(selected.readingSeconds));
-    hashBytes(hash, &selected.readingSessions, sizeof(selected.readingSessions));
-    const BookState* state = BOOK_STATES.find(selected.path);
-    if (state != nullptr) {
-      hashBytes(hash, &state->status, sizeof(state->status));
-      hashBytes(hash, &state->progressPercent, sizeof(state->progressPercent));
-      hashBytes(hash, &state->startDate, sizeof(state->startDate));
-      hashBytes(hash, &state->finishDate, sizeof(state->finishDate));
-      hashBytes(hash, &state->readingSeconds, sizeof(state->readingSeconds));
-      hashBytes(hash, &state->readingSessions, sizeof(state->readingSessions));
-    }
+    const uint64_t pathHash = hashText(selected.path);
+    const uint64_t titleHash = hashText(selected.title);
+    const uint64_t authorHash = hashText(selected.author);
+    const uint64_t coverHash = hashText(selected.coverBmpPath);
+    const uint64_t synopsisHash = hashText(selected.synopsis);
+    hashBytes(hash, &pathHash, sizeof(pathHash));
+    hashBytes(hash, &titleHash, sizeof(titleHash));
+    hashBytes(hash, &authorHash, sizeof(authorHash));
+    hashBytes(hash, &coverHash, sizeof(coverHash));
+    hashBytes(hash, &synopsisHash, sizeof(synopsisHash));
     const BookMetadataOverride* override = BOOK_METADATA_OVERRIDES.find(selected.path);
     const uint8_t hasOverride = override != nullptr;
     hashBytes(hash, &hasOverride, sizeof(hasOverride));
     if (override != nullptr) {
-      const size_t titleSize = override->title.size();
-      const size_t authorSize = override->author.size();
-      const size_t synopsisSize = override->synopsis.size();
-      hashBytes(hash, &titleSize, sizeof(titleSize));
-      hashBytes(hash, override->title.data(), override->title.size());
-      hashBytes(hash, &authorSize, sizeof(authorSize));
-      hashBytes(hash, override->author.data(), override->author.size());
-      hashBytes(hash, &synopsisSize, sizeof(synopsisSize));
-      hashBytes(hash, override->synopsis.data(), override->synopsis.size());
+      const uint64_t overrideTitleHash = hashText(override->title);
+      const uint64_t overrideAuthorHash = hashText(override->author);
+      const uint64_t overrideSynopsisHash = hashText(override->synopsis);
+      hashBytes(hash, &overrideTitleHash, sizeof(overrideTitleHash));
+      hashBytes(hash, &overrideAuthorHash, sizeof(overrideAuthorHash));
+      hashBytes(hash, &overrideSynopsisHash, sizeof(overrideSynopsisHash));
     }
   }
   return hash;
+}
+
+uint64_t RecentBooksActivity::bookDynamicKey(const RecentBook& book) const {
+  uint64_t hash = 1469598103934665603ULL;
+  const uint64_t pathHash = hashText(book.path);
+  hashBytes(hash, &pathHash, sizeof(pathHash));
+  hashBytes(hash, &book.progressPercent, sizeof(book.progressPercent));
+  hashBytes(hash, &book.readingSeconds, sizeof(book.readingSeconds));
+  hashBytes(hash, &book.lastSessionSeconds, sizeof(book.lastSessionSeconds));
+  hashBytes(hash, &book.dailyReadingSeconds, sizeof(book.dailyReadingSeconds));
+  hashBytes(hash, &book.dailyReadingDateKey, sizeof(book.dailyReadingDateKey));
+  hashBytes(hash, &book.readingSessions, sizeof(book.readingSessions));
+  hashBytes(hash, &book.pagesTurned, sizeof(book.pagesTurned));
+  const BookState* state = BOOK_STATES.find(book.path);
+  const uint8_t hasState = state != nullptr;
+  hashBytes(hash, &hasState, sizeof(hasState));
+  if (state != nullptr) {
+    hashBytes(hash, &state->status, sizeof(state->status));
+    hashBytes(hash, &state->progressPercent, sizeof(state->progressPercent));
+    hashBytes(hash, &state->startDate, sizeof(state->startDate));
+    hashBytes(hash, &state->finishDate, sizeof(state->finishDate));
+    hashBytes(hash, &state->lastOpenedDate, sizeof(state->lastOpenedDate));
+    hashBytes(hash, &state->readingSeconds, sizeof(state->readingSeconds));
+    hashBytes(hash, &state->readingSessions, sizeof(state->readingSessions));
+    hashBytes(hash, &state->pagesTurned, sizeof(state->pagesTurned));
+  }
+  return hash;
+}
+
+uint64_t RecentBooksActivity::bookCoverVisualKey(const RecentBook& book) const {
+  uint64_t hash = 1469598103934665603ULL;
+  const uint64_t pathHash = hashText(book.path);
+  hashBytes(hash, &pathHash, sizeof(pathHash));
+  hashBytes(hash, &book.progressPercent, sizeof(book.progressPercent));
+  return hash;
+}
+
+uint64_t RecentBooksActivity::snapshotDynamicKey() const {
+  uint64_t hash = 1469598103934665603ULL;
+  const bool accumulated = !halClock.isAvailable();
+  const uint32_t today = halClock.getDateKey();
+  hashBytes(hash, &accumulated, sizeof(accumulated));
+  hashBytes(hash, &today, sizeof(today));
+  const size_t bookCount = recentBooks.size();
+  hashBytes(hash, &bookCount, sizeof(bookCount));
+  for (const auto& book : recentBooks) {
+    const uint64_t pathHash = hashText(book.path);
+    hashBytes(hash, &pathHash, sizeof(pathHash));
+    hashBytes(hash, &book.progressPercent, sizeof(book.progressPercent));
+    hashBytes(hash, &book.readingSeconds, sizeof(book.readingSeconds));
+    hashBytes(hash, &book.lastSessionSeconds, sizeof(book.lastSessionSeconds));
+    hashBytes(hash, &book.dailyReadingSeconds, sizeof(book.dailyReadingSeconds));
+    hashBytes(hash, &book.dailyReadingDateKey, sizeof(book.dailyReadingDateKey));
+    hashBytes(hash, &book.readingSessions, sizeof(book.readingSessions));
+    hashBytes(hash, &book.pagesTurned, sizeof(book.pagesTurned));
+  }
+  // Reading Stats can edit a book's Last Read date without changing its
+  // structural shelf metadata or RecentBooksStore entry. Keep those dates in
+  // the dynamic signature so a resumed Home frame refreshes after that edit.
+  const auto& bookStates = BOOK_STATES.getBooks();
+  const size_t stateCount = bookStates.size();
+  hashBytes(hash, &stateCount, sizeof(stateCount));
+  for (const auto& state : bookStates) {
+    const uint64_t pathHash = hashText(state.path);
+    hashBytes(hash, &pathHash, sizeof(pathHash));
+    hashBytes(hash, &state.lastOpenedDate, sizeof(state.lastOpenedDate));
+  }
+  if (visibleBookCount > 0 && !recentBooks.empty()) {
+    const uint64_t selectedKey = bookDynamicKey(recentBooks[selectedRecentIndex()]);
+    hashBytes(hash, &selectedKey, sizeof(selectedKey));
+  }
+  return hash;
+}
+
+void RecentBooksActivity::captureSnapshotVisualState(const size_t pageStart) {
+  snapshotBookVisualKeys.fill(0);
+  size_t visibleIndex = 0;
+  const size_t pageEnd = pageStart + snapshotBookVisualKeys.size();
+  for (const auto& book : recentBooks) {
+    if (!isVisibleRecentBook(book)) continue;
+    if (visibleIndex >= pageStart && visibleIndex < pageEnd) {
+      const size_t slot = visibleIndex - pageStart;
+      snapshotBookVisualKeys[slot] = bookCoverVisualKey(book);
+    }
+    if (++visibleIndex >= pageEnd) break;
+  }
+  snapshotDynamicNeedsPatch = false;
 }
 
 bool RecentBooksActivity::restoreSnapshot() {
@@ -993,22 +1073,70 @@ bool RecentBooksActivity::restoreSnapshot() {
   uint32_t dataSize = 0;
   uint64_t key = 0;
   uint32_t pageStart = 0;
+  uint32_t restoredSelectorIndex = 0;
+  uint8_t restoredTab = 0;
+  uint32_t restoredVisibleBookCount = 0;
+  uint64_t dynamicKey = 0;
+  std::array<uint64_t, BOOKS_PER_PAGE> bookPathKeys{};
+  std::array<uint64_t, BOOKS_PER_PAGE> bookVisualKeys{};
   if (file.read(&magic, sizeof(magic)) != sizeof(magic) || file.read(&version, sizeof(version)) != sizeof(version) ||
       file.read(&width, sizeof(width)) != sizeof(width) || file.read(&height, sizeof(height)) != sizeof(height) ||
       file.read(&dataSize, sizeof(dataSize)) != sizeof(dataSize) || file.read(&key, sizeof(key)) != sizeof(key)) {
     return false;
   }
   if (magic != FOLIO_HOME_MAGIC || version != FOLIO_HOME_VERSION || width != renderer.getScreenWidth() ||
-      height != renderer.getScreenHeight() || dataSize != renderer.getBufferSize() || key != snapshotKey() ||
-      file.read(&pageStart, sizeof(pageStart)) != sizeof(pageStart)) {
+      height != renderer.getScreenHeight() || dataSize != renderer.getBufferSize() ||
+      file.read(&pageStart, sizeof(pageStart)) != sizeof(pageStart) ||
+      file.read(&restoredSelectorIndex, sizeof(restoredSelectorIndex)) != sizeof(restoredSelectorIndex) ||
+      file.read(&restoredTab, sizeof(restoredTab)) != sizeof(restoredTab) ||
+      file.read(&restoredVisibleBookCount, sizeof(restoredVisibleBookCount)) != sizeof(restoredVisibleBookCount) ||
+      file.read(&dynamicKey, sizeof(dynamicKey)) != sizeof(dynamicKey) ||
+      file.read(bookPathKeys.data(), sizeof(bookPathKeys)) != sizeof(bookPathKeys) ||
+      file.read(bookVisualKeys.data(), sizeof(bookVisualKeys)) != sizeof(bookVisualKeys)) {
+    return false;
+  }
+  if (restoredTab != 1 && restoredTab != 2) return false;
+  const uint8_t originalTab = activeTab;
+  activeTab = restoredTab;
+  rebuildVisibleBooks();
+  bool sameVisiblePage = restoredVisibleBookCount == visibleBookCount;
+  size_t visibleIndex = 0;
+  const size_t restoredPageEnd = static_cast<size_t>(pageStart) + BOOKS_PER_PAGE;
+  for (const auto& book : recentBooks) {
+    if (!sameVisiblePage) break;
+    if (!isVisibleRecentBook(book)) continue;
+    if (visibleIndex >= pageStart && visibleIndex < restoredPageEnd &&
+        bookPathKeys[visibleIndex - pageStart] != hashText(book.path)) {
+      sameVisiblePage = false;
+      break;
+    }
+    ++visibleIndex;
+    if (visibleIndex >= restoredPageEnd) break;
+  }
+  if (!sameVisiblePage || key != snapshotKey() || restoredSelectorIndex >= visibleBookCount ||
+      (restoredSelectorIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE != pageStart) {
+    activeTab = originalTab;
+    rebuildVisibleBooks();
+    selectorIndex = 0;
     return false;
   }
   const bool loaded = file.read(renderer.getFrameBuffer(), dataSize) == static_cast<int>(dataSize);
   if (loaded) {
+    selectorIndex = restoredSelectorIndex;
     snapshotPageStart = pageStart;
-    snapshotSelectorIndex = SIZE_MAX;
+    snapshotSelectorIndex = selectorIndex;
     snapshotPresentationKeyValue = snapshotPresentationKey();
+    snapshotBookVisualKeys = bookVisualKeys;
+    snapshotDynamicNeedsPatch = dynamicKey != snapshotDynamicKey();
+    const RecentBook& selected = recentBooks[selectedRecentIndex()];
+    lastFeaturedPath = selected.path;
+    lastFeaturedCoverPath = selected.coverBmpPath;
+    lastFeaturedCoverVisible = SETTINGS.featuredShowCover != 0;
     LOG_DBG("SHELF", "Restored %u-byte Home snapshot", dataSize);
+  } else {
+    activeTab = originalTab;
+    rebuildVisibleBooks();
+    selectorIndex = 0;
   }
   return loaded;
 }
@@ -1025,6 +1153,23 @@ void RecentBooksActivity::writeSnapshot() {
   const uint32_t dataSize = renderer.getBufferSize();
   const uint64_t key = snapshotKey();
   const uint32_t pageStart = static_cast<uint32_t>((selectorIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE);
+  const uint64_t dynamicKey = snapshotDynamicKey();
+  const uint32_t savedSelectorIndex = static_cast<uint32_t>(selectorIndex);
+  const uint8_t savedTab = activeTab;
+  const uint32_t savedVisibleBookCount = static_cast<uint32_t>(visibleBookCount);
+  std::array<uint64_t, BOOKS_PER_PAGE> bookPathKeys{};
+  std::array<uint64_t, BOOKS_PER_PAGE> bookVisualKeys{};
+  size_t visibleIndex = 0;
+  const size_t pageEnd = static_cast<size_t>(pageStart) + bookPathKeys.size();
+  for (const auto& book : recentBooks) {
+    if (!isVisibleRecentBook(book)) continue;
+    if (visibleIndex >= pageStart && visibleIndex < pageEnd) {
+      const size_t slot = visibleIndex - pageStart;
+      bookPathKeys[slot] = hashText(book.path);
+      bookVisualKeys[slot] = bookCoverVisualKey(book);
+    }
+    if (++visibleIndex >= pageEnd) break;
+  }
   const bool ok = file.write(&magic, sizeof(magic)) == sizeof(magic) &&
                   file.write(&version, sizeof(version)) == sizeof(version) &&
                   file.write(&width, sizeof(width)) == sizeof(width) &&
@@ -1032,14 +1177,59 @@ void RecentBooksActivity::writeSnapshot() {
                   file.write(&dataSize, sizeof(dataSize)) == sizeof(dataSize) &&
                   file.write(&key, sizeof(key)) == sizeof(key) &&
                   file.write(&pageStart, sizeof(pageStart)) == sizeof(pageStart) &&
+                  file.write(&savedSelectorIndex, sizeof(savedSelectorIndex)) == sizeof(savedSelectorIndex) &&
+                  file.write(&savedTab, sizeof(savedTab)) == sizeof(savedTab) &&
+                  file.write(&savedVisibleBookCount, sizeof(savedVisibleBookCount)) == sizeof(savedVisibleBookCount) &&
+                  file.write(&dynamicKey, sizeof(dynamicKey)) == sizeof(dynamicKey) &&
+                  file.write(bookPathKeys.data(), sizeof(bookPathKeys)) == sizeof(bookPathKeys) &&
+                  file.write(bookVisualKeys.data(), sizeof(bookVisualKeys)) == sizeof(bookVisualKeys) &&
                   file.write(renderer.getFrameBuffer(), dataSize) == dataSize;
   if (ok) {
     snapshotPageStart = pageStart;
     snapshotSelectorIndex = selectorIndex;
     snapshotPresentationKeyValue = snapshotPresentationKey();
+    snapshotBookVisualKeys = bookVisualKeys;
+    snapshotDynamicNeedsPatch = false;
   } else {
     LOG_ERR("SHELF", "Failed to write Home snapshot");
   }
+}
+
+void RecentBooksActivity::writeSnapshotNavigationState() {
+  HalFile file = Storage.open(FOLIO_HOME_SNAPSHOT, O_RDWR);
+  if (!file) return;
+
+  uint32_t magic = 0;
+  uint16_t version = 0;
+  uint16_t width = 0;
+  uint16_t height = 0;
+  uint32_t dataSize = 0;
+  uint64_t key = 0;
+  if (file.read(&magic, sizeof(magic)) != sizeof(magic) || file.read(&version, sizeof(version)) != sizeof(version) ||
+      file.read(&width, sizeof(width)) != sizeof(width) || file.read(&height, sizeof(height)) != sizeof(height) ||
+      file.read(&dataSize, sizeof(dataSize)) != sizeof(dataSize) || file.read(&key, sizeof(key)) != sizeof(key) ||
+      magic != FOLIO_HOME_MAGIC || version != FOLIO_HOME_VERSION || width != renderer.getScreenWidth() ||
+      height != renderer.getScreenHeight() || dataSize != renderer.getBufferSize() || key != snapshotKey()) {
+    return;
+  }
+  uint32_t storedPageStart = 0;
+  if (file.read(&storedPageStart, sizeof(storedPageStart)) != sizeof(storedPageStart) ||
+      storedPageStart != (selectorIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE) {
+    return;
+  }
+
+  const size_t selectorOffset = sizeof(magic) + sizeof(version) + sizeof(width) + sizeof(height) + sizeof(dataSize) +
+                                sizeof(key) + sizeof(uint32_t);
+  if (!file.seek(selectorOffset)) return;
+  const uint32_t savedSelectorIndex = static_cast<uint32_t>(selectorIndex);
+  const uint8_t savedTab = activeTab;
+  if (file.write(&savedSelectorIndex, sizeof(savedSelectorIndex)) != sizeof(savedSelectorIndex) ||
+      file.write(&savedTab, sizeof(savedTab)) != sizeof(savedTab)) {
+    LOG_ERR("SHELF", "Failed to update Home snapshot navigation");
+    return;
+  }
+  LOG_DBG("SHELF", "Updated Home snapshot selection=%u tab=%u", static_cast<unsigned>(selectorIndex),
+          static_cast<unsigned>(activeTab));
 }
 
 void RecentBooksActivity::generateNextCover() {
@@ -1200,6 +1390,8 @@ void RecentBooksActivity::generateNextCover() {
       if (keepShelfSnapshot) {
         snapshotRestored = true;
         initialRenderPending = false;
+        snapshotWritePending = true;
+        snapshotWriteRequestedMs = millis();
       } else {
         snapshotRestored = false;
         if (Storage.exists(FOLIO_HOME_SNAPSHOT)) Storage.remove(FOLIO_HOME_SNAPSHOT);
@@ -1552,13 +1744,17 @@ void RecentBooksActivity::onEnter() {
   if (!snapshotRestored) {
     snapshotPageStart = SIZE_MAX;
     snapshotSelectorIndex = SIZE_MAX;
+    snapshotBookVisualKeys.fill(0);
+    snapshotDynamicNeedsPatch = false;
   }
   snapshotFastPathUsed = false;
   lastRenderedSelectorIndex = SIZE_MAX;
   lastRenderedPageStart = SIZE_MAX;
   lastRenderedTab = 0;
-  lastFeaturedPath.clear();
-  lastFeaturedCoverPath.clear();
+  if (!snapshotRestored) {
+    lastFeaturedPath.clear();
+    lastFeaturedCoverPath.clear();
+  }
   overlayFrameShown = false;
   initialRenderPending = true;
   requestUpdate();
@@ -1571,6 +1767,7 @@ void RecentBooksActivity::onExit() {
           static_cast<unsigned>(recentBooks.capacity() * sizeof(RecentBook)), static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(ESP.getMaxAllocHeap()));
 #endif
+  if (usesFourByTwoGrid() && visibleBookCount > 0) writeSnapshotNavigationState();
   Activity::onExit();
   // This activity is leaving permanently. Release the rebuildable book-vector
   // allocation before invalidating thumbnail sources so the outgoing shelf's
@@ -2737,14 +2934,18 @@ void RecentBooksActivity::render(RenderLock&&) {
   // A child screen can change visual settings while this shelf remains on the
   // activity stack. Compare only the compact in-memory presentation key here;
   // the full book/snapshot key remains reserved for the SD restore path.
-  if (snapshotRestored && snapshotPresentationKeyValue != snapshotPresentationKey()) {
+  if (snapshotRestored && lastRenderedSelectorIndex == selectorIndex && lastRenderedTab == activeTab &&
+      snapshotPresentationKeyValue != snapshotPresentationKey()) {
     snapshotRestored = false;
     snapshotFastPathUsed = false;
+    snapshotDynamicNeedsPatch = false;
     snapshotPageStart = SIZE_MAX;
     lastRenderedSelectorIndex = SIZE_MAX;
     lastRenderedPageStart = SIZE_MAX;
     initialRenderPending = true;
   }
+
+  const bool snapshotDynamicPatchPending = snapshotDynamicNeedsPatch;
 
   if (SETTINGS.uiTheme == CrossPointSettings::UI_THEME::CAROUSEL) {
     renderer.clearScreen();
@@ -2776,7 +2977,7 @@ void RecentBooksActivity::render(RenderLock&&) {
   if (snapshotLayout && renderedFromSnapshot &&
       initialRenderPending && !snapshotFastPathUsed && !overlayFrameShown && !menuPopup.isActive() &&
       !bookActionsPopup.isActive() && !retrievingBookCache && !recentCacheWarmupActive && !manualSingleRefresh &&
-      snapshotPageStart == currentPageStart && visibleBookCount > 0) {
+      !snapshotDynamicNeedsPatch && snapshotPageStart == currentPageStart && visibleBookCount > 0) {
     const auto& folioTheme = static_cast<const FolioNooirTheme&>(GUI);
     const FolioShelfLayout layout = folioTheme.shelfLayout(renderer, metrics);
     const int columns = layout.columns;
@@ -2970,22 +3171,31 @@ void RecentBooksActivity::render(RenderLock&&) {
     const int detailX = showFeaturedCover ? detailPadding * 2 + detailCoverWidth : detailPadding;
     const int detailWidth = std::max(1, pageWidth - detailX - detailPadding);
     renderer.fillRect(detailX, contentTop + 1, detailWidth, detailHeight - 2, false);
+    const size_t selectedSlot = selectorIndex % BOOKS_PER_PAGE;
+    const bool selectedCoverProgressChanged = snapshotLayout && renderedFromSnapshot &&
+                                              selectedSlot < snapshotBookVisualKeys.size() &&
+                                              snapshotBookVisualKeys[selectedSlot] != bookCoverVisualKey(selected);
     const bool featuredCoverCached = !manualSingleRefresh && renderedFromSnapshot && lastFeaturedPath == selected.path &&
                                      lastFeaturedCoverPath == selected.coverBmpPath &&
-                                     lastFeaturedCoverVisible == showFeaturedCover;
+                                     lastFeaturedCoverVisible == showFeaturedCover &&
+                                     !selectedCoverProgressChanged;
     if (showFeaturedCover && !featuredCoverCached) {
       renderer.fillRect(detailPadding, contentTop + 1, detailCoverWidth, detailHeight - 2, false);
     }
     // Use the same 220px source as the Folio shelf cards.  The standalone
     // Carousel still owns the 360px preference; using it here would make the
     // same cover look darker after the separate HQ thumbnail is downsampled.
-    if (showFeaturedCover) {
+    if (showFeaturedCover && !featuredCoverCached) {
       drawCover(selected, detailPadding, contentTop + 7, detailCoverWidth, detailCoverHeight, !featuredCoverCached,
                 false);
+      const unsigned long decorationStartedUs = micros();
       BookCoverTreatment::drawFrame(renderer, detailPadding, contentTop + 7, detailCoverWidth, detailCoverHeight,
                                     false, true);
-      BookCoverTreatment::drawProgress(renderer, detailPadding, contentTop + 7, detailCoverWidth, detailCoverHeight,
-                                       selected.progressPercent, false, true);
+      if (SETTINGS.coverProgressStyle != CrossPointSettings::COVER_PROGRESS_NONE) {
+        BookCoverTreatment::drawProgress(renderer, detailPadding, contentTop + 7, detailCoverWidth, detailCoverHeight,
+                                         selected.progressPercent, false, true);
+      }
+      LOG_DBG("PERF", "Home featured cover decorations=%luus", static_cast<unsigned long>(micros() - decorationStartedUs));
     }
 #if NOOIR_EPUB_DIAGNOSTICS
     if (!lifecycleHomeCoverRecorded) {
@@ -3278,6 +3488,8 @@ void RecentBooksActivity::render(RenderLock&&) {
       const int cardHeight = threeCoverGrid ? gridHeight : layout.cardHeight;
       const size_t pageStart = (selectorIndex / gridPageItems) * gridPageItems;
       if (threeCoverGrid && !renderedFromSnapshot) renderer.fillRect(0, gridTop, pageWidth, gridHeight, false);
+      unsigned long coverDecorationUs = 0;
+      size_t decoratedCardCount = 0;
       for (int slot = 0; slot < gridPageItems; ++slot) {
         const size_t index = pageStart + static_cast<size_t>(slot);
         if (index >= visibleBookCount) break;
@@ -3294,11 +3506,27 @@ void RecentBooksActivity::render(RenderLock&&) {
         if (!threeCoverGrid) {
           renderer.fillRect(x, y + coverHeight, cardWidth, std::max(1, cardHeight - coverHeight), false);
         }
-        const bool refreshCard = !renderedFromSnapshot || (manualSingleRefresh && index == selectorIndex);
-        drawCover(book, x, y, cardWidth, coverHeight, refreshCard, false);
-        BookCoverTreatment::drawFrame(renderer, x, y, cardWidth, coverHeight, index == selectorIndex);
-        BookCoverTreatment::drawProgress(renderer, x, y, cardWidth, coverHeight, book.progressPercent,
-                                         index == selectorIndex);
+        const uint64_t coverVisualKey = bookCoverVisualKey(book);
+        const bool dynamicCoverChanged = snapshotLayout && renderedFromSnapshot &&
+                                         snapshotBookVisualKeys[static_cast<size_t>(slot)] != coverVisualKey;
+        const bool refreshCard = !renderedFromSnapshot || (manualSingleRefresh && index == selectorIndex) ||
+                                 dynamicCoverChanged;
+        if (refreshCard) {
+          renderer.fillRect(x, y, cardWidth, coverHeight, false);
+          drawCover(book, x, y, cardWidth, coverHeight, true, false);
+          const unsigned long decorationStartedUs = micros();
+          BookCoverTreatment::drawFrame(renderer, x, y, cardWidth, coverHeight, false);
+          if (SETTINGS.coverProgressStyle != CrossPointSettings::COVER_PROGRESS_NONE) {
+            BookCoverTreatment::drawProgress(renderer, x, y, cardWidth, coverHeight, book.progressPercent, false);
+          }
+          coverDecorationUs += static_cast<unsigned long>(micros() - decorationStartedUs);
+          ++decoratedCardCount;
+        }
+        if (snapshotLayout) snapshotBookVisualKeys[static_cast<size_t>(slot)] = coverVisualKey;
+      }
+      if (decoratedCardCount > 0) {
+        LOG_DBG("PERF", "Home grid cover decorations cards=%u total=%luus",
+                static_cast<unsigned>(decoratedCardCount), coverDecorationUs);
       }
       const size_t pageCount = (visibleBookCount + gridPageItems - 1) / gridPageItems;
       folioTheme.drawPageIndicator(renderer, layout, selectorIndex / gridPageItems + 1, pageCount);
@@ -3406,6 +3634,16 @@ void RecentBooksActivity::render(RenderLock&&) {
   lastRenderedSelectorIndex = selectorIndex;
   lastRenderedPageStart = currentPageStart;
   lastRenderedTab = activeTab;
+  if (snapshotLayout && visibleBookCount > 0 && (!renderedFromSnapshot || snapshotDynamicPatchPending)) {
+    captureSnapshotVisualState(currentPageStart);
+  }
+  snapshotPresentationKeyValue = snapshotPresentationKey();
+  if (snapshotLayout && snapshotDynamicPatchPending) {
+    // A dynamic-only patch has updated the frame already. Refresh the SD copy
+    // after the user pauses so the next activity return will not patch it again.
+    snapshotWritePending = true;
+    snapshotWriteRequestedMs = millis();
+  }
   // The framebuffer is already a valid in-memory base frame even when its
   // optional SD snapshot is still waiting for the idle write. Keep using it
   // for immediate button navigation; otherwise the first button press after
