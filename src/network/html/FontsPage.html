@@ -136,11 +136,43 @@
       .family { border-color:var(--nooir-line); }
       .family-meta,.empty { color:var(--nooir-muted); }
       .btn,.btn-primary { border-radius:0; background:var(--nooir-accent); }
-    </style>
+        /* Shared touch and form behavior across the Nooir web pages. */
+    :root { --nooir-focus: #315f79; }
+    @media (prefers-color-scheme: dark) { :root { --nooir-focus: #9ccde4; } }
+    button, input, select, textarea { font: inherit; max-width: 100%; }
+    button { min-height: 40px; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: wait; }
+    :focus-visible { outline: 3px solid var(--nooir-focus); outline-offset: 2px; }
+    header nav, .nav-links { gap: 6px 14px; flex-wrap: wrap; }
+    header nav a, .nav-links a { min-height: 40px; display: inline-flex; align-items: center; }
+    .empty, .message, [role="status"] { line-height: 1.45; }
+    .error, .status-err, .error-message { color: #9d3028; }
+    .success, .status-ok, .success-message { color: #286742; }
+    @media (max-width: 700px) {
+      body { padding-left: 16px !important; padding-right: 16px !important; }
+      .nooir-header { margin-left: -16px !important; margin-right: -16px !important; padding-left: 16px !important; padding-right: 16px !important; }
+      header:not(.nooir-header) { padding-left: 16px; padding-right: 16px; }
+      main { padding-left: 16px; padding-right: 16px; }
+      header nav, .nav-links { gap: 4px 12px; }
+      header nav a, .nav-links a { min-height: 44px; }
+      .card { padding: 16px; }
+      .toolbar, .page-header, .action-buttons, .upload-form, .add-row, .family { flex-wrap: wrap; }
+      .setting-row { align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+      .setting-control { max-width: 100%; }
+      .setting-control input, .setting-control select, .setting-control textarea { max-width: 100%; }
+      .task { align-items: flex-start; flex-wrap: wrap; }
+      .task-actions { max-width: 100%; overflow-x: auto; padding-bottom: 4px; }
+      .book { flex-direction: column; gap: 8px; }
+      .book .meta { text-align: left; white-space: normal; }
+      .file-table { display: block; max-width: 100%; overflow-x: auto; }
+      .file-table th, .file-table td { white-space: nowrap; }
+      #progress-container { width: 100%; }
+      .modal { max-width: calc(100vw - 24px); }
+    }</style>
   </head>
   <body>
     <header class="nooir-header"><h1>Folio <span class="noo">Nooir</span></h1><nav>
-      <a href="/">Device</a><a href="/library">Bookshelf</a><a href="/stats">Reading Stats</a><a href="/todo">To-Do List</a><a href="/files">Transfer</a><a href="/settings">Settings</a><a href="/fonts" class="active">Typography</a>
+      <a href="/">Device</a><a href="/library">Bookshelf</a><a href="/stats">Reading Stats</a><a href="/todo">To-Do List</a><a href="/files">Transfer</a><a href="/clippings">Clippings</a><a href="/settings">Settings</a><a href="/fonts" class="active" aria-current="page">Typography</a>
     </nav></header>
 
     <div class="card">
@@ -155,7 +187,7 @@
         <button type="submit" class="btn btn-primary">Upload</button>
       </form>
       <p id="pickedInfo" class="family-meta" style="margin: 8px 0 0;"></p>
-      <div id="status"></div>
+      <div id="status" role="status" aria-live="polite"></div>
     </div>
 
   <script>

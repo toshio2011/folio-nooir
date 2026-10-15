@@ -16,8 +16,6 @@
 
 namespace {
 
-constexpr size_t MAX_CLIPPINGS = 32;
-constexpr size_t MAX_CLIP_BYTES = 1024;
 constexpr char CLIPPINGS_DIR[] = "/.crosspoint/clippings/";
 constexpr char MASTER_CLIPPINGS_FILE[] = "/My Clippings.txt";
 
@@ -77,7 +75,7 @@ bool save(const std::string& bookPath, const std::vector<ClippingEntry>& clippin
   for (size_t index = 0; index < clippings.size(); ++index) {
     const auto& clipping = clippings[index];
     JsonObject item = array.add<JsonObject>();
-    item["text"] = ClipFile::normalizeText(clipping.text).substr(0, MAX_CLIP_BYTES);
+    item["text"] = ClipFile::normalizeText(clipping.text).substr(0, ClipFile::MAX_CLIPPING_TEXT_BYTES);
     item["percentage"] = clipping.percentage;
     item["spine"] = clipping.spineIndex;
     item["page"] = clipping.page;
@@ -110,13 +108,13 @@ bool loadImpl(const std::string& bookPath, std::vector<ClippingEntry>& clippings
   if (!PersistableStoreBase::readDocFromFile(clippingPath(bookPath).c_str(), doc)) return false;
 
   JsonArrayConst array = doc["clippings"].as<JsonArrayConst>();
-  clippings.reserve(std::min(array.size(), MAX_CLIPPINGS));
-  if (notes) notes->reserve(std::min(array.size(), MAX_CLIPPINGS));
+  clippings.reserve(std::min(array.size(), ClipFile::MAX_CLIPPINGS_PER_BOOK));
+  if (notes) notes->reserve(std::min(array.size(), ClipFile::MAX_CLIPPINGS_PER_BOOK));
   for (JsonObjectConst item : array) {
     const char* text = item["text"] | "";
     if (!text[0]) continue;
     ClippingEntry clipping;
-    clipping.text = ClipFile::normalizeText(std::string(text)).substr(0, MAX_CLIP_BYTES);
+    clipping.text = ClipFile::normalizeText(std::string(text)).substr(0, ClipFile::MAX_CLIPPING_TEXT_BYTES);
     clipping.percentage = std::clamp(item["percentage"] | 0.0f, 0.0f, 1.0f);
     clipping.spineIndex = item["spine"] | static_cast<uint16_t>(0);
     clipping.page = item["page"] | static_cast<uint16_t>(0);
@@ -138,7 +136,7 @@ bool loadImpl(const std::string& bookPath, std::vector<ClippingEntry>& clippings
     LOG_DBG("CLP", "load style=%u bold=%u highlighted=1", static_cast<unsigned>(clipping.styleMask),
             clipping.bold ? 1u : 0u);
     clippings.push_back(std::move(clipping));
-    if (clippings.size() >= MAX_CLIPPINGS) break;
+    if (clippings.size() >= ClipFile::MAX_CLIPPINGS_PER_BOOK) break;
   }
   return true;
 }
@@ -273,17 +271,17 @@ bool replace(const std::string& bookPath, const std::vector<ClippingEntry>& clip
              const std::vector<std::string>& notes) {
   std::vector<ClippingEntry> bounded;
   std::vector<std::string> boundedNotes;
-  bounded.reserve(std::min(clippings.size(), MAX_CLIPPINGS));
-  boundedNotes.reserve(std::min(clippings.size(), MAX_CLIPPINGS));
+  bounded.reserve(std::min(clippings.size(), MAX_CLIPPINGS_PER_BOOK));
+  boundedNotes.reserve(std::min(clippings.size(), MAX_CLIPPINGS_PER_BOOK));
   for (size_t index = 0; index < clippings.size(); ++index) {
     const auto& clipping = clippings[index];
     if (clipping.text.empty()) continue;
     ClippingEntry copy = clipping;
     copy.text = normalizeText(copy.text);
-    copy.text.resize(std::min(copy.text.size(), MAX_CLIP_BYTES));
+    copy.text.resize(std::min(copy.text.size(), MAX_CLIPPING_TEXT_BYTES));
     bounded.push_back(std::move(copy));
     boundedNotes.push_back(index < notes.size() ? boundedNote(notes[index]) : std::string{});
-    if (bounded.size() >= MAX_CLIPPINGS) break;
+    if (bounded.size() >= MAX_CLIPPINGS_PER_BOOK) break;
   }
   return save(bookPath, bounded, &boundedNotes);
 }
@@ -291,7 +289,7 @@ bool replace(const std::string& bookPath, const std::vector<ClippingEntry>& clip
 bool append(const std::string& bookPath, const std::string& bookTitle, ClippingEntry clipping) {
   if (clipping.text.empty()) return false;
   clipping.text = normalizeText(clipping.text);
-  clipping.text.resize(std::min(clipping.text.size(), MAX_CLIP_BYTES));
+  clipping.text.resize(std::min(clipping.text.size(), MAX_CLIPPING_TEXT_BYTES));
   if (clipping.dateKey == 0) clipping.dateKey = halClock.getDateKey();
 
   std::vector<ClippingEntry> clippings;
@@ -326,7 +324,7 @@ bool append(const std::string& bookPath, const std::string& bookTitle, ClippingE
     return true;
   }
 
-  if (clippings.size() >= MAX_CLIPPINGS) {
+  if (clippings.size() >= MAX_CLIPPINGS_PER_BOOK) {
     clippings.erase(clippings.begin());
     if (!notes.empty()) notes.erase(notes.begin());
   }

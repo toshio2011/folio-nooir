@@ -16,10 +16,42 @@
     .book{padding:11px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:18px}.book .meta{color:var(--muted);text-align:right;white-space:nowrap}.book-left{display:flex;gap:12px;align-items:flex-start;min-width:0}.book-cover{width:48px;height:72px;object-fit:cover;background:var(--line);border:1px solid var(--line);flex:0 0 auto}.book-cover.missing{display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.7rem;text-align:center}.book-info{min-width:0}.book small{display:block;color:var(--muted);margin-top:3px}.book details{margin-top:8px}.book summary{color:var(--accent);cursor:pointer;font-size:.85rem}
     .edit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px}.edit-grid label{display:flex;flex-direction:column;gap:3px;color:var(--muted);font-size:.75rem}.edit-grid input,.edit-grid select,.edit-grid textarea{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:6px}.edit-grid textarea{min-height:54px;resize:vertical;grid-column:1/-1}.edit-actions{display:flex;gap:8px;margin-top:8px}.edit-message{color:var(--muted);font-size:.8rem}.muted{color:var(--muted)}
     @media(max-width:640px){.book .meta{white-space:normal}.edit-grid{grid-template-columns:1fr}}
-  </style>
+      /* Shared touch and form behavior across the Nooir web pages. */
+    :root { --nooir-focus: #315f79; }
+    @media (prefers-color-scheme: dark) { :root { --nooir-focus: #9ccde4; } }
+    button, input, select, textarea { font: inherit; max-width: 100%; }
+    button { min-height: 40px; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: wait; }
+    :focus-visible { outline: 3px solid var(--nooir-focus); outline-offset: 2px; }
+    header nav, .nav-links { gap: 6px 14px; flex-wrap: wrap; }
+    header nav a, .nav-links a { min-height: 40px; display: inline-flex; align-items: center; }
+    .empty, .message, [role="status"] { line-height: 1.45; }
+    .error, .status-err, .error-message { color: #9d3028; }
+    .success, .status-ok, .success-message { color: #286742; }
+    @media (max-width: 700px) {
+      body { padding-left: 16px !important; padding-right: 16px !important; }
+      .nooir-header { margin-left: -16px !important; margin-right: -16px !important; padding-left: 16px !important; padding-right: 16px !important; }
+      header:not(.nooir-header) { padding-left: 16px; padding-right: 16px; }
+      main { padding-left: 16px; padding-right: 16px; }
+      header nav, .nav-links { gap: 4px 12px; }
+      header nav a, .nav-links a { min-height: 44px; }
+      .card { padding: 16px; }
+      .toolbar, .page-header, .action-buttons, .upload-form, .add-row, .family { flex-wrap: wrap; }
+      .setting-row { align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+      .setting-control { max-width: 100%; }
+      .setting-control input, .setting-control select, .setting-control textarea { max-width: 100%; }
+      .task { align-items: flex-start; flex-wrap: wrap; }
+      .task-actions { max-width: 100%; overflow-x: auto; padding-bottom: 4px; }
+      .book { flex-direction: column; gap: 8px; }
+      .book .meta { text-align: left; white-space: normal; }
+      .file-table { display: block; max-width: 100%; overflow-x: auto; }
+      .file-table th, .file-table td { white-space: nowrap; }
+      #progress-container { width: 100%; }
+      .modal { max-width: calc(100vw - 24px); }
+    }</style>
 </head>
 <body>
-  <header><h1>Folio <span class="noo">Nooir</span></h1><nav><a href="/">Device</a><a href="/library">Bookshelf</a><a class="active" href="/stats">Reading Stats</a><a href="/todo">To-Do List</a><a href="/files">Transfer</a><a href="/settings">Settings</a><a href="/fonts">Typography</a></nav></header>
+  <header><h1>Folio <span class="noo">Nooir</span></h1><nav aria-label="Main navigation"><a href="/">Device</a><a href="/library">Bookshelf</a><a class="active" href="/stats" aria-current="page">Reading Stats</a><a href="/todo">To-Do List</a><a href="/files">Transfer</a><a href="/clippings">Clippings</a><a href="/settings">Settings</a><a href="/fonts">Typography</a></nav></header>
   <main><div class="cards" id="summary"><div class="card">Loading statistics...</div></div><h2>Reading Stats</h2><p class="muted">Each filled day represents a saved reading session. Unknown-date sessions are shown separately until the device clock is synchronized.</p><section class="calendar" id="calendar"></section><div class="toolbar"><h2 style="margin:0;flex:1">Book Details</h2><a class="button" href="/api/stats/export">Download JSON</a></div><section id="books"></section></main>
   <script>
     const esc=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

@@ -77,7 +77,8 @@ OPDS server.
 
 ## Web Interface
 
-The browser UI has four primary pages.
+The browser UI includes device status, the Bookshelf, Reading Stats, To-Do,
+Transfer, Clippings, Settings, and Typography pages.
 
 ### Home
 
@@ -120,6 +121,14 @@ upload.
 
 Installed fonts appear in **Settings > Reader > Font Family** after the font
 registry refreshes.
+
+### Clippings
+
+The Clippings page browses saved highlights and notes by book or across the
+books already tracked by the reader. It edits the existing per-book clipping
+JSON files; deleting or editing an entry does not rewrite the append-only
+`/My Clippings.txt` export. Pages are streamed in small batches, and the page
+does not generate book covers.
 
 ## Command Line Use
 

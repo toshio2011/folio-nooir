@@ -37,6 +37,7 @@
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
 #include "WebDAVHandler.h"
+#include "WebClippingsHandler.h"
 #include "WifiCredentialStore.h"
 #include "WeatherStore.h"
 #include "ToDoStore.h"
@@ -534,6 +535,7 @@ void CrossPointWebServer::begin() {
   server->on("/api/stats/export", HTTP_GET, [this] { handleStatsExport(); });
   server->on("/api/book", HTTP_GET, [this] { handleGetBookInfo(); });
   server->on("/api/book", HTTP_POST, [this] { handlePostBookUpdate(); });
+  WebClippingsHandler::registerRoutes(server.get());
   server->on("/api/files", HTTP_GET, [this] { handleFileListData(); });
   server->on("/download", HTTP_GET, [this] { handleDownload(); });
 
@@ -924,6 +926,7 @@ void CrossPointWebServer::handleLibraryData() const {
     }
     doc.clear();
     doc["index"] = static_cast<uint32_t>(visibleIndex);
+    doc["path"] = book.path;
     doc["title"] = book.title;
     doc["author"] = book.author;
     doc["progress"] = book.progressPercent;

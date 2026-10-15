@@ -14,6 +14,8 @@ namespace ClipFile {
 // Notes are optional on-disk metadata and are kept small for the device's
 // limited heap. The byte cap is applied on both load and save boundaries.
 constexpr size_t MAX_NOTE_BYTES = 256;
+constexpr size_t MAX_CLIPPINGS_PER_BOOK = 32;
+constexpr size_t MAX_CLIPPING_TEXT_BYTES = 1024;
 
 // Converts malformed UTF-8 and glyphs that cannot be rendered reliably by
 // the e-ink font set to ordinary spaces. Normal ASCII question marks remain

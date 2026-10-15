@@ -16,10 +16,33 @@ the IP address shown on the device screen.
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/` | Home/status page |
+| `GET` | `/library` | Bookshelf page |
+| `GET` | `/stats` | Reading statistics page |
+| `GET` | `/todo` | To-Do page |
 | `GET` | `/files` | File manager page |
+| `GET` | `/clippings` | Clippings and notes page |
 | `GET` | `/settings` | Web settings page |
 | `GET` | `/fonts` | SD-card font manager page |
 | `GET` | `/js/jszip.min.js` | JavaScript asset used by the file manager |
+
+## Clippings and Notes
+
+The page reads the existing per-book clipping JSON files. Pages are bounded to
+10 entries and streamed as JSON; set `book` to an EPUB path to filter to one
+book. Use `books=1` to page through books with saved clippings.
+
+```bash
+curl 'http://crosspoint.local/api/clippings?offset=0&limit=10'
+curl 'http://crosspoint.local/api/clippings?book=%2FBooks%2FExample.epub&offset=0&limit=10'
+curl 'http://crosspoint.local/api/clippings?books=1&offset=0&limit=10'
+```
+
+`POST /api/clippings` accepts a JSON object with `action` set to `edit` or
+`delete`, a `path`, an entry `index`, and its expected text, note, page, spine,
+and date values. An edit also includes the new `text` and `note`. The expected
+values protect against applying a stale browser form to a different clipping.
+Changes use the same `ClipFile` per-book JSON operations as the reader; the
+append-only `/My Clippings.txt` export is not rewritten.
 
 ## Device Status
 

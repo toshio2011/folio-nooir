@@ -5,38 +5,42 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Folio Nooir Library</title>
   <style>
-    :root{--ink:#1d1b1a;--paper:#f3eee4;--card:#fffaf0;--muted:#756d63;--accent:#7b4635;--line:#d8cdbd}
-    @media(prefers-color-scheme:dark){:root{--ink:#eee8dd;--paper:#181614;--card:#24201c;--muted:#b8ada0;--accent:#d39a78;--line:#4a423a}}
+    :root{--ink:#1d1b1a;--paper:#f3eee4;--card:#fffaf0;--muted:#756d63;--accent:#7b4635;--line:#d8cdbd;--focus:#315f79}
+    @media(prefers-color-scheme:dark){:root{--ink:#eee8dd;--paper:#181614;--card:#24201c;--muted:#b8ada0;--accent:#d39a78;--line:#4a423a;--focus:#9ccde4;color-scheme:dark}}
     *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:Georgia,"Times New Roman",serif}
     header{max-width:1100px;margin:auto;padding:32px 22px 18px;border-bottom:1px solid var(--line)}
     h1{margin:0;font-size:clamp(2rem,7vw,4.5rem);font-weight:500;letter-spacing:-.04em}.noo{color:var(--accent)}
     nav{display:flex;gap:18px;margin-top:16px;flex-wrap:wrap}a{color:var(--ink);text-decoration:none}nav a.active{color:var(--accent);border-bottom:2px solid}
     main{max-width:1100px;margin:auto;padding:24px 22px 60px}.summary{display:flex;gap:24px;color:var(--muted);margin-bottom:24px;flex-wrap:wrap}
-    .shelf{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:28px 20px}.book{min-width:0}
+    .shelf{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:28px 20px}.book{min-width:0}
     .cover{aspect-ratio:2/3;background:linear-gradient(145deg,var(--accent),#2d2723);box-shadow:5px 7px 0 rgba(0,0,0,.14);overflow:hidden;display:flex;align-items:center;justify-content:center;padding:14px;color:white;text-align:center}
     .cover img{width:100%;height:100%;object-fit:cover}.title{font-weight:700;margin:14px 0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.author,.meta{color:var(--muted);font-size:.88rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .bar{height:4px;background:var(--line);margin-top:10px}.fill{height:100%;background:var(--accent)}.empty{color:var(--muted);padding:50px 0}.pager{text-align:center;margin-top:34px}.pager button{border:1px solid var(--line);background:var(--card);color:var(--ink);padding:10px 18px;border-radius:3px;font:inherit;cursor:pointer}.pager button:disabled{opacity:.55;cursor:wait}
+    button,input,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);padding:9px 10px}button{cursor:pointer}button:hover{border-color:var(--accent);color:var(--accent)}:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+    .edit-book{margin-top:9px}.edit-book summary{cursor:pointer;color:var(--accent);font-size:.88rem;min-height:40px;display:flex;align-items:center}.edit-book form{padding:9px 0;border-top:1px solid var(--line)}.edit-book label{display:block;color:var(--muted);font-size:.82rem;margin:8px 0 4px}.edit-book input,.edit-book textarea{width:100%;min-width:0}.edit-book textarea{min-height:76px;resize:vertical}.edit-book button{min-height:42px;margin-top:8px}.edit-status{min-height:1.2em;color:var(--muted);font-size:.82rem;line-height:1.4}
+    @media(max-width:640px){header{padding:24px 16px 12px}nav{gap:4px 12px}nav a{min-height:44px}main{padding:18px 16px 44px}.shelf{grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:22px 14px}.cover{padding:10px}.pager button{min-height:44px}}
   </style>
 </head>
 <body>
-  <header><h1>Folio <span class="noo">Nooir</span></h1><nav><a href="/">Device</a><a class="active" href="/library">Bookshelf</a><a href="/stats">Reading Stats</a><a href="/todo">To-Do List</a><a href="/files">Transfer</a><a href="/settings">Settings</a><a href="/fonts">Typography</a></nav></header>
+  <header><h1>Folio <span class="noo">Nooir</span></h1><nav aria-label="Main navigation"><a href="/">Device</a><a class="active" href="/library" aria-current="page">Bookshelf</a><a href="/stats">Reading Stats</a><a href="/todo">To-Do List</a><a href="/files">Transfer</a><a href="/clippings">Clippings</a><a href="/settings">Settings</a><a href="/fonts">Typography</a></nav></header>
   <main><div class="summary" id="summary">Loading library…</div><section class="shelf" id="shelf"></section><div class="pager"><button id="more" type="button" hidden>Load more</button></div></main>
   <script>
     const esc=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const duration=s=>s<60?`${s}s`:s<3600?`${Math.floor(s/60)}m`:`${Math.floor(s/3600)}h ${Math.floor(s%3600/60)}m`;
     const pageSize=10, summary=document.getElementById('summary'), shelf=document.getElementById('shelf'), more=document.getElementById('more');
     let offset=0, books=[];
-    const renderBook=b=>`<article class="book"><div class="cover">${b.hasCover?`<img loading="lazy" src="/api/library/cover?index=${b.index}" alt=""/>`:`<span>${esc(b.title)}</span>`}</div><div class="title" title="${esc(b.title)}">${esc(b.title)||'Untitled'}</div><div class="author">${esc(b.author)||'Unknown author'}</div><div class="bar"><div class="fill" style="width:${b.progress}%"></div></div><div class="meta">${b.progress===100?'Complete':b.progress?'Ongoing':'New'} · ${b.progress}% · ${duration(b.seconds)}</div></article>`;
+    const renderBook=b=>`<article class="book" data-path="${esc(b.path)}"><div class="cover">${b.hasCover?`<img loading="lazy" src="/api/library/cover?index=${b.index}" alt=""/>`:`<span>${esc(b.title)}</span>`}</div><div class="title" title="${esc(b.title)}">${esc(b.title)||'Untitled'}</div><div class="author">${esc(b.author)||'Unknown author'}</div><div class="bar"><div class="fill" style="width:${b.progress}%"></div></div><div class="meta">${b.progress===100?'Complete':b.progress?'Ongoing':'New'} · ${b.progress}% · ${duration(b.seconds)}</div><details class="edit-book"><summary>Edit book details</summary><form><label>Title<input name="title" maxlength="160" required></label><label>Author<input name="author" maxlength="160"></label><label>Synopsis<textarea name="synopsis" maxlength="2048"></textarea></label><button type="submit">Save details</button><div class="edit-status" role="status" aria-live="polite"></div></form></details></article>`;
     const updateSummary=()=>{const seconds=books.reduce((n,b)=>n+b.seconds,0),sessions=books.reduce((n,b)=>n+b.sessions,0);summary.innerHTML=`<span>${books.length} books loaded</span><span>${duration(seconds)} read</span><span>${sessions} sessions</span>`};
     async function loadPage(){
       more.disabled=true;
       try{
         const response=await fetch(`/api/library?offset=${offset}&limit=${pageSize}`),page=await response.json();
         if(!page.books.length&&offset===0){shelf.innerHTML='<div class="empty">Open a book on your Xteink to begin the shelf.</div>';summary.innerHTML='<span>No books yet</span>';more.hidden=true;return}
-        books=books.concat(page.books);offset+=page.books.length;shelf.innerHTML=books.map(renderBook).join('');updateSummary();more.hidden=!page.hasMore;
+        books=books.concat(page.books);offset+=page.books.length;shelf.innerHTML=books.map(renderBook).join('');bindBookEditors();updateSummary();more.hidden=!page.hasMore;
       }catch(_){summary.textContent='Could not load the library.';more.hidden=true}
       finally{more.disabled=false}
     }
+    function bindBookEditors(){shelf.querySelectorAll('.book').forEach(card=>{const details=card.querySelector('details'),form=card.querySelector('form');let loaded=false;details.addEventListener('toggle',async()=>{if(!details.open||loaded)return;const status=form.querySelector('.edit-status');status.textContent='Loading saved details…';try{const r=await fetch(`/api/book?path=${encodeURIComponent(card.dataset.path)}`,{cache:'no-store'}),data=await r.json();if(!r.ok)throw Error(data.error||'Could not load book details');form.elements.title.value=data.title||'';form.elements.author.value=data.author||'';form.elements.synopsis.value=data.synopsis||'';loaded=true;status.textContent='Edits are saved as device metadata; the book file stays unchanged.'}catch(e){status.textContent=e.message}});form.addEventListener('submit',async e=>{e.preventDefault();const button=form.querySelector('button'),status=form.querySelector('.edit-status');button.disabled=true;status.textContent='Saving details…';const payload={path:card.dataset.path,title:form.elements.title.value,author:form.elements.author.value,synopsis:form.elements.synopsis.value};try{const r=await fetch('/api/book',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),data=await r.json();if(!r.ok||data.ok===false)throw Error(data.error||'Could not save book details');const book=books.find(item=>item.path===card.dataset.path);if(book){book.title=payload.title;book.author=payload.author}card.querySelector('.title').textContent=payload.title||'Untitled';card.querySelector('.title').title=payload.title;card.querySelector('.author').textContent=payload.author||'Unknown author';status.textContent='Details saved.';details.open=false}catch(err){status.textContent=err.message}finally{button.disabled=false}})})}
     more.addEventListener('click',loadPage);loadPage();
   </script>
 </body>
