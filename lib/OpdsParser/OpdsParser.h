@@ -95,7 +95,10 @@ class OpdsParser final : public Print {
   // Helper to find attribute value
   static const char* findAttribute(const XML_Char** atts, const char* name);
   static void assignBounded(std::string& target, const char* value, size_t maxLen);
+  static bool assignUrlBounded(std::string& target, const char* value, size_t maxLen);
   static void appendBounded(std::string& target, const char* value, size_t len, size_t maxLen);
+  void initializeParser();
+  void discardParsedFeed();
 
   XML_Parser parser = nullptr;
   std::vector<OpdsEntry> entries;

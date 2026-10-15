@@ -29,6 +29,21 @@ TEST(OpdsFilename, IllegalCharactersAreSanitized) {
   EXPECT_EQ(opdsBookFilename("A/B", "C:D*E?", OpdsFilenameFormat::AuthorTitle), "A_B - C_D_E_.epub");
 }
 
+TEST(OpdsFilename, TraversalLikeMetadataCannotCreateNestedPaths) {
+  const std::string result = opdsBookFilename("../../authors\\unsafe", "../books\\unsafe.epub",
+                                              OpdsFilenameFormat::AuthorTitle);
+  EXPECT_EQ(result.find('/'), std::string::npos);
+  EXPECT_EQ(result.find('\\'), std::string::npos);
+  EXPECT_EQ(result.substr(result.size() - 5), ".epub");
+}
+
+TEST(OpdsFilename, DuplicateAndSanitizationCollisionNamesAreDeterministic) {
+  EXPECT_EQ(opdsBookFilename("A/B", "Same title", OpdsFilenameFormat::AuthorTitle),
+            opdsBookFilename("A_B", "Same title", OpdsFilenameFormat::AuthorTitle));
+  EXPECT_EQ(opdsBookFilename("A/B", "Same title", OpdsFilenameFormat::AuthorTitle),
+            opdsBookFilename("A/B", "Same title", OpdsFilenameFormat::AuthorTitle));
+}
+
 TEST(OpdsFilename, EmptyAuthorAndTitleFallsBackToBook) {
   // sanitizeFilename returns "book" when nothing usable remains.
   EXPECT_EQ(opdsBookFilename("", "", OpdsFilenameFormat::AuthorTitle), "book.epub");

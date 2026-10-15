@@ -18,10 +18,16 @@ std::string extractHost(const std::string& url);
  */
 std::string encodeUnsafeUrlChars(const std::string& url);
 
+/** Return whether two HTTP(S) URLs share the same scheme, host, and port. */
+bool sameOrigin(const std::string& firstUrl, const std::string& secondUrl);
+
+/** Return true when a redirect changes an HTTPS URL to plain HTTP. */
+bool isHttpsDowngrade(const std::string& firstUrl, const std::string& secondUrl);
+
 /**
- * Build full URL from server URL and path.
- * If path starts with /, it's an absolute path from the host root.
- * Otherwise, it's relative to the server URL.
+ * Resolve a URL reference against a base URL and encode unsafe URL characters.
+ * Supports absolute, root-relative, path-relative, query-only, and fragment
+ * references used by OPDS feeds.
  */
 std::string buildUrl(const std::string& serverUrl, const std::string& path);
 

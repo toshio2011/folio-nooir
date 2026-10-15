@@ -1,5 +1,8 @@
 #include "HttpDownloader.h"
 
+#include "util/UrlUtils.h"
+#include "HttpTransferPolicy.h"
+
 #include <Arduino.h>
 #include <Logging.h>
 #include <Memory.h>
@@ -37,7 +40,6 @@ constexpr int HTTP_TX_BUF = 512;
 // HTTPClient's uint16 setTimeout it doesn't silently truncate.
 constexpr int HTTP_TIMEOUT_MS = 60000;
 constexpr size_t READ_CHUNK = 1024;
-constexpr int MAX_REDIRECTS = 5;
 
 #if NOOIR_KOSYNC_FONT_DIAGNOSTICS
 uint32_t fontNetworkMinFree = 0xFFFFFFFFu;
@@ -68,17 +70,16 @@ struct Sink {
   size_t downloaded = 0;
 };
 
-bool isRedirect(int status) {
-  return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
-}
-
 #if defined(FREEINK_NET_WOLFSSL)
 HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std::string& username,
                                          const std::string& password, Sink& sink,
                                          const bool downgradeRedirectsToHttp) {
   std::string url = startUrl;
+  std::string authUsername = username;
+  std::string authPassword = password;
+  int redirectsFollowed = 0;
 
-  for (int hop = 0; hop <= MAX_REDIRECTS; ++hop) {
+  while (true) {
     freeink::SecureHttpClient http;
     http.setTimeout(HTTP_TIMEOUT_MS);
     http.setInsecure();
@@ -96,8 +97,8 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
     // append a second User-Agent header, which strict servers reject (aiohttp
     // answers 400 "Duplicate 'User-Agent' header found").
     http.setUserAgent("CrossPoint-ESP32-" CROSSPOINT_VERSION);
-    if (!username.empty() && !password.empty()) {
-      const std::string credentials = username + ":" + password;
+    if (!authUsername.empty()) {
+      const std::string credentials = authUsername + ":" + authPassword;
       const String encoded = base64::encode(credentials.c_str());
       http.addHeader("Authorization", std::string("Basic ") + encoded.c_str());
     }
@@ -131,36 +132,53 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
       LOG_ERR("HTTP", "wolfSSL request failed: %s", url.c_str());
       return HttpDownloader::HTTP_ERROR;
     }
-    if (isRedirect(status)) {
+    if (HttpTransferPolicy::isRedirectStatus(status)) {
+      if (!HttpTransferPolicy::mayFollowRedirect(status, redirectsFollowed)) {
+        LOG_ERR("HTTP", "too many redirects");
+        return HttpDownloader::HTTP_ERROR;
+      }
       const std::string location = http.getHeader("location");
-      const bool sourceWasHttps = url.rfind("https://", 0) == 0;
       std::string redirectedUrl;
-      if (location.empty() || !freeink::SecureHttpClient::resolveUrl(url, location, redirectedUrl)) {
+      if (location.empty()) {
         LOG_ERR("HTTP", "wolfSSL bad redirect: %d", status);
+        return HttpDownloader::HTTP_ERROR;
+      }
+      redirectedUrl = UrlUtils::buildUrl(url, location);
+      if (!UrlUtils::sameOrigin(redirectedUrl, redirectedUrl)) {
+        LOG_ERR("HTTP", "wolfSSL invalid redirect URL");
+        return HttpDownloader::HTTP_ERROR;
+      }
+      if (UrlUtils::isHttpsDowngrade(url, redirectedUrl) && !downgradeRedirectsToHttp) {
+        LOG_ERR("HTTP", "refusing HTTPS downgrade redirect");
         return HttpDownloader::HTTP_ERROR;
       }
       // Only the explicitly opted-in font-asset path may skip the second TLS
       // session. Keep ordinary HTTPS redirects (KOSync, OPDS, OTA, etc.)
       // secure, and do not downgrade an HTTP -> HTTPS redirect.
-      if (downgradeRedirectsToHttp && sourceWasHttps && redirectedUrl.rfind("https://", 0) == 0) {
+      if (downgradeRedirectsToHttp && url.rfind("https://", 0) == 0 &&
+          redirectedUrl.rfind("https://", 0) == 0) {
         redirectedUrl.replace(0, 8, "http://");
       }
+      if (!UrlUtils::sameOrigin(url, redirectedUrl)) {
+        authUsername.clear();
+        authPassword.clear();
+      }
       url = std::move(redirectedUrl);
+      ++redirectsFollowed;
       continue;
     }
-    if (status != 200) {
+    if (!HttpTransferPolicy::isSuccessfulStatus(status)) {
       LOG_ERR("HTTP", "wolfSSL unexpected status: %d", status);
       return HttpDownloader::HTTP_ERROR;
     }
     if (http.callbackAborted()) return HttpDownloader::FILE_ERROR;
-    if (!http.responseComplete()) {
+    const size_t contentLength = http.hasContentLength() ? http.getContentLength() : 0;
+    if (!HttpTransferPolicy::isResponseComplete(http.responseComplete(), contentLength, sink.downloaded)) {
       LOG_ERR("HTTP", "wolfSSL incomplete: got %zu of %zu bytes", sink.downloaded, sink.total);
       return HttpDownloader::HTTP_ERROR;
     }
     return HttpDownloader::OK;
   }
-  LOG_ERR("HTTP", "too many redirects");
-  return HttpDownloader::HTTP_ERROR;
 }
 #endif
 
@@ -196,7 +214,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   }
 
   esp_http_client_set_header(client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
-  if (!username.empty() && !password.empty()) {
+  if (!username.empty()) {
     // Preemptive Basic auth, like the prior addHeader; don't wait for a 401.
     const std::string credentials = username + ":" + password;
     const String header = "Basic " + base64::encode(credentials.c_str());
@@ -217,11 +235,30 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   }
   int64_t contentLength = esp_http_client_fetch_headers(client);
   int status = esp_http_client_get_status_code(client);
+  std::string currentUrl = url;
 #if NOOIR_KOSYNC_FONT_DIAGNOSTICS
   fontNetworkDiagnostic("http_headers", status, contentLength > 0 ? static_cast<size_t>(contentLength) : 0);
 #endif
-  for (int hop = 0; isRedirect(status) && hop < MAX_REDIRECTS; ++hop) {
+  int redirectsFollowed = 0;
+  while (HttpTransferPolicy::mayFollowRedirect(status, redirectsFollowed)) {
     if (esp_http_client_set_redirection(client) != ESP_OK) break;
+    char redirectedUrlBuffer[1024] = {};
+    if (esp_http_client_get_url(client, redirectedUrlBuffer, sizeof(redirectedUrlBuffer)) != ESP_OK) {
+      LOG_ERR("HTTP", "redirect URL unavailable");
+      esp_http_client_cleanup(client);
+      return HttpDownloader::HTTP_ERROR;
+    }
+    const std::string redirectedUrl(redirectedUrlBuffer);
+    if (UrlUtils::isHttpsDowngrade(currentUrl, redirectedUrl)) {
+      LOG_ERR("HTTP", "refusing HTTPS downgrade redirect");
+      esp_http_client_cleanup(client);
+      return HttpDownloader::HTTP_ERROR;
+    }
+    if (!UrlUtils::sameOrigin(currentUrl, redirectedUrl)) {
+      esp_http_client_delete_header(client, "Authorization");
+    }
+    currentUrl = redirectedUrl;
+    ++redirectsFollowed;
     esp_http_client_close(client);
     err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
@@ -233,7 +270,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     status = esp_http_client_get_status_code(client);
   }
 
-  if (status != 200) {
+  if (!HttpTransferPolicy::isSuccessfulStatus(status)) {
     LOG_ERR("HTTP", "unexpected status: %d", status);
     esp_http_client_cleanup(client);
     return HttpDownloader::HTTP_ERROR;
@@ -282,7 +319,8 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   fontNetworkDiagnostic("http_body_done", complete ? 0 : -1, sink.downloaded);
 #endif
   esp_http_client_cleanup(client);
-  if (!complete) {
+  const size_t expectedLength = contentLength > 0 ? static_cast<size_t>(contentLength) : 0;
+  if (!HttpTransferPolicy::isResponseComplete(complete, expectedLength, sink.downloaded)) {
     LOG_ERR("HTTP", "incomplete: got %zu of %zu bytes", sink.downloaded, sink.total);
     return HttpDownloader::HTTP_ERROR;
   }
@@ -379,7 +417,7 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
     Storage.remove(destPath.c_str());
     return result;
   }
-  if (sink.downloaded == 0) {
+  if (!HttpTransferPolicy::hasDownloadBody(sink.downloaded)) {
     LOG_ERR("HTTP", "no data received");
     Storage.remove(destPath.c_str());
     return HTTP_ERROR;
