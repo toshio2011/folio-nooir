@@ -76,6 +76,13 @@ inline SleepComposerSettingsValues normalizeSleepComposerSettings(const uint8_t 
   return result;
 }
 
+inline bool sleepComposerHasRandomElement(const uint8_t background, const uint8_t overlayA, const uint8_t overlayB) {
+  const auto settings = normalizeSleepComposerSettings(background, overlayA, overlayB);
+  constexpr auto randomElement = static_cast<uint8_t>(SleepComposerElement::Random);
+  return settings.background == randomElement || settings.overlayA == randomElement ||
+         settings.overlayB == randomElement;
+}
+
 struct SleepComposerAvailability {
   bool customImage = false;
   bool bookCover = false;

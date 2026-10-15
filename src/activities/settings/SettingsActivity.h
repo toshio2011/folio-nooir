@@ -35,6 +35,7 @@ enum class SettingAction {
   ToDoList,
   SettingsProfiles,
   VisualPreview,
+  SleepScreenPreview,
   ClearFavoriteSleepImage,
   QuickActions,
 };
@@ -211,6 +212,7 @@ class SettingsActivity final : public Activity {
   void enterCategory(int categoryIndex);
   void toggleCurrentSetting();
   void openSleepTimeoutPicker();
+  void openSleepScreenPreview();
   void openQuickActionsPicker();
   void rebuildSettingsLists();
   void syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged);

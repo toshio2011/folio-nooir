@@ -33,6 +33,7 @@
 #include "StatusBarSettingsActivity.h"
 #include "TextSettingsActivity.h"
 #include "VisualPreviewActivity.h"
+#include "activities/boot_sleep/SleepActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
 #include "components/UITheme.h"
@@ -206,7 +207,7 @@ void SettingsActivity::rebuildSettingsLists() {
   // Reserve once at this explicit list rebuild, including the actions added
   // below. Move each descriptor from the temporary list instead of deep-copying
   // its enum strings/vectors and growing four category arenas geometrically.
-  size_t categorySizes[] = {1U + (hasFavoriteSleep ? 1U : 0U), 6, BoardConfig::hasTouch() ? 0U : 2U,
+  size_t categorySizes[] = {2U + (hasFavoriteSleep ? 1U : 0U), 6, BoardConfig::hasTouch() ? 0U : 2U,
                            9U + (BoardConfig::hasTouch() ? 0U : 1U)};
 #if FREEINK_CAP_BLE_HID_HOST
   ++categorySizes[3];
@@ -230,6 +231,9 @@ void SettingsActivity::rebuildSettingsLists() {
         SettingInfo::Action(StrId::STR_CLEAR_FAVORITE_SLEEP, SettingAction::ClearFavoriteSleepImage));
   }
   displaySettings.push_back(SettingInfo::Action(StrId::STR_VISUAL_PREVIEW, SettingAction::VisualPreview));
+  auto sleepPreview = SettingInfo::Action(StrId::STR_PREVIEW_SLEEP_SCREEN, SettingAction::SleepScreenPreview);
+  sleepPreview.category = StrId::STR_CAT_DISPLAY;
+  displaySettings.push_back(std::move(sleepPreview));
 
   // Append device-only ACTION items
   if (!BoardConfig::hasTouch()) {
@@ -284,6 +288,10 @@ void SettingsActivity::rebuildSettingsLists() {
 
   reorder(displaySettings, {
                               StrId::STR_SLEEP_SCREEN,
+                              StrId::STR_SLEEP_BACKGROUND,
+                              StrId::STR_SLEEP_OVERLAY_A,
+                              StrId::STR_SLEEP_OVERLAY_B,
+                              StrId::STR_PREVIEW_SLEEP_SCREEN,
                               StrId::STR_SLEEP_COVER_MODE,
                               StrId::STR_SLEEP_COVER_FILTER,
                               StrId::STR_CLEAR_FAVORITE_SLEEP,
@@ -631,6 +639,10 @@ void SettingsActivity::toggleCurrentSetting() {
         syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
         SETTINGS.saveToFile();
         rebuildSettingsLists();
+        if (sleepScreenChanged &&
+            SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE) {
+          openSleepScreenPreview();
+        }
       };
       if (!setting.enumStringValues.empty()) {
         optionPopup.show(setting.nameId, setting.enumStringValues, currentValue, std::move(onSelect));
@@ -654,6 +666,10 @@ void SettingsActivity::toggleCurrentSetting() {
         syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
         SETTINGS.saveToFile();
         rebuildSettingsLists();
+        if (sleepScreenChanged &&
+            SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE) {
+          openSleepScreenPreview();
+        }
       };
       if (!setting.enumStringValues.empty()) {
         optionPopup.show(setting.nameId, setting.enumStringValues, cur, std::move(onSelect));
@@ -754,6 +770,9 @@ void SettingsActivity::toggleCurrentSetting() {
                                  requestUpdate();
                                });
         break;
+      case SettingAction::SleepScreenPreview:
+        openSleepScreenPreview();
+        break;
       case SettingAction::ClearFavoriteSleepImage:
         APP_STATE.favoriteSleepImagePath.clear();
         if (!APP_STATE.favoriteSleepImageBmpPath.empty()) {
@@ -845,6 +864,17 @@ void SettingsActivity::syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChan
     SETTINGS.quickResumeSleepScreen = CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_NEVER;
     quickResumeTimeoutAutoEnabled = false;
   }
+}
+
+void SettingsActivity::openSleepScreenPreview() {
+  const uint8_t selectedMode = SETTINGS.sleepScreen;
+  logSettingsDiagnostic("sleep_preview_open", selectedMode);
+  startActivityForResult(
+      std::make_unique<SleepActivity>(renderer, mappedInput, SleepActivity::PreviewMode{selectedMode}),
+      [this](const ActivityResult&) {
+        logSettingsDiagnostic("sleep_preview_return");
+        requestUpdate();
+      });
 }
 
 void SettingsActivity::openSleepTimeoutPicker() {

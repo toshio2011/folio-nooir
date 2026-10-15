@@ -36,6 +36,7 @@
 #include "images/MoonIcon.h"
 #include "images/NooirLogo360.h"
 #include "util/ClipFile.h"
+#include "util/SleepScreenMode.h"
 #include "util/EpubDiagnostics.h"
 #include "util/StatisticsCover.h"
 #include "util/StatisticsDate.h"
@@ -698,6 +699,27 @@ void drawSleepBookProgressCard(GfxRenderer& renderer, const std::string& title, 
 }  // namespace
 
 void SleepActivity::onEnter() {
+  if (preview) {
+    Activity::onEnter();
+    previewPreviousDarkMode = renderer.isDarkMode();
+    ignoreInitialConfirm = mappedInput.isPressed(MappedInputManager::Button::Confirm) ||
+                           mappedInput.wasReleased(MappedInputManager::Button::Confirm);
+    effectiveSleepScreen = previewMode == CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM
+                               ? chooseRandomSleepScreenMode()
+                               : previewMode;
+    if (effectiveSleepScreen >= CrossPointSettings::SLEEP_SCREEN_MODE_COUNT ||
+        effectiveSleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM) {
+      effectiveSleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::DARK;
+    }
+    sleepAssetLogCount = 0;
+    sleepPngPreflightComplete = false;
+    sleepPngAllocationAllowed = false;
+    currentBackgroundPreserved = false;
+    prepareSleepPngDecode(renderer);
+    renderPreviewScreen();
+    return;
+  }
+
 #if FREEINK_CAP_BLE_HID_HOST
   const bool bleWasRunning = BleHid.isRunning();
   const bool bleWasConnecting = BleHid.isConnecting();
@@ -771,54 +793,103 @@ void SleepActivity::onEnter() {
   }
   if (currentBackgroundPreserved) renderer.restoreBwBuffer();
 
-  if (renderQuickResume) {
-    return renderLastScreenSleepScreen();
-  }
+  renderSelectedSleepScreen();
+}
 
-  // Overlay mode intentionally leaves the reader framebuffer intact: visible
-  // PNG pixels are composited while transparent pixels leave it untouched.
-  if (effectiveSleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY && renderOverlaySleepScreen()) {
+void SleepActivity::onExit() {
+  if (preview) {
+    renderer.waitRefreshComplete();
+    renderer.setRenderMode(GfxRenderer::BW);
+    renderer.setDarkMode(previewPreviousDarkMode);
+    renderer.setFadingFix(SETTINGS.fadingFix);
+    renderer.releaseGrayscaleStripScratch();
+    ImageBlock::releaseRenderCache();
+    sleepPngPreflightComplete = false;
+    sleepPngAllocationAllowed = false;
+    currentBackgroundPreserved = false;
+  }
+  Activity::onExit();
+}
+
+void SleepActivity::loop() {
+  if (!preview) return;
+
+  if (ignoreInitialConfirm) {
+    if (!mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+        !mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      ignoreInitialConfirm = false;
+    }
     return;
   }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    finish();
+    return;
+  }
+
+  if (!mappedInput.wasReleased(MappedInputManager::Button::Confirm) &&
+      !mappedInput.wasReleased(MappedInputManager::Button::Right)) {
+    return;
+  }
+
+  if (previewMode == CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM) {
+    effectiveSleepScreen = chooseRandomSleepScreenMode();
+  } else if (previewMode != CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE ||
+             !sleepComposerHasRandomElement(SETTINGS.sleepBackgroundElement, SETTINGS.sleepOverlayAElement,
+                                            SETTINGS.sleepOverlayBElement)) {
+    return;
+  }
+
+  RenderLock lock;
+  renderPreviewScreen();
+}
+
+void SleepActivity::renderPreviewScreen() {
+  sleepAssetLogCount = 0;
+  currentBackgroundPreserved = false;
+  renderer.setDarkMode(false);
+  renderer.setRenderMode(GfxRenderer::BW);
+  renderer.setFadingFix(SETTINGS.fadingFix);
+  // Opaque modes retain their regular sleep precondition refresh. Starting
+  // from a clean framebuffer gives overlay and quick-resume previews a neutral
+  // background instead of leaving the Settings screen underneath.
+  renderer.clearScreen();
+  SleepRenderCompletion completion{renderer};
+  renderSelectedSleepScreen();
+}
+
+void SleepActivity::renderSelectedSleepScreen() const {
+  const bool renderQuickResume =
+      effectiveSleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
+      (!preview && fromTimeout &&
+       SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT);
+  if (renderQuickResume) return renderLastScreenSleepScreen();
+
+  // Overlay mode intentionally keeps the framebuffer intact so transparent
+  // PNG pixels leave the existing background visible.
+  if (effectiveSleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY && renderOverlaySleepScreen()) return;
   if (effectiveSleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY) {
     logSleepAsset("sleep_fallback_selected", "default_sleep_screen", "overlay_candidates_failed");
   }
 
   switch (effectiveSleepScreen) {
-    case (CrossPointSettings::SLEEP_SCREEN_MODE::BLANK):
-      return renderBlankSleepScreen();
-    case (CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM):
+    case CrossPointSettings::SLEEP_SCREEN_MODE::BLANK: return renderBlankSleepScreen();
+    case CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM: return renderCustomSleepScreen();
+    case CrossPointSettings::SLEEP_SCREEN_MODE::COVER: return renderCoverSleepScreen();
+    case CrossPointSettings::SLEEP_SCREEN_MODE::COVER_PROGRESS: return renderCoverSleepScreen({}, {}, {}, {}, 0, true);
+    case CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM:
+      if (APP_STATE.lastSleepFromReader) return renderCoverSleepScreen();
       return renderCustomSleepScreen();
-    case (CrossPointSettings::SLEEP_SCREEN_MODE::COVER):
-      return renderCoverSleepScreen();
-    case (CrossPointSettings::SLEEP_SCREEN_MODE::COVER_PROGRESS):
-      return renderCoverSleepScreen({}, {}, {}, {}, 0, true);
-    case (CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM):
-      if (APP_STATE.lastSleepFromReader) {
-        return renderCoverSleepScreen();
-      } else {
-        return renderCustomSleepScreen();
-      }
-    case (CrossPointSettings::SLEEP_SCREEN_MODE::COVER_OVERLAY):
-      return renderCoverOverlaySleepScreen();
-    case (CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY):
-      return renderDefaultSleepScreen();
-    case (CrossPointSettings::SLEEP_SCREEN_MODE::READING_STATS_SLEEP):
-      return renderReadingStatsSleepScreen();
-    case (CrossPointSettings::SLEEP_SCREEN_MODE::MINIMAL_STATS):
-      return renderMinimalStatsSleepScreen();
-    case (CrossPointSettings::SLEEP_SCREEN_MODE::CLIPPING_COVER):
-      return renderClippingCoverSleepScreen();
-    case (CrossPointSettings::SLEEP_SCREEN_MODE::TODO_LIST):
-      return renderToDoSleepScreen();
-    case (CrossPointSettings::SLEEP_SCREEN_MODE::READING_CALENDAR_SLEEP):
-      return renderReadingCalendarSleepScreen();
-    case (CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP):
-      return renderReadingSummarySleepScreen();
-    case (CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE):
-      return renderFlexibleSleepScreen();
-    default:
-      return renderDefaultSleepScreen();
+    case CrossPointSettings::SLEEP_SCREEN_MODE::COVER_OVERLAY: return renderCoverOverlaySleepScreen();
+    case CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY: return renderDefaultSleepScreen();
+    case CrossPointSettings::SLEEP_SCREEN_MODE::READING_STATS_SLEEP: return renderReadingStatsSleepScreen();
+    case CrossPointSettings::SLEEP_SCREEN_MODE::MINIMAL_STATS: return renderMinimalStatsSleepScreen();
+    case CrossPointSettings::SLEEP_SCREEN_MODE::CLIPPING_COVER: return renderClippingCoverSleepScreen();
+    case CrossPointSettings::SLEEP_SCREEN_MODE::TODO_LIST: return renderToDoSleepScreen();
+    case CrossPointSettings::SLEEP_SCREEN_MODE::READING_CALENDAR_SLEEP: return renderReadingCalendarSleepScreen();
+    case CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP: return renderReadingSummarySleepScreen();
+    case CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE: return renderFlexibleSleepScreen();
+    default: return renderDefaultSleepScreen();
   }
 }
 
@@ -943,8 +1014,10 @@ bool SleepActivity::renderCustomSleepScreenAt(const SleepComposerRect* bounds, s
           const auto filename = std::string(sleepDir) + "/" + files[randomFileIndex];
           LOG_DBG("SLP", "Trying custom sleep image: %s", filename.c_str());
           if (renderImage(filename)) {
-            APP_STATE.pushRecentSleep(randomFileIndex);
-            APP_STATE.saveToFile();
+            if (!preview) {
+              APP_STATE.pushRecentSleep(randomFileIndex);
+              APP_STATE.saveToFile();
+            }
             if (dir) dir.close();
             return true;
           }

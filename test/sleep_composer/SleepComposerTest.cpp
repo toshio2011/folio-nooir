@@ -39,6 +39,22 @@ TEST(SleepComposer, FlexibleSettingsRoundTripKeepsSharedElementValues) {
             static_cast<uint8_t>(SleepComposerElement::CurrentBookCover));
 }
 
+TEST(SleepComposer, RandomPreviewDetectionUsesOnlyTheThreeConfiguredLayers) {
+  EXPECT_FALSE(sleepComposerHasRandomElement(static_cast<uint8_t>(SleepComposerElement::CurrentBookCover),
+                                             static_cast<uint8_t>(SleepComposerElement::ReadingCalendar),
+                                             static_cast<uint8_t>(SleepComposerElement::ClockDate)));
+  EXPECT_TRUE(sleepComposerHasRandomElement(static_cast<uint8_t>(SleepComposerElement::Random),
+                                            static_cast<uint8_t>(SleepComposerElement::ReadingCalendar),
+                                            static_cast<uint8_t>(SleepComposerElement::ClockDate)));
+  EXPECT_TRUE(sleepComposerHasRandomElement(static_cast<uint8_t>(SleepComposerElement::CurrentBookCover),
+                                            static_cast<uint8_t>(SleepComposerElement::Random),
+                                            static_cast<uint8_t>(SleepComposerElement::ClockDate)));
+  EXPECT_TRUE(sleepComposerHasRandomElement(static_cast<uint8_t>(SleepComposerElement::CurrentBookCover),
+                                            static_cast<uint8_t>(SleepComposerElement::ReadingCalendar),
+                                            static_cast<uint8_t>(SleepComposerElement::Random)));
+  EXPECT_FALSE(sleepComposerHasRandomElement(255, 255, 255));
+}
+
 TEST(SleepComposer, RandomCandidatesExcludeUnavailableSourcesAndNeverSelectRandom) {
   SleepComposerAvailability available;
   available.currentBook = false;

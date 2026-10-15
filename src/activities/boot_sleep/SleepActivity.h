@@ -10,14 +10,24 @@ class Bitmap;
 
 class SleepActivity final : public Activity {
  public:
+  struct PreviewMode {
+    uint8_t value;
+  };
+
   explicit SleepActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool fromTimeout = false)
       : Activity("Sleep", renderer, mappedInput), fromTimeout(fromTimeout) {}
+  SleepActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const PreviewMode previewMode)
+      : Activity("Sleep", renderer, mappedInput), previewMode(previewMode.value), preview(true) {}
   void onEnter() override;
+  void onExit() override;
+  void loop() override;
   bool acceptsBluetoothInput() const override { return false; }
   bool bluetoothResourceSensitive() const override { return true; }
 
  private:
   void renderDefaultSleepScreen() const;
+  void renderSelectedSleepScreen() const;
+  void renderPreviewScreen();
   void renderCustomSleepScreen() const;
   bool renderCustomSleepScreenAt(const SleepComposerRect* bounds, std::string* selectedPath) const;
   bool drawCustomImageInBounds(const std::string& path, const SleepComposerRect& bounds,
@@ -55,4 +65,8 @@ class SleepActivity final : public Activity {
   bool renderOverlayPng(const std::string& path, bool allowOpaque = false) const;
 
   bool fromTimeout = false;
+  uint8_t previewMode = 0;
+  bool preview = false;
+  bool ignoreInitialConfirm = false;
+  bool previewPreviousDarkMode = false;
 };
