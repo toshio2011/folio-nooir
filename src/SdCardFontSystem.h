@@ -68,9 +68,15 @@ class SdCardFontSystem {
   /// font objects and coverage registered for the next UI/Reader session.
   void releaseReaderCaches();
 
-  /// Release rebuildable state of the separately selected interface font at
-  /// hard boundaries such as Sleep, while preserving its registered coverage.
+  /// Fully unload the separately selected interface-font assets at hard
+  /// Reader/Web/Sleep boundaries. The saved setting and registry stay intact;
+  /// the ActivityManager reloads the family lazily after returning to a light
+  /// screen.
   void releaseInterfaceFontCaches();
+
+  /// Release only glyph/layout caches for pressure reclaim paths that should
+  /// retain the selected interface font's intervals and renderer registration.
+  void releaseInterfaceFontGlyphCaches();
 
   /// Drop the selected Reader-size font's coverage owner after Reader exit;
   /// separately loaded UI fallback sizes remain available to RecentBooks.

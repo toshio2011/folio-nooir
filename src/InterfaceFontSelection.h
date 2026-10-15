@@ -29,6 +29,14 @@ constexpr uint8_t styleMaskForPointSize(const uint8_t pointSize) {
   }
 }
 
+// Keep custom UI font assets out of activities that own the heap for heavier
+// work. The ActivityManager calls the loader again after those activities
+// leave, so the user's saved choice can be restored lazily on a light screen.
+constexpr bool mayLoadUiFontsNow(const bool readerActive, const bool webExclusive,
+                                 const bool sdIndependentScreen, const bool bluetoothOwnsHeap) {
+  return !readerActive && !webExclusive && !sdIndependentScreen && !bluetoothOwnsHeap;
+}
+
 // A saved choice stays usable only while the family is still installed,
 // provides every size-matched UI face, and fits the persisted family field.
 // The caller can safely fall back to built-in UI when this predicate fails.

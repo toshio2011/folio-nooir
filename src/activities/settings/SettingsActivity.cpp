@@ -128,11 +128,16 @@ void SettingsActivity::reclaimStableBluetoothTransientCaches() {
   // markBluetoothQuiescent() is called by render(), which already owns the
   // render lock. Do not acquire a nested RenderLock here.
   if (auto* fontCache = renderer.getFontCacheManager()) fontCache->releaseTransientFontCaches();
+  // This is the stable, pre-admission boundary: BLE is stopped and the
+  // existing heap floors say a cold start needs room. Drop the separately
+  // selected UI font's interval tables and registrations as well as its
+  // rebuildable glyph caches; ActivityManager keeps them unloaded while BLE
+  // admission is pending or active.
   sdFontSystem.releaseInterfaceFontCaches();
   const size_t freeAfter = ESP.getFreeHeap();
   const size_t largestAfter = ESP.getMaxAllocHeap();
   LOG_INF("BLEMEM",
-          "stage=settings_ble_return_reclaim item=font_decompressor_and_interface_cache free=%u->%u freed=%u largest=%u->%u gain=%u",
+          "stage=settings_ble_return_reclaim item=font_decompressor_and_interface_assets free=%u->%u freed=%u largest=%u->%u gain=%u",
           static_cast<unsigned>(freeBefore), static_cast<unsigned>(freeAfter),
           static_cast<unsigned>(freeAfter > freeBefore ? freeAfter - freeBefore : 0),
           static_cast<unsigned>(largestBefore), static_cast<unsigned>(largestAfter),

@@ -70,6 +70,14 @@ TEST(FontSelectionCompatibility, InterfaceFamiliesRequireEveryExactUiSize) {
   }
 }
 
+TEST(FontSelectionCompatibility, InterfaceFontsStayUnloadedDuringHeavyModes) {
+  EXPECT_TRUE(InterfaceFontSelection::mayLoadUiFontsNow(false, false, false, false));
+  EXPECT_FALSE(InterfaceFontSelection::mayLoadUiFontsNow(true, false, false, false));
+  EXPECT_FALSE(InterfaceFontSelection::mayLoadUiFontsNow(false, true, false, false));
+  EXPECT_FALSE(InterfaceFontSelection::mayLoadUiFontsNow(false, false, true, false));
+  EXPECT_FALSE(InterfaceFontSelection::mayLoadUiFontsNow(false, false, false, true));
+}
+
 TEST(FontSelectionCompatibility, InterfaceMiniPackLoadsOnlyRequiredRoles) {
   EXPECT_EQ(InterfaceFontSelection::styleMaskForPointSize(8), InterfaceFontSelection::kRegularStyleMask);
   EXPECT_EQ(InterfaceFontSelection::styleMaskForPointSize(10),

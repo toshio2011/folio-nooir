@@ -83,7 +83,7 @@ void releaseSleepBoundaryCaches(GfxRenderer& renderer) {
   });
   releaseSleepOwner("reader_shared_font_cache", [] { sdFontSystem.releaseReaderCaches(); });
   releaseSleepOwner("ui_fallback_glyph_cache", [] { sdFontSystem.releaseUiFallbackCaches(); });
-  releaseSleepOwner("interface_font_rebuildable_cache", [] { sdFontSystem.releaseInterfaceFontCaches(); });
+  releaseSleepOwner("interface_font_assets", [] { sdFontSystem.releaseInterfaceFontCaches(); });
   releaseSleepOwner("reader_font_coverage_owner", [&renderer] { sdFontSystem.releaseReaderFontOwner(renderer); });
   releaseSleepOwner("image_render_cache", [] { ImageBlock::releaseRenderCache(); });
   releaseSleepOwner("reader_grayscale_scratch", [&renderer] { renderer.releaseGrayscaleStripScratch(); });

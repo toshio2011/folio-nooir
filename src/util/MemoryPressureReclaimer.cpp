@@ -59,7 +59,7 @@ ReclaimReport reclaimForHeadroom(const size_t targetFree, const size_t targetLar
   // disposable UI fallback/interface-font caches; registered font objects,
   // coverage tables, settings, and fallback bindings stay.
   sdFontSystem.releaseUiFallbackCaches();
-  sdFontSystem.releaseInterfaceFontCaches();
+  sdFontSystem.releaseInterfaceFontGlyphCaches();
   report.freeAfter = ESP.getFreeHeap();
   report.largestAfter = ESP.getMaxAllocHeap();
   const size_t freed = report.freeAfter > report.freeBefore ? report.freeAfter - report.freeBefore : 0;

@@ -10,6 +10,7 @@
 
 #include "OpdsServerStore.h"
 #include "BleInput.h"
+#include "InterfaceFontSelection.h"
 #include "SdCardFontSystem.h"
 #include "components/UITheme.h"
 #include "boot_sleep/BootActivity.h"
@@ -37,6 +38,13 @@ static bool lifecycleFirstRenderRecorded = false;
 static bool lifecycleFirstRefreshRecorded = false;
 static bool lifecycleFirstUsableRecorded = false;
 #endif
+
+static bool isSdIndependentUiActivity(const Activity* activity) {
+  if (!activity) return false;
+  const auto& name = activity->name;
+  return name == "Boot" || name == "Sleep" || name == "Crash" || name == "OtaUpdate" ||
+         name == "SdFirmwareUpdate" || name == "FontDownload";
+}
 
 #if FREEINK_CAP_BLE_HID_HOST
 static constexpr unsigned long BLUETOOTH_NOTIFICATION_DURATION_MS = 2400;
@@ -362,6 +370,13 @@ void ActivityManager::loop() {
 #endif
       pendingAction = PendingAction::None;
       currentActivity = std::move(pendingActivity);
+      // These screens do not use the SD-backed UI font and may need the heap
+      // immediately. Release its complete asset set while the transition lock
+      // is still held, before the activity's onEnter() starts its own work.
+      // Sleep and Web perform their own logged teardown boundaries.
+      if (isSdIndependentUiActivity(currentActivity.get()) && currentActivity->name != "Sleep") {
+        sdFontSystem.releaseInterfaceFontCaches();
+      }
 
       lock.unlock();  // onEnter may acquire its own lock
 #if FREEINK_CAP_BLE_HID_HOST
@@ -430,13 +445,21 @@ void ActivityManager::loop() {
         std::any_of(stackActivities.begin(), stackActivities.end(), [](const auto& activity) {
           return activity && activity->name == "CrossPointWebServer";
         });
-    const bool sdIndependentScreen = currentActivity->name == "Boot" || currentActivity->name == "Sleep" ||
-                                     currentActivity->name == "Crash" || currentActivity->name == "OtaUpdate" ||
-                                     currentActivity->name == "SdFirmwareUpdate" || currentActivity->name == "FontDownload";
-    // Web-exclusive entry deliberately releases rebuildable UI font arenas.
-    // Do not immediately refill them from this steady main-loop service while
-    // Web (or one of its mode-selection children) owns the heap.
-    if (!sdIndependentScreen && !webExclusiveActivityActive) {
+    const bool sdIndependentScreen = isSdIndependentUiActivity(currentActivity.get());
+    const bool readerActivityActive = isReaderActivity();
+    bool bluetoothOwnsHeap = bleinput::reAdmissionPending();
+#if FREEINK_CAP_BLE_HID_HOST
+    bluetoothOwnsHeap = bluetoothOwnsHeap || BleHid.isRunning();
+#endif
+    // Heavy activities unload custom interface fonts. Do not reload while a
+    // Reader is current or on the activity stack, Web owns the heap, an
+    // independent recovery/sleep screen is active, or BLE admission is
+    // pending/active. A light activity will lazily restore the saved choice.
+    if (InterfaceFontSelection::mayLoadUiFontsNow(readerActivityActive, webExclusiveActivityActive,
+                                                  sdIndependentScreen, bluetoothOwnsHeap)) {
+      // UI font load steps register/replace renderer families. Serialize them
+      // with render use just like the lifecycle teardown path.
+      RenderLock uiFontLock;
       sdFontSystem.ensureUiLoaded(renderer);
       if (sdFontSystem.progressUiLoad(renderer)) requestUpdate();
     }

@@ -346,7 +346,28 @@ void SdCardFontSystem::releaseReaderCaches() {
 
 void SdCardFontSystem::releaseInterfaceFontCaches() {
 #if NOOIR_SD_FONT_DIAGNOSTICS
-  uiManager_.logMemoryStats("sleep_before_interface_release");
+  uiManager_.logMemoryStats("before_interface_font_unload");
+#endif
+  // Remove renderer overrides before deleting the SD-owned font objects.
+  // Keep the persisted family choice so ensureUiLoaded() can restore it after
+  // the heavy activity ends.
+  if (renderer_) {
+    renderer_->clearUiFontOverrides();
+    uiManager_.unloadAll(*renderer_, false);
+    renderer_->clearUiTextPreparation();
+  }
+  uiLoadInProgress_ = false;
+  uiLoadingFamily_.clear();
+  uiLoadingStep_ = 0;
+  uiAttemptedFamily_.clear();
+#if NOOIR_SD_FONT_DIAGNOSTICS
+  uiManager_.logMemoryStats("after_interface_font_unload");
+#endif
+}
+
+void SdCardFontSystem::releaseInterfaceFontGlyphCaches() {
+#if NOOIR_SD_FONT_DIAGNOSTICS
+  uiManager_.logMemoryStats("pressure_before_interface_cache_release");
 #endif
   uiManager_.releaseReaderCaches();
   // The renderer's bounded key cache only records which UI labels were
@@ -354,7 +375,7 @@ void SdCardFontSystem::releaseInterfaceFontCaches() {
   // draw can repopulate the selected custom roles lazily.
   if (renderer_) renderer_->clearUiTextPreparation();
 #if NOOIR_SD_FONT_DIAGNOSTICS
-  uiManager_.logMemoryStats("sleep_after_interface_release");
+  uiManager_.logMemoryStats("pressure_after_interface_cache_release");
 #endif
 }
 

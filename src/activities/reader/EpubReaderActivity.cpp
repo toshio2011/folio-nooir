@@ -2719,7 +2719,7 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
   if (!readerIdleFontCachesReleased) {
     const size_t freeBefore = ESP.getFreeHeap();
     const size_t largestBefore = ESP.getMaxAllocHeap();
-    EpubDiagnostics::record("reader_idle_ble_cache_release_before", currentSpineIndex,
+    EpubDiagnostics::record("reader_idle_ble_font_release_before", currentSpineIndex,
                             section->currentPage);
     {
       RenderLock cleanupLock;
@@ -2728,15 +2728,15 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
     }
     const size_t freeAfter = ESP.getFreeHeap();
     const size_t largestAfter = ESP.getMaxAllocHeap();
-    LOG_INF("RIDLE", "item=reader_disposable_font_cache spine=%d page=%d free=%u->%u freed=%u largest=%u->%u gain=%u",
+    LOG_INF("RIDLE", "item=reader_disposable_font_assets spine=%d page=%d free=%u->%u freed=%u largest=%u->%u gain=%u",
             currentSpineIndex, section->currentPage, static_cast<unsigned>(freeBefore),
             static_cast<unsigned>(freeAfter),
             static_cast<unsigned>(freeAfter > freeBefore ? freeAfter - freeBefore : 0),
             static_cast<unsigned>(largestBefore), static_cast<unsigned>(largestAfter),
             static_cast<unsigned>(largestAfter > largestBefore ? largestAfter - largestBefore : 0));
-    logReaderBleReclaim(1, "reader_disposable_font_caches", freeBefore, freeAfter, largestBefore, largestAfter,
+    logReaderBleReclaim(1, "reader_disposable_font_assets", freeBefore, freeAfter, largestBefore, largestAfter,
                         readerBleReturnAdmitted(freeAfter, largestAfter));
-    EpubDiagnostics::record("reader_idle_ble_cache_release_after", currentSpineIndex,
+    EpubDiagnostics::record("reader_idle_ble_font_release_after", currentSpineIndex,
                             section->currentPage, 0, freeBefore,
                             freeBefore > freeAfter ? freeBefore - freeAfter : 0, 1);
     readerIdleFontCachesReleased = true;
