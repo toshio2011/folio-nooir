@@ -1,5 +1,7 @@
 #include "ButtonNavigator.h"
 
+#include <algorithm>
+
 const MappedInputManager* ButtonNavigator::mappedInput = nullptr;
 
 void ButtonNavigator::onNext(const Callback& callback) {
@@ -54,6 +56,20 @@ void ButtonNavigator::onRelease(const Buttons& buttons, const Callback& callback
 }
 
 void ButtonNavigator::onContinuous(const Buttons& buttons, const Callback& callback) {
+  // Never run a continuous navigation step on the same input frame as a press
+  // or release. Some input backends keep isPressed() true for the release
+  // frame; without this guard the release handler can clear the repeat timer
+  // and the continuous handler immediately fires again, which is especially
+  // visible on Spine shelves where a continuous action changes pages.
+  const bool wasPressedOrReleased =
+      std::any_of(buttons.begin(), buttons.end(), [](const MappedInputManager::Button button) {
+        return mappedInput != nullptr && (mappedInput->wasPressed(button) || mappedInput->wasReleased(button));
+      });
+  if (wasPressedOrReleased) {
+    lastContinuousNavTime = 0;
+    return;
+  }
+
   const bool isPressed = std::any_of(buttons.begin(), buttons.end(), [this](const MappedInputManager::Button button) {
     return mappedInput != nullptr && mappedInput->isPressed(button) && shouldNavigateContinuously();
   });
@@ -83,7 +99,6 @@ int ButtonNavigator::nextIndex(const int currentIndex, const int totalItems) {
 int ButtonNavigator::previousIndex(const int currentIndex, const int totalItems) {
   if (totalItems <= 0) return 0;
 
-  // Calculate the previous index with wrap-around
   return (currentIndex + totalItems - 1) % totalItems;
 }
 
