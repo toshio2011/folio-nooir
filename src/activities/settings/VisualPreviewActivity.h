@@ -25,6 +25,7 @@ class VisualPreviewActivity final : public Activity {
   uint8_t finishedLayoutPreview_ = CrossPointSettings::FOLIO_LAYOUT_SPINE;
   uint8_t spineAppearancePreview_ = CrossPointSettings::SPINE_APPEARANCE_ALL_SPINES;
   uint8_t spineDecorationPreview_ = CrossPointSettings::SPINE_DECORATION_BALANCED;
+  bool ignoreInitialConfirm_ = true;
   std::vector<TabInfo> tabs_;
   std::vector<Tab> tabKinds_;
   OptionPopup optionPopup_;
