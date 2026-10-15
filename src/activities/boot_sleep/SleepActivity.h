@@ -21,6 +21,7 @@ class SleepActivity final : public Activity {
   void onEnter() override;
   void onExit() override;
   void loop() override;
+  bool preventAutoSleep() override { return preview; }
   bool acceptsBluetoothInput() const override { return false; }
   bool bluetoothResourceSensitive() const override { return true; }
 
