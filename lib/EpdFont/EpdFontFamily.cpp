@@ -18,6 +18,19 @@ const EpdFont* EpdFontFamily::getFont(const Style style) const {
   return regular;
 }
 
+EpdFontFamily EpdFontFamily::withStyleFallbacks(const EpdFontFamily& primary, const EpdFontFamily& fallback,
+                                                const uint8_t primaryStyleMask) {
+  const auto choose = [primaryStyleMask](const uint8_t style, const EpdFont* primaryFont,
+                                         const EpdFont* fallbackFont) {
+    if ((primaryStyleMask & (1u << style)) != 0 && primaryFont != nullptr) return primaryFont;
+    return fallbackFont != nullptr ? fallbackFont : primaryFont;
+  };
+  return EpdFontFamily(choose(REGULAR, primary.regular, fallback.regular),
+                       choose(BOLD, primary.bold, fallback.bold),
+                       choose(ITALIC, primary.italic, fallback.italic),
+                       choose(BOLD_ITALIC, primary.boldItalic, fallback.boldItalic));
+}
+
 void EpdFontFamily::getTextDimensions(const char* string, int* w, int* h, const Style style) const {
   getFont(style)->getTextDimensions(string, w, h);
 }

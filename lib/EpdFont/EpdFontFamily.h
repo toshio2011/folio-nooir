@@ -24,6 +24,11 @@ class EpdFontFamily {
   explicit EpdFontFamily(const EpdFont* regular, const EpdFont* bold = nullptr, const EpdFont* italic = nullptr,
                          const EpdFont* boldItalic = nullptr)
       : regular(regular), bold(bold), italic(italic), boldItalic(boldItalic) {}
+  // Build a non-owning face pack that takes only selected styles from primary
+  // and falls back role-by-role to `fallback`. Used by the UI Mini Pack so a
+  // missing 8 pt Bold face, for example, keeps the built-in 8 pt Bold role.
+  static EpdFontFamily withStyleFallbacks(const EpdFontFamily& primary, const EpdFontFamily& fallback,
+                                          uint8_t primaryStyleMask);
   ~EpdFontFamily() = default;
   void getTextDimensions(const char* string, int* w, int* h, Style style = REGULAR) const;
   const EpdFontData* getData(Style style = REGULAR) const;

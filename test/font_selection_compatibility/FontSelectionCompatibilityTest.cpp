@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "EpdFontFamily.h"
 #include "FontSelectionCompatibility.h"
 #include "InterfaceFontSelection.h"
 #include "SdCardFontRegistry.h"
@@ -67,6 +68,84 @@ TEST(FontSelectionCompatibility, InterfaceFamiliesRequireEveryExactUiSize) {
                            incomplete.files.end());
     EXPECT_FALSE(incomplete.hasInterfaceSizes()) << "missing " << static_cast<int>(missingSize) << " pt";
   }
+}
+
+TEST(FontSelectionCompatibility, InterfaceMiniPackLoadsOnlyRequiredRoles) {
+  EXPECT_EQ(InterfaceFontSelection::styleMaskForPointSize(8), InterfaceFontSelection::kRegularStyleMask);
+  EXPECT_EQ(InterfaceFontSelection::styleMaskForPointSize(10),
+            InterfaceFontSelection::kRegularStyleMask | InterfaceFontSelection::kBoldStyleMask);
+  EXPECT_EQ(InterfaceFontSelection::styleMaskForPointSize(12),
+            InterfaceFontSelection::kRegularStyleMask | InterfaceFontSelection::kBoldStyleMask);
+  EXPECT_EQ(InterfaceFontSelection::styleMaskForPointSize(14), 0);
+
+  const uint8_t ui8 = InterfaceFontSelection::styleMaskForPointSize(8);
+  const uint8_t ui10 = InterfaceFontSelection::styleMaskForPointSize(10);
+  const uint8_t ui12 = InterfaceFontSelection::styleMaskForPointSize(12);
+  uint8_t miniPackRoleCount = 0;
+  uint8_t fullReaderRoleCount = 0;
+  const uint8_t roleMasks[] = {ui8, ui10, ui12};
+  for (const uint8_t mask : roleMasks) {
+    for (uint8_t style = 0; style < 4; ++style) {
+      if (SdCardFontStyleMask::includes(mask, style)) ++miniPackRoleCount;
+      if (SdCardFontStyleMask::includes(SdCardFontStyleMask::kAll, style)) ++fullReaderRoleCount;
+    }
+  }
+  EXPECT_EQ(miniPackRoleCount, 5);
+  EXPECT_EQ(fullReaderRoleCount, 12);
+
+  // These masks are the exact gate used by SdCardFont::load() before it reads
+  // or registers a style's interval table.
+  EXPECT_TRUE(SdCardFontStyleMask::includes(ui8, EpdFontFamily::REGULAR));
+  EXPECT_FALSE(SdCardFontStyleMask::includes(ui8, EpdFontFamily::BOLD));
+  EXPECT_FALSE(SdCardFontStyleMask::includes(ui8, EpdFontFamily::ITALIC));
+  EXPECT_FALSE(SdCardFontStyleMask::includes(ui8, EpdFontFamily::BOLD_ITALIC));
+  EXPECT_TRUE(SdCardFontStyleMask::includes(ui10, EpdFontFamily::REGULAR));
+  EXPECT_TRUE(SdCardFontStyleMask::includes(ui10, EpdFontFamily::BOLD));
+  EXPECT_FALSE(SdCardFontStyleMask::includes(ui10, EpdFontFamily::ITALIC));
+  EXPECT_FALSE(SdCardFontStyleMask::includes(ui10, EpdFontFamily::BOLD_ITALIC));
+
+  // The Reader loader keeps the full-style default.
+  for (uint8_t style = 0; style < 4; ++style) {
+    EXPECT_TRUE(SdCardFontStyleMask::includes(SdCardFontStyleMask::kAll, style));
+  }
+}
+
+TEST(FontSelectionCompatibility, InterfaceMiniPackFallsBackPerStyle) {
+  EpdFontData customRegularData{};
+  EpdFontData customBoldData{};
+  EpdFontData builtinRegularData{};
+  EpdFontData builtinBoldData{};
+  EpdFontData builtinItalicData{};
+  EpdFontData builtinBoldItalicData{};
+  EpdFont customRegular(&customRegularData);
+  EpdFont customBold(&customBoldData);
+  EpdFont builtinRegular(&builtinRegularData);
+  EpdFont builtinBold(&builtinBoldData);
+  EpdFont builtinItalic(&builtinItalicData);
+  EpdFont builtinBoldItalic(&builtinBoldItalicData);
+
+  const EpdFontFamily custom8(&customRegular);
+  const EpdFontFamily builtin8(&builtinRegular, &builtinBold, &builtinItalic, &builtinBoldItalic);
+  const EpdFontFamily mini8 = EpdFontFamily::withStyleFallbacks(
+      custom8, builtin8, InterfaceFontSelection::styleMaskForPointSize(8));
+  EXPECT_EQ(mini8.getData(EpdFontFamily::REGULAR), &customRegularData);
+  EXPECT_EQ(mini8.getData(EpdFontFamily::BOLD), &builtinBoldData);
+  EXPECT_EQ(mini8.getData(EpdFontFamily::ITALIC), &builtinItalicData);
+  EXPECT_EQ(mini8.getData(EpdFontFamily::BOLD_ITALIC), &builtinBoldItalicData);
+
+  // A missing custom 10/12 pt Bold face uses built-in Bold instead of
+  // silently resolving to the custom Regular face.
+  const EpdFontFamily custom10(&customRegular);
+  const EpdFontFamily mini10 = EpdFontFamily::withStyleFallbacks(
+      custom10, builtin8, InterfaceFontSelection::styleMaskForPointSize(10));
+  EXPECT_EQ(mini10.getData(EpdFontFamily::REGULAR), &customRegularData);
+  EXPECT_EQ(mini10.getData(EpdFontFamily::BOLD), &builtinBoldData);
+
+  const EpdFontFamily custom10Bold(&customRegular, &customBold);
+  const EpdFontFamily mini10Bold = EpdFontFamily::withStyleFallbacks(
+      custom10Bold, builtin8, InterfaceFontSelection::styleMaskForPointSize(10));
+  EXPECT_EQ(mini10Bold.getData(EpdFontFamily::REGULAR), &customRegularData);
+  EXPECT_EQ(mini10Bold.getData(EpdFontFamily::BOLD), &customBoldData);
 }
 
 TEST(FontSelectionCompatibility, MissingOrUnpersistableInterfaceFamilyFallsBack) {

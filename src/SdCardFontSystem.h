@@ -95,6 +95,7 @@ class SdCardFontSystem {
   void setupUiFallbacks(GfxRenderer& renderer);
 
   SdCardFontRegistry registry_;
+  GfxRenderer* renderer_ = nullptr;  // global renderer outlives this font-system facade
   SdCardFontManager manager_;
   SdCardFontManager uiManager_{0x554946u};  // distinct IDs from the reader manager
   std::atomic<bool> registryDirty_{false};

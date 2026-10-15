@@ -8,6 +8,7 @@
 
 #include "EpdFont.h"
 #include "EpdFontData.h"
+#include "SdCardFontStyleMask.h"
 
 #ifndef NOOIR_SD_FONT_DIAGNOSTICS
 #define NOOIR_SD_FONT_DIAGNOSTICS 0
@@ -41,7 +42,10 @@ class SdCardFont {
   // Load .cpfont file: reads header + intervals into RAM, records file layout offsets.
   // Supports v4 (multi-style) format.
   // Returns true on success.
-  bool load(const char* path);
+  // `styleMask` limits which style interval indexes are retained. Reader font
+  // loads use the full default; the separate interface-font manager can load
+  // only the roles that the UI actually uses.
+  bool load(const char* path, uint8_t styleMask = SdCardFontStyleMask::kAll);
 
   // Pre-read glyphs needed for the given UTF-8 text from SD card.
   // styleMask: bitmask of styles to prewarm (bit 0=regular, 1=bold, 2=italic, 3=bolditalic).
@@ -119,6 +123,9 @@ class SdCardFont {
 
   // Number of styles present in this font file.
   uint8_t styleCount() const { return styleCount_; }
+
+  // Styles loaded into this instance after applying the optional load mask.
+  uint8_t loadedStyleMask() const { return loadedStyleMask_; }
 
   // Returns true if the glyph pointer points into the overflow buffer.
   bool isOverflowGlyph(const EpdGlyph* glyph) const;
@@ -277,6 +284,7 @@ class SdCardFont {
 
   PerStyle styles_[MAX_STYLES] = {};
   uint8_t styleCount_ = 0;
+  uint8_t loadedStyleMask_ = 0;
 
   char filePath_[128] = {};
 

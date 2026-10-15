@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "SdCardFontStyleMask.h"
+
 #ifndef NOOIR_SD_FONT_DIAGNOSTICS
 #define NOOIR_SD_FONT_DIAGNOSTICS 0
 #endif
@@ -32,7 +34,8 @@ class SdCardFontManager {
   // Load exact 8/10/12 pt files for a separate interface-font selection.
   bool loadFamilyUiSizes(const SdCardFontFamilyInfo& family, GfxRenderer& renderer);
   bool beginFamilyUiSizes(const SdCardFontFamilyInfo& family, GfxRenderer& renderer);
-  bool loadFamilyUiSize(const SdCardFontFamilyInfo& family, GfxRenderer& renderer, uint8_t pointSize);
+  bool loadFamilyUiSize(const SdCardFontFamilyInfo& family, GfxRenderer& renderer, uint8_t pointSize,
+                        uint8_t styleMask = SdCardFontStyleMask::kAll);
 
   // Additively load the .cpfont of `family` at the exact physical `pointSize`
   // (used for size-matched CJK UI fallback alongside the reader-size font).
@@ -66,6 +69,7 @@ class SdCardFontManager {
   int getFontId(const std::string& familyName) const;
 
   int getFontIdForPointSize(uint8_t pointSize) const;
+  uint8_t getLoadedStyleMaskForPointSize(uint8_t pointSize) const;
 
   // Get name of currently loaded family (empty if none).
   const std::string& currentFamilyName() const { return loadedFamilyName_; };
@@ -84,7 +88,11 @@ class SdCardFontManager {
 
   // Load+register a single .cpfont file and append it to loaded_.
   // Returns the font id, or 0 on failure (allocation, read, or id collision).
-  int loadFile(const SdCardFontFileInfo& file, const char* familyName, GfxRenderer& renderer);
+  // Returns false for file/load errors. A valid file with no requested styles
+  // is a successful empty result (fontId=0), which lets optional UI roles fall
+  // back independently to built-in faces.
+  bool loadFile(const SdCardFontFileInfo& file, const char* familyName, GfxRenderer& renderer, uint8_t styleMask,
+                int& fontId, uint8_t* loadedStyleMask = nullptr);
 
   std::string loadedFamilyName_;
   uint8_t loadedPointSize_ = 0;

@@ -20,19 +20,31 @@ static uint8_t fontSizeEnumFromSettings() {
 // Built-in UI fonts and their physical point sizes (at 150 DPI, matching the
 // SD-font converter). Each is paired with a same-size SD fallback so CJK UI
 // text matches the surrounding Latin. See SdCardFontSystem::setupUiFallbacks.
-struct UiFontSize {
+struct UiFontFallbackSize {
   int fontId;
   uint8_t pointSize;
 };
-constexpr UiFontSize kUiFontSizes[] = {
+constexpr UiFontFallbackSize kUiFontFallbackSizes[] = {
     {SMALL_FONT_ID, 8},
     {UI_10_FONT_ID, 10},
     {UI_12_FONT_ID, 12},
 };
 
+struct InterfaceFontRole {
+  int fontId;
+  uint8_t pointSize;
+  uint8_t styleMask;
+};
+constexpr InterfaceFontRole kInterfaceFontRoles[] = {
+    {SMALL_FONT_ID, 8, InterfaceFontSelection::styleMaskForPointSize(8)},
+    {UI_10_FONT_ID, 10, InterfaceFontSelection::styleMaskForPointSize(10)},
+    {UI_12_FONT_ID, 12, InterfaceFontSelection::styleMaskForPointSize(12)},
+};
+
 }  // namespace
 
 void SdCardFontSystem::begin(GfxRenderer& renderer) {
+  renderer_ = &renderer;
   registry_.discover();
 
   // Register this system as the SD font ID resolver in settings.
@@ -212,43 +224,57 @@ bool SdCardFontSystem::progressUiLoad(GfxRenderer& renderer) {
   };
 
   const auto* family = registry_.findFamily(uiLoadingFamily_);
-  static constexpr uint8_t kUiPointSizes[] = {8, 10, 12};
-  if (!family || uiLoadingStep_ >= sizeof(kUiPointSizes) / sizeof(kUiPointSizes[0]) ||
-      !uiManager_.loadFamilyUiSize(*family, renderer, kUiPointSizes[uiLoadingStep_])) {
+  if (!family || uiLoadingStep_ >= sizeof(kInterfaceFontRoles) / sizeof(kInterfaceFontRoles[0]) ||
+      !uiManager_.loadFamilyUiSize(*family, renderer, kInterfaceFontRoles[uiLoadingStep_].pointSize,
+                                   kInterfaceFontRoles[uiLoadingStep_].styleMask)) {
     return fallbackToBuiltIn("size load failed");
   }
   ++uiLoadingStep_;
-  if (uiLoadingStep_ < sizeof(kUiPointSizes) / sizeof(kUiPointSizes[0])) return false;
+  if (uiLoadingStep_ < sizeof(kInterfaceFontRoles) / sizeof(kInterfaceFontRoles[0])) return false;
 
-  const int ui8 = uiManager_.getFontIdForPointSize(8);
-  const int ui10 = uiManager_.getFontIdForPointSize(10);
-  const int ui12 = uiManager_.getFontIdForPointSize(12);
-  if (ui8 == 0 || ui10 == 0 || ui12 == 0) {
-    return fallbackToBuiltIn("required sizes incomplete");
-  }
-
-  // Do not activate a family that cannot render the basic Latin UI alphabet.
-  // Arabic and other script gaps still use the existing built-in fallback
-  // mapping below; a family with no common UI glyphs is simply incompatible.
-  const int uiIds[] = {ui8, ui10, ui12};
+  // Validate only custom faces that this compact pack actually loaded. A
+  // missing Regular/Bold role stays mapped to its matching built-in face.
   static constexpr uint32_t kUiCoverageProbes[] = {' ', '0', 'A', 'a'};
-  for (const int id : uiIds) {
+  bool hasCustomRole = false;
+  for (const auto& role : kInterfaceFontRoles) {
+    const int id = uiManager_.getFontIdForPointSize(role.pointSize);
+    if (id == 0) continue;
     const auto fontIt = renderer.getFontMap().find(id);
     if (fontIt == renderer.getFontMap().end()) {
       return fallbackToBuiltIn("font registration incomplete");
     }
-    for (const uint32_t cp : kUiCoverageProbes) {
-      if (!fontIt->second.hasCodepoint(cp)) {
-        return fallbackToBuiltIn("basic UI glyph coverage missing");
+    const auto fallbackIt = renderer.getFontMap().find(role.fontId);
+    if (fallbackIt == renderer.getFontMap().end()) {
+      return fallbackToBuiltIn("built-in UI role missing");
+    }
+    const uint8_t loadedMask = uiManager_.getLoadedStyleMaskForPointSize(role.pointSize);
+    hasCustomRole = hasCustomRole || (loadedMask & role.styleMask) != 0;
+    for (uint8_t style = 0; style < 4; ++style) {
+      if ((loadedMask & role.styleMask & (1u << style)) == 0) continue;
+      for (const uint32_t cp : kUiCoverageProbes) {
+        if (!fontIt->second.hasCodepoint(cp, static_cast<EpdFontFamily::Style>(style))) {
+          return fallbackToBuiltIn("basic UI glyph coverage missing");
+        }
       }
     }
+
+    // Join selected SD faces and built-in fallbacks by style. This preserves,
+    // for example, the built-in 8 pt Bold while using only the custom 8 pt
+    // Regular role.
+    const EpdFontFamily miniPack =
+        EpdFontFamily::withStyleFallbacks(fontIt->second, fallbackIt->second, loadedMask & role.styleMask);
+    if (!renderer.replaceFontFamily(id, miniPack)) {
+      return fallbackToBuiltIn("font family replacement failed");
+    }
+    renderer.setUiFontOverride(role.fontId, id, role.fontId, loadedMask & role.styleMask);
   }
 
-  // Built-in UI IDs are the Arabic fallback, so a custom family that lacks a
-  // UI Arabic codepoint cannot break localized navigation or menus.
-  renderer.setUiFontOverride(SMALL_FONT_ID, ui8, SMALL_FONT_ID);
-  renderer.setUiFontOverride(UI_10_FONT_ID, ui10, UI_10_FONT_ID);
-  renderer.setUiFontOverride(UI_12_FONT_ID, ui12, UI_12_FONT_ID);
+  if (!hasCustomRole) {
+    return fallbackToBuiltIn("no usable UI roles");
+  }
+
+  // Built-in UI IDs remain the Arabic fallback, so missing Arabic glyphs do
+  // not break localized navigation or menus.
   LOG_DBG("SDFS", "Loaded interface font family: %s", uiLoadingFamily_.c_str());
   uiAttemptedFamily_ = uiLoadingFamily_;
   uiLoadingFamily_.clear();
@@ -283,7 +309,7 @@ void SdCardFontSystem::setupUiFallbacks(GfxRenderer& renderer) {
     return;
   }
 
-  for (const auto& ui : kUiFontSizes) {
+  for (const auto& ui : kUiFontFallbackSizes) {
     const int sdFontId = manager_.loadFamilyExtraSize(*family, renderer, ui.pointSize);
     if (sdFontId != 0) {
       renderer.setFallbackFont(ui.fontId, sdFontId);
@@ -323,6 +349,10 @@ void SdCardFontSystem::releaseInterfaceFontCaches() {
   uiManager_.logMemoryStats("sleep_before_interface_release");
 #endif
   uiManager_.releaseReaderCaches();
+  // The renderer's bounded key cache only records which UI labels were
+  // prepared. Drop those keys with the backing font arenas so the next UI
+  // draw can repopulate the selected custom roles lazily.
+  if (renderer_) renderer_->clearUiTextPreparation();
 #if NOOIR_SD_FONT_DIAGNOSTICS
   uiManager_.logMemoryStats("sleep_after_interface_release");
 #endif

@@ -103,6 +103,9 @@ class GfxRenderer {
   // Built-in UI ID -> lazily loaded SD interface-font ID. Kept separate from
   // reader/CJK fallback mapping so reader typography is unaffected.
   std::map<int, int> uiFontOverrideMap_;
+  // SD styles that should be prepared for each UI override. Roles provided by
+  // the built-in fallback face need no SD reads or decompression.
+  std::map<int, uint8_t> uiFontOverrideStyleMask_;
   struct UiPreparedText {
     uint32_t hash = 0;
     int fontId = 0;
@@ -164,6 +167,14 @@ class GfxRenderer {
   // Setup
   void begin();  // must be called right after display.begin()
   void insertFont(int fontId, EpdFontFamily font);
+  // Replace an existing renderer family without touching its SD-font owner,
+  // point-size registration, or Arabic fallback bindings.
+  bool replaceFontFamily(int fontId, EpdFontFamily font) {
+    const auto it = fontMap.find(fontId);
+    if (it == fontMap.end()) return false;
+    it->second = font;
+    return true;
+  }
   // Clears both the flash-font map and any SD-font registration for fontId.
   // Coupled to avoid dangling SdCardFont* in sdCardFonts_ when callers free
   // the underlying SdCardFont and forget the SD-side unregister.
@@ -195,6 +206,7 @@ class GfxRenderer {
     }
     for (auto it = uiFontOverrideMap_.begin(); it != uiFontOverrideMap_.end();) {
       if (it->second == fontId) {
+        uiFontOverrideStyleMask_.erase(it->second);
         it = uiFontOverrideMap_.erase(it);
       } else {
         ++it;
@@ -229,13 +241,16 @@ class GfxRenderer {
   // setFallbackFont maps a primary UI font id to an SD font id of the same size.
   void setFallbackFont(int primaryFontId, int fallbackFontId) { fallbackFontMap_[primaryFontId] = fallbackFontId; }
   void clearFallbackFonts() { fallbackFontMap_.clear(); }
-  void setUiFontOverride(int builtinFontId, int sdFontId, int arabicFallbackFontId = 0) {
+  void setUiFontOverride(int builtinFontId, int sdFontId, int arabicFallbackFontId = 0,
+                         uint8_t sdStyleMask = 0x0F) {
     uiFontOverrideMap_[builtinFontId] = sdFontId;
+    uiFontOverrideStyleMask_[sdFontId] = sdStyleMask;
     if (arabicFallbackFontId != 0) arabicFallbackFontMap_[sdFontId] = arabicFallbackFontId;
   }
   void clearUiFontOverrides() {
     for (const auto& entry : uiFontOverrideMap_) arabicFallbackFontMap_.erase(entry.second);
     uiFontOverrideMap_.clear();
+    uiFontOverrideStyleMask_.clear();
     uiPreparedTextCount_ = 0;
     uiPreparedTextNext_ = 0;
   }

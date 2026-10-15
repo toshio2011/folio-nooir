@@ -401,6 +401,9 @@ int GfxRenderer::scaleUiFontId(const int fontId) const {
 void GfxRenderer::prepareUiTextIfNeeded(const int fontId, const char* text,
                                         const EpdFontFamily::Style style) const {
   if (text == nullptr || *text == '\0' || !isUiFontOverride(fontId)) return;
+  const uint8_t styleIndex = static_cast<uint8_t>(style) & 0x03;
+  const auto roleIt = uiFontOverrideStyleMask_.find(fontId);
+  if (roleIt != uiFontOverrideStyleMask_.end() && (roleIt->second & (1u << styleIndex)) == 0) return;
 
   // UI labels are short, but cap hashing so a malformed caller cannot turn
   // this guard into an unbounded scan. The cache only suppresses repeated
@@ -416,7 +419,7 @@ void GfxRenderer::prepareUiTextIfNeeded(const int fontId, const char* text,
   }
   hash ^= static_cast<uint32_t>(length);
   hash *= kFnvPrime;
-  const uint8_t styleMask = static_cast<uint8_t>(1U << (static_cast<uint8_t>(style) & 0x03));
+  const uint8_t styleMask = static_cast<uint8_t>(1U << styleIndex);
 
   for (uint8_t i = 0; i < uiPreparedTextCount_; ++i) {
     const auto& entry = uiPreparedText_[i];

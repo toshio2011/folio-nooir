@@ -10,6 +10,7 @@
 #include <memory>
 
 #include "EpdFontFamily.h"
+#include "SdCardFontStyleMask.h"
 #include "../Memory/Memory.h"
 #include "../../src/util/EpubDiagnostics.h"
 
@@ -180,6 +181,7 @@ void SdCardFont::freeAll() {
     freeStyleAll(styles_[i]);
   }
   styleCount_ = 0;
+  loadedStyleMask_ = 0;
   contentHash_ = 0;
   loaded_ = false;
 }
@@ -512,8 +514,9 @@ void SdCardFont::computeStyleFileOffsets(PerStyle& s, uint32_t baseOffset) {
 
 // --- Load ---
 
-bool SdCardFont::load(const char* path) {
+bool SdCardFont::load(const char* path, uint8_t styleMask) {
   freeAll();
+  styleMask &= 0x0F;
   if (strlen(path) >= sizeof(filePath_)) {
     LOG_ERR("SDCF", "Path too long (%zu bytes, max %zu)", strlen(path), sizeof(filePath_) - 1);
     return false;
@@ -577,18 +580,10 @@ bool SdCardFont::load(const char* path) {
     }
 
     auto& s = styles_[styleId];
-    s.present = true;
-    s.header.intervalCount = readU32(tocBuf + 4);
-    s.header.glyphCount = readU32(tocBuf + 8);
-    s.header.advanceY = tocBuf[12];
-    s.header.ascender = readI16(tocBuf + 13);
-    s.header.descender = readI16(tocBuf + 15);
-    s.header.kernLeftEntryCount = readU16(tocBuf + 17);
-    s.header.kernRightEntryCount = readU16(tocBuf + 19);
-    s.header.kernLeftClassCount = tocBuf[21];
-    s.header.kernRightClassCount = tocBuf[22];
-    s.header.ligaturePairCount = tocBuf[23];
-    s.header.is2Bit = is2Bit;
+    const uint32_t intervalCount = readU32(tocBuf + 4);
+    const uint32_t glyphCount = readU32(tocBuf + 8);
+    const uint16_t kernLeftEntryCount = readU16(tocBuf + 17);
+    const uint16_t kernRightEntryCount = readU16(tocBuf + 19);
 
     // Sanity-check counts to reject malformed files before allocating.
     // Kern class counts are uint8 (bounded by type). Entry counts are uint16
@@ -596,17 +591,33 @@ bool SdCardFont::load(const char* path) {
     static constexpr uint32_t MAX_INTERVALS = 4096;
     static constexpr uint32_t MAX_GLYPHS = 65536;
     static constexpr uint32_t MAX_KERN_ENTRIES = 4096;
-    if (s.header.intervalCount > MAX_INTERVALS || s.header.glyphCount > MAX_GLYPHS ||
-        s.header.kernLeftEntryCount > MAX_KERN_ENTRIES || s.header.kernRightEntryCount > MAX_KERN_ENTRIES) {
-      LOG_ERR("SDCF", "Style %u: unreasonable counts (iv=%u, gl=%u, kL=%u, kR=%u)", styleId, s.header.intervalCount,
-              s.header.glyphCount, s.header.kernLeftEntryCount, s.header.kernRightEntryCount);
+    if (intervalCount > MAX_INTERVALS || glyphCount > MAX_GLYPHS || kernLeftEntryCount > MAX_KERN_ENTRIES ||
+        kernRightEntryCount > MAX_KERN_ENTRIES) {
+      LOG_ERR("SDCF", "Style %u: unreasonable counts (iv=%u, gl=%u, kL=%u, kR=%u)", styleId, intervalCount,
+              glyphCount, kernLeftEntryCount, kernRightEntryCount);
       file.close();
       freeAll();
       return false;
     }
 
-    uint32_t dataOffset = readU32(tocBuf + 24);
+    if (!SdCardFontStyleMask::includes(styleMask, styleId)) continue;
+
+    s.present = true;
+    s.header.intervalCount = intervalCount;
+    s.header.glyphCount = glyphCount;
+    s.header.advanceY = tocBuf[12];
+    s.header.ascender = readI16(tocBuf + 13);
+    s.header.descender = readI16(tocBuf + 15);
+    s.header.kernLeftEntryCount = kernLeftEntryCount;
+    s.header.kernRightEntryCount = kernRightEntryCount;
+    s.header.kernLeftClassCount = tocBuf[21];
+    s.header.kernRightClassCount = tocBuf[22];
+    s.header.ligaturePairCount = tocBuf[23];
+    s.header.is2Bit = is2Bit;
+
+    const uint32_t dataOffset = readU32(tocBuf + 24);
     computeStyleFileOffsets(s, dataOffset);
+    loadedStyleMask_ |= static_cast<uint8_t>(1u << styleId);
   }
 
   styleCount_ = styleCount;
@@ -716,7 +727,11 @@ bool SdCardFont::load(const char* path) {
 
   loaded_ = true;
 
-  LOG_DBG("SDCF", "Loaded: %s (v%u, %u styles)", path, CPFONT_VERSION, styleCount_);
+  uint8_t loadedStyleCount = 0;
+  for (uint8_t style = 0; style < MAX_STYLES; ++style) {
+    if (loadedStyleMask_ & (1u << style)) ++loadedStyleCount;
+  }
+  LOG_DBG("SDCF", "Loaded: %s (v%u, styles=%u/%u)", path, CPFONT_VERSION, loadedStyleCount, styleCount_);
   for (uint8_t i = 0; i < MAX_STYLES; i++) {
     if (!styles_[i].present) continue;
     const auto& h = styles_[i].header;
