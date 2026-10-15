@@ -39,9 +39,7 @@ static bool lifecycleFirstRefreshRecorded = false;
 static bool lifecycleFirstUsableRecorded = false;
 #endif
 
-static bool isSdIndependentUiActivity(const Activity* activity) {
-  if (!activity) return false;
-  const auto& name = activity->name;
+static bool isSdIndependentUiActivityName(const std::string& name) {
   return name == "Boot" || name == "Sleep" || name == "Crash" || name == "OtaUpdate" ||
          name == "SdFirmwareUpdate" || name == "FontDownload";
 }
@@ -374,7 +372,7 @@ void ActivityManager::loop() {
       // immediately. Release its complete asset set while the transition lock
       // is still held, before the activity's onEnter() starts its own work.
       // Sleep and Web perform their own logged teardown boundaries.
-      if (isSdIndependentUiActivity(currentActivity.get()) && currentActivity->name != "Sleep") {
+      if (isSdIndependentUiActivityName(currentActivity->name) && currentActivity->name != "Sleep") {
         sdFontSystem.releaseInterfaceFontCaches();
       }
 
@@ -445,7 +443,7 @@ void ActivityManager::loop() {
         std::any_of(stackActivities.begin(), stackActivities.end(), [](const auto& activity) {
           return activity && activity->name == "CrossPointWebServer";
         });
-    const bool sdIndependentScreen = isSdIndependentUiActivity(currentActivity.get());
+    const bool sdIndependentScreen = isSdIndependentUiActivityName(currentActivity->name);
     const bool readerActivityActive = isReaderActivity();
     bool bluetoothOwnsHeap = bleinput::reAdmissionPending();
 #if FREEINK_CAP_BLE_HID_HOST
