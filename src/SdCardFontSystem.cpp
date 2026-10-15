@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "CrossPointSettings.h"
+#include "InterfaceFontSelection.h"
 #include "fontIds.h"
 
 namespace {
@@ -135,7 +136,7 @@ void SdCardFontSystem::ensureUiLoaded(GfxRenderer& renderer) {
   }
   const bool registryChanged = registryWasDirty || uiReloadRequested_.exchange(false, std::memory_order_acquire);
 
-  const char* wantedFamily = SETTINGS.uiFontFamilyName;
+  const std::string wantedFamily = SETTINGS.uiFontFamilyName;
   const std::string currentFamily = uiManager_.currentFamilyName();
 
   if (uiLoadInProgress_ && !registryChanged && uiLoadingFamily_ == wantedFamily) return;
@@ -147,7 +148,7 @@ void SdCardFontSystem::ensureUiLoaded(GfxRenderer& renderer) {
     uiLoadingStep_ = 0;
   }
 
-  if (wantedFamily[0] == '\0') {
+  if (wantedFamily.empty()) {
     if (!currentFamily.empty()) {
       renderer.clearUiFontOverrides();
       uiManager_.unloadAll(renderer, false);
@@ -164,40 +165,57 @@ void SdCardFontSystem::ensureUiLoaded(GfxRenderer& renderer) {
   // mappings cleared before it runs, but avoid unloading the same manager twice.
   uiAttemptedFamily_ = wantedFamily;
 
-  if (wantedFamily[0] == '\0') return;
-
   const auto* family = registry_.findFamily(wantedFamily);
-  if (!family || !family->hasInterfaceSizes()) {
-    LOG_DBG("SDFS", "Interface font unavailable: %s (using built-in UI)", wantedFamily);
+  if (!InterfaceFontSelection::isCompatibleFamily(family, sizeof(SETTINGS.uiFontFamilyName))) {
+    LOG_DBG("SDFS", "Interface font unavailable: %s (using built-in UI)", wantedFamily.c_str());
+    uiManager_.unloadAll(renderer, false);
+    if (strcmp(SETTINGS.uiFontFamilyName, wantedFamily.c_str()) == 0) {
+      SETTINGS.uiFontFamilyName[0] = '\0';
+      SETTINGS.saveToFile();
+    }
+    uiAttemptedFamily_.clear();
     return;
   }
 
   if (!uiManager_.beginFamilyUiSizes(*family, renderer)) {
-    LOG_ERR("SDFS", "Failed to start interface font: %s (using built-in UI)", wantedFamily);
+    LOG_ERR("SDFS", "Failed to start interface font: %s (using built-in UI)", wantedFamily.c_str());
+    if (strcmp(SETTINGS.uiFontFamilyName, wantedFamily.c_str()) == 0) {
+      SETTINGS.uiFontFamilyName[0] = '\0';
+      SETTINGS.saveToFile();
+    }
+    uiAttemptedFamily_.clear();
     return;
   }
 
   uiLoadingFamily_ = wantedFamily;
   uiLoadingStep_ = 0;
   uiLoadInProgress_ = true;
-  LOG_DBG("SDFS", "Starting interface font load: %s", wantedFamily);
+  LOG_DBG("SDFS", "Starting interface font load: %s", wantedFamily.c_str());
 }
 
 bool SdCardFontSystem::progressUiLoad(GfxRenderer& renderer) {
   if (!uiLoadInProgress_) return false;
 
-  const auto* family = registry_.findFamily(uiLoadingFamily_);
-  static constexpr uint8_t kUiPointSizes[] = {8, 10, 12};
-  if (!family || uiLoadingStep_ >= sizeof(kUiPointSizes) / sizeof(kUiPointSizes[0]) ||
-      !uiManager_.loadFamilyUiSize(*family, renderer, kUiPointSizes[uiLoadingStep_])) {
+  const auto fallbackToBuiltIn = [this, &renderer](const char* reason) {
     renderer.clearUiFontOverrides();
     uiManager_.unloadAll(renderer, false);
-    LOG_ERR("SDFS", "Interface font step failed: %s (using built-in UI)", uiLoadingFamily_.c_str());
-    uiAttemptedFamily_ = uiLoadingFamily_;
+    if (strcmp(SETTINGS.uiFontFamilyName, uiLoadingFamily_.c_str()) == 0) {
+      SETTINGS.uiFontFamilyName[0] = '\0';
+      SETTINGS.saveToFile();
+    }
+    LOG_DBG("SDFS", "Interface font fallback (%s): %s", reason, uiLoadingFamily_.c_str());
+    uiAttemptedFamily_.clear();
     uiLoadingFamily_.clear();
     uiLoadingStep_ = 0;
     uiLoadInProgress_ = false;
     return true;
+  };
+
+  const auto* family = registry_.findFamily(uiLoadingFamily_);
+  static constexpr uint8_t kUiPointSizes[] = {8, 10, 12};
+  if (!family || uiLoadingStep_ >= sizeof(kUiPointSizes) / sizeof(kUiPointSizes[0]) ||
+      !uiManager_.loadFamilyUiSize(*family, renderer, kUiPointSizes[uiLoadingStep_])) {
+    return fallbackToBuiltIn("size load failed");
   }
   ++uiLoadingStep_;
   if (uiLoadingStep_ < sizeof(kUiPointSizes) / sizeof(kUiPointSizes[0])) return false;
@@ -206,14 +224,7 @@ bool SdCardFontSystem::progressUiLoad(GfxRenderer& renderer) {
   const int ui10 = uiManager_.getFontIdForPointSize(10);
   const int ui12 = uiManager_.getFontIdForPointSize(12);
   if (ui8 == 0 || ui10 == 0 || ui12 == 0) {
-    renderer.clearUiFontOverrides();
-    uiManager_.unloadAll(renderer, false);
-    LOG_ERR("SDFS", "Interface font sizes incomplete: %s (using built-in UI)", uiLoadingFamily_.c_str());
-    uiAttemptedFamily_ = uiLoadingFamily_;
-    uiLoadingFamily_.clear();
-    uiLoadingStep_ = 0;
-    uiLoadInProgress_ = false;
-    return true;
+    return fallbackToBuiltIn("required sizes incomplete");
   }
 
   // Do not activate a family that cannot render the basic Latin UI alphabet.
@@ -224,27 +235,11 @@ bool SdCardFontSystem::progressUiLoad(GfxRenderer& renderer) {
   for (const int id : uiIds) {
     const auto fontIt = renderer.getFontMap().find(id);
     if (fontIt == renderer.getFontMap().end()) {
-      renderer.clearUiFontOverrides();
-      uiManager_.unloadAll(renderer, false);
-      LOG_DBG("SDFS", "Interface font registration incomplete: %s (using built-in UI)",
-              uiLoadingFamily_.c_str());
-      uiAttemptedFamily_ = uiLoadingFamily_;
-      uiLoadingFamily_.clear();
-      uiLoadingStep_ = 0;
-      uiLoadInProgress_ = false;
-      return true;
+      return fallbackToBuiltIn("font registration incomplete");
     }
     for (const uint32_t cp : kUiCoverageProbes) {
       if (!fontIt->second.hasCodepoint(cp)) {
-        renderer.clearUiFontOverrides();
-        uiManager_.unloadAll(renderer, false);
-        LOG_DBG("SDFS", "Interface font lacks basic UI coverage: %s (using built-in UI)",
-                uiLoadingFamily_.c_str());
-        uiAttemptedFamily_ = uiLoadingFamily_;
-        uiLoadingFamily_.clear();
-        uiLoadingStep_ = 0;
-        uiLoadInProgress_ = false;
-        return true;
+        return fallbackToBuiltIn("basic UI glyph coverage missing");
       }
     }
   }

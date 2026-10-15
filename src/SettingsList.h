@@ -13,6 +13,7 @@
 
 #include "CrossPointSettings.h"
 #include "FontSelectionCompatibility.h"
+#include "InterfaceFontSelection.h"
 #include "KOReaderCredentialStore.h"
 #include "activities/settings/SettingsActivity.h"
 #include "util/DictionaryNameResolver.h"
@@ -102,7 +103,7 @@ inline SettingInfo buildInterfaceFontSetting(const SdCardFontRegistry* registry)
   std::vector<std::string> familyNames;
   if (registry) {
     for (const auto& family : registry->getFamilies()) {
-      if (family.hasInterfaceSizes() && family.name.size() < sizeof(SETTINGS.uiFontFamilyName)) {
+      if (InterfaceFontSelection::isCompatibleFamily(&family, sizeof(SETTINGS.uiFontFamilyName))) {
         familyNames.push_back(family.name);
       }
     }

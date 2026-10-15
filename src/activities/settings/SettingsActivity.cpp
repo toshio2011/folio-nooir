@@ -127,10 +127,11 @@ void SettingsActivity::reclaimStableBluetoothTransientCaches() {
   // markBluetoothQuiescent() is called by render(), which already owns the
   // render lock. Do not acquire a nested RenderLock here.
   if (auto* fontCache = renderer.getFontCacheManager()) fontCache->releaseTransientFontCaches();
+  sdFontSystem.releaseInterfaceFontCaches();
   const size_t freeAfter = ESP.getFreeHeap();
   const size_t largestAfter = ESP.getMaxAllocHeap();
   LOG_INF("BLEMEM",
-          "stage=settings_ble_return_reclaim item=font_decompressor_cache free=%u->%u freed=%u largest=%u->%u gain=%u",
+          "stage=settings_ble_return_reclaim item=font_decompressor_and_interface_cache free=%u->%u freed=%u largest=%u->%u gain=%u",
           static_cast<unsigned>(freeBefore), static_cast<unsigned>(freeAfter),
           static_cast<unsigned>(freeAfter > freeBefore ? freeAfter - freeBefore : 0),
           static_cast<unsigned>(largestBefore), static_cast<unsigned>(largestAfter),
@@ -193,8 +194,7 @@ void SettingsActivity::rebuildSettingsLists() {
     if (isVisualPreviewSetting(setting.nameId)) return -1;
     if (isFolioLayoutSetting(setting.nameId) && !folioNooir) return -1;
     if (isCarouselLayoutSetting(setting.nameId) && !carouselTheme) return -1;
-    if (setting.category == StrId::STR_CAT_DISPLAY)
-      return setting.nameId == StrId::STR_INTERFACE_FONT ? -1 : 0;
+    if (setting.category == StrId::STR_CAT_DISPLAY) return 0;
     if (setting.category == StrId::STR_CAT_READER) return setting.inTextSettings ? -1 : 1;
     if (setting.category == StrId::STR_CAT_CONTROLS)
       return setting.valuePtr == &CrossPointSettings::pwrBtnFootnoteBack &&

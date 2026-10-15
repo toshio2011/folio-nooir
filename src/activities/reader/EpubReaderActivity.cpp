@@ -1436,6 +1436,7 @@ bool EpubReaderActivity::recoverBuildHeapGate() {
     const size_t beforeLargest = ESP.getMaxAllocHeap();
     if (auto* fcm = renderer.getFontCacheManager()) fcm->releaseSdFontCaches();
     sdFontSystem.releaseUiFallbackCaches();
+    sdFontSystem.releaseInterfaceFontCaches();
     LOG_INF("SCT", "build_heap_release owner=render_only_font_arenas free=%u->%u largest=%u->%u",
             static_cast<unsigned>(beforeFree), ESP.getFreeHeap(),
             static_cast<unsigned>(beforeLargest), ESP.getMaxAllocHeap());
@@ -2723,6 +2724,7 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
     {
       RenderLock cleanupLock;
       if (auto* fontCache = renderer.getFontCacheManager()) fontCache->releaseSdFontCaches();
+      sdFontSystem.releaseInterfaceFontCaches();
     }
     const size_t freeAfter = ESP.getFreeHeap();
     const size_t largestAfter = ESP.getMaxAllocHeap();

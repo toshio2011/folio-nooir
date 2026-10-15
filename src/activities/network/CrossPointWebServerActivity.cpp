@@ -111,6 +111,7 @@ void releaseWebExclusiveRuntimeCaches(GfxRenderer& renderer) {
   });
   releaseOwner("reader_shared_font_cache", [] { sdFontSystem.releaseReaderCaches(); });
   releaseOwner("ui_fallback_font_cache", [] { sdFontSystem.releaseUiFallbackCaches(); });
+  releaseOwner("interface_font_rebuildable_cache", [] { sdFontSystem.releaseInterfaceFontCaches(); });
   releaseOwner("image_render_cache", [] { ImageBlock::releaseRenderCache(); });
   releaseOwner("reader_grayscale_scratch", [&renderer] { renderer.releaseGrayscaleStripScratch(); });
 

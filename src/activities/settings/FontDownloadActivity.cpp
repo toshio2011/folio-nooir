@@ -464,6 +464,7 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
       diagnosticRecord("asset_abort", file.size, -1, i);
 #endif
       fontInstaller_.deleteFamily(family.name.c_str());
+      sdFontSystem.markRegistryDirty();
       family.installed = false;
       family.hasUpdate = false;
       {
@@ -479,6 +480,7 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
       diagnosticRecord("asset_fail", file.size, result, i);
 #endif
       fontInstaller_.deleteFamily(family.name.c_str());
+      sdFontSystem.markRegistryDirty();
       family.installed = false;
       family.hasUpdate = false;
       RenderLock lock(*this);
@@ -494,6 +496,7 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
     if (!computeFileCrc32(destPath, actualCrc)) {
       LOG_ERR("FONT", "Failed to open file for CRC check: %s", destPath);
       fontInstaller_.deleteFamily(family.name.c_str());
+      sdFontSystem.markRegistryDirty();
       family.installed = false;
       family.hasUpdate = false;
       RenderLock lock(*this);
@@ -507,6 +510,7 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
     if (actualCrc != file.crc32) {
       LOG_ERR("FONT", "CRC32 mismatch for %s: got %08x expected %08x", file.name.c_str(), actualCrc, file.crc32);
       fontInstaller_.deleteFamily(family.name.c_str());
+      sdFontSystem.markRegistryDirty();
       family.installed = false;
       family.hasUpdate = false;
       RenderLock lock(*this);
@@ -525,6 +529,7 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
     if (!fontInstaller_.validateCpfontFile(destPath)) {
       LOG_ERR("FONT", "Invalid .cpfont: %s", destPath);
       fontInstaller_.deleteFamily(family.name.c_str());
+      sdFontSystem.markRegistryDirty();
       family.installed = false;
       family.hasUpdate = false;
       RenderLock lock(*this);
@@ -539,6 +544,9 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
   }
 
   fontInstaller_.refreshRegistry();
+  // The UI font may have been replaced in place. Force the system-owned
+  // registry refresh and staged UI reload after this exclusive download view.
+  sdFontSystem.markRegistryDirty();
 #if NOOIR_KOSYNC_FONT_DIAGNOSTICS
   diagnosticRecord("font_refresh", 0, 0, family.files.size());
 #endif
@@ -581,6 +589,7 @@ void FontDownloadActivity::onDeleteConfirmationResult(const ActivityResult& resu
     errorMessage_ = "Failed to delete font";
   } else {
     fontInstaller_.refreshRegistry();
+    sdFontSystem.markRegistryDirty();
     family.installed = false;
     family.hasUpdate = false;
   }

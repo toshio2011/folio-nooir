@@ -212,11 +212,14 @@ void ReaderActivity::onEnter() {
   showOpeningBookFeedback(renderer, initialBookPath);
   // SD-font registration and cache release mutate renderer-owned maps and
   // font objects. Keep the transition serialized with the render task, while
-  // leaving the selected reader-size font warm for the heavy open path.
+  // leaving the selected reader-size font warm for the heavy open path. The
+  // separately selected interface font keeps its registration but releases
+  // rebuildable glyph/layout caches for the same pressure boundary.
   {
     RenderLock lock(*this);
     sdFontSystem.ensureLoaded(renderer);
     sdFontSystem.releaseUiFallbackCaches();
+    sdFontSystem.releaseInterfaceFontCaches();
   }
 
   currentBookPath = initialBookPath;

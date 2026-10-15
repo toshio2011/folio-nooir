@@ -56,9 +56,10 @@ ReclaimReport reclaimForHeadroom(const size_t targetFree, const size_t targetLar
 
   // The Reader's own FontCacheManager release is the cheaper, subsystem-owned
   // Level 1 and runs before this shared request. This Level 2 hook drops only
-  // disposable mini glyph caches of size-matched UI fallback fonts; registered
-  // font objects, coverage/layout tables, settings, and fallback bindings stay.
+  // disposable UI fallback/interface-font caches; registered font objects,
+  // coverage tables, settings, and fallback bindings stay.
   sdFontSystem.releaseUiFallbackCaches();
+  sdFontSystem.releaseInterfaceFontCaches();
   report.freeAfter = ESP.getFreeHeap();
   report.largestAfter = ESP.getMaxAllocHeap();
   const size_t freed = report.freeAfter > report.freeBefore ? report.freeAfter - report.freeBefore : 0;
