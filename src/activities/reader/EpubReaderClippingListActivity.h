@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
@@ -9,16 +10,15 @@
 #include "components/OptionPopup.h"
 #include "util/ButtonNavigator.h"
 
-// Lightweight list of saved clippings for the current EPUB. Selecting a row
-// does not reopen or re-layout the book; the full text is shown in the row and
-// the same content is available in /My Clippings.txt for export.
+// Lightweight paged list of saved clippings. Details are loaded from the same
+// per-book store; the append-only /My Clippings.txt export remains unchanged.
 class EpubReaderClippingListActivity final : public Activity {
   struct ClippingItem {
     std::string bookPath;
     std::string bookTitle;
     ClippingEntry clipping;
     std::string note;
-    bool noteLoaded = false;
+    size_t bookClipIndex = 0;
   };
  public:
   EpubReaderClippingListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string bookPath,
@@ -38,6 +38,9 @@ class EpubReaderClippingListActivity final : public Activity {
   std::vector<ClippingItem> clippings;
   bool allBooks = false;
   int selectedIndex = 0;
+  size_t allBooksOffset = 0;
+  bool allBooksHasMore = false;
+  static constexpr size_t ALL_BOOKS_PAGE_SIZE = 12;
   ButtonNavigator buttonNavigator;
   OptionPopup actionsPopup;
   OptionPopup confirmPopup;
@@ -51,6 +54,9 @@ class EpubReaderClippingListActivity final : public Activity {
   void editSelected();
   void editNoteSelected();
   void deleteSelected();
-  bool loadNotesForBook(const std::string& sourcePath);
-  bool saveBookClippings(const std::string& sourcePath);
+  void loadCurrentBookClippings();
+  void loadAllBooksPage();
+  bool changeSavedClipping(const ClippingItem& item, const std::string* newText, const std::string* newNote,
+                           bool erase);
+  void changeAllBooksPage(int direction);
 };

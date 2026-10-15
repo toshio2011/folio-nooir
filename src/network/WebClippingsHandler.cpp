@@ -20,7 +20,7 @@
 
 namespace {
 
-constexpr size_t kPageLimit = 10;
+constexpr size_t kPageLimit = 12;
 constexpr int kMaxOffset = 100000;
 constexpr size_t kRequestBodyLimit = 4096;
 constexpr size_t kMinimumFreeHeap = 96 * 1024;
@@ -36,6 +36,8 @@ bool memoryAvailable(WebServer* server) {
 
 void sendPage(WebServer* server) {
   server->sendHeader("Content-Encoding", "gzip");
+  server->sendHeader("Cache-Control", "no-cache");
+  server->sendHeader("X-Folio-Build", CROSSPOINT_VERSION);
   server->send_P(200, "text/html", ClippingsPageHtml, sizeof(ClippingsPageHtml));
 }
 
@@ -91,6 +93,8 @@ void visitKnownBooks(Visitor&& visitor) {
 }
 
 void startJson(WebServer* server) {
+  server->sendHeader("Cache-Control", "no-store");
+  server->sendHeader("X-Folio-Build", CROSSPOINT_VERSION);
   server->setContentLength(CONTENT_LENGTH_UNKNOWN);
   server->send(200, "application/json", "");
 }
@@ -113,8 +117,8 @@ void sendBooksPage(WebServer* server, const int offset, const size_t limit) {
   size_t emitted = 0;
   JsonDocument row;
   visitKnownBooks([&](const std::string& path, const std::string& title) {
-    std::vector<ClippingEntry> clips;
-    if (!ClipFile::load(path, clips) || clips.empty()) return true;
+    size_t count = 0;
+    if (!ClipFile::count(path, count) || count == 0) return true;
     if (visible++ < static_cast<size_t>(offset)) return true;
     if (emitted >= limit) {
       hasMore = true;
@@ -123,7 +127,7 @@ void sendBooksPage(WebServer* server, const int offset, const size_t limit) {
     row.clear();
     row["path"] = path;
     row["title"] = title;
-    row["count"] = clips.size();
+    row["count"] = count;
     appendRow(server, row, first);
     ++emitted;
     return true;
@@ -164,22 +168,37 @@ void sendClippingsPage(WebServer* server, const int offset, const size_t limit) 
     server->sendContent("{\"items\":[");
     bool first = true;
     bool hasMore = false;
-    size_t visible = 0;
     size_t emitted = 0;
+    size_t remaining = static_cast<size_t>(offset);
     JsonDocument row;
     visitKnownBooks([&](const std::string& path, const std::string& title) {
+      size_t bookCount = 0;
+      if (!ClipFile::count(path, bookCount) || bookCount == 0) return true;
+      if (remaining >= bookCount) {
+        remaining -= bookCount;
+        return true;
+      }
+
+      if (emitted >= limit) {
+        hasMore = true;
+        return false;
+      }
+
+      const size_t start = remaining;
+      remaining = 0;
+      const size_t requested = std::min(limit - emitted, bookCount - start);
       std::vector<ClippingEntry> clips;
       std::vector<std::string> notes;
-      if (!ClipFile::load(path, clips, notes) || clips.empty()) return true;
-      for (size_t index = 0; index < clips.size(); ++index) {
-        if (visible++ < static_cast<size_t>(offset)) continue;
-        if (emitted >= limit) {
-          hasMore = true;
-          return false;
-        }
-        const std::string& note = index < notes.size() ? notes[index] : std::string{};
-        appendClippingRow(server, row, first, path, title, index, clips[index], note);
+      size_t loadedCount = 0;
+      if (!ClipFile::loadPage(path, start, requested, clips, notes, loadedCount)) return true;
+      for (size_t i = 0; i < clips.size(); ++i) {
+        const std::string& note = i < notes.size() ? notes[i] : std::string{};
+        appendClippingRow(server, row, first, path, title, start + i, clips[i], note);
         ++emitted;
+      }
+      if (start + clips.size() < loadedCount) {
+        hasMore = true;
+        return false;
       }
       return true;
     });
@@ -199,25 +218,25 @@ void sendClippingsPage(WebServer* server, const int offset, const size_t limit) 
   if (!memoryAvailable(server)) return;
   std::vector<ClippingEntry> clips;
   std::vector<std::string> notes;
-  if (!ClipFile::load(path, clips, notes)) {
+  size_t totalCount = 0;
+  if (!ClipFile::loadPage(path, static_cast<size_t>(offset), limit, clips, notes, totalCount)) {
     server->send(404, "application/json", "{\"error\":\"No saved clippings for this book.\"}");
     return;
   }
 
-  const size_t start = std::min(static_cast<size_t>(offset), clips.size());
-  const size_t end = std::min(clips.size(), start + limit);
+  const size_t start = static_cast<size_t>(offset);
   const std::string title = titleForPath(path, {});
   startJson(server);
   server->sendContent("{\"items\":[");
   bool first = true;
   JsonDocument row;
-  for (size_t index = start; index < end; ++index) {
-    const std::string& note = index < notes.size() ? notes[index] : std::string{};
-    appendClippingRow(server, row, first, path, title, index, clips[index], note);
+  for (size_t i = 0; i < clips.size(); ++i) {
+    const std::string& note = i < notes.size() ? notes[i] : std::string{};
+    appendClippingRow(server, row, first, path, title, start + i, clips[i], note);
   }
   char footer[112];
   std::snprintf(footer, sizeof(footer), "],\"offset\":%d,\"limit\":%u,\"hasMore\":%s}", offset,
-           static_cast<unsigned>(limit), end < clips.size() ? "true" : "false");
+           static_cast<unsigned>(limit), start + clips.size() < totalCount ? "true" : "false");
   server->sendContent(footer);
   server->sendContent("");
 }

@@ -100,45 +100,58 @@ bool save(const std::string& bookPath, const std::vector<ClippingEntry>& clippin
   return PersistableStoreBase::writeDocToFile(clippingPath(bookPath).c_str(), doc);
 }
 
-bool loadImpl(const std::string& bookPath, std::vector<ClippingEntry>& clippings,
-              std::vector<std::string>* notes) {
+void decodeClipping(JsonObjectConst item, ClippingEntry& clipping) {
+  const char* text = item["text"] | "";
+  clipping.text = ClipFile::normalizeText(std::string(text)).substr(0, ClipFile::MAX_CLIPPING_TEXT_BYTES);
+  clipping.percentage = std::clamp(item["percentage"] | 0.0f, 0.0f, 1.0f);
+  clipping.spineIndex = item["spine"] | static_cast<uint16_t>(0);
+  clipping.page = item["page"] | static_cast<uint16_t>(0);
+  clipping.dateKey = item["date"] | static_cast<uint32_t>(0);
+  if (!item["firstWord"].isNull() && !item["lastWord"].isNull()) {
+    clipping.firstWord = item["firstWord"] | static_cast<uint16_t>(0);
+    clipping.lastWord = item["lastWord"] | static_cast<uint16_t>(0);
+    clipping.hasWordRange = clipping.firstWord <= clipping.lastWord;
+  }
+  clipping.styleMask = item["styleMask"] | static_cast<uint8_t>(0);
+  // Old JSON files have no explicit bold key. Derive it from the existing
+  // aggregate style mask, while preserving an explicit false for new
+  // regular-only clippings.
+  clipping.bold = item["bold"].isNull() ? styleMaskHasBold(clipping.styleMask) : (item["bold"] | false);
+  LOG_DBG("CLP", "load style=%u bold=%u highlighted=1", static_cast<unsigned>(clipping.styleMask),
+          clipping.bold ? 1u : 0u);
+}
+
+bool loadRange(const std::string& bookPath, const size_t offset, const size_t limit,
+               std::vector<ClippingEntry>& clippings, std::vector<std::string>* notes, size_t& totalCount) {
   clippings.clear();
   if (notes) notes->clear();
+  totalCount = 0;
   JsonDocument doc;
   if (!PersistableStoreBase::readDocFromFile(clippingPath(bookPath).c_str(), doc)) return false;
 
   JsonArrayConst array = doc["clippings"].as<JsonArrayConst>();
-  clippings.reserve(std::min(array.size(), ClipFile::MAX_CLIPPINGS_PER_BOOK));
-  if (notes) notes->reserve(std::min(array.size(), ClipFile::MAX_CLIPPINGS_PER_BOOK));
+  const size_t outputLimit = std::min(limit, ClipFile::MAX_CLIPPINGS_PER_BOOK);
+  clippings.reserve(outputLimit);
+  if (notes) notes->reserve(outputLimit);
   for (JsonObjectConst item : array) {
     const char* text = item["text"] | "";
     if (!text[0]) continue;
-    ClippingEntry clipping;
-    clipping.text = ClipFile::normalizeText(std::string(text)).substr(0, ClipFile::MAX_CLIPPING_TEXT_BYTES);
-    clipping.percentage = std::clamp(item["percentage"] | 0.0f, 0.0f, 1.0f);
-    clipping.spineIndex = item["spine"] | static_cast<uint16_t>(0);
-    clipping.page = item["page"] | static_cast<uint16_t>(0);
-    clipping.dateKey = item["date"] | static_cast<uint32_t>(0);
-    if (!item["firstWord"].isNull() && !item["lastWord"].isNull()) {
-      clipping.firstWord = item["firstWord"] | static_cast<uint16_t>(0);
-      clipping.lastWord = item["lastWord"] | static_cast<uint16_t>(0);
-      clipping.hasWordRange = clipping.firstWord <= clipping.lastWord;
+    if (totalCount >= ClipFile::MAX_CLIPPINGS_PER_BOOK) break;
+    if (totalCount >= offset && clippings.size() < outputLimit) {
+      ClippingEntry clipping;
+      decodeClipping(item, clipping);
+      clippings.push_back(std::move(clipping));
+      if (notes) notes->push_back(boundedNote(item["note"] | ""));
     }
-    clipping.styleMask = item["styleMask"] | static_cast<uint8_t>(0);
-    // Old JSON files have no explicit bold key. Derive it from the existing
-    // aggregate style mask, while preserving an explicit false for new
-    // regular-only clippings.
-    clipping.bold = item["bold"].isNull() ? styleMaskHasBold(clipping.styleMask) : (item["bold"] | false);
-    if (notes) {
-      const char* note = item["note"] | "";
-      notes->push_back(boundedNote(note));
-    }
-    LOG_DBG("CLP", "load style=%u bold=%u highlighted=1", static_cast<unsigned>(clipping.styleMask),
-            clipping.bold ? 1u : 0u);
-    clippings.push_back(std::move(clipping));
-    if (clippings.size() >= ClipFile::MAX_CLIPPINGS_PER_BOOK) break;
+    ++totalCount;
   }
   return true;
+}
+
+bool loadImpl(const std::string& bookPath, std::vector<ClippingEntry>& clippings,
+              std::vector<std::string>* notes) {
+  size_t totalCount = 0;
+  return loadRange(bookPath, 0, ClipFile::MAX_CLIPPINGS_PER_BOOK, clippings, notes, totalCount);
 }
 
 bool appendMaster(const std::string& title, const ClippingEntry& clipping) {
@@ -234,6 +247,16 @@ bool load(const std::string& bookPath, std::vector<ClippingEntry>& clippings) {
 
 bool load(const std::string& bookPath, std::vector<ClippingEntry>& clippings, std::vector<std::string>& notes) {
   return loadImpl(bookPath, clippings, &notes);
+}
+
+bool loadPage(const std::string& bookPath, const size_t offset, const size_t limit,
+              std::vector<ClippingEntry>& clippings, std::vector<std::string>& notes, size_t& totalCount) {
+  return loadRange(bookPath, offset, limit, clippings, &notes, totalCount);
+}
+
+bool count(const std::string& bookPath, size_t& totalCount) {
+  std::vector<ClippingEntry> unusedClippings;
+  return loadRange(bookPath, ClipFile::MAX_CLIPPINGS_PER_BOOK, 0, unusedClippings, nullptr, totalCount);
 }
 
 bool replace(const std::string& bookPath, const std::vector<ClippingEntry>& clippings) {

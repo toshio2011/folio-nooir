@@ -29,6 +29,15 @@ bool load(const std::string& bookPath, std::vector<ClippingEntry>& clippings);
 // above without loading or retaining note text.
 bool load(const std::string& bookPath, std::vector<ClippingEntry>& clippings, std::vector<std::string>& notes);
 
+// Loads one bounded window while parsing the same per-book JSON. Only the
+// requested clipping strings/notes are copied to heap; totalCount is the
+// number of valid entries in the file, including entries outside the window.
+bool loadPage(const std::string& bookPath, size_t offset, size_t limit, std::vector<ClippingEntry>& clippings,
+              std::vector<std::string>& notes, size_t& totalCount);
+
+// Counts valid entries without constructing clipping or note strings.
+bool count(const std::string& bookPath, size_t& totalCount);
+
 // Replace the editable on-device list. The append-only My Clippings.txt
 // export is intentionally left unchanged.
 bool replace(const std::string& bookPath, const std::vector<ClippingEntry>& clippings);
