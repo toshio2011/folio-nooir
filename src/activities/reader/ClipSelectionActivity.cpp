@@ -335,8 +335,11 @@ void ClipSelectionActivity::drawSelection() {
 }
 
 void ClipSelectionActivity::drawHints() const {
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), startIndex < 0 ? tr(STR_SELECT) : "Save", tr(STR_DIR_LEFT),
-                                            tr(STR_DIR_RIGHT));
+  // Saving a selection both marks the passage in the reader and adds its text
+  // to the clipping list/export. Name the in-book action here so that the two
+  // effects are easier to distinguish in the later clipping manager.
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), startIndex < 0 ? tr(STR_SELECT) : tr(STR_SAVE_HIGHLIGHT),
+                                            tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }
 

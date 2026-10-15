@@ -141,9 +141,11 @@ StatisticsSnapshot StatisticsSnapshot::build(const StatisticsSnapshotOptions& op
       }
     }
   };
-  for (const auto& state : BOOK_STATES.getBooks()) consumeBook(makeBook(&state, findRecent(state.path), state.path));
-  for (const auto& recent : RECENT_BOOKS.getBooks()) {
-    if (!BOOK_STATES.find(recent.path)) consumeBook(makeBook(nullptr, &recent, recent.path));
+  if (options.scanBookStates) {
+    for (const auto& state : BOOK_STATES.getBooks()) consumeBook(makeBook(&state, findRecent(state.path), state.path));
+    for (const auto& recent : RECENT_BOOKS.getBooks()) {
+      if (!BOOK_STATES.find(recent.path)) consumeBook(makeBook(nullptr, &recent, recent.path));
+    }
   }
 
   std::stable_sort(result.books.begin(), result.books.end(), bookOrder);

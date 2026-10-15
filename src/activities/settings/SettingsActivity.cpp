@@ -186,6 +186,10 @@ void SettingsActivity::rebuildSettingsLists() {
   auto settings = getSettingsList(&sdFontSystem.registry(), &dictionaries);
   const auto visibleCategory = [&](const SettingInfo& setting) -> int {
     if (setting.category == StrId::STR_NONE_OPT) return -1;
+    if (isSleepComposerSetting(setting) &&
+        SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE) {
+      return -1;
+    }
     if (isVisualPreviewSetting(setting.nameId)) return -1;
     if (isFolioLayoutSetting(setting.nameId) && !folioNooir) return -1;
     if (isCarouselLayoutSetting(setting.nameId) && !carouselTheme) return -1;

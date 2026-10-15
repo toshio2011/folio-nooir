@@ -17,6 +17,8 @@ class EpubReaderClippingListActivity final : public Activity {
     std::string bookPath;
     std::string bookTitle;
     ClippingEntry clipping;
+    std::string note;
+    bool noteLoaded = false;
   };
  public:
   EpubReaderClippingListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string bookPath,
@@ -47,5 +49,8 @@ class EpubReaderClippingListActivity final : public Activity {
   int listHeight() const;
   void showActions();
   void editSelected();
+  void editNoteSelected();
   void deleteSelected();
+  bool loadNotesForBook(const std::string& sourcePath);
+  bool saveBookClippings(const std::string& sourcePath);
 };

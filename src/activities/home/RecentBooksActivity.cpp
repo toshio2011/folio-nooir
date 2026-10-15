@@ -2629,25 +2629,20 @@ void RecentBooksActivity::loop() {
     requestUpdate();
   });
 
-  buttonNavigator.onNextContinuous([this, listSize, pageItems, carouselTheme, spineLayout, twoRowSpineLayout, layout] {
-    selectorIndex = carouselTheme
+  buttonNavigator.onNextContinuous([this, listSize, pageItems, carouselTheme, spineLayout, twoRowSpineLayout] {
+    // A held Spine control repeats the same logical selection step as a tap.
+    // The normal page-window render moves to the next shelf when that step
+    // crosses a page boundary; skipping directly to page starts loses books.
+    selectorIndex = (carouselTheme || spineLayout || twoRowSpineLayout)
                         ? ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize)
-                        : (spineLayout
-                                ? moveSpinePage(layout, true)
-                               : (twoRowSpineLayout
-                                      ? moveTwoRowSpinePage(layout, true)
-                               : ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems)));
+                        : ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
     requestUpdate();
   });
 
-  buttonNavigator.onPreviousContinuous([this, listSize, pageItems, carouselTheme, spineLayout, twoRowSpineLayout, layout] {
-    selectorIndex = carouselTheme
+  buttonNavigator.onPreviousContinuous([this, listSize, pageItems, carouselTheme, spineLayout, twoRowSpineLayout] {
+    selectorIndex = (carouselTheme || spineLayout || twoRowSpineLayout)
                         ? ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize)
-                        : (spineLayout
-                                ? moveSpinePage(layout, false)
-                               : (twoRowSpineLayout
-                                      ? moveTwoRowSpinePage(layout, false)
-                               : ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems)));
+                        : ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
     requestUpdate();
   });
 

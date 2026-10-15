@@ -287,15 +287,15 @@ void SynopsisActivity::render(RenderLock&&) {
     }
 
     const auto drawRowText = [this, detailX, detailWidth, infoTop](const InfoRow& row, const char* text,
-                                                                   const bool bold) {
+                                                                   const EpdFontFamily::Style style) {
       if (row.top < 0 || row.height <= 0 || !text || !text[0]) return;
       const int baseline = infoTop + row.top + (row.height - renderer.getLineHeight(SMALL_FONT_ID)) / 2;
       const std::string fitted = renderer.truncatedText(SMALL_FONT_ID, text, detailWidth,
-                                                        bold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
-      renderer.drawText(SMALL_FONT_ID, detailX, baseline, fitted.c_str(), bold);
+                                                        style);
+      renderer.drawText(SMALL_FONT_ID, detailX, baseline, fitted.c_str(), true, style);
     };
-    if (format) drawRowText(rows.format, format, true);
-    drawRowText(rows.status, statusText(status, progressPercent), false);
+    if (format) drawRowText(rows.format, format, EpdFontFamily::BOLD);
+    drawRowText(rows.status, statusText(status, progressPercent), EpdFontFamily::REGULAR);
     char progressDetails[64]{};
     size_t progressDetailsLength = 0;
     const auto appendProgressDetail = [&progressDetails, &progressDetailsLength](const char* value) {
@@ -321,7 +321,7 @@ void SynopsisActivity::render(RenderLock&&) {
       snprintf(sessions, sizeof(sessions), "%u sessions", static_cast<unsigned>(readingSessions));
       appendProgressDetail(sessions);
     }
-    drawRowText(rows.progressDetails, progressDetails, false);
+    drawRowText(rows.progressDetails, progressDetails, EpdFontFamily::REGULAR);
     const int progressY = infoTop + rows.progressBar.top;
     renderer.drawRect(detailX, progressY, detailWidth, rows.progressBar.height);
     const int fill = std::max(0, detailWidth - 2) * std::min<uint8_t>(progressPercent, 100) / 100;

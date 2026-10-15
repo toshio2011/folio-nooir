@@ -44,6 +44,7 @@
 #include "util/BleMemoryPolicy.h"
 #include "util/EpubDiagnostics.h"
 #include "util/ScreenshotUtil.h"
+#include "util/SleepScreenMode.h"
 #include "activities/reader/ReaderUtils.h"
 
 GfxRenderer renderer(display);
@@ -198,9 +199,12 @@ void enterDeepSleep(bool fromTimeout = false) {
           static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
+  APP_STATE.activeSleepScreenMode = SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM
+                                        ? chooseRandomSleepScreenMode()
+                                        : SETTINGS.sleepScreen;
 
   const bool isQuickResumeSleep =
-      SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
+      APP_STATE.activeSleepScreenMode == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
       (fromTimeout &&
        SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT);
   APP_STATE.showBootScreen = !isQuickResumeSleep;

@@ -210,6 +210,39 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
                           {StrId::STR_DARK, StrId::STR_LIGHT, StrId::STR_CUSTOM, StrId::STR_COVER,
                            StrId::STR_NONE_OPT, StrId::STR_QUICK_RESUME, StrId::STR_PAGE_OVERLAY},
                           "sleepScreen", StrId::STR_CAT_DISPLAY),
+        SettingInfo::Enum(StrId::STR_SLEEP_BACKGROUND, &CrossPointSettings::sleepBackgroundElement,
+                          {StrId::STR_SLEEP_ELEMENT_NONE, StrId::STR_SLEEP_ELEMENT_DARK,
+                           StrId::STR_SLEEP_ELEMENT_LIGHT, StrId::STR_SLEEP_ELEMENT_BLANK,
+                           StrId::STR_SLEEP_ELEMENT_NOOIR, StrId::STR_SLEEP_ELEMENT_CUSTOM_IMAGE,
+                           StrId::STR_SLEEP_ELEMENT_BOOK_COVER, StrId::STR_SLEEP_ELEMENT_CURRENT_PAGE,
+                           StrId::STR_SLEEP_ELEMENT_TRANSPARENT_PNG, StrId::STR_SLEEP_ELEMENT_BOOK_TITLE,
+                           StrId::STR_SLEEP_ELEMENT_BOOK_PROGRESS, StrId::STR_SLEEP_ELEMENT_BOOK_STATS,
+                           StrId::STR_SLEEP_ELEMENT_READING_CALENDAR, StrId::STR_SLEEP_ELEMENT_READING_SUMMARY,
+                           StrId::STR_SLEEP_ELEMENT_TODO, StrId::STR_SLEEP_ELEMENT_CLIPPING,
+                           StrId::STR_SLEEP_ELEMENT_CLOCK_DATE, StrId::STR_SLEEP_ELEMENT_RANDOM},
+                          "sleepBackgroundElement", StrId::STR_CAT_DISPLAY),
+        SettingInfo::Enum(StrId::STR_SLEEP_OVERLAY_A, &CrossPointSettings::sleepOverlayAElement,
+                          {StrId::STR_SLEEP_ELEMENT_NONE, StrId::STR_SLEEP_ELEMENT_DARK,
+                           StrId::STR_SLEEP_ELEMENT_LIGHT, StrId::STR_SLEEP_ELEMENT_BLANK,
+                           StrId::STR_SLEEP_ELEMENT_NOOIR, StrId::STR_SLEEP_ELEMENT_CUSTOM_IMAGE,
+                           StrId::STR_SLEEP_ELEMENT_BOOK_COVER, StrId::STR_SLEEP_ELEMENT_CURRENT_PAGE,
+                           StrId::STR_SLEEP_ELEMENT_TRANSPARENT_PNG, StrId::STR_SLEEP_ELEMENT_BOOK_TITLE,
+                           StrId::STR_SLEEP_ELEMENT_BOOK_PROGRESS, StrId::STR_SLEEP_ELEMENT_BOOK_STATS,
+                           StrId::STR_SLEEP_ELEMENT_READING_CALENDAR, StrId::STR_SLEEP_ELEMENT_READING_SUMMARY,
+                           StrId::STR_SLEEP_ELEMENT_TODO, StrId::STR_SLEEP_ELEMENT_CLIPPING,
+                           StrId::STR_SLEEP_ELEMENT_CLOCK_DATE, StrId::STR_SLEEP_ELEMENT_RANDOM},
+                          "sleepOverlayAElement", StrId::STR_CAT_DISPLAY),
+        SettingInfo::Enum(StrId::STR_SLEEP_OVERLAY_B, &CrossPointSettings::sleepOverlayBElement,
+                          {StrId::STR_SLEEP_ELEMENT_NONE, StrId::STR_SLEEP_ELEMENT_DARK,
+                           StrId::STR_SLEEP_ELEMENT_LIGHT, StrId::STR_SLEEP_ELEMENT_BLANK,
+                           StrId::STR_SLEEP_ELEMENT_NOOIR, StrId::STR_SLEEP_ELEMENT_CUSTOM_IMAGE,
+                           StrId::STR_SLEEP_ELEMENT_BOOK_COVER, StrId::STR_SLEEP_ELEMENT_CURRENT_PAGE,
+                           StrId::STR_SLEEP_ELEMENT_TRANSPARENT_PNG, StrId::STR_SLEEP_ELEMENT_BOOK_TITLE,
+                           StrId::STR_SLEEP_ELEMENT_BOOK_PROGRESS, StrId::STR_SLEEP_ELEMENT_BOOK_STATS,
+                           StrId::STR_SLEEP_ELEMENT_READING_CALENDAR, StrId::STR_SLEEP_ELEMENT_READING_SUMMARY,
+                           StrId::STR_SLEEP_ELEMENT_TODO, StrId::STR_SLEEP_ELEMENT_CLIPPING,
+                           StrId::STR_SLEEP_ELEMENT_CLOCK_DATE, StrId::STR_SLEEP_ELEMENT_RANDOM},
+                          "sleepOverlayBElement", StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_SLEEP_COVER_MODE, &CrossPointSettings::sleepScreenCoverMode,
                           {StrId::STR_FIT, StrId::STR_CROP}, "sleepScreenCoverMode", StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_SLEEP_COVER_FILTER, &CrossPointSettings::sleepScreenCoverFilter,
@@ -550,6 +583,9 @@ inline void configureSleepSetting(SettingInfo& sleepSetting) {
       case CrossPointSettings::SLEEP_SCREEN_MODE::TODO_LIST: return 11;
       case CrossPointSettings::SLEEP_SCREEN_MODE::READING_CALENDAR_SLEEP: return 12;
       case CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP: return 13;
+      case CrossPointSettings::SLEEP_SCREEN_MODE::COVER_PROGRESS: return 14;
+      case CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM: return 15;
+      case CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE: return 16;
       default:
         return SETTINGS.sleepScreen <= CrossPointSettings::SLEEP_SCREEN_MODE::COVER ? SETTINGS.sleepScreen : 3;
     }
@@ -569,7 +605,10 @@ inline void configureSleepSetting(SettingInfo& sleepSetting) {
       case 10: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::CLIPPING_COVER; break;
       case 11: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::TODO_LIST; break;
       case 12: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::READING_CALENDAR_SLEEP; break;
-      case 13:
+      case 13: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP; break;
+      case 14: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::COVER_PROGRESS; break;
+      case 15: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM; break;
+      case 16: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE; break;
       default: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP; break;
     }
   };
@@ -580,6 +619,15 @@ inline void configureSleepSetting(SettingInfo& sleepSetting) {
   sleepSetting.enumStringValues.push_back(I18N.get(StrId::STR_TODO_LIST));
   sleepSetting.enumStringValues.push_back(I18N.get(StrId::STR_READING_CALENDAR_SLEEP));
   sleepSetting.enumStringValues.push_back(I18N.get(StrId::STR_READING_SUMMARY_SLEEP));
+  sleepSetting.enumStringValues.push_back(I18N.get(StrId::STR_SLEEP_COVER_PROGRESS));
+  sleepSetting.enumStringValues.push_back(I18N.get(StrId::STR_SLEEP_RANDOM));
+  sleepSetting.enumStringValues.push_back(I18N.get(StrId::STR_SLEEP_FLEXIBLE));
+}
+
+inline bool isSleepComposerSetting(const SettingInfo& setting) {
+  if (!setting.key) return false;
+  return strcmp(setting.key, "sleepBackgroundElement") == 0 || strcmp(setting.key, "sleepOverlayAElement") == 0 ||
+         strcmp(setting.key, "sleepOverlayBElement") == 0;
 }
 
 template <typename Callback>

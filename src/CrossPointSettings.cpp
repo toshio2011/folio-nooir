@@ -298,6 +298,12 @@ bool CrossPointSettings::fromJsonForProfile(JsonVariantConst doc, const bool pre
     }
   }
 
+  const auto sleepComposerValues = normalizeSleepComposerSettings(
+      s.sleepBackgroundElement, s.sleepOverlayAElement, s.sleepOverlayBElement);
+  s.sleepBackgroundElement = sleepComposerValues.background;
+  s.sleepOverlayAElement = sleepComposerValues.overlayA;
+  s.sleepOverlayBElement = sleepComposerValues.overlayB;
+
   // Profiles created before the visual fields existed receive the 1.6.4
   // presentation defaults. This keeps each old profile independent from the
   // profile that happened to be active immediately before it was selected.

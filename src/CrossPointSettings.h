@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include "util/QuickActions.h"
+#include "util/SleepComposer.h"
 
 class CrossPointSettings : public PersistableStore<CrossPointSettings> {
  private:
@@ -21,25 +22,29 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
 
  public:
   enum SLEEP_SCREEN_MODE {
-    DARK = 0,
-    LIGHT = 1,
-    CUSTOM = 2,
-    COVER = 3,
+    DARK = SleepScreenModeValue::DARK,
+    LIGHT = SleepScreenModeValue::LIGHT,
+    CUSTOM = SleepScreenModeValue::CUSTOM,
+    COVER = SleepScreenModeValue::COVER,
     // Legacy persisted value; hidden from the sleep-mode selector.
-    COVER_CUSTOM = 4,
-    BLANK = 5,
-    QUICK_RESUME = 6,
+    COVER_CUSTOM = SleepScreenModeValue::COVER_CUSTOM,
+    BLANK = SleepScreenModeValue::BLANK,
+    QUICK_RESUME = SleepScreenModeValue::QUICK_RESUME,
     // Keep new sleep modes at the end: these values are persisted in settings.
-    OVERLAY = 7,
+    OVERLAY = SleepScreenModeValue::OVERLAY,
     // Recent/current book cover with a transparent page overlay above it.
-    COVER_OVERLAY = 8,
-    READING_STATS_SLEEP = 9,
-    MINIMAL_STATS = 10,
-    CLIPPING_COVER = 11,
-    TODO_LIST = 12,
+    COVER_OVERLAY = SleepScreenModeValue::COVER_OVERLAY,
+    READING_STATS_SLEEP = SleepScreenModeValue::READING_STATS_SLEEP,
+    MINIMAL_STATS = SleepScreenModeValue::MINIMAL_STATS,
+    CLIPPING_COVER = SleepScreenModeValue::CLIPPING_COVER,
+    TODO_LIST = SleepScreenModeValue::TODO_LIST,
     // RC2 additions. Keep the RC1 values above stable for persisted settings.
-    READING_CALENDAR_SLEEP = 13,
-    READING_SUMMARY_SLEEP = 14,
+    READING_CALENDAR_SLEEP = SleepScreenModeValue::READING_CALENDAR_SLEEP,
+    READING_SUMMARY_SLEEP = SleepScreenModeValue::READING_SUMMARY_SLEEP,
+    // Appended modes preserve all existing persisted sleep mode values.
+    COVER_PROGRESS = SleepScreenModeValue::COVER_PROGRESS,
+    RANDOM = SleepScreenModeValue::RANDOM,
+    FLEXIBLE_COMPOSITE = SleepScreenModeValue::FLEXIBLE_COMPOSITE,
     SLEEP_SCREEN_MODE_COUNT
   };
   enum TODO_SLEEP_MODE {
@@ -318,6 +323,10 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
 
   // Sleep screen settings
   uint8_t sleepScreen = DARK;
+  // Three small, persisted selections are resolved only when entering sleep.
+  uint8_t sleepBackgroundElement = static_cast<uint8_t>(SleepComposerElement::CurrentBookCover);
+  uint8_t sleepOverlayAElement = static_cast<uint8_t>(SleepComposerElement::ReadingCalendar);
+  uint8_t sleepOverlayBElement = static_cast<uint8_t>(SleepComposerElement::ClockDate);
   // Sleep screen cover mode settings
   uint8_t sleepScreenCoverMode = FIT;
   // Sleep screen cover filter

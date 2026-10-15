@@ -76,7 +76,9 @@ void VisualPreviewActivity::onEnter() {
   finishedLayoutPreview_ = SETTINGS.finishedBookLayout;
   spineAppearancePreview_ = SETTINGS.spineAppearanceMode;
   spineDecorationPreview_ = SETTINGS.spineDecorationStyle;
-  ignoreInitialConfirm_ = true;
+  confirmPressSinceEntry_ = false;
+  confirmPressConsumed_ = false;
+  touchDownSinceEntry_ = false;
   selectedRow_ = 0;
   requestUpdate();
 }
@@ -209,6 +211,7 @@ bool VisualPreviewActivity::handleTouch(const int listTop, const int listHeight,
   };
 
   if (mappedInput.wasScreenTouchDown(x, y)) {
+    touchDownSinceEntry_ = true;
     const int index = tabIndex(x, y);
     if (index >= 0) {
       selectTab(index);
@@ -228,6 +231,10 @@ bool VisualPreviewActivity::handleTouch(const int listTop, const int listHeight,
   }
 
   if (mappedInput.wasScreenTapped(x, y)) {
+    const bool explicitTouch = touchDownSinceEntry_;
+    touchDownSinceEntry_ = false;
+    if (!explicitTouch) return true;
+
     const int index = tabIndex(x, y);
     if (index >= 0) {
       selectTab(index);
@@ -249,21 +256,16 @@ bool VisualPreviewActivity::handleTouch(const int listTop, const int listHeight,
 }
 
 void VisualPreviewActivity::loop() {
-  if (optionPopup_.handleInput(mappedInput, [this] { requestUpdate(); })) return;
-
-  // The Confirm release used to open Visual Preview can arrive in the first
-  // frame of this activity. Row 0 is Featured: Cover, so accepting that stale
-  // edge immediately toggles the setting just by entering the screen.
-  if (ignoreInitialConfirm_) {
+  const bool confirmPressed = mappedInput.wasPressed(MappedInputManager::Button::Confirm);
+  if (confirmPressed) confirmPressSinceEntry_ = true;
+  const bool popupWasActive = optionPopup_.isActive();
+  if (optionPopup_.handleInput(mappedInput, [this] { requestUpdate(); })) {
+    if (popupWasActive && confirmPressed) confirmPressConsumed_ = true;
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-      ignoreInitialConfirm_ = false;
-      return;
+      confirmPressSinceEntry_ = false;
+      confirmPressConsumed_ = false;
     }
-    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm) ||
-        mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
-      return;
-    }
-    ignoreInitialConfirm_ = false;
+    return;
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
@@ -303,7 +305,9 @@ void VisualPreviewActivity::loop() {
     selectedRow_ = static_cast<uint8_t>((selectedRow_ + 1) % std::max(1, rowCount()));
     requestUpdate();
   } else if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    activateRow();
+    if (confirmPressSinceEntry_ && !confirmPressConsumed_) activateRow();
+    confirmPressSinceEntry_ = false;
+    confirmPressConsumed_ = false;
   }
 }
 

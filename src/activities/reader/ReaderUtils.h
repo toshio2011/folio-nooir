@@ -49,12 +49,25 @@ inline void applyOrientation(GfxRenderer& renderer, const uint8_t orientation) {
 // next activity paints its complete frame and performs the only visible refresh.
 // Reader onExit() is invoked while ActivityManager already holds the render lock.
 inline void clearGhostingOnExit(GfxRenderer& renderer) {
-  // Overlay sleep is intentionally composited over the page that is currently
-  // on the reader.  enterDeepSleep() marks lastSleepFromReader before the
-  // reader's onExit() runs, so do not erase that framebuffer here; the sleep
-  // activity will add the PNG and perform the panel refresh itself.  All other
-  // exits retain the normal clean full refresh to prevent reader ghosting.
-  if (APP_STATE.lastSleepFromReader && SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY) {
+  // Overlay and Flexible Current Page sleep modes are composited over the page
+  // currently on the reader. enterDeepSleep() marks lastSleepFromReader before
+  // onExit() runs, so keep that framebuffer for those selected sleep modes.
+  const bool flexibleKeepsReaderPage =
+      SETTINGS.sleepBackgroundElement == static_cast<uint8_t>(SleepComposerElement::CurrentPage) ||
+      SETTINGS.sleepBackgroundElement == static_cast<uint8_t>(SleepComposerElement::Random) ||
+      SETTINGS.sleepOverlayAElement == static_cast<uint8_t>(SleepComposerElement::CurrentPage) ||
+      SETTINGS.sleepOverlayAElement == static_cast<uint8_t>(SleepComposerElement::Random) ||
+      SETTINGS.sleepOverlayBElement == static_cast<uint8_t>(SleepComposerElement::CurrentPage) ||
+      SETTINGS.sleepOverlayBElement == static_cast<uint8_t>(SleepComposerElement::Random);
+  if (APP_STATE.lastSleepFromReader &&
+      (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY ||
+       (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM &&
+        APP_STATE.activeSleepScreenMode == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY) ||
+       (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE &&
+        flexibleKeepsReaderPage) ||
+       (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM &&
+        APP_STATE.activeSleepScreenMode == CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE &&
+        flexibleKeepsReaderPage))) {
     return;
   }
   renderer.clearScreen();

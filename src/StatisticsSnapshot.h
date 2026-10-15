@@ -89,6 +89,10 @@ struct StatisticsSnapshotOptions {
   bool keepDailyHistory = true;
   bool keepAllBooks = true;
   bool evaluateAchievements = true;
+  // Sleep composition only needs aggregate reading history and the selected
+  // current-book cache. Skipping book-state iteration keeps sleep work
+  // independent of library size. Existing callers retain the default scan.
+  bool scanBookStates = true;
   std::string selectedBookPath;
   // Optional bounded view for screens that need a small recent/current-book
   // summary.  Zero preserves the existing unlimited Statistics activity path.

@@ -1,8 +1,10 @@
 #pragma once
+#include <cstdint>
 #include <string>
 #include <vector>
 
 #include "activities/Activity.h"
+#include "util/SleepComposer.h"
 
 class Bitmap;
 
@@ -17,10 +19,16 @@ class SleepActivity final : public Activity {
  private:
   void renderDefaultSleepScreen() const;
   void renderCustomSleepScreen() const;
+  bool renderCustomSleepScreenAt(const SleepComposerRect* bounds, std::string* selectedPath) const;
+  bool drawCustomImageInBounds(const std::string& path, const SleepComposerRect& bounds,
+                               std::string* reusablePath = nullptr) const;
+  bool drawSleepBookCoverInBounds(const std::string& coverPath, const SleepComposerRect& bounds,
+                                  bool fullFrame) const;
+  void renderFlexibleSleepScreen() const;
   bool renderCustomImage(const std::string& path) const;
   void renderCoverSleepScreen(const std::string& bookPath = {}, const std::string& overlayPath = {},
                              const std::string& clippingText = {}, const std::string& clippingTitle = {},
-                             uint16_t clippingPage = 0) const;
+                             uint16_t clippingPage = 0, bool showBookProgress = false) const;
   void renderCoverOverlaySleepScreen() const;
   void renderReadingStatsSleepScreen() const;
   void renderMinimalStatsSleepScreen() const;
@@ -32,13 +40,18 @@ class SleepActivity final : public Activity {
   void renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, const std::string& overlayPath) const;
   void renderBitmapSleepScreenWithClipping(const Bitmap& bitmap, const std::string& text, const std::string& title,
                                            uint16_t page) const;
+  void renderBitmapSleepScreenWithBookProgress(const Bitmap& bitmap, const std::string& title,
+                                               uint8_t progress, uint32_t readingSeconds, uint16_t sessions) const;
   void renderLastScreenSleepScreen() const;
   void renderBlankSleepScreen() const;
+  uint8_t effectiveSleepScreen = 0;
+  bool currentBackgroundPreserved = false;
   bool renderOverlaySleepScreen() const;
   std::vector<std::string> findOverlayPngCandidates() const;
   std::string findOverlayPngPath() const;
   bool renderOverlayPngPass(const std::string& path, GfxRenderer::RenderMode mode, bool* transparencyDetected,
-                            bool drawPixels = true) const;
+                            bool drawPixels = true, const SleepComposerRect* destination = nullptr) const;
+  bool renderOverlayPngInBounds(const std::string& path, const SleepComposerRect& destination) const;
   bool renderOverlayPng(const std::string& path, bool allowOpaque = false) const;
 
   bool fromTimeout = false;

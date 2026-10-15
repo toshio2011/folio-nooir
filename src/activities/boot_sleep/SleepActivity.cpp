@@ -5,6 +5,7 @@
 #include <GfxRenderer.h>
 #include <Epub/blocks/ImageBlock.h>
 #include <HalStorage.h>
+#include <HalClock.h>
 #include <I18n.h>
 #include <Memory.h>
 #include <PNGdec.h>
@@ -467,6 +468,58 @@ std::string sleepFilename(const std::string& path) {
   return slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
+std::string sleepBookCoverCachePath(const std::string& bookPath) {
+  if (bookPath.empty()) return {};
+  const RecentBook* recent = recentBookForSleepPath(bookPath);
+  if (recent && !recent->coverBmpPath.empty() && Storage.exists(recent->coverBmpPath.c_str())) {
+    return recent->coverBmpPath;
+  }
+  if (FsHelpers::hasXtcExtension(bookPath)) {
+    Xtc book(bookPath, "/.crosspoint");
+    return book.getCoverBmpPath();
+  }
+  if (FsHelpers::hasTxtExtension(bookPath)) {
+    Txt book(bookPath, "/.crosspoint");
+    return book.getCoverBmpPath();
+  }
+  if (FsHelpers::hasEpubExtension(bookPath)) {
+    Epub book(bookPath, "/.crosspoint");
+    return book.getCoverBmpPath(SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP);
+  }
+  return {};
+}
+
+bool hasCustomSleepImageFast() {
+  if (!APP_STATE.favoriteSleepImagePath.empty() && Storage.exists(APP_STATE.favoriteSleepImagePath.c_str())) return true;
+  if (!APP_STATE.legacySleepImageDisabled &&
+      (Storage.exists("/sleep.bmp") || Storage.exists("/sleep.png"))) return true;
+  auto folder = Storage.open("/.sleep");
+  if (folder && folder.isDirectory()) return true;
+  if (folder) folder.close();
+  folder = Storage.open("/sleep");
+  return folder && folder.isDirectory();
+}
+
+bool hasTransparentSleepPngFast() {
+  if (!APP_STATE.favoriteSleepImagePath.empty() && FsHelpers::hasPngExtension(APP_STATE.favoriteSleepImagePath) &&
+      Storage.exists(APP_STATE.favoriteSleepImagePath.c_str())) return true;
+  if (Storage.exists("/sleep.png")) return true;
+  auto folder = Storage.open("/.sleep");
+  if (folder && folder.isDirectory()) return true;
+  if (folder) folder.close();
+  folder = Storage.open("/sleep");
+  return folder && folder.isDirectory();
+}
+
+void drawSleepDefaultArtwork(GfxRenderer& renderer, const bool invert) {
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const int logoY = pageHeight / 2 - NOOIR_LOGO_HEIGHT / 2 - 24;
+  renderer.drawImage(NooirLogo360, (pageWidth - NOOIR_LOGO_WIDTH) / 2, logoY, NOOIR_LOGO_WIDTH, NOOIR_LOGO_HEIGHT);
+  renderer.drawCenteredText(SMALL_FONT_ID, pageHeight / 2 + 54, tr(STR_SLEEPING));
+  if (invert) renderer.invertScreen();
+}
+
 std::string sleepDuration(const uint32_t seconds) {
   const uint32_t minutes = (seconds + 30) / 60;
   if (minutes < 60) return std::to_string(minutes) + " min";
@@ -488,7 +541,7 @@ void drawSleepMetric(const GfxRenderer& renderer, const int fontId, const int x,
   renderer.drawText(fontId, x + std::max(0, (width - textWidth) / 2), y, value.c_str(), true, style);
 }
 
-SleepClippingSnapshot loadSleepClippingSnapshot() {
+SleepClippingSnapshot loadSleepClippingSnapshot(const bool selectedBookOnly = false) {
   SleepClippingSnapshot snapshot;
   std::vector<std::string> candidates;
   const auto addCandidate = [&candidates](const std::string& path) {
@@ -498,7 +551,11 @@ SleepClippingSnapshot loadSleepClippingSnapshot() {
     candidates.push_back(path);
   };
   if (!APP_STATE.openEpubPath.empty()) addCandidate(APP_STATE.openEpubPath);
-  for (const auto& recent : RECENT_BOOKS.getBooks()) addCandidate(recent.path);
+  if (selectedBookOnly) {
+    if (candidates.empty() && !RECENT_BOOKS.getBooks().empty()) addCandidate(RECENT_BOOKS.getBooks().front().path);
+  } else {
+    for (const auto& recent : RECENT_BOOKS.getBooks()) addCandidate(recent.path);
+  }
   if (candidates.empty()) return snapshot;
 
   // Start at a random recent book, then stop at the first book with saved
@@ -607,6 +664,37 @@ void drawClippingSleepCard(GfxRenderer& renderer, const std::string& text, const
   renderer.drawText(SMALL_FONT_ID, textX, footerY, attribution.c_str(), true, EpdFontFamily::BOLD);
 }
 
+void drawSleepBookProgressCard(GfxRenderer& renderer, const std::string& title, const uint8_t progress,
+                               const uint32_t readingSeconds, const uint16_t sessions) {
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const int panelX = std::max(12, pageWidth / 30);
+  const int panelWidth = pageWidth - panelX * 2;
+  const int panelHeight = std::max(116, std::min(136, pageHeight / 5));
+  const int panelY = pageHeight - panelHeight - 16;
+  const int contentX = panelX + 12;
+  const int contentWidth = panelWidth - 24;
+
+  renderer.fillRoundedRect(panelX, panelY, panelWidth, panelHeight, 10, Color::White);
+  renderer.drawRoundedRect(panelX, panelY, panelWidth, panelHeight, 2, 10, true);
+  const std::string displayTitle = renderer.truncatedText(UI_12_FONT_ID, title.c_str(), contentWidth);
+  renderer.drawText(UI_12_FONT_ID, contentX, panelY + 10, displayTitle.c_str(), true, EpdFontFamily::BOLD);
+
+  const uint8_t safeProgress = std::min<uint8_t>(progress, 100);
+  const std::string progressText = std::to_string(safeProgress) + "%";
+  renderer.drawText(UI_10_FONT_ID, contentX, panelY + 36, progressText.c_str(), true, EpdFontFamily::BOLD);
+
+  const std::string readingText = sleepDuration(readingSeconds) + "  ·  " + std::to_string(sessions) + " " +
+                                  tr(STR_SESSION_PLURAL);
+  const std::string displayReadingText = renderer.truncatedText(SMALL_FONT_ID, readingText.c_str(), contentWidth);
+  renderer.drawText(SMALL_FONT_ID, contentX, panelY + 58, displayReadingText.c_str());
+
+  const int barY = panelY + panelHeight - 28;
+  const int barWidth = contentWidth;
+  renderer.drawRect(contentX, barY, barWidth, 12);
+  if (safeProgress > 0) renderer.fillRect(contentX + 2, barY + 2, (barWidth - 4) * safeProgress / 100, 8);
+}
+
 }  // namespace
 
 void SleepActivity::onEnter() {
@@ -627,6 +715,13 @@ void SleepActivity::onEnter() {
 #endif
   EpubDiagnostics::Scope diagnostics("sleep_render_start", "sleep_render_end");
   Activity::onEnter();
+  effectiveSleepScreen = SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM
+                             ? APP_STATE.activeSleepScreenMode
+                             : SETTINGS.sleepScreen;
+  if (effectiveSleepScreen >= CrossPointSettings::SLEEP_SCREEN_MODE_COUNT ||
+      effectiveSleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM) {
+    effectiveSleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::DARK;
+  }
   sleepAssetLogCount = 0;
   sleepPngPreflightComplete = false;
   sleepPngAllocationAllowed = false;
@@ -637,13 +732,14 @@ void SleepActivity::onEnter() {
   // before PNGdec requests its large contiguous decoder object.
   releaseSleepBoundaryCaches(renderer);
   prepareSleepPngDecode(renderer);
-  LOG_INF("SLP", "sleep_asset_selected mode=%u free=%u largest=%u",
-          static_cast<unsigned>(SETTINGS.sleepScreen), static_cast<unsigned>(ESP.getFreeHeap()),
+  LOG_INF("SLP", "sleep_asset_selected mode=%u configured=%u free=%u largest=%u",
+          static_cast<unsigned>(effectiveSleepScreen), static_cast<unsigned>(SETTINGS.sleepScreen),
+          static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(ESP.getMaxAllocHeap()));
-  EpubDiagnostics::phaseRecord("sleep_asset_selected", static_cast<int>(SETTINGS.sleepScreen));
+  EpubDiagnostics::phaseRecord("sleep_asset_selected", static_cast<int>(effectiveSleepScreen));
 
   const bool renderQuickResume =
-      SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
+      effectiveSleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
       (fromTimeout &&
        SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT);
 
@@ -652,9 +748,19 @@ void SleepActivity::onEnter() {
   // and restore that framebuffer around the popup; the final sleep frame then
   // replaces the popup instead of leaving it underneath the artwork. Quick
   // Resume needs the same treatment because it intentionally keeps the page.
-  const bool preserveCurrentBackground =
-      (renderQuickResume || SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY) &&
-      renderer.hasFrameBuffer() && renderer.storeBwBuffer();
+  const bool flexibleMayUseCurrentPage =
+      effectiveSleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE &&
+      (SETTINGS.sleepBackgroundElement == static_cast<uint8_t>(SleepComposerElement::CurrentPage) ||
+       SETTINGS.sleepBackgroundElement == static_cast<uint8_t>(SleepComposerElement::Random) ||
+       SETTINGS.sleepOverlayAElement == static_cast<uint8_t>(SleepComposerElement::CurrentPage) ||
+       SETTINGS.sleepOverlayAElement == static_cast<uint8_t>(SleepComposerElement::Random) ||
+       SETTINGS.sleepOverlayBElement == static_cast<uint8_t>(SleepComposerElement::CurrentPage) ||
+       SETTINGS.sleepOverlayBElement == static_cast<uint8_t>(SleepComposerElement::Random));
+  const bool shouldPreserveCurrentBackground =
+      renderQuickResume || effectiveSleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY ||
+      (flexibleMayUseCurrentPage && APP_STATE.lastSleepFromReader);
+  currentBackgroundPreserved = shouldPreserveCurrentBackground && renderer.hasFrameBuffer() &&
+                               renderer.storeBwBuffer();
   const auto previousOrientation = renderer.getOrientation();
   if (APP_STATE.lastSleepFromReader) {
     ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
@@ -663,7 +769,7 @@ void SleepActivity::onEnter() {
   } else {
     GUI.drawPopup(renderer, tr(STR_ENTERING_SLEEP));
   }
-  if (preserveCurrentBackground) renderer.restoreBwBuffer();
+  if (currentBackgroundPreserved) renderer.restoreBwBuffer();
 
   if (renderQuickResume) {
     return renderLastScreenSleepScreen();
@@ -671,20 +777,22 @@ void SleepActivity::onEnter() {
 
   // Overlay mode intentionally leaves the reader framebuffer intact: visible
   // PNG pixels are composited while transparent pixels leave it untouched.
-  if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY && renderOverlaySleepScreen()) {
+  if (effectiveSleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY && renderOverlaySleepScreen()) {
     return;
   }
-  if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY) {
+  if (effectiveSleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY) {
     logSleepAsset("sleep_fallback_selected", "default_sleep_screen", "overlay_candidates_failed");
   }
 
-  switch (SETTINGS.sleepScreen) {
+  switch (effectiveSleepScreen) {
     case (CrossPointSettings::SLEEP_SCREEN_MODE::BLANK):
       return renderBlankSleepScreen();
     case (CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM):
       return renderCustomSleepScreen();
     case (CrossPointSettings::SLEEP_SCREEN_MODE::COVER):
       return renderCoverSleepScreen();
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::COVER_PROGRESS):
+      return renderCoverSleepScreen({}, {}, {}, {}, 0, true);
     case (CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM):
       if (APP_STATE.lastSleepFromReader) {
         return renderCoverSleepScreen();
@@ -707,12 +815,28 @@ void SleepActivity::onEnter() {
       return renderReadingCalendarSleepScreen();
     case (CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP):
       return renderReadingSummarySleepScreen();
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE):
+      return renderFlexibleSleepScreen();
     default:
       return renderDefaultSleepScreen();
   }
 }
 
 void SleepActivity::renderCustomSleepScreen() const {
+  if (!renderCustomSleepScreenAt(nullptr, nullptr)) renderDefaultSleepScreen();
+}
+
+bool SleepActivity::renderCustomSleepScreenAt(const SleepComposerRect* bounds, std::string* selectedPath) const {
+  if (bounds && selectedPath && !selectedPath->empty()) {
+    return drawCustomImageInBounds(*selectedPath, *bounds, selectedPath);
+  }
+  const auto renderImage = [this, bounds, selectedPath](const std::string& path) {
+    if (!bounds) return renderCustomImage(path);
+    std::string reusable = path;
+    if (!drawCustomImageInBounds(path, *bounds, &reusable)) return false;
+    if (selectedPath) *selectedPath = std::move(reusable);
+    return true;
+  };
   // A pinned image is checked before scanning the sleep directory. This keeps
   // the common favorite path fast and avoids decoding every candidate just to
   // decide what to show. The BMP cache is generated by the image viewer, so
@@ -721,9 +845,9 @@ void SleepActivity::renderCustomSleepScreen() const {
       Storage.exists(APP_STATE.favoriteSleepImagePath.c_str()) &&
       !APP_STATE.favoriteSleepImageBmpPath.empty() &&
       Storage.exists(APP_STATE.favoriteSleepImageBmpPath.c_str()) &&
-      renderCustomImage(APP_STATE.favoriteSleepImageBmpPath)) {
+      renderImage(APP_STATE.favoriteSleepImageBmpPath)) {
     LOG_DBG("SLP", "Rendering favorite sleep image: %s", APP_STATE.favoriteSleepImagePath.c_str());
-    return;
+    return true;
   }
   // Support state files created by an earlier path-only implementation and
   // direct BMP/PNG favorites. Unsupported or missing favorites fall through
@@ -732,9 +856,9 @@ void SleepActivity::renderCustomSleepScreen() const {
       (FsHelpers::hasBmpExtension(APP_STATE.favoriteSleepImagePath) ||
        FsHelpers::hasPngExtension(APP_STATE.favoriteSleepImagePath)) &&
       Storage.exists(APP_STATE.favoriteSleepImagePath.c_str()) &&
-      renderCustomImage(APP_STATE.favoriteSleepImagePath)) {
+      renderImage(APP_STATE.favoriteSleepImagePath)) {
     LOG_DBG("SLP", "Rendering favorite sleep image: %s", APP_STATE.favoriteSleepImagePath.c_str());
-    return;
+    return true;
   }
 
   // Migrate the old firmware behavior without deleting the user's file. An
@@ -742,13 +866,13 @@ void SleepActivity::renderCustomSleepScreen() const {
   // Favorite; after that action legacySleepImageDisabled makes random mode
   // take precedence even though the old file is still recoverable on SD.
   if (!APP_STATE.legacySleepImageDisabled) {
-    if (Storage.exists("/sleep.bmp") && renderCustomImage("/sleep.bmp")) {
+    if (Storage.exists("/sleep.bmp") && renderImage("/sleep.bmp")) {
       LOG_DBG("SLP", "Rendering legacy fixed sleep image: /sleep.bmp");
-      return;
+      return true;
     }
-    if (Storage.exists("/sleep.png") && renderCustomImage("/sleep.png")) {
+    if (Storage.exists("/sleep.png") && renderImage("/sleep.png")) {
       LOG_DBG("SLP", "Rendering legacy fixed sleep image: /sleep.png");
-      return;
+      return true;
     }
   }
 
@@ -818,11 +942,11 @@ void SleepActivity::renderCustomSleepScreen() const {
           if (pass == 0 && APP_STATE.isRecentSleep(randomFileIndex, window)) continue;
           const auto filename = std::string(sleepDir) + "/" + files[randomFileIndex];
           LOG_DBG("SLP", "Trying custom sleep image: %s", filename.c_str());
-          if (renderCustomImage(filename)) {
+          if (renderImage(filename)) {
             APP_STATE.pushRecentSleep(randomFileIndex);
             APP_STATE.saveToFile();
             if (dir) dir.close();
-            return;
+            return true;
           }
         }
       }
@@ -834,11 +958,10 @@ void SleepActivity::renderCustomSleepScreen() const {
   // after the folder pool so clearing a favorite returns to random images for
   // existing installations that still have an old /sleep.bmp.
   if (!APP_STATE.legacySleepImageDisabled &&
-      (renderCustomImage("/sleep.bmp") || renderCustomImage("/sleep.png"))) {
-    return;
+      (renderImage("/sleep.bmp") || renderImage("/sleep.png"))) {
+    return true;
   }
-
-  renderDefaultSleepScreen();
+  return false;
 }
 
 bool SleepActivity::renderCustomImage(const std::string& path) const {
@@ -888,6 +1011,81 @@ bool SleepActivity::renderCustomImage(const std::string& path) const {
   }
   LOG_DBG("SLP", "Loading PNG: %s", path.c_str());
   renderBitmapSleepScreen(bitmap);
+  return true;
+}
+
+bool SleepActivity::drawCustomImageInBounds(const std::string& path, const SleepComposerRect& bounds,
+                                            std::string* reusablePath) const {
+  if (bounds.width <= 0 || bounds.height <= 0) return false;
+  const auto drawBitmap = [this, &bounds](Bitmap& bitmap) {
+    if (bitmap.parseHeaders() != BmpReaderError::Ok || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) return false;
+    const bool fullFrame = bounds.x == 0 && bounds.y == 0 && bounds.width == renderer.getScreenWidth() &&
+                           bounds.height == renderer.getScreenHeight();
+    if (fullFrame && SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP) {
+      const auto placement = getSleepBitmapPlacement(bitmap, renderer);
+      renderer.drawBitmap(bitmap, placement.x, placement.y, bounds.width, bounds.height, placement.cropX,
+                          placement.cropY);
+      return true;
+    }
+    const int drawWidth = std::min(bounds.width, bounds.height * bitmap.getWidth() / bitmap.getHeight());
+    const int drawHeight = std::min(bounds.height, bounds.width * bitmap.getHeight() / bitmap.getWidth());
+    const int x = bounds.x + (bounds.width - drawWidth) / 2;
+    const int y = bounds.y + (bounds.height - drawHeight) / 2;
+    renderer.drawBitmap(bitmap, x, y, drawWidth, drawHeight);
+    return true;
+  };
+
+  HalFile imageFile;
+  if (!Storage.openFileForRead("SLP", path, imageFile)) return false;
+  if (FsHelpers::hasBmpExtension(path)) {
+    Bitmap bitmap(imageFile, true);
+    if (!drawBitmap(bitmap)) return false;
+    if (reusablePath) *reusablePath = path;
+    return true;
+  }
+  if (!FsHelpers::hasPngExtension(path)) return false;
+
+  constexpr const char* PNG_CACHE_PATH = "/.crosspoint/.sleep-image.bmp";
+  Storage.mkdir("/.crosspoint");
+  HalFile bmpOut;
+  if (!Storage.openFileForWrite("SLP", PNG_CACHE_PATH, bmpOut)) return false;
+  const bool fullFrame = bounds.x == 0 && bounds.y == 0 && bounds.width == renderer.getScreenWidth() &&
+                         bounds.height == renderer.getScreenHeight();
+  const bool crop = fullFrame && SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP;
+  const bool converted = PngToBmpConverter::pngFileTo8BitBmpStream(imageFile, bmpOut, crop);
+  imageFile.close();
+  bmpOut.close();
+  if (!converted) {
+    Storage.remove(PNG_CACHE_PATH);
+    logSleepAsset("sleep_asset_invalid", path.c_str(), "composer_png_conversion");
+    return false;
+  }
+  HalFile cachedBmp;
+  if (!Storage.openFileForRead("SLP", PNG_CACHE_PATH, cachedBmp)) return false;
+  Bitmap bitmap(cachedBmp, true);
+  if (!drawBitmap(bitmap)) return false;
+  if (reusablePath) *reusablePath = PNG_CACHE_PATH;
+  return true;
+}
+
+bool SleepActivity::drawSleepBookCoverInBounds(const std::string& coverPath, const SleepComposerRect& bounds,
+                                               const bool fullFrame) const {
+  if (coverPath.empty() || bounds.width <= 0 || bounds.height <= 0) return false;
+  HalFile file;
+  if (!Storage.openFileForRead("SLP", coverPath, file)) return false;
+  Bitmap bitmap(file);
+  if (bitmap.parseHeaders() != BmpReaderError::Ok || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) return false;
+  if (fullFrame && SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP) {
+    const auto placement = getSleepBitmapPlacement(bitmap, renderer);
+    renderer.drawBitmap(bitmap, placement.x, placement.y, bounds.width, bounds.height, placement.cropX,
+                        placement.cropY);
+  } else {
+    const int drawWidth = std::min(bounds.width, bounds.height * bitmap.getWidth() / bitmap.getHeight());
+    const int drawHeight = std::min(bounds.height, bounds.width * bitmap.getHeight() / bitmap.getWidth());
+    const int x = bounds.x + (bounds.width - drawWidth) / 2;
+    const int y = bounds.y + (bounds.height - drawHeight) / 2;
+    renderer.drawBitmap(bitmap, x, y, drawWidth, drawHeight);
+  }
   return true;
 }
 
@@ -1030,7 +1228,8 @@ std::string SleepActivity::findOverlayPngPath() const {
 }
 
 bool SleepActivity::renderOverlayPngPass(const std::string& path, const GfxRenderer::RenderMode mode,
-                                         bool* transparencyDetected, const bool drawPixels) const {
+                                         bool* transparencyDetected, const bool drawPixels,
+                                         const SleepComposerRect* destination) const {
   if (!sleepPngDecodeAvailable(path.c_str())) return false;
   auto png = makeUniqueNoThrow<PNG>();
   if (!png) {
@@ -1078,16 +1277,34 @@ bool SleepActivity::renderOverlayPngPass(const std::string& path, const GfxRende
 
   const int screenWidth = renderer.getScreenWidth();
   const int screenHeight = renderer.getScreenHeight();
+  int dstX = 0;
+  int dstY = 0;
   int dstWidth = srcWidth;
   int dstHeight = srcHeight;
-  if (dstWidth > screenWidth || dstHeight > screenHeight) {
+  if (destination) {
+    const int maxWidth = std::max(1, destination->width);
+    const int maxHeight = std::max(1, destination->height);
+    if (static_cast<int64_t>(srcWidth) * maxHeight > static_cast<int64_t>(srcHeight) * maxWidth) {
+      dstWidth = maxWidth;
+      dstHeight = std::max(1, (srcHeight * maxWidth) / srcWidth);
+    } else {
+      dstHeight = maxHeight;
+      dstWidth = std::max(1, (srcWidth * maxHeight) / srcHeight);
+    }
+    dstX = destination->x + (destination->width - dstWidth) / 2;
+    dstY = destination->y + (destination->height - dstHeight) / 2;
+  } else {
+    dstWidth = std::min(dstWidth, screenWidth);
+    dstHeight = std::min(dstHeight, screenHeight);
     if (static_cast<int64_t>(srcWidth) * screenHeight > static_cast<int64_t>(srcHeight) * screenWidth) {
       dstWidth = screenWidth;
       dstHeight = std::max(1, (srcHeight * screenWidth) / srcWidth);
-    } else {
+    } else if (srcWidth > screenWidth || srcHeight > screenHeight) {
       dstHeight = screenHeight;
       dstWidth = std::max(1, (srcWidth * screenHeight) / srcHeight);
     }
+    dstX = (screenWidth - dstWidth) / 2;
+    dstY = (screenHeight - dstHeight) / 2;
   }
 
   OverlayPngContext context;
@@ -1096,8 +1313,8 @@ bool SleepActivity::renderOverlayPngPass(const std::string& path, const GfxRende
   context.srcHeight = srcHeight;
   context.dstWidth = dstWidth;
   context.dstHeight = dstHeight;
-  context.dstX = (screenWidth - dstWidth) / 2;
-  context.dstY = (screenHeight - dstHeight) / 2;
+  context.dstX = dstX;
+  context.dstY = dstY;
   context.transparentColor = -2;
   context.pngObj = png.get();
   context.transparencyDetected = transparencyDetected;
@@ -1111,6 +1328,16 @@ bool SleepActivity::renderOverlayPngPass(const std::string& path, const GfxRende
     return false;
   }
   return true;
+}
+
+bool SleepActivity::renderOverlayPngInBounds(const std::string& path,
+                                             const SleepComposerRect& destination) const {
+  if (!sleepPngDecodeAvailable(path.c_str())) return false;
+  bool transparencyDetected = false;
+  renderer.setRenderMode(GfxRenderer::BW);
+  const bool decoded = renderOverlayPngPass(path, GfxRenderer::BW, &transparencyDetected, true, &destination);
+  renderer.setRenderMode(GfxRenderer::BW);
+  return decoded && transparencyDetected;
 }
 
 bool SleepActivity::renderOverlayPng(const std::string& path, const bool allowOpaque) const {
@@ -1165,19 +1392,8 @@ bool SleepActivity::renderOverlayPng(const std::string& path, const bool allowOp
 // After the light precondition refresh has cleared the previous frame, the
 // actual sleep artwork uses the normal grayscale/half refresh path.
 void SleepActivity::renderDefaultSleepScreen() const {
-  const auto pageWidth = renderer.getScreenWidth();
-  const auto pageHeight = renderer.getScreenHeight();
-
   preconditionSleepRefresh(renderer);
-  const int logoY = pageHeight / 2 - NOOIR_LOGO_HEIGHT / 2 - 24;
-  renderer.drawImage(NooirLogo360, (pageWidth - NOOIR_LOGO_WIDTH) / 2, logoY, NOOIR_LOGO_WIDTH, NOOIR_LOGO_HEIGHT);
-  renderer.drawCenteredText(SMALL_FONT_ID, pageHeight / 2 + 54, tr(STR_SLEEPING));
-
-  // Make sleep screen dark unless light is selected in settings
-  if (SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::LIGHT) {
-    renderer.invertScreen();
-  }
-
+  drawSleepDefaultArtwork(renderer, effectiveSleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::LIGHT);
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 }
 
@@ -1314,6 +1530,49 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
   renderer.setRenderMode(GfxRenderer::BW);
 }
 
+void SleepActivity::renderBitmapSleepScreenWithBookProgress(const Bitmap& bitmap, const std::string& title,
+                                                            const uint8_t progress, const uint32_t readingSeconds,
+                                                            const uint16_t sessions) const {
+  const auto placement = getSleepBitmapPlacement(bitmap, renderer);
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const bool hasGreyscale = bitmap.hasGreyscale() &&
+                            SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::NO_FILTER;
+
+  preconditionSleepRefresh(renderer);
+  renderer.setRenderMode(GfxRenderer::BW);
+  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+  drawSleepBookProgressCard(renderer, title, progress, readingSeconds, sessions);
+  if (SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
+    renderer.invertScreen();
+  }
+
+  if (hasGreyscale) {
+    renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
+    bitmap.rewindToData();
+    renderer.clearScreen(0x00);
+    renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
+    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+    drawSleepBookProgressCard(renderer, title, progress, readingSeconds, sessions);
+    renderer.copyGrayscaleLsbBuffers();
+
+    bitmap.rewindToData();
+    renderer.clearScreen(0x00);
+    renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
+    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+    drawSleepBookProgressCard(renderer, title, progress, readingSeconds, sessions);
+    renderer.copyGrayscaleMsbBuffers();
+
+    renderer.setFadingFix(true);
+    renderer.displayGrayBuffer();
+    renderer.setFadingFix(SETTINGS.fadingFix);
+    renderer.setRenderMode(GfxRenderer::BW);
+  } else {
+    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+    renderer.setRenderMode(GfxRenderer::BW);
+  }
+}
+
 void SleepActivity::renderBitmapSleepScreenWithClipping(const Bitmap& bitmap, const std::string& text,
                                                         const std::string& title, const uint16_t page) const {
   const auto placement = getSleepBitmapPlacement(bitmap, renderer);
@@ -1363,9 +1622,9 @@ void SleepActivity::renderBitmapSleepScreenWithClipping(const Bitmap& bitmap, co
 
 void SleepActivity::renderCoverSleepScreen(const std::string& requestedBookPath, const std::string& overlayPath,
                                            const std::string& clippingText, const std::string& clippingTitle,
-                                           const uint16_t clippingPage) const {
+                                           const uint16_t clippingPage, const bool showBookProgress) const {
   void (SleepActivity::*renderNoCoverSleepScreen)() const = &SleepActivity::renderDefaultSleepScreen;
-  switch (SETTINGS.sleepScreen) {
+  switch (effectiveSleepScreen) {
     case (CrossPointSettings::SLEEP_SCREEN_MODE::COVER):
     case (CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM):
       renderNoCoverSleepScreen = &SleepActivity::renderCustomSleepScreen;
@@ -1377,6 +1636,25 @@ void SleepActivity::renderCoverSleepScreen(const std::string& requestedBookPath,
   const std::string bookPath = requestedBookPath.empty() ? sleepBookPath() : requestedBookPath;
   if (bookPath.empty()) {
     return (this->*renderNoCoverSleepScreen)();
+  }
+
+  std::string bookTitle;
+  uint8_t progress = 0;
+  uint32_t readingSeconds = 0;
+  uint16_t sessions = 0;
+  if (showBookProgress) {
+    // The active/recent book is normally at the front. Use only that cached
+    // entry so this optional mode never scans a potentially large library.
+    const auto& recentBooks = RECENT_BOOKS.getBooks();
+    const RecentBook* recentBook = !recentBooks.empty() && recentBooks.front().path == bookPath
+                                       ? &recentBooks.front()
+                                       : nullptr;
+    bookTitle = recentBook && !recentBook->title.empty() ? recentBook->title : sleepFilename(bookPath);
+    if (recentBook) {
+      progress = recentBook->progressPercent;
+      readingSeconds = recentBook->readingSeconds;
+      sessions = recentBook->readingSessions;
+    }
   }
 
   std::string coverBmpPath;
@@ -1391,6 +1669,7 @@ void SleepActivity::renderCoverSleepScreen(const std::string& requestedBookPath,
     // noticeable pause when entering sleep after a large book was read.
     coverBmpPath = lastXtc.getCoverBmpPath();
     if (!Storage.exists(coverBmpPath.c_str())) {
+      if (showBookProgress) return (this->*renderNoCoverSleepScreen)();
       if (!lastXtc.load()) {
         LOG_ERR("SLP", "Failed to load last XTC");
         return (this->*renderNoCoverSleepScreen)();
@@ -1406,6 +1685,7 @@ void SleepActivity::renderCoverSleepScreen(const std::string& requestedBookPath,
     Txt lastTxt(bookPath, "/.crosspoint");
     coverBmpPath = lastTxt.getCoverBmpPath();
     if (!Storage.exists(coverBmpPath.c_str())) {
+      if (showBookProgress) return (this->*renderNoCoverSleepScreen)();
       if (!lastTxt.load()) {
         LOG_ERR("SLP", "Failed to load last TXT");
         return (this->*renderNoCoverSleepScreen)();
@@ -1421,6 +1701,7 @@ void SleepActivity::renderCoverSleepScreen(const std::string& requestedBookPath,
     Epub lastEpub(bookPath, "/.crosspoint");
     coverBmpPath = lastEpub.getCoverBmpPath(cropped);
     if (!Storage.exists(coverBmpPath.c_str())) {
+      if (showBookProgress) return (this->*renderNoCoverSleepScreen)();
       // Skip loading CSS since we only need metadata here. This path is only
       // reached when the cover cache is genuinely missing.
       if (!lastEpub.load(true, true)) {
@@ -1452,6 +1733,8 @@ void SleepActivity::renderCoverSleepScreen(const std::string& requestedBookPath,
         renderBitmapSleepScreenWithOverlay(bitmap, overlayPath);
       } else if (!clippingText.empty()) {
         renderBitmapSleepScreenWithClipping(bitmap, clippingText, clippingTitle, clippingPage);
+      } else if (showBookProgress) {
+        renderBitmapSleepScreenWithBookProgress(bitmap, bookTitle, progress, readingSeconds, sessions);
       } else {
         renderBitmapSleepScreen(bitmap);
       }
@@ -2022,6 +2305,580 @@ void SleepActivity::renderToDoSleepScreen() const {
     renderer.drawText(SMALL_FONT_ID, contentX, panelY + panelHeight - 25, "FOLIO NOOIR", true,
                       EpdFontFamily::BOLD);
   }
+  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+}
+
+void SleepActivity::renderFlexibleSleepScreen() const {
+  constexpr size_t MAX_TODO_ITEMS = 128;
+  struct CalendarData {
+    bool valid = false;
+    int year = 0;
+    int month = 0;
+    int today = 0;
+    int daysInMonth = 0;
+    uint32_t maximumSeconds = 0;
+    uint32_t totalSeconds = 0;
+    uint32_t totalPages = 0;
+    uint32_t totalSessions = 0;
+    uint16_t activeDays = 0;
+    std::array<ReadingDayStat, 31> days{};
+  };
+  struct ComposerData {
+    std::string bookPath;
+    std::string title;
+    std::string author;
+    std::string coverPath;
+    const RecentBook* recentBook = nullptr;
+    bool hasBook = false;
+    StatisticsSnapshot statistics;
+    CalendarData calendar;
+    SleepClippingSnapshot clipping;
+    std::array<const ToDoItem*, MAX_TODO_ITEMS> todos{};
+    size_t todoCount = 0;
+    int openTodos = 0;
+    int completedTodos = 0;
+    size_t todoStart = 0;
+    uint32_t dateKey = 0;
+    char dateText[16] = {};
+    char timeText[16] = {};
+    std::string customImagePath;
+    std::string overlayPath;
+  } data;
+
+  const auto configured = normalizeSleepComposerSettings(SETTINGS.sleepBackgroundElement,
+                                                          SETTINGS.sleepOverlayAElement,
+                                                          SETTINGS.sleepOverlayBElement);
+  const std::array<SleepComposerElement, 3> requested = {
+      static_cast<SleepComposerElement>(configured.background),
+      static_cast<SleepComposerElement>(configured.overlayA),
+      static_cast<SleepComposerElement>(configured.overlayB),
+  };
+
+  data.bookPath = sleepBookPath();
+  data.hasBook = !data.bookPath.empty();
+  data.recentBook = data.hasBook ? recentBookForSleepPath(data.bookPath) : nullptr;
+  data.title = data.recentBook && !data.recentBook->title.empty() ? data.recentBook->title
+                                                                  : sleepFilename(data.bookPath);
+  if (data.recentBook) data.author = data.recentBook->author;
+  if (data.hasBook) {
+    data.coverPath = sleepBookCoverCachePath(data.bookPath);
+    if (!Storage.exists(data.coverPath.c_str())) data.coverPath.clear();
+  }
+
+  const auto& allTodos = TODO_STORE.getItems();
+  for (const auto& item : allTodos) {
+    if (item.completed) ++data.completedTodos;
+    else ++data.openTodos;
+    const bool include = SETTINGS.todoSleepMode == CrossPointSettings::TODO_COMPLETED
+                             ? item.completed
+                             : SETTINGS.todoSleepMode == CrossPointSettings::TODO_UNCHECKED ? !item.completed : true;
+    if (include && data.todoCount < data.todos.size()) data.todos[data.todoCount++] = &item;
+  }
+  if (SETTINGS.todoSleepMode == CrossPointSettings::TODO_RANDOM && data.todoCount > 0) {
+    data.todoStart = static_cast<size_t>(millis() % data.todoCount);
+  }
+
+  data.dateKey = halClock.getDateKey();
+  int dateYear = 0;
+  int dateMonth = 0;
+  int dateDay = 0;
+  const bool hasDate = StatisticsDate::split(data.dateKey, dateYear, dateMonth, dateDay);
+  const bool hasClock = hasDate && halClock.hasUsableTime() &&
+                        halClock.formatTime(data.timeText, sizeof(data.timeText), SETTINGS.clockUtcOffsetQ,
+                                            SETTINGS.clockFormat == 1);
+  if (hasDate) snprintf(data.dateText, sizeof(data.dateText), "%04d-%02d-%02d", dateYear, dateMonth, dateDay);
+
+  bool anyRandom = false;
+  bool needsPngPath = false;
+  bool needsClipping = false;
+  for (const auto element : requested) {
+    anyRandom |= element == SleepComposerElement::Random;
+    needsPngPath |= element == SleepComposerElement::Random || element == SleepComposerElement::TransparentPng;
+    needsClipping |= element == SleepComposerElement::Random || element == SleepComposerElement::ClippingQuote;
+  }
+  if (needsPngPath) data.overlayPath = findOverlayPngPath();
+  if (needsClipping) data.clipping = loadSleepClippingSnapshot(true);
+
+  SleepComposerAvailability available;
+  available.customImage = hasCustomSleepImageFast();
+  available.bookCover = !data.coverPath.empty();
+  available.currentBook = data.hasBook;
+  available.currentPage = currentBackgroundPreserved && APP_STATE.lastSleepFromReader;
+  available.transparentPng = !data.overlayPath.empty();
+  available.readingCalendar = hasDate;
+  available.readingSummary = true;
+  available.todo = data.todoCount > 0;
+  available.clipping = data.clipping.valid;
+  available.clockDate = hasClock;
+
+  std::array<SleepComposerElement, 3> elements{};
+  elements[0] = resolveSleepComposerElement(requested[0], SleepComposerRole::Base, available,
+                                             static_cast<uint32_t>(random(0x7fffffffL)));
+  elements[1] = resolveSleepComposerElement(requested[1], SleepComposerRole::OverlayPrimary, available,
+                                             static_cast<uint32_t>(random(0x7fffffffL)), elements.data(), 1);
+  elements[2] = resolveSleepComposerElement(requested[2], SleepComposerRole::OverlaySecondary, available,
+                                             static_cast<uint32_t>(random(0x7fffffffL)), elements.data(), 2);
+
+  const bool needsStatistics = sleepComposerNeedsStatisticsSnapshot(elements.data(), elements.size());
+  if (needsStatistics) {
+    StatisticsSnapshotOptions options;
+    options.keepDailyHistory = elements[0] == SleepComposerElement::ReadingCalendar ||
+                               elements[1] == SleepComposerElement::ReadingCalendar ||
+                               elements[2] == SleepComposerElement::ReadingCalendar;
+    options.keepAllBooks = false;
+    options.evaluateAchievements = false;
+    options.scanBookStates = false;
+    data.statistics = StatisticsSnapshot::build(options);
+  }
+
+  const bool hasCalendarLayer = std::find(elements.begin(), elements.end(), SleepComposerElement::ReadingCalendar) !=
+                                elements.end();
+  if (hasCalendarLayer && needsStatistics) {
+    auto& calendar = data.calendar;
+    if (StatisticsDate::split(data.statistics.todayDateKey, calendar.year, calendar.month, calendar.today)) {
+      calendar.valid = true;
+      calendar.daysInMonth = StatisticsDate::daysInMonth(calendar.year, calendar.month);
+      for (const auto& entry : data.statistics.days) {
+        int entryYear = 0;
+        int entryMonth = 0;
+        int entryDay = 0;
+        if (!StatisticsDate::split(entry.dateKey, entryYear, entryMonth, entryDay) || entryYear != calendar.year ||
+            entryMonth != calendar.month) {
+          continue;
+        }
+        auto& day = calendar.days[static_cast<size_t>(entryDay - 1)];
+        day.dateKey = entry.dateKey;
+        day.seconds = std::min(entry.seconds, UINT32_MAX - day.seconds) + day.seconds;
+        day.sessions = static_cast<uint16_t>(std::min<uint32_t>(UINT16_MAX, day.sessions + entry.sessions));
+        day.pagesTurned = std::min(entry.pagesTurned, UINT32_MAX - day.pagesTurned) + day.pagesTurned;
+      }
+      for (const auto& day : calendar.days) {
+        if (!day.dateKey) continue;
+        ++calendar.activeDays;
+        calendar.maximumSeconds = std::max(calendar.maximumSeconds, day.seconds);
+        calendar.totalSeconds = std::min(day.seconds, UINT32_MAX - calendar.totalSeconds) + calendar.totalSeconds;
+        calendar.totalPages = std::min(day.pagesTurned, UINT32_MAX - calendar.totalPages) + calendar.totalPages;
+        calendar.totalSessions = std::min<uint32_t>(UINT32_MAX, calendar.totalSessions + day.sessions);
+      }
+    }
+  }
+
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const SleepComposerRect frame{0, 0, pageWidth, pageHeight};
+  const auto drawDefault = [this]() { drawSleepDefaultArtwork(renderer, false); };
+  const auto card = [this](const SleepComposerRect& rect, const bool dark = false) {
+    if (dark) {
+      renderer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, 10, Color::Black);
+      renderer.drawRoundedRect(rect.x, rect.y, rect.width, rect.height, 2, 10, true);
+    } else {
+      renderer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, 10, Color::White);
+      renderer.drawRoundedRect(rect.x, rect.y, rect.width, rect.height, 2, 10, true);
+    }
+  };
+  const auto inner = [](const SleepComposerRect& rect, const int padding) {
+    return SleepComposerRect{rect.x + padding, rect.y + padding, std::max(1, rect.width - padding * 2),
+                             std::max(1, rect.height - padding * 2)};
+  };
+  const auto drawProgress = [this](const SleepComposerRect& rect, const int y, const uint8_t progress) {
+    const int value = std::min<uint8_t>(progress, 100);
+    renderer.drawRect(rect.x, y, rect.width, 10);
+    if (value > 0 && rect.width > 4) renderer.fillRect(rect.x + 2, y + 2, (rect.width - 4) * value / 100, 6);
+  };
+
+  const auto drawCalendar = [this, &data, pageWidth, pageHeight](const SleepComposerRect& rect,
+                                                                  const SleepComposerRole role) {
+    const auto& calendar = data.calendar;
+    if (!calendar.valid) return false;
+    if (role != SleepComposerRole::Base) {
+      char summary[72];
+      snprintf(summary, sizeof(summary), "%04d-%02d  %ud  %s", calendar.year, calendar.month,
+               static_cast<unsigned>(calendar.activeDays), sleepDuration(calendar.totalSeconds).c_str());
+      renderer.drawText(UI_10_FONT_ID, rect.x, rect.y, renderer.truncatedText(UI_10_FONT_ID, summary, rect.width).c_str(),
+                        true, EpdFontFamily::BOLD);
+      const int barY = rect.y + renderer.getLineHeight(UI_10_FONT_ID) + 8;
+      const int gap = std::max(2, rect.width / 100);
+      const int barWidth = std::max(2, (rect.width - gap * 6) / 7);
+      const int height = std::max(12, rect.height - (barY - rect.y) - 8);
+      for (int i = 0; i < 7; ++i) {
+        const uint32_t seconds = data.statistics.overview.week[static_cast<size_t>(i)].seconds;
+        const int barHeight = calendar.maximumSeconds == 0
+                                  ? (seconds > 0 ? height / 2 : 0)
+                                  : std::max(1, static_cast<int>(static_cast<uint64_t>(seconds) * height /
+                                                                 std::max<uint32_t>(1, calendar.maximumSeconds)));
+        if (barHeight > 0) {
+          renderer.fillRectDither(rect.x + i * (barWidth + gap), rect.y + rect.height - barHeight, barWidth,
+                                  barHeight, i == 6 ? Color::Black : Color::DarkGray);
+        }
+      }
+      return true;
+    }
+
+    const int side = std::max(16, pageWidth / 18);
+    const int gridWidth = pageWidth - side * 2;
+    const int cellWidth = std::max(1, gridWidth / 7);
+    const int weekdayHeight = renderer.getLineHeight(SMALL_FONT_ID);
+    char monthText[16];
+    snprintf(monthText, sizeof(monthText), "%04d-%02d", calendar.year, calendar.month);
+    renderer.drawCenteredText(UI_12_FONT_ID, 26, monthText, true, EpdFontFamily::BOLD);
+    renderer.drawLine(side, 54, pageWidth - side, 54);
+    static constexpr const char* weekdayLabels[] = {"M", "T", "W", "T", "F", "S", "S"};
+    for (int col = 0; col < 7; ++col) {
+      const int labelWidth = renderer.getTextWidth(SMALL_FONT_ID, weekdayLabels[col]);
+      renderer.drawText(SMALL_FONT_ID, side + col * cellWidth + (cellWidth - labelWidth) / 2, 64,
+                        weekdayLabels[col]);
+    }
+    const uint32_t firstDay = static_cast<uint32_t>(calendar.year * 10000 + calendar.month * 100 + 1);
+    const int firstWeekday = StatisticsDate::weekdayMondayFirst(firstDay);
+    const int rows = std::max(1, (firstWeekday + calendar.daysInMonth + 6) / 7);
+    const int footerHeight = renderer.getLineHeight(SMALL_FONT_ID) + renderer.getLineHeight(UI_10_FONT_ID) + 24;
+    const int cellHeight = std::max(18, std::min(48, (pageHeight - 118 - footerHeight) / rows));
+    const int gridTop = 64 + weekdayHeight + 8;
+    for (int dayNumber = 1; dayNumber <= calendar.daysInMonth; ++dayNumber) {
+      const int slot = firstWeekday + dayNumber - 1;
+      const int x = side + (slot % 7) * cellWidth;
+      const int y = gridTop + (slot / 7) * cellHeight;
+      const auto& day = calendar.days[static_cast<size_t>(dayNumber - 1)];
+      if (day.seconds > 0 && calendar.maximumSeconds > 0) {
+        const uint32_t intensity = static_cast<uint32_t>(static_cast<uint64_t>(day.seconds) * 100U /
+                                                         calendar.maximumSeconds);
+        const Color fill = intensity <= 25 ? Color::LightGray : (intensity <= 60 ? Color::DarkGray : Color::Black);
+        renderer.fillRectDither(x + 2, y + 2, cellWidth - 4, cellHeight - 4, fill);
+      }
+      if (dayNumber == calendar.today) renderer.drawRect(x, y, cellWidth, cellHeight, 2, true);
+      const std::string label = std::to_string(dayNumber);
+      const int labelWidth = renderer.getTextWidth(SMALL_FONT_ID, label.c_str(), EpdFontFamily::BOLD);
+      renderer.drawText(SMALL_FONT_ID, x + (cellWidth - labelWidth) / 2, y + 5, label.c_str(),
+                        day.seconds > 0 && calendar.maximumSeconds > 0 &&
+                            static_cast<uint64_t>(day.seconds) * 100U / calendar.maximumSeconds > 60,
+                        EpdFontFamily::BOLD);
+    }
+    const int footerY = gridTop + rows * cellHeight + 12;
+    renderer.drawLine(side, footerY - 6, pageWidth - side, footerY - 6);
+    const std::string summary = sleepDuration(calendar.totalSeconds) + "  ·  " +
+                                std::to_string(calendar.activeDays) + " " + tr(STR_STATS_ACTIVE_DAYS);
+    renderer.drawText(UI_10_FONT_ID, side, footerY, renderer.truncatedText(UI_10_FONT_ID, summary.c_str(), gridWidth).c_str(),
+                      true, EpdFontFamily::BOLD);
+    const std::string details = std::to_string(calendar.totalPages) + " " + tr(STR_PAGES) + "  ·  " +
+                                std::to_string(calendar.totalSessions) + " " + tr(STR_SESSIONS);
+    renderer.drawText(SMALL_FONT_ID, side, footerY + renderer.getLineHeight(UI_10_FONT_ID) + 4,
+                      renderer.truncatedText(SMALL_FONT_ID, details.c_str(), gridWidth).c_str());
+    return true;
+  };
+
+  const auto drawElement = [this, &data, &card, &inner, &drawProgress, &drawCalendar, &drawDefault, pageWidth,
+                            pageHeight](const SleepComposerElement element, const SleepComposerRole role,
+                                        const SleepComposerRect& rect) {
+    const bool overlay = role != SleepComposerRole::Base;
+    if (element == SleepComposerElement::None) return true;
+    if (element == SleepComposerElement::Dark || element == SleepComposerElement::Light ||
+        element == SleepComposerElement::Blank) {
+      if (overlay) {
+        const bool dark = element == SleepComposerElement::Dark;
+        card(rect, dark);
+        if (element != SleepComposerElement::Blank) {
+          const char* label = dark ? "DARK" : "LIGHT";
+          renderer.drawText(UI_10_FONT_ID, rect.x + 14, rect.y + 12, label, dark, EpdFontFamily::BOLD);
+        }
+      } else if (element == SleepComposerElement::Dark) {
+        renderer.invertScreen();
+      }
+      return true;
+    }
+    if (element == SleepComposerElement::NooirDefault) {
+      if (!overlay) {
+        drawDefault();
+      } else {
+        card(rect);
+        const int logoWidth = std::min(rect.width - 20, NOOIR_LOGO_WIDTH);
+        const int logoHeight = std::max(1, NOOIR_LOGO_HEIGHT * logoWidth / NOOIR_LOGO_WIDTH);
+        renderer.drawImage(NooirLogo360, rect.x + (rect.width - logoWidth) / 2,
+                           rect.y + (rect.height - logoHeight) / 2, logoWidth, logoHeight);
+      }
+      return true;
+    }
+    if (element == SleepComposerElement::CustomImage) {
+      const SleepComposerRect imageBounds = overlay ? inner(rect, 8) : rect;
+      if (overlay) card(rect);
+      const bool drawn = renderCustomSleepScreenAt(&imageBounds, &data.customImagePath);
+      if (!drawn) {
+        if (!overlay) drawDefault();
+        else {
+          card(rect);
+          renderer.drawCenteredText(SMALL_FONT_ID, rect.y + rect.height / 2 - 6, "IMAGE UNAVAILABLE");
+        }
+      } else if (SETTINGS.sleepScreenCoverFilter ==
+                 CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
+        if (!overlay) renderer.invertScreen();
+      }
+      return drawn;
+    }
+    if (element == SleepComposerElement::CurrentBookCover) {
+      if (overlay) card(rect);
+      const SleepComposerRect imageBounds = overlay ? inner(rect, 8) : rect;
+      const bool drawn = drawSleepBookCoverInBounds(data.coverPath, imageBounds, !overlay);
+      if (!drawn) {
+        if (!overlay) drawDefault();
+        else {
+          card(rect);
+          renderer.drawCenteredText(SMALL_FONT_ID, rect.y + rect.height / 2 - 6, "NO COVER");
+        }
+      } else if (!overlay && SETTINGS.sleepScreenCoverFilter ==
+                                   CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
+        renderer.invertScreen();
+      }
+      return drawn;
+    }
+    if (element == SleepComposerElement::TransparentPng) {
+      if (overlay) card(rect);
+      else drawDefault();
+      const SleepComposerRect imageBounds = overlay ? inner(rect, 8) : rect;
+      const bool drawn = !data.overlayPath.empty() && renderOverlayPngInBounds(data.overlayPath, imageBounds);
+      if (!drawn) {
+        if (overlay) {
+          card(rect);
+          renderer.drawCenteredText(SMALL_FONT_ID, rect.y + rect.height / 2 - 6, "PNG UNAVAILABLE");
+        } else {
+          drawDefault();
+        }
+      } else if (overlay) {
+        renderer.drawRoundedRect(rect.x, rect.y, rect.width, rect.height, 2, 10, true);
+      }
+      return drawn;
+    }
+
+    if (overlay) card(rect);
+    const SleepComposerRect content = overlay ? inner(rect, 12)
+                                               : SleepComposerRect{24, 28, std::max(1, pageWidth - 48),
+                                                                   std::max(1, pageHeight - 56)};
+    int y = content.y;
+    const int lineHeight = renderer.getLineHeight(SMALL_FONT_ID);
+    const int titleLineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+    const auto drawClamped = [this](const int font, const int x, const int textY, const int width,
+                                    const std::string& text, const bool bold = false) {
+      const auto style = bold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
+      const std::string clipped = renderer.truncatedText(font, text.c_str(), width, style);
+      renderer.drawText(font, x, textY, clipped.c_str(), true, style);
+    };
+
+    switch (element) {
+      case SleepComposerElement::CurrentPage:
+        renderer.drawText(UI_10_FONT_ID, content.x, y, "QUICK RESUME", true, EpdFontFamily::BOLD);
+        y += renderer.getLineHeight(UI_10_FONT_ID) + 6;
+        drawClamped(UI_12_FONT_ID, content.x, y, content.width, data.title, true);
+        if (!overlay && !data.author.empty()) {
+          y += titleLineHeight + 4;
+          drawClamped(SMALL_FONT_ID, content.x, y, content.width, data.author);
+        }
+        return true;
+      case SleepComposerElement::BookTitleAuthor:
+        drawClamped(UI_12_FONT_ID, content.x, y, content.width, data.title, true);
+        if (!data.author.empty() && (role != SleepComposerRole::OverlaySecondary)) {
+          y += titleLineHeight + 5;
+          drawClamped(SMALL_FONT_ID, content.x, y, content.width, data.author);
+        }
+        return true;
+      case SleepComposerElement::BookProgress:
+      case SleepComposerElement::BookStats: {
+        const uint8_t progress = data.recentBook ? data.recentBook->progressPercent : 0;
+        const uint32_t seconds = data.recentBook ? data.recentBook->readingSeconds : 0;
+        const uint16_t sessions = data.recentBook ? data.recentBook->readingSessions : 0;
+        drawClamped(overlay ? UI_10_FONT_ID : UI_12_FONT_ID, content.x, y, content.width, data.title, true);
+        y += (overlay ? renderer.getLineHeight(UI_10_FONT_ID) : titleLineHeight) + 7;
+        char progressText[16];
+        snprintf(progressText, sizeof(progressText), "%u%%", progress);
+        renderer.drawText(overlay ? UI_10_FONT_ID : NOTOSERIF_18_FONT_ID, content.x, y, progressText, true,
+                          EpdFontFamily::BOLD);
+        if (element == SleepComposerElement::BookStats || role == SleepComposerRole::Base) {
+          const std::string metric = sleepDuration(seconds) + "  ·  " + std::to_string(sessions) + " " +
+                                     tr(STR_SESSION_PLURAL);
+          drawClamped(SMALL_FONT_ID, content.x, y + (overlay ? 24 : 34), content.width, metric);
+        }
+        const int barY = content.y + content.height - 18;
+        drawProgress(SleepComposerRect{content.x, 0, content.width, 0}, barY, progress);
+        return true;
+      }
+      case SleepComposerElement::ReadingCalendar:
+        return drawCalendar(content, role);
+      case SleepComposerElement::ReadingSummary: {
+        if (!overlay) {
+          renderer.drawText(UI_12_FONT_ID, content.x, y, tr(STR_READING_SUMMARY_SLEEP), true,
+                            EpdFontFamily::BOLD);
+          y += titleLineHeight + 10;
+          if (!data.title.empty()) {
+            drawClamped(UI_10_FONT_ID, content.x, y, content.width, data.title, true);
+            y += renderer.getLineHeight(UI_10_FONT_ID) + 8;
+          }
+          renderer.drawLine(content.x, y, content.x + content.width, y);
+          y += 12;
+          const std::string today = std::string(tr(STR_TODAY)) + "  " +
+                                    sleepDuration(data.statistics.overview.todaySeconds);
+          drawClamped(UI_10_FONT_ID, content.x, y, content.width, today, true);
+          y += 28;
+          uint32_t weekSeconds = 0;
+          for (const auto& day : data.statistics.overview.week) {
+            weekSeconds = std::min(day.seconds, UINT32_MAX - weekSeconds) + weekSeconds;
+          }
+          const std::string week = std::string(tr(STR_STATS_THIS_WEEK)) + "  " + sleepDuration(weekSeconds);
+          drawClamped(UI_10_FONT_ID, content.x, y, content.width, week, true);
+          y += 28;
+          const std::string streak = std::string(tr(STR_STATS_CURRENT_STREAK)) + "  " +
+                                     std::to_string(data.statistics.overview.currentStreak) + " d";
+          drawClamped(UI_10_FONT_ID, content.x, y, content.width, streak, true);
+        } else {
+          char summary[96];
+          snprintf(summary, sizeof(summary), "TODAY %s  ·  %lu d STREAK",
+                   sleepDuration(data.statistics.overview.todaySeconds).c_str(),
+                   static_cast<unsigned long>(data.statistics.overview.currentStreak));
+          renderer.drawText(UI_10_FONT_ID, content.x, y, "READING SUMMARY", true, EpdFontFamily::BOLD);
+          y += renderer.getLineHeight(UI_10_FONT_ID) + 8;
+          drawClamped(UI_10_FONT_ID, content.x, y, content.width, summary, true);
+          if (role == SleepComposerRole::OverlayPrimary) {
+            const std::string retained = sleepDuration(data.statistics.overview.retainedSeconds) + " total";
+            drawClamped(SMALL_FONT_ID, content.x, y + 28, content.width, retained);
+          }
+        }
+        return true;
+      }
+      case SleepComposerElement::ToDo: {
+        char countText[44];
+        snprintf(countText, sizeof(countText), "TO-DO  %d OPEN  /  %d DONE", data.openTodos, data.completedTodos);
+        drawClamped(UI_10_FONT_ID, content.x, y, content.width, countText, true);
+        y += renderer.getLineHeight(UI_10_FONT_ID) + 8;
+        if (data.todoCount == 0) {
+          renderer.drawText(SMALL_FONT_ID, content.x, y, "Nothing on your list.");
+          return true;
+        }
+        const size_t maxRows = role == SleepComposerRole::Base ? 7 :
+                               role == SleepComposerRole::OverlayPrimary ? 2 : 1;
+        const size_t rows = std::min(maxRows, data.todoCount);
+        for (size_t row = 0; row < rows; ++row) {
+          const ToDoItem& item = *data.todos[(data.todoStart + row) % data.todoCount];
+          const int textWidth = std::max(1, content.width - 22);
+          renderer.drawRoundedRect(content.x, y + 1, 14, 14, 1, 3, true);
+          if (item.completed) {
+            renderer.drawLine(content.x + 3, y + 8, content.x + 6, y + 11, 2, true);
+            renderer.drawLine(content.x + 6, y + 11, content.x + 12, y + 4, 2, true);
+          }
+          drawClamped(SMALL_FONT_ID, content.x + 20, y, textWidth, item.text, !item.completed);
+          y += std::max(24, lineHeight + 8);
+        }
+        return true;
+      }
+      case SleepComposerElement::ClippingQuote: {
+        if (data.clipping.valid) {
+          renderer.drawText(overlay ? UI_10_FONT_ID : UI_12_FONT_ID, content.x, y,
+                            data.clipping.title.empty() ? "A CLIPPING" : "QUOTE", true, EpdFontFamily::BOLD);
+          y += (overlay ? renderer.getLineHeight(UI_10_FONT_ID) : titleLineHeight) + 6;
+          const int maxLines = role == SleepComposerRole::Base ? 8 : role == SleepComposerRole::OverlayPrimary ? 3 : 2;
+          const auto lines = renderer.wrappedText(UI_10_FONT_ID, data.clipping.text.c_str(), content.width, maxLines);
+          for (const auto& line : lines) {
+            renderer.drawText(UI_10_FONT_ID, content.x, y, line.c_str());
+            y += renderer.getLineHeight(UI_10_FONT_ID) + 3;
+          }
+          const std::string attribution = data.clipping.title + "  ·  p." + std::to_string(data.clipping.page);
+          drawClamped(SMALL_FONT_ID, content.x, rect.y + rect.height - lineHeight - 10, content.width,
+                      attribution);
+          return true;
+        }
+        return false;
+      }
+      case SleepComposerElement::ClockDate:
+        if (overlay) {
+          renderer.drawText(UI_10_FONT_ID, content.x, y, data.timeText, true, EpdFontFamily::BOLD);
+          y += renderer.getLineHeight(UI_10_FONT_ID) + 4;
+          drawClamped(SMALL_FONT_ID, content.x, y, content.width, data.dateText);
+        } else {
+          renderer.drawCenteredText(NOTOSERIF_18_FONT_ID, content.y + 60, data.timeText, true,
+                                    EpdFontFamily::BOLD);
+          renderer.drawCenteredText(UI_12_FONT_ID, content.y + 104, data.dateText, true, EpdFontFamily::REGULAR);
+          if (!data.title.empty()) {
+            const std::string bookLine = "READING  ·  " + data.title;
+            renderer.drawCenteredText(SMALL_FONT_ID, content.y + 150,
+                                      renderer.truncatedText(SMALL_FONT_ID, bookLine.c_str(), content.width).c_str());
+          }
+        }
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  const bool keepCurrentPage = elements[0] == SleepComposerElement::CurrentPage && currentBackgroundPreserved;
+  if (!keepCurrentPage) preconditionSleepRefresh(renderer);
+  renderer.setRenderMode(GfxRenderer::BW);
+  bool baseDrawn = true;
+  if (elements[0] == SleepComposerElement::CurrentBookCover) {
+    baseDrawn = drawSleepBookCoverInBounds(data.coverPath, frame, true);
+    if (!baseDrawn) drawDefault();
+    else if (SETTINGS.sleepScreenCoverFilter ==
+             CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) renderer.invertScreen();
+  } else if (elements[0] == SleepComposerElement::CustomImage) {
+    baseDrawn = renderCustomSleepScreenAt(&frame, &data.customImagePath);
+    if (!baseDrawn) drawDefault();
+    else if (SETTINGS.sleepScreenCoverFilter ==
+             CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) renderer.invertScreen();
+  } else if (elements[0] == SleepComposerElement::TransparentPng) {
+    drawDefault();
+    baseDrawn = !data.overlayPath.empty() && renderOverlayPngInBounds(data.overlayPath, frame);
+    if (!baseDrawn) drawDefault();
+  } else if (elements[0] == SleepComposerElement::CurrentPage) {
+    if (!keepCurrentPage) {
+      drawDefault();
+      baseDrawn = false;
+    }
+  } else {
+    baseDrawn = drawElement(elements[0], SleepComposerRole::Base, frame);
+    if (!baseDrawn) drawDefault();
+  }
+
+  std::array<SleepComposerRect, 2> occupied{};
+  size_t occupiedCount = 0;
+  const std::array<SleepComposerRole, 2> overlayRoles = {SleepComposerRole::OverlayPrimary,
+                                                          SleepComposerRole::OverlaySecondary};
+  for (size_t index = 1; index < elements.size(); ++index) {
+    if (elements[index] == SleepComposerElement::None) continue;
+    const auto role = overlayRoles[index - 1];
+    const auto slot = chooseSleepComposerOverlaySlot(role, pageWidth, pageHeight, occupied.data(), occupiedCount);
+    if (slot == SleepComposerSlot::None) continue;
+    const auto rect = sleepComposerSlotRect(role, slot, pageWidth, pageHeight);
+    occupied[occupiedCount++] = rect;
+    bool drawn = false;
+    if (elements[index] == SleepComposerElement::CurrentBookCover) {
+      card(rect);
+      drawn = drawSleepBookCoverInBounds(data.coverPath, inner(rect, 8), false);
+      if (!drawn) {
+        card(rect);
+        renderer.drawCenteredText(SMALL_FONT_ID, rect.y + rect.height / 2 - 6, "NO COVER");
+      }
+    } else if (elements[index] == SleepComposerElement::CustomImage) {
+      card(rect);
+      const auto imageBounds = inner(rect, 8);
+      drawn = renderCustomSleepScreenAt(&imageBounds, &data.customImagePath);
+      if (!drawn) {
+        card(rect);
+        renderer.drawCenteredText(SMALL_FONT_ID, rect.y + rect.height / 2 - 6, "IMAGE UNAVAILABLE");
+      }
+    } else if (elements[index] == SleepComposerElement::TransparentPng) {
+      card(rect);
+      const auto imageBounds = inner(rect, 8);
+      drawn = !data.overlayPath.empty() && renderOverlayPngInBounds(data.overlayPath, imageBounds);
+      if (!drawn) {
+        card(rect);
+        renderer.drawCenteredText(SMALL_FONT_ID, rect.y + rect.height / 2 - 6, "PNG UNAVAILABLE");
+      } else {
+        renderer.drawRoundedRect(rect.x, rect.y, rect.width, rect.height, 2, 10, true);
+      }
+    } else {
+      drawn = drawElement(elements[index], role, rect);
+      if (!drawn) {
+        card(rect);
+        renderer.drawCenteredText(SMALL_FONT_ID, rect.y + rect.height / 2 - 6, "NO DATA");
+      }
+    }
+  }
+
+  renderer.setRenderMode(GfxRenderer::BW);
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 }
 

@@ -27,6 +27,24 @@ bool styleMaskHasBold(const uint8_t styleMask) {
   return (styleMask & 0x0Au) != 0;
 }
 
+std::string boundedNote(const char* note) {
+  if (!note) return {};
+  constexpr size_t INPUT_LIMIT = ClipFile::MAX_NOTE_BYTES + 3;
+  size_t inputLength = 0;
+  while (inputLength < INPUT_LIMIT && note[inputLength] != '\0') ++inputLength;
+  std::string safe = ClipFile::normalizeText(std::string(note, inputLength));
+  if (safe.size() <= ClipFile::MAX_NOTE_BYTES) return safe;
+
+  size_t end = ClipFile::MAX_NOTE_BYTES;
+  // normalizeText() guarantees valid UTF-8. If the cap lands inside a
+  // multi-byte character, back up to its leading byte before truncating.
+  while (end > 0 && (static_cast<uint8_t>(safe[end]) & 0xC0u) == 0x80u) --end;
+  safe.resize(end);
+  return safe;
+}
+
+std::string boundedNote(const std::string& note) { return boundedNote(note.c_str()); }
+
 std::string clippingPath(const std::string& bookPath) {
   const std::string bookmarkPath = BookmarkUtil::getBookmarkPath(bookPath);
   const std::string bookmarkDir = BookmarkUtil::getBookmarksDir();
@@ -52,10 +70,12 @@ std::string dateLabel(const uint32_t dateKey) {
   return buf;
 }
 
-bool save(const std::string& bookPath, const std::vector<ClippingEntry>& clippings) {
+bool save(const std::string& bookPath, const std::vector<ClippingEntry>& clippings,
+          const std::vector<std::string>* notes = nullptr) {
   JsonDocument doc;
   JsonArray array = doc["clippings"].to<JsonArray>();
-  for (const auto& clipping : clippings) {
+  for (size_t index = 0; index < clippings.size(); ++index) {
+    const auto& clipping = clippings[index];
     JsonObject item = array.add<JsonObject>();
     item["text"] = ClipFile::normalizeText(clipping.text).substr(0, MAX_CLIP_BYTES);
     item["percentage"] = clipping.percentage;
@@ -70,12 +90,57 @@ bool save(const std::string& bookPath, const std::vector<ClippingEntry>& clippin
     // Always write the explicit key for newly saved entries.  Missing keys
     // in older files remain backward-compatible through load()'s fallback.
     item["bold"] = clipping.bold;
+    if (notes && index < notes->size()) {
+      const std::string note = boundedNote((*notes)[index]);
+      if (!note.empty()) item["note"] = note;
+    }
     LOG_DBG("CLP", "save_json style=%u bold=%u highlighted=1", static_cast<unsigned>(clipping.styleMask),
             clipping.bold ? 1u : 0u);
   }
 
   Storage.mkdir(CLIPPINGS_DIR);
   return PersistableStoreBase::writeDocToFile(clippingPath(bookPath).c_str(), doc);
+}
+
+bool loadImpl(const std::string& bookPath, std::vector<ClippingEntry>& clippings,
+              std::vector<std::string>* notes) {
+  clippings.clear();
+  if (notes) notes->clear();
+  JsonDocument doc;
+  if (!PersistableStoreBase::readDocFromFile(clippingPath(bookPath).c_str(), doc)) return false;
+
+  JsonArrayConst array = doc["clippings"].as<JsonArrayConst>();
+  clippings.reserve(std::min(array.size(), MAX_CLIPPINGS));
+  if (notes) notes->reserve(std::min(array.size(), MAX_CLIPPINGS));
+  for (JsonObjectConst item : array) {
+    const char* text = item["text"] | "";
+    if (!text[0]) continue;
+    ClippingEntry clipping;
+    clipping.text = ClipFile::normalizeText(std::string(text)).substr(0, MAX_CLIP_BYTES);
+    clipping.percentage = std::clamp(item["percentage"] | 0.0f, 0.0f, 1.0f);
+    clipping.spineIndex = item["spine"] | static_cast<uint16_t>(0);
+    clipping.page = item["page"] | static_cast<uint16_t>(0);
+    clipping.dateKey = item["date"] | static_cast<uint32_t>(0);
+    if (!item["firstWord"].isNull() && !item["lastWord"].isNull()) {
+      clipping.firstWord = item["firstWord"] | static_cast<uint16_t>(0);
+      clipping.lastWord = item["lastWord"] | static_cast<uint16_t>(0);
+      clipping.hasWordRange = clipping.firstWord <= clipping.lastWord;
+    }
+    clipping.styleMask = item["styleMask"] | static_cast<uint8_t>(0);
+    // Old JSON files have no explicit bold key. Derive it from the existing
+    // aggregate style mask, while preserving an explicit false for new
+    // regular-only clippings.
+    clipping.bold = item["bold"].isNull() ? styleMaskHasBold(clipping.styleMask) : (item["bold"] | false);
+    if (notes) {
+      const char* note = item["note"] | "";
+      notes->push_back(boundedNote(note));
+    }
+    LOG_DBG("CLP", "load style=%u bold=%u highlighted=1", static_cast<unsigned>(clipping.styleMask),
+            clipping.bold ? 1u : 0u);
+    clippings.push_back(std::move(clipping));
+    if (clippings.size() >= MAX_CLIPPINGS) break;
+  }
+  return true;
 }
 
 bool appendMaster(const std::string& title, const ClippingEntry& clipping) {
@@ -166,51 +231,61 @@ std::string normalizeText(const std::string& text) {
 }
 
 bool load(const std::string& bookPath, std::vector<ClippingEntry>& clippings) {
-  clippings.clear();
-  JsonDocument doc;
-  if (!PersistableStoreBase::readDocFromFile(clippingPath(bookPath).c_str(), doc)) return false;
+  return loadImpl(bookPath, clippings, nullptr);
+}
 
-  JsonArrayConst array = doc["clippings"].as<JsonArrayConst>();
-  clippings.reserve(std::min(array.size(), MAX_CLIPPINGS));
-  for (JsonObjectConst item : array) {
-    const char* text = item["text"] | "";
-    if (!text[0]) continue;
-    ClippingEntry clipping;
-    clipping.text = normalizeText(std::string(text)).substr(0, MAX_CLIP_BYTES);
-    clipping.percentage = std::clamp(item["percentage"] | 0.0f, 0.0f, 1.0f);
-    clipping.spineIndex = item["spine"] | static_cast<uint16_t>(0);
-    clipping.page = item["page"] | static_cast<uint16_t>(0);
-    clipping.dateKey = item["date"] | static_cast<uint32_t>(0);
-    if (!item["firstWord"].isNull() && !item["lastWord"].isNull()) {
-      clipping.firstWord = item["firstWord"] | static_cast<uint16_t>(0);
-      clipping.lastWord = item["lastWord"] | static_cast<uint16_t>(0);
-      clipping.hasWordRange = clipping.firstWord <= clipping.lastWord;
-    }
-    clipping.styleMask = item["styleMask"] | static_cast<uint8_t>(0);
-    // Old JSON files have no explicit bold key.  Derive it from the existing
-    // aggregate style mask, while preserving an explicit false for new
-    // regular-only clippings.
-    clipping.bold = item["bold"].isNull() ? styleMaskHasBold(clipping.styleMask) : (item["bold"] | false);
-    LOG_DBG("CLP", "load style=%u bold=%u highlighted=1", static_cast<unsigned>(clipping.styleMask),
-            clipping.bold ? 1u : 0u);
-    clippings.push_back(std::move(clipping));
-    if (clippings.size() >= MAX_CLIPPINGS) break;
-  }
-  return true;
+bool load(const std::string& bookPath, std::vector<ClippingEntry>& clippings, std::vector<std::string>& notes) {
+  return loadImpl(bookPath, clippings, &notes);
 }
 
 bool replace(const std::string& bookPath, const std::vector<ClippingEntry>& clippings) {
+  // Keep notes attached to unchanged passages for legacy callers that still
+  // replace only the clipping vector. The manager uses the aligned overload
+  // below so edited text and deletion remain unambiguous.
+  std::vector<ClippingEntry> previous;
+  std::vector<std::string> previousNotes;
+  loadImpl(bookPath, previous, &previousNotes);
+  std::vector<std::string> notes(clippings.size());
+  std::vector<bool> matched(previous.size(), false);
+  for (size_t i = 0; i < clippings.size(); ++i) {
+    const auto& target = clippings[i];
+    size_t match = previous.size();
+    for (size_t j = 0; j < previous.size(); ++j) {
+      if (matched[j] || previous[j].spineIndex != target.spineIndex || previous[j].page != target.page) continue;
+      if (previous[j].text == target.text) {
+        match = j;
+        break;
+      }
+      // If an older caller edited the quote text, keep its note only when the
+      // page contains one unambiguous saved passage.
+      if (match == previous.size()) match = j;
+      else match = previous.size() + 1;
+    }
+    if (match < previous.size()) {
+      matched[match] = true;
+      if (match < previousNotes.size()) notes[i] = previousNotes[match];
+    }
+  }
+  return replace(bookPath, clippings, notes);
+}
+
+bool replace(const std::string& bookPath, const std::vector<ClippingEntry>& clippings,
+             const std::vector<std::string>& notes) {
   std::vector<ClippingEntry> bounded;
+  std::vector<std::string> boundedNotes;
   bounded.reserve(std::min(clippings.size(), MAX_CLIPPINGS));
-  for (const auto& clipping : clippings) {
+  boundedNotes.reserve(std::min(clippings.size(), MAX_CLIPPINGS));
+  for (size_t index = 0; index < clippings.size(); ++index) {
+    const auto& clipping = clippings[index];
     if (clipping.text.empty()) continue;
     ClippingEntry copy = clipping;
     copy.text = normalizeText(copy.text);
     copy.text.resize(std::min(copy.text.size(), MAX_CLIP_BYTES));
     bounded.push_back(std::move(copy));
+    boundedNotes.push_back(index < notes.size() ? boundedNote(notes[index]) : std::string{});
     if (bounded.size() >= MAX_CLIPPINGS) break;
   }
-  return save(bookPath, bounded);
+  return save(bookPath, bounded, &boundedNotes);
 }
 
 bool append(const std::string& bookPath, const std::string& bookTitle, ClippingEntry clipping) {
@@ -220,7 +295,8 @@ bool append(const std::string& bookPath, const std::string& bookTitle, ClippingE
   if (clipping.dateKey == 0) clipping.dateKey = halClock.getDateKey();
 
   std::vector<ClippingEntry> clippings;
-  load(bookPath, clippings);
+  std::vector<std::string> notes;
+  load(bookPath, clippings, notes);
   const auto duplicate = std::find_if(clippings.begin(), clippings.end(), [&](const ClippingEntry& item) {
     return item.page == clipping.page && item.spineIndex == clipping.spineIndex && item.text == clipping.text;
   });
@@ -240,7 +316,7 @@ bool append(const std::string& bookPath, const std::string& bookTitle, ClippingE
         duplicate->lastWord = clipping.lastWord;
         duplicate->hasWordRange = true;
       }
-      if (!save(bookPath, clippings)) {
+      if (!save(bookPath, clippings, &notes)) {
         LOG_ERR("CLP", "Failed to update clipping metadata for %s", bookPath.c_str());
         return false;
       }
@@ -250,9 +326,13 @@ bool append(const std::string& bookPath, const std::string& bookTitle, ClippingE
     return true;
   }
 
-  if (clippings.size() >= MAX_CLIPPINGS) clippings.erase(clippings.begin());
+  if (clippings.size() >= MAX_CLIPPINGS) {
+    clippings.erase(clippings.begin());
+    if (!notes.empty()) notes.erase(notes.begin());
+  }
   clippings.push_back(clipping);
-  if (!save(bookPath, clippings)) {
+  notes.emplace_back();
+  if (!save(bookPath, clippings, &notes)) {
     LOG_ERR("CLP", "Failed to save clipping for %s", bookPath.c_str());
     return false;
   }
