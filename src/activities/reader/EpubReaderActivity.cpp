@@ -2921,7 +2921,8 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
   bool deepReleased = false;
   const bool deepAdmissionNeeded =
       !readerBleReturnAdmitted(deepBeforeFree, deepBeforeLargest);
-  const bool deepQuiescent = !bluetoothResourceSensitive();
+  const bool deepResourceSensitive = bluetoothResourceSensitive();
+  const bool deepQuiescent = !deepResourceSensitive;
   const bool deepSectionBuildIdle = section && !section->isBuilding();
   const bool deepRenderStable = firstStableRenderComplete.load(std::memory_order_acquire);
   const bool deepRenderLockFree = !RenderLock::peek();
@@ -2930,9 +2931,9 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
   const bool deepReplayHoldClear = !readerSurvivalReturnHeld.load(std::memory_order_acquire);
   const bool deepReaderResetReason = readerDeepCacheRescueReason &&
                                      strcmp(readerDeepCacheRescueReason, "reader_enter_reset") == 0;
-  const bool deepSafe = returnPending && deepQuiescent && deepSectionBuildIdle && deepRenderStable &&
-                        deepRenderLockFree && deepRenderWorkIdle && deepStopRequestClear && deepReplayHoldClear &&
-                        !readerRenderWaitingForBleStop;
+  const bool deepSafe = bleinput::readerBleDeepCacheReclaimSafe(
+      returnPending, deepQuiescent, deepSectionBuildIdle, deepRenderStable, deepRenderLockFree, deepRenderWorkIdle,
+      deepStopRequestClear, deepReplayHoldClear, !readerRenderWaitingForBleStop);
   const bool deepEligible = readerDeepCacheRescueEligible || (deepReaderResetReason && deepSafe);
   LOG_INF("BLEMEM",
           "reader_deep_reclaim_eligibility generation=%u owner=reader_shared_font_caches eligible=%d "
@@ -2942,7 +2943,7 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
           static_cast<unsigned>(returnGeneration), deepEligible ? 1 : 0,
           readerDeepCacheRescueReason ? readerDeepCacheRescueReason : "none", returnPending ? 1 : 0,
           deepQuiescent ? 1 : 0, deepSectionBuildIdle ? 0 : 1, deepRenderStable ? 1 : 0,
-          deepRenderLockFree ? 0 : 1, deepRenderWorkIdle ? 0 : 1, deepQuiescent ? 0 : 1,
+          deepRenderLockFree ? 0 : 1, deepRenderWorkIdle ? 0 : 1, deepResourceSensitive ? 1 : 0,
           deepStopRequestClear ? 0 : 1, deepReplayHoldClear ? 0 : 1,
           readerRenderWaitingForBleStop ? 1 : 0, deepAdmissionNeeded ? 1 : 0,
           static_cast<unsigned>(deepBeforeFree), static_cast<unsigned>(deepBeforeLargest));

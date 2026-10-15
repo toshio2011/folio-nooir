@@ -66,6 +66,19 @@ TEST(BleMemoryPolicy, ReaderReturnCleanupRequiresEveryLifecycleGate) {
   EXPECT_FALSE(bleinput::readerBleReturnCleanupAllowed(true, true, true, true, true, false, true));
 }
 
+TEST(BleMemoryPolicy, DeepReaderCacheReclaimRequiresEverySafetyGate) {
+  EXPECT_TRUE(bleinput::readerBleDeepCacheReclaimSafe(true, true, true, true, true, true, true, true, true));
+  EXPECT_FALSE(bleinput::readerBleDeepCacheReclaimSafe(false, true, true, true, true, true, true, true, true));
+  EXPECT_FALSE(bleinput::readerBleDeepCacheReclaimSafe(true, false, true, true, true, true, true, true, true));
+  EXPECT_FALSE(bleinput::readerBleDeepCacheReclaimSafe(true, true, false, true, true, true, true, true, true));
+  EXPECT_FALSE(bleinput::readerBleDeepCacheReclaimSafe(true, true, true, false, true, true, true, true, true));
+  EXPECT_FALSE(bleinput::readerBleDeepCacheReclaimSafe(true, true, true, true, false, true, true, true, true));
+  EXPECT_FALSE(bleinput::readerBleDeepCacheReclaimSafe(true, true, true, true, true, false, true, true, true));
+  EXPECT_FALSE(bleinput::readerBleDeepCacheReclaimSafe(true, true, true, true, true, true, false, true, true));
+  EXPECT_FALSE(bleinput::readerBleDeepCacheReclaimSafe(true, true, true, true, true, true, true, false, true));
+  EXPECT_FALSE(bleinput::readerBleDeepCacheReclaimSafe(true, true, true, true, true, true, true, true, false));
+}
+
 TEST(BleMemoryPolicy, BleOffNeverRequestsReaderRenderReclaim) {
   EXPECT_FALSE(bleinput::readerBleCachedRenderNeedsReclaim(false, false, 15 * 1024, 8 * 1024));
   EXPECT_FALSE(bleinput::readerBleCachedRenderNeedsReclaim(false, true, 15 * 1024, 8 * 1024));

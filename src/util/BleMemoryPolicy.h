@@ -94,4 +94,16 @@ constexpr bool readerBleReturnCleanupAllowed(const bool bleEnabled, const bool b
          !bleRunning && !admissionPasses;
 }
 
+// The final shared Reader font-cache release is more disruptive than the
+// earlier disposable-cache releases. Keep its quiescence checks together so
+// the whole gate can be tested without ESP runtime state.
+constexpr bool readerBleDeepCacheReclaimSafe(const bool returnPending, const bool readerQuiescent,
+                                             const bool sectionBuildIdle, const bool renderStable,
+                                             const bool renderLockFree, const bool renderWorkIdle,
+                                             const bool stopRequestClear, const bool replayHoldClear,
+                                             const bool notWaitingForBleStop) {
+  return returnPending && readerQuiescent && sectionBuildIdle && renderStable && renderLockFree &&
+         renderWorkIdle && stopRequestClear && replayHoldClear && notWaitingForBleStop;
+}
+
 }  // namespace bleinput
