@@ -76,6 +76,7 @@ void VisualPreviewActivity::onEnter() {
   finishedLayoutPreview_ = SETTINGS.finishedBookLayout;
   spineAppearancePreview_ = SETTINGS.spineAppearanceMode;
   spineDecorationPreview_ = SETTINGS.spineDecorationStyle;
+  ignoreInitialConfirm_ = true;
   selectedRow_ = 0;
   requestUpdate();
 }
@@ -249,6 +250,21 @@ bool VisualPreviewActivity::handleTouch(const int listTop, const int listHeight,
 
 void VisualPreviewActivity::loop() {
   if (optionPopup_.handleInput(mappedInput, [this] { requestUpdate(); })) return;
+
+  // The Confirm release used to open Visual Preview can arrive in the first
+  // frame of this activity. Row 0 is Featured: Cover, so accepting that stale
+  // edge immediately toggles the setting just by entering the screen.
+  if (ignoreInitialConfirm_) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      ignoreInitialConfirm_ = false;
+      return;
+    }
+    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm) ||
+        mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
+      return;
+    }
+    ignoreInitialConfirm_ = false;
+  }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     finish();
