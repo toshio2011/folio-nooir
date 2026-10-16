@@ -2629,7 +2629,7 @@ void CrossPointWebServer::handlePostSettings() {
 
   if (doc["sleepScreen"].is<JsonVariant>()) {
     const int value = doc["sleepScreen"].as<int>();
-    if (value >= 0 && value < 17) {
+    if (value >= 0 && value < 16) {
       const auto previous = SETTINGS.sleepScreen;
       switch (value) {
         case 0: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::DARK; break;
@@ -2648,7 +2648,6 @@ void CrossPointWebServer::handlePostSettings() {
         case 13: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP; break;
         case 14: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::COVER_PROGRESS; break;
         case 15: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM; break;
-        case 16: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE; break;
       }
       changed |= SETTINGS.sleepScreen != previous;
       ++applied;

@@ -102,13 +102,15 @@ constexpr size_t MAX_CLIPPING_RECORD_JSON_BYTES =
 
 bool loadClippingsPageFromFile(const std::string& path, const size_t offset, const size_t outputLimit,
                               std::vector<ClippingEntry>& clippings, std::vector<std::string>* notes,
-                              size_t& totalCount) {
+                              size_t& totalCount, bool* foundFile = nullptr) {
+  if (foundFile) *foundFile = false;
   const String backupPath = String(path.c_str()) + ".bak";
   const String pendingPath = String(path.c_str()) + ".tmp";
   const String candidates[] = {String(path.c_str()), backupPath, pendingPath};
   for (size_t index = 0; index < sizeof(candidates) / sizeof(candidates[0]); ++index) {
     const String& candidate = candidates[index];
     if (!Storage.exists(candidate.c_str())) continue;
+    if (foundFile) *foundFile = true;
 
     HalFile file = Storage.open(candidate.c_str());
     if (!file) {
@@ -233,14 +235,16 @@ void decodeClipping(JsonObjectConst item, ClippingEntry& clipping) {
 }
 
 bool loadRange(const std::string& bookPath, const size_t offset, const size_t limit,
-               std::vector<ClippingEntry>& clippings, std::vector<std::string>* notes, size_t& totalCount) {
+               std::vector<ClippingEntry>& clippings, std::vector<std::string>* notes, size_t& totalCount,
+               bool* foundFile = nullptr) {
   clippings.clear();
   if (notes) notes->clear();
   totalCount = 0;
   const size_t outputLimit = std::min(limit, ClipFile::MAX_CLIPPINGS_PER_BOOK);
   clippings.reserve(outputLimit);
   if (notes) notes->reserve(outputLimit);
-  return loadClippingsPageFromFile(clippingPath(bookPath), offset, outputLimit, clippings, notes, totalCount);
+  return loadClippingsPageFromFile(clippingPath(bookPath), offset, outputLimit, clippings, notes, totalCount,
+                                   foundFile);
 }
 
 bool loadImpl(const std::string& bookPath, std::vector<ClippingEntry>& clippings,
@@ -367,7 +371,17 @@ bool loadPage(const std::string& bookPath, const size_t offset, const size_t lim
 
 bool count(const std::string& bookPath, size_t& totalCount) {
   std::vector<ClippingEntry> unusedClippings;
-  return loadRange(bookPath, ClipFile::MAX_CLIPPINGS_PER_BOOK, 0, unusedClippings, nullptr, totalCount);
+  bool foundFile = false;
+  const bool loaded = loadRange(bookPath, ClipFile::MAX_CLIPPINGS_PER_BOOK, 0, unusedClippings, nullptr, totalCount,
+                                &foundFile);
+  // Books without annotations are a normal case while browsing the library.
+  // Distinguish them from unreadable or malformed existing clipping files so
+  // the all-books page does not report a false storage error for every such book.
+  if (!loaded && !foundFile) {
+    totalCount = 0;
+    return true;
+  }
+  return loaded;
 }
 
 bool replace(const std::string& bookPath, const std::vector<ClippingEntry>& clippings) {

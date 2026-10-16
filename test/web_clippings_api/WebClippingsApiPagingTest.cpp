@@ -117,6 +117,28 @@ TEST(WebClippingsApiPaging, AllBooksRouteStreamsOnlyTheRequestedWindowAcrossBook
   EXPECT_EQ(loadedBooks, (std::vector<std::string>{"/Books/A.epub", "/Books/B.epub"}));
 }
 
+TEST(WebClippingsApiPaging, AllBooksRouteSkipsBooksWithoutClippingsWithoutStorageErrors) {
+  const std::vector<FixtureBook> books{{"/Books/Empty.epub", "Empty", 0},
+                                       {"/Books/Annotated.epub", "Annotated", 2}};
+  std::vector<std::string> loadedBooks;
+  const auto summary = WebClippingsApi::streamAllBooksPage(
+      0, 12,
+      [&](auto&& visitor) { visitFixtureBooks(books, std::forward<decltype(visitor)>(visitor)); },
+      [&](const std::string& path, size_t& count) { return countFixtureBook(books, path, count); },
+      [&](const std::string& path, const size_t offset, const size_t limit,
+          std::vector<ClippingEntry>& clippings, std::vector<std::string>& notes, size_t& totalCount) {
+        loadedBooks.push_back(path);
+        return loadFixturePage(books, path, offset, limit, clippings, notes, totalCount);
+      },
+      [](const std::string&, const std::string&, size_t, const ClippingEntry&, const std::string&) {});
+
+  EXPECT_EQ(summary.recordsFound, 2u);
+  EXPECT_EQ(summary.responseCount, 2u);
+  EXPECT_EQ(summary.storageErrors, 0u);
+  EXPECT_FALSE(summary.hasMore);
+  EXPECT_EQ(loadedBooks, (std::vector<std::string>{"/Books/Annotated.epub"}));
+}
+
 TEST(WebClippingsApiPaging, PerBookRouteReportsMissingClipFile) {
   std::vector<ClippingEntry> clippings;
   std::vector<std::string> notes;
