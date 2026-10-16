@@ -15,6 +15,7 @@
 #include "SettingsList.h"
 #include "FontSelectionCompatibility.h"
 #include "fontIds.h"
+#include "util/HomeThemePolicy.h"
 #include "util/RandomSleepPreferences.h"
 
 namespace {
@@ -299,6 +300,23 @@ bool CrossPointSettings::fromJsonForProfile(JsonVariantConst doc, const bool pre
       }
       s.*(info.valuePtr) = v;
     }
+  }
+
+  // Theme value 5 used to select the standalone Carousel presentation. If an
+  // older settings file has no independent Recent/Finished layout keys, carry
+  // its explicit 3/5-cover choice forward once. Files that already stored
+  // Folio layouts keep those choices, and carouselLayout remains intact for
+  // downgrade compatibility.
+  const bool recentLayoutMissing = doc["recentBookLayout"].isNull();
+  const bool finishedLayoutMissing = doc["finishedBookLayout"].isNull();
+  const auto carouselLayoutMigration = HomeThemePolicy::migrateLegacyCarouselLayout(
+      s.uiTheme, UI_THEME::FOLIO_NOOIR_LITE, s.carouselLayout, !doc["carouselLayout"].isNull(),
+      !recentLayoutMissing, recentBookLayout, !finishedLayoutMissing, finishedBookLayout,
+      CAROUSEL_LAYOUT_THREE_COVER, FOLIO_LAYOUT_THREE_COVER_CAROUSEL, FOLIO_LAYOUT_FIVE_COVER_CAROUSEL);
+  if (carouselLayoutMigration.applied) {
+    recentBookLayout = carouselLayoutMigration.recentBookLayout;
+    finishedBookLayout = carouselLayoutMigration.finishedBookLayout;
+    needsResave = true;
   }
 
   const auto sleepComposerValues = normalizeSleepComposerSettings(

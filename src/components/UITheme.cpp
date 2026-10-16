@@ -56,9 +56,9 @@ void UITheme::setTheme(CrossPointSettings::UI_THEME type) {
       currentTheme = std::make_unique<FolioNooirTheme>();
       currentMetrics = &LyraMetrics::values;
       break;
-    case CrossPointSettings::UI_THEME::CAROUSEL:
-      LOG_DBG("UI", "Using Carousel theme");
-      currentTheme = std::make_unique<CarouselTheme>();
+    case CrossPointSettings::UI_THEME::FOLIO_NOOIR_LITE:
+      LOG_DBG("UI", "Using Folio Nooir Lite theme");
+      currentTheme = std::make_unique<FolioNooirTheme>();
       currentMetrics = &LyraMetrics::values;
       break;
   }

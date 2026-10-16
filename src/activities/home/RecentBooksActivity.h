@@ -51,6 +51,7 @@ class RecentBooksActivity final : public Activity {
     bool valid = false;
     uint64_t identity = 0;
     bool unavailable = false;
+    bool normalUnavailable = false;
   };
   std::array<CarouselHqProbe, 10> carouselHqProbes{};
   static constexpr size_t CAROUSEL_SOURCE_CACHE_SIZE = 6;

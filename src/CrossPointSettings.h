@@ -257,8 +257,12 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LYRA_3_COVERS = 2,
     ROUNDEDRAFF = 3,
     FOLIO_NOOIR = 4,
-    CAROUSEL = 5
+    // Keep value 5 for settings files written by the former Carousel theme.
+    FOLIO_NOOIR_LITE = 5,
+    CAROUSEL = FOLIO_NOOIR_LITE
   };
+  static_assert(FOLIO_NOOIR_LITE == 5 && CAROUSEL == FOLIO_NOOIR_LITE,
+                "Folio Nooir Lite must retain the legacy Carousel theme value");
 
   // Folio Nooir Recent/Finished presentation. Keep Grid as value 0 so older
   // settings files that do not contain either key naturally retain the

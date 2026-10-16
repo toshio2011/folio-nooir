@@ -173,8 +173,8 @@ void SettingsActivity::rebuildSettingsLists() {
   std::vector<DictionaryEntry> dictionaries;
   DictionaryRegistry::discover(dictionaries);
 
-  const bool folioNooir = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR;
-  const bool carouselTheme = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::CAROUSEL;
+  const bool folioLayoutTheme = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR ||
+                                SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR_LITE;
   const auto isFolioLayoutSetting = [](const StrId id) {
     return id == StrId::STR_RECENT_BOOK_LAYOUT || id == StrId::STR_FINISHED_BOOK_LAYOUT;
   };
@@ -199,7 +199,10 @@ void SettingsActivity::rebuildSettingsLists() {
         return false;
     }
   };
-  auto settings = getSettingsList(&sdFontSystem.registry(), &dictionaries);
+  // Interface Font is hidden for this release. Avoid discovering Mini Pack
+  // families while building a row that the user cannot select; keep the
+  // independent Reader font picker backed by the registry.
+  auto settings = getSettingsList(&sdFontSystem.registry(), &dictionaries, false);
   const auto visibleCategory = [&](const SettingInfo& setting) -> int {
     if (setting.category == StrId::STR_NONE_OPT) return -1;
     if (isSleepComposerSetting(setting)) {
@@ -210,8 +213,9 @@ void SettingsActivity::rebuildSettingsLists() {
       return -1;
     }
     if (isVisualPreviewSetting(setting.nameId)) return -1;
-    if (isFolioLayoutSetting(setting.nameId) && !folioNooir) return -1;
-    if (isCarouselLayoutSetting(setting.nameId) && !carouselTheme) return -1;
+    if (setting.nameId == StrId::STR_INTERFACE_FONT) return -1;
+    if (isFolioLayoutSetting(setting.nameId) && !folioLayoutTheme) return -1;
+    if (isCarouselLayoutSetting(setting.nameId)) return -1;
     if (setting.category == StrId::STR_CAT_DISPLAY) return 0;
     if (setting.category == StrId::STR_CAT_READER) return setting.inTextSettings ? -1 : 1;
     if (setting.category == StrId::STR_CAT_CONTROLS)

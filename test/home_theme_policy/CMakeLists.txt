@@ -1,0 +1,5 @@
+add_executable(home_theme_policy_test HomeThemePolicyTest.cpp)
+target_link_libraries(home_theme_policy_test PRIVATE GTest::gtest_main crosspoint_test_common)
+
+include(GoogleTest)
+gtest_discover_tests(home_theme_policy_test)

@@ -633,7 +633,7 @@ inline bool isSleepComposerSetting(const SettingInfo& setting) {
 
 template <typename Callback>
 inline void forEachEffectiveSetting(const SdCardFontRegistry* registry, const std::vector<DictionaryEntry>* dictionaries,
-                                    Callback&& callback) {
+                                    Callback&& callback, const bool includeInterfaceFontFamilies = true) {
   const auto& baseList = getBaseSettingsList();
   bool dictionaryInserted = false;
 
@@ -655,7 +655,7 @@ inline void forEachEffectiveSetting(const SdCardFontRegistry* registry, const st
     } else if (base.nameId == StrId::STR_FONT_FAMILY) {
       callback(buildFontFamilySetting(registry));
     } else if (base.nameId == StrId::STR_INTERFACE_FONT) {
-      callback(buildInterfaceFontSetting(registry));
+      if (includeInterfaceFontFamilies) callback(buildInterfaceFontSetting(registry));
     } else if (base.nameId == StrId::STR_DICTIONARY_FONT) {
       callback(buildDictionaryFontSetting());
     } else {
@@ -669,10 +669,12 @@ inline void forEachEffectiveSetting(const SdCardFontRegistry* registry, const st
 }
 
 inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* registry = nullptr,
-                                                const std::vector<DictionaryEntry>* dictionaries = nullptr) {
+                                                const std::vector<DictionaryEntry>* dictionaries = nullptr,
+                                                const bool includeInterfaceFontFamilies = true) {
   const auto& baseList = getBaseSettingsList();
   std::vector<SettingInfo> v;
   v.reserve(baseList.size() + ((dictionaries && !dictionaries->empty()) ? 1 : 0));
-  forEachEffectiveSetting(registry, dictionaries, [&v](const SettingInfo& setting) { v.push_back(setting); });
+  forEachEffectiveSetting(registry, dictionaries, [&v](const SettingInfo& setting) { v.push_back(setting); },
+                          includeInterfaceFontFamilies);
   return v;
 }
