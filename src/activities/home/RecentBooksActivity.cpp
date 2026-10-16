@@ -418,9 +418,8 @@ void drawSpineShelfFurniture(const GfxRenderer& renderer, const SpineShelfPlanne
   }
 }
 
-void drawSpineSlotFocusOutline(const GfxRenderer& renderer, const SpineShelfPlanner::Rect& rect,
+void drawSpineSlotFocusOutline(const GfxRenderer& renderer, const SpineShelfPlanner::FocusFrame& frame,
                                const bool selected) {
-  const auto frame = SpineShelfPlanner::focusFrameFor(rect);
   if (!frame.valid()) return;
 
   // The book's own bottom border meets the shelf and closes this three-sided
@@ -434,23 +433,60 @@ void drawSpineSlotFocusOutline(const GfxRenderer& renderer, const SpineShelfPlan
 }
 
 void drawSpinePageSelectionMarker(const GfxRenderer& renderer, const SpineShelfPlanner::Page& page,
-                                 const size_t index, const bool selected) {
+                                 const size_t index, const bool selected,
+                                 SpineShelfPlanner::RenderedFocusGeometry& renderedFocus) {
   for (size_t slotIndex = 0; slotIndex < page.itemCount; ++slotIndex) {
     const auto& slot = page.slots[slotIndex];
     if (slot.itemIndex != index || slot.itemIndex < page.firstIndex ||
         slot.itemIndex - page.firstIndex >= SpineShelfPlanner::MAX_BOOKS) continue;
-    drawSpineSlotFocusOutline(renderer, slot.rect, selected);
+    SpineShelfPlanner::FocusFrame frame{};
+    SpineShelfPlanner::Rect renderedSlot{};
+    bool restoreRenderedRightEdge = false;
+    if (selected) {
+      renderedFocus.remember(index, slot.rect);
+      frame = SpineShelfPlanner::focusFrameFor(slot.rect);
+    } else {
+      const auto deselection = SpineShelfPlanner::focusGeometryForDeselection(renderedFocus, index, slot.rect);
+      renderedSlot = deselection.finalSlot;
+      frame = deselection.frame;
+      restoreRenderedRightEdge = deselection.restoredPreviousGeometry;
+    }
+    drawSpineSlotFocusOutline(renderer, frame, selected);
+    if (restoreRenderedRightEdge) {
+      // Erasing the exterior focus stroke can visually break the adjacent
+      // book edge after incremental refresh. Restore its right edge from the
+      // exact final slot geometry that was painted.
+      const int right = SpineShelfPlanner::slotRightEdgeX(renderedSlot);
+      renderer.drawLine(right, renderedSlot.y, right, renderedSlot.y + renderedSlot.height - 1, true);
+    }
     return;
   }
 }
 
 void drawTwoRowSpinePageSelectionMarker(const GfxRenderer& renderer, const SpineShelfPlanner::TwoRowPage& page,
-                                       const size_t index, const bool selected) {
+                                       const size_t index, const bool selected,
+                                       SpineShelfPlanner::RenderedFocusGeometry& renderedFocus) {
   for (size_t slotIndex = 0; slotIndex < page.itemCount; ++slotIndex) {
     const auto& slot = page.slots[slotIndex];
     if (slot.itemIndex != index || slot.itemIndex < page.firstIndex ||
         slot.itemIndex - page.firstIndex >= SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY) continue;
-    drawSpineSlotFocusOutline(renderer, slot.rect, selected);
+    SpineShelfPlanner::FocusFrame frame{};
+    SpineShelfPlanner::Rect renderedSlot{};
+    bool restoreRenderedRightEdge = false;
+    if (selected) {
+      renderedFocus.remember(index, slot.rect);
+      frame = SpineShelfPlanner::focusFrameFor(slot.rect);
+    } else {
+      const auto deselection = SpineShelfPlanner::focusGeometryForDeselection(renderedFocus, index, slot.rect);
+      renderedSlot = deselection.finalSlot;
+      frame = deselection.frame;
+      restoreRenderedRightEdge = deselection.restoredPreviousGeometry;
+    }
+    drawSpineSlotFocusOutline(renderer, frame, selected);
+    if (restoreRenderedRightEdge) {
+      const int right = SpineShelfPlanner::slotRightEdgeX(renderedSlot);
+      renderer.drawLine(right, renderedSlot.y, right, renderedSlot.y + renderedSlot.height - 1, true);
+    }
     return;
   }
 }
@@ -1257,13 +1293,13 @@ void RecentBooksActivity::drawSnapshotSelectionOutline(const FolioShelfLayout& l
   if (usesSpineLayout()) {
     const auto bounds = spineShelfBounds(renderer.getScreenWidth(), layout);
     const auto& window = spinePageForSelection(bounds);
-    drawSpinePageSelectionMarker(renderer, window.page, index, selected);
+    drawSpinePageSelectionMarker(renderer, window.page, index, selected, renderedSpineFocus);
     return;
   }
   if (usesTwoRowSpineLayout()) {
     const auto bounds = twoRowSpineBounds(renderer.getScreenWidth(), layout);
     const auto& window = twoRowSpinePageForSelection(bounds);
-    drawTwoRowSpinePageSelectionMarker(renderer, window.page, index, selected);
+    drawTwoRowSpinePageSelectionMarker(renderer, window.page, index, selected, renderedSpineFocus);
     return;
   }
   if (usesThreeCoverGrid()) {
@@ -3326,7 +3362,10 @@ void RecentBooksActivity::render(RenderLock&&) {
     snapshotPageStart = SIZE_MAX;
     snapshotPageItems = 0;
   }
-  if (!renderedFromSnapshot) renderer.clearScreen();
+  if (!renderedFromSnapshot) {
+    renderer.clearScreen();
+    renderedSpineFocus.clear();
+  }
 
   // The cover bookshelf is exclusive to the Folio Nooir UI theme. Other
   // themes retain CrossPoint's compact Recent Books list.

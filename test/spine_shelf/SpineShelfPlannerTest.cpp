@@ -83,6 +83,65 @@ TEST(SpineShelfPlanner, FocusFrameRejectsSlotsTooSmallForTheThreeSidedStroke) {
   EXPECT_FALSE(SpineShelfPlanner::focusFrameFor(Rect{10, 10, 20, 2}).valid());
 }
 
+TEST(SpineShelfPlanner, DeselectionRestoresExactPreviouslyRenderedAdjacentSlotGeometry) {
+  SpineShelfPlanner::RenderedFocusGeometry renderedFocus;
+  const Rect previousSlot{38, 144, 42, 170};
+  const Rect adjacentSlot{84, 136, 48, 178};
+  renderedFocus.remember(3, previousSlot);
+
+  // The planner's current candidate is the adjacent selection, but deselection
+  // must restore the geometry of the item whose focus was actually painted.
+  const auto deselection = SpineShelfPlanner::focusGeometryForDeselection(renderedFocus, 3, adjacentSlot);
+  ASSERT_TRUE(deselection.restoredPreviousGeometry);
+  const auto& erasedSlot = deselection.finalSlot;
+  const auto& erasedFrame = deselection.frame;
+  EXPECT_EQ(erasedSlot.x, previousSlot.x);
+  EXPECT_EQ(erasedSlot.y, previousSlot.y);
+  EXPECT_EQ(erasedSlot.width, previousSlot.width);
+  EXPECT_EQ(erasedSlot.height, previousSlot.height);
+  EXPECT_EQ(SpineShelfPlanner::slotRightEdgeX(erasedSlot), previousSlot.x + previousSlot.width - 1);
+  EXPECT_EQ(erasedFrame.left, previousSlot.x - 1);
+  EXPECT_EQ(erasedFrame.right, previousSlot.x + previousSlot.width);
+  EXPECT_EQ(erasedFrame.top, previousSlot.y - 1);
+  EXPECT_EQ(erasedFrame.bottom, previousSlot.y + previousSlot.height - 1);
+  EXPECT_NE(erasedFrame.right, adjacentSlot.x + adjacentSlot.width);
+
+  renderedFocus.remember(4, adjacentSlot);
+  const auto nextDeselect = SpineShelfPlanner::focusGeometryForDeselection(renderedFocus, 4, previousSlot);
+  ASSERT_TRUE(nextDeselect.restoredPreviousGeometry);
+  const auto& nextSlot = nextDeselect.finalSlot;
+  const auto& nextFrame = nextDeselect.frame;
+  EXPECT_EQ(nextSlot.x, adjacentSlot.x);
+  EXPECT_EQ(nextSlot.y, adjacentSlot.y);
+  EXPECT_EQ(nextFrame.left, adjacentSlot.x - 1);
+  EXPECT_EQ(nextFrame.right, adjacentSlot.x + adjacentSlot.width);
+}
+
+TEST(SpineShelfPlanner, NewlyRenderedPageReplacesPreviousPageFocusGeometry) {
+  SpineShelfPlanner::RenderedFocusGeometry renderedFocus;
+  renderedFocus.remember(8, Rect{20, 150, 40, 160});
+
+  // A page repaint removes the previous frame; recording its selected item
+  // then gives later deselection the geometry actually rendered on that page.
+  renderedFocus.clear();
+  const Rect newPageSlot{612, 142, 52, 168};
+  renderedFocus.remember(9, newPageSlot);
+
+  const auto wrongItem = SpineShelfPlanner::focusGeometryForDeselection(renderedFocus, 8, Rect{600, 140, 40, 170});
+  EXPECT_FALSE(wrongItem.restoredPreviousGeometry);
+  EXPECT_EQ(wrongItem.finalSlot.x, 600);
+
+  // The wrong-item lookup leaves the saved new-page selection intact.
+  const auto deselection = SpineShelfPlanner::focusGeometryForDeselection(renderedFocus, 9, Rect{0, 0, 1, 1});
+  ASSERT_TRUE(deselection.restoredPreviousGeometry);
+  const auto& erasedSlot = deselection.finalSlot;
+  const auto& erasedFrame = deselection.frame;
+  EXPECT_EQ(erasedSlot.x, newPageSlot.x);
+  EXPECT_EQ(erasedSlot.width, newPageSlot.width);
+  EXPECT_EQ(erasedFrame.left, newPageSlot.x - 1);
+  EXPECT_EQ(erasedFrame.right, newPageSlot.x + newPageSlot.width);
+}
+
 TEST(SpineShelfPlanner, TallerAvailableRegionProducesBookLikeProportions) {
   const auto input = books();
   const Rect bounds{0, 0, 480, 280};

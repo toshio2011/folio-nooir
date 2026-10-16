@@ -172,6 +172,7 @@ class RecentBooksActivity final : public Activity {
   size_t lastRenderedSelectorIndex = SIZE_MAX;
   size_t lastRenderedPageStart = SIZE_MAX;
   uint8_t lastRenderedTab = 0;
+  SpineShelfPlanner::RenderedFocusGeometry renderedSpineFocus{};
   // The selector can point to a different book after Recent reorders entries
   // when a reader closes. Track the actual featured book instead of relying on
   // its numeric position in the shelf snapshot.

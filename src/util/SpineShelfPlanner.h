@@ -81,6 +81,57 @@ inline FocusFrame focusFrameFor(const Rect& slot) {
   return FocusFrame{left, right, top, bottom, Rect{left, top, right - left + 1, bottom - top + 1}};
 }
 
+// Retain the exact final geometry used for the last painted Spine focus frame.
+// Selection can move before the next frame is composed, so recomputing the old
+// item's rectangle from the new selection/page can erase the wrong edge.
+struct RenderedFocusGeometry {
+  size_t itemIndex = SIZE_MAX;
+  Rect finalSlot{};
+
+  bool valid() const { return itemIndex != SIZE_MAX && focusFrameFor(finalSlot).valid(); }
+
+  void remember(const size_t index, const Rect& slotGeometry) {
+    itemIndex = index;
+    finalSlot = slotGeometry;
+    if (!valid()) clear();
+  }
+
+  bool take(const size_t index, Rect& slotOutput) {
+    if (!valid() || itemIndex != index) return false;
+    slotOutput = finalSlot;
+    clear();
+    return true;
+  }
+
+  void clear() {
+    itemIndex = SIZE_MAX;
+    finalSlot = {};
+  }
+};
+
+struct FocusDeselectionGeometry {
+  Rect finalSlot{};
+  FocusFrame frame{};
+  bool restoredPreviousGeometry = false;
+};
+
+inline FocusDeselectionGeometry focusGeometryForDeselection(RenderedFocusGeometry& rendered,
+                                                            const size_t index,
+                                                            const Rect& currentSlot) {
+  FocusDeselectionGeometry result{};
+  result.restoredPreviousGeometry = rendered.take(index, result.finalSlot);
+  if (result.restoredPreviousGeometry) {
+    result.frame = focusFrameFor(result.finalSlot);
+  }
+  if (!result.restoredPreviousGeometry) {
+    result.finalSlot = currentSlot;
+    result.frame = focusFrameFor(currentSlot);
+  }
+  return result;
+}
+
+inline int slotRightEdgeX(const Rect& slot) { return slot.x + slot.width - 1; }
+
 struct Slot {
   size_t itemIndex = 0;
   Rect rect{};
