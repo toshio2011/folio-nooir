@@ -13,14 +13,24 @@
     "webSettingsDeferralCommit": "4eb9b811af823344a36950725614f9ab3e341544",
     "clippingsDeferralCommit": "4eb9b811af823344a36950725614f9ab3e341544",
     "interfaceFontDecision": "Worker E commit ce86b9f8 disables custom UI font application and preserves selection; row is still present in this exact source and row-hide remains pending",
-    "homeWorkerOverlap": "Home worker A commit 33ed7e30 is not merged here; it changed presentation/layout visibility while preserving stable theme value 5 and stored layout fields. SettingsActivity overlap must be resolved during integration.",
-    "prototypeBaseCommit": "0d1c87933bd5fc5421ba33989991e141e0cd4adc",
+    "homeWorkerOverlap": "Home worker A is integrated on this branch; theme value 5 remains the Folio Nooir Lite alias. Recent/Finished layouts are available under both Folio themes; the legacy Carousel field is retained for persistence/migration and is replaced in the UI by those two selectors. Interface Font remains available and uses the staged Mini Pack path.",
+    "prototypeBaseCommit": "0f775cb37172dbd725a819d3d8383cf9b8a26f45",
     "prototypeWorkingTreeFiles": [
+      "src/SettingsGroups.h",
+      "src/SettingsGroupDevice.h",
       "src/activities/settings/SettingsActivity.cpp",
-      "src/activities/settings/SettingsActivity.h"
+      "src/activities/settings/SettingsActivity.h",
+      "src/InterfaceFontSelection.h",
+      "src/SdCardFontSystem.cpp",
+      "src/network/html/SettingsPage.html",
+      "test/font_selection_compatibility/FontSelectionCompatibilityTest.cpp",
+      "test/settings_organization/test_after_prototype.py",
+      "test/web_stability/test_grouped_settings_contract.py",
+      "docs/settings-organization/generate_after_inventory.py",
+      "test/web_stability/CMakeLists.txt"
     ],
     "prototypeLayout": "static seven-row group root; Confirm opens one child group; Back returns to group root; only one currentGroupSettings vector is materialized",
-    "webRouteStatus": "Bounded group/page routes are integrated in main at 7296bbc85467675fdc8e1dffd4c73f4022e96518 (route commit 908453f39608169b1dad079e31a94db28415001b); not merged into this experiment worktree. Clippings remains disabled."
+    "webRouteStatus": "Bounded Web Settings group/page routes are integrated on the current 1.6.6 branch (route 908453f39608169b1dad079e31a94db28415001b; integration 7296bbc85467675fdc8e1dffd4c73f4022e96518); Web Clippings/Notes remain disabled."
   },
   "summary": {
     "baseRecords": 89,
@@ -3757,7 +3767,7 @@
       "hiddenReason": "theme-specific setting",
       "englishLabel": "Carousel layout",
       "proposedGroupId": "home_appearance",
-      "deviceExposureAfterPrototype": "Home & Appearance group; Carousel-specific control intentionally hidden for 1.6.6",
+      "deviceExposureAfterPrototype": "Legacy Carousel field retained for persistence/migration; its value maps to the independent Recent/Finished layout selectors, which are available in Folio Nooir Lite",
       "deviceReachableAfterPrototype": false,
       "deviceGroupAfterPrototype": null,
       "stableIdUnchanged": true,
@@ -4701,9 +4711,9 @@
       "hiddenReason": "selection preserved; built-in UI fallback active",
       "englishLabel": "Interface Font",
       "proposedGroupId": "home_appearance",
-      "deviceExposureAfterPrototype": "deferred in 1.6.6; selected family is preserved and built-in fallback remains active",
-      "deviceReachableAfterPrototype": false,
-      "deviceGroupAfterPrototype": null,
+      "deviceExposureAfterPrototype": "Home & Appearance group > Interface Font; Default plus installed compatible Mini Pack families",
+      "deviceReachableAfterPrototype": true,
+      "deviceGroupAfterPrototype": "home_appearance",
       "stableIdUnchanged": true,
       "persistenceAndOptionsUnchanged": true
     },

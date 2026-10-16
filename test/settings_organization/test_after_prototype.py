@@ -9,6 +9,7 @@ DOCS = ROOT / "docs" / "settings-organization"
 ACTIVITY_CPP = ROOT / "src" / "activities" / "settings" / "SettingsActivity.cpp"
 ACTIVITY_H = ROOT / "src" / "activities" / "settings" / "SettingsActivity.h"
 GROUPS_H = ROOT / "src" / "SettingsGroups.h"
+FONT_SELECTION_H = ROOT / "src" / "InterfaceFontSelection.h"
 
 
 class SettingsGroupPrototypeTest(unittest.TestCase):
@@ -20,6 +21,7 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
         cls.cpp = ACTIVITY_CPP.read_text(encoding="utf-8")
         cls.header = ACTIVITY_H.read_text(encoding="utf-8")
         cls.group_header = GROUPS_H.read_text(encoding="utf-8")
+        cls.font_selection = FONT_SELECTION_H.read_text(encoding="utf-8")
 
     def test_all_setting_ids_and_persistence_descriptors_are_unchanged(self):
         before = {row["stableId"]: row for row in self.before["records"]}
@@ -59,9 +61,10 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
             self.assertIn("FOLIO_NOOIR and FOLIO_NOOIR_LITE",
                           rows[stable_id]["deviceExposureAfterPrototype"])
         self.assertFalse(rows["carouselLayout"]["deviceReachableAfterPrototype"])
-        self.assertIn("intentionally hidden", rows["carouselLayout"]["deviceExposureAfterPrototype"])
-        self.assertEqual(self.report["layoutPresentation"]["carouselLayout"],
-                         "hidden for 1.6.6, matching main SettingsActivity behavior")
+        self.assertIn("Legacy Carousel field retained", rows["carouselLayout"]["deviceExposureAfterPrototype"])
+        self.assertIn("legacy persisted field retained", self.report["layoutPresentation"]["carouselLayout"])
+        self.assertEqual(self.report["deviceExposureCoverage"]["intentionalReplacements"]["carouselLayout"]["replacedBy"],
+                         ["recentBookLayout", "finishedBookLayout"])
 
     def test_group_enter_return_and_quick_actions_move_are_explicit(self):
         self.assertIn('logSettingsDiagnostic("group_enter", selectedCategoryIndex)', self.cpp)
@@ -74,6 +77,15 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
         self.assertEqual(quick["deviceGroupBefore"], "reading")
         self.assertEqual(quick["deviceGroupAfterPrototype"], "controls")
 
+    def test_interface_font_stays_reachable_and_uses_the_lazy_mini_pack_path(self):
+        row = next(item for item in self.after["records"] if item["stableId"] == "manual:uiFontFamilyName")
+        self.assertTrue(row["deviceReachableAfterPrototype"])
+        self.assertEqual(row["deviceGroupAfterPrototype"], "home_appearance")
+        self.assertIn("buildInterfaceFontSetting(&sdFontSystem.registry())", self.cpp)
+        self.assertIn("selectedGroup == SettingsGroupId::HomeAppearance || selectedGroup == SettingsGroupId::Reading",
+                      self.cpp)
+        self.assertIn("kCustomUiFontsEnabledForCurrentRelease = true", self.font_selection)
+
     def test_all_historical_web_keys_have_one_unchanged_group_contract(self):
         arrays = {}
         for match in re.finditer(r"static constexpr const char\* (\w+)\[\] = \{(.*?)\};", self.group_header, re.S):
@@ -84,8 +96,8 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
         self.assertEqual(len(expected), 84)
         self.assertEqual(self.before["summary"]["oldWebX4StableKeys"], 82)
         self.assertEqual(self.report["webSettings"]["everyHistoricalKeyHasGroup"], True)
-        self.assertIn("not merged into this isolated settings-organization experiment worktree",
-                      self.report["integrationBlockers"][0])
+        self.assertTrue(self.report["webSettings"]["routeCommitIntegratedHere"])
+        self.assertEqual(self.report["integrationBlockers"], [])
 
     def test_bounded_web_contract_never_restores_all_catalog_access(self):
         contract = self.report["webSettings"]["apiContract"]
@@ -117,7 +129,7 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
     def test_parity_report_and_markdown_table_have_requested_full_schema(self):
         coverage = self.report["deviceExposureCoverage"]
         self.assertEqual(coverage["previouslyExposedStableIds"], 127)
-        self.assertEqual(coverage["reachableAfter"], 122)
+        self.assertEqual(coverage["reachableAfter"], 123)
         self.assertEqual(coverage["accidentalMissing"], 0)
         self.assertEqual(sum(self.report["webSettings"]["groupCounts"].values()), 84)
         self.assertEqual(self.report["webSettings"]["x4ReachableKeyCount"], 82)
@@ -132,22 +144,25 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
                          len(self.after["records"]))
 
     def test_intended_deferrals_are_not_counted_as_accidental_losses(self):
-        self.assertEqual(self.report["deferredDeviceUi"], ["manual:uiFontFamilyName"])
+        self.assertEqual(self.report["deferredDeviceUi"], [])
         self.assertEqual(len(self.report["deferredSleepComposer"]), 4)
-        for stable_id in ("manual:uiFontFamilyName", "sleepBackgroundElement", "sleepOverlayAElement",
-                          "sleepOverlayBElement", "sleepScreen.option.flexible_composite", "web:clippings_notes"):
+        for stable_id in ("sleepBackgroundElement", "sleepOverlayAElement", "sleepOverlayBElement",
+                          "sleepScreen.option.flexible_composite", "web:clippings_notes"):
             row = next(item for item in self.after["records"] if item["stableId"] == stable_id)
             self.assertFalse(row["deviceReachableAfterPrototype"])
 
     def test_every_other_previously_reachable_device_setting_stays_reachable(self):
         deferred = {
-            "manual:uiFontFamilyName", "sleepBackgroundElement", "sleepOverlayAElement",
-            "sleepOverlayBElement", "sleepScreen.option.flexible_composite", "web:clippings_notes",
-            "carouselLayout",
+            "sleepBackgroundElement", "sleepOverlayAElement", "sleepOverlayBElement",
+            "sleepScreen.option.flexible_composite", "web:clippings_notes",
         }
         after = {row["stableId"]: row for row in self.after["records"]}
         for row in self.before["records"]:
             if row["stableId"] in deferred:
+                continue
+            if row["stableId"] == "carouselLayout":
+                self.assertFalse(after[row["stableId"]]["deviceReachableAfterPrototype"])
+                self.assertIn("maps", after[row["stableId"]]["deviceExposureAfterPrototype"])
                 continue
             old_exposure = row.get("deviceExposureBefore") or ""
             if not old_exposure or old_exposure.startswith(("not exposed", "not selectable")):

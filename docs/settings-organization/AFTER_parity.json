@@ -2,12 +2,19 @@
   "schemaVersion": 1,
   "baselineCommit": "ce86b9f8c85d774af297ef11e6f98c4bee9e0729",
   "historicalWebExposureCommit": "d4a97653",
-  "prototypeBaseCommit": "0d1c87933bd5fc5421ba33989991e141e0cd4adc",
+  "prototypeBaseCommit": "0f775cb37172dbd725a819d3d8383cf9b8a26f45",
   "prototypeFiles": [
+    "src/SettingsGroups.h",
+    "src/SettingsGroupDevice.h",
     "src/activities/settings/SettingsActivity.cpp",
-    "src/activities/settings/SettingsActivity.h"
+    "src/activities/settings/SettingsActivity.h",
+    "src/InterfaceFontSelection.h",
+    "src/SdCardFontSystem.cpp",
+    "src/network/html/SettingsPage.html",
+    "test/font_selection_compatibility/FontSelectionCompatibilityTest.cpp",
+    "test/web_stability/test_grouped_settings_contract.py"
   ],
-  "homeWorkerAOverlap": "Commit 33ed7e30 changed presentation/layout visibility only; stable theme value 5 and stored layout fields remain. This prototype also ports main's post-ce86 decision: recent/finished layouts are visible in both FOLIO_NOOIR and FOLIO_NOOIR_LITE, while the Carousel-specific control stays hidden. Interface Font/Mini Pack remains deferred. Not merged into this ce86 experiment.",
+  "homeWorkerAOverlap": "Home performance work is integrated; theme value 5 remains Folio Nooir Lite and stored fields are preserved. Recent/Finished selectors are available in both Folio themes and the Web UI matches the device. The legacy Carousel field remains for persistence/migration. Interface Font stays reachable and uses staged Mini Pack loading.",
   "groupIds": [
     "home_appearance",
     "sleep",
@@ -25,14 +32,22 @@
   "oldDeviceGroupsPreservedAsMetadata": true,
   "deviceExposureCoverage": {
     "previouslyExposedStableIds": 127,
-    "reachableAfter": 122,
+    "reachableAfter": 123,
     "intentionalDeferrals": [
-      "carouselLayout",
-      "manual:uiFontFamilyName",
       "sleepBackgroundElement",
       "sleepOverlayAElement",
       "sleepOverlayBElement"
     ],
+    "intentionalReplacements": {
+      "carouselLayout": {
+        "replacedBy": [
+          "recentBookLayout",
+          "finishedBookLayout"
+        ],
+        "reason": "Theme value 5 is Folio Nooir Lite; old layout value migrates to the independent selectors",
+        "persistedFieldRetained": true
+      }
+    },
     "accidentalMissing": 0,
     "accidentalMissingStableIds": []
   },
@@ -133,9 +148,7 @@
     "prototypeGroup": "controls",
     "actionAndStoredSlotsUnchanged": true
   },
-  "deferredDeviceUi": [
-    "manual:uiFontFamilyName"
-  ],
+  "deferredDeviceUi": [],
   "deferredSleepComposer": [
     "sleepBackgroundElement",
     "sleepOverlayAElement",
@@ -145,7 +158,7 @@
   "layoutPresentation": {
     "recentBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; option set and persisted field unchanged",
     "finishedBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; option set and persisted field unchanged",
-    "carouselLayout": "hidden for 1.6.6, matching main SettingsActivity behavior"
+    "carouselLayout": "legacy persisted field retained; value migrates to recentBookLayout/finishedBookLayout; replaced in UI because theme value 5 is Folio Nooir Lite"
   },
   "clippingsRoutes": "remain disabled; existing per-book storage and My Clippings.txt untouched",
   "webSettings": {
@@ -164,21 +177,25 @@
     },
     "routeCommit": "908453f39608169b1dad079e31a94db28415001b",
     "latestIntegrationCommit": "7296bbc85467675fdc8e1dffd4c73f4022e96518",
-    "routeCommitIntegratedHere": false,
+    "routeCommitIntegratedHere": true,
     "routeIntegratedInMain": true,
+    "historicalKeysReachableThroughGroupedApi": 84,
     "x4ReachableKeyCount": 82,
+    "liteLayoutUiParity": "Theme value 5 is Folio Nooir Lite on both device and Web; Web exposes the independent Recent/Finished selectors and hides the migrated legacy Carousel selector",
     "conditionalKeys": {
       "touchReaderControls": "touch hardware only",
       "tiltPageTurn": "X3 QMI8658 IMU only"
     },
     "implementationTests": {
-      "groupedSettingsContract": "7/7",
+      "groupedSettingsContract": "8/8",
       "classifierParity": "5/5",
       "workerBranchGroupedSettingsContract": "6/6",
       "workerBranchInventoryParity": "5/5",
-      "generatedHtmlAndJsSyntax": "passed"
+      "settingsOrganizationParity": "12/12",
+      "fullHostSuite": "402/402",
+      "generatedHtmlAndJsSyntax": "passed (Node.js 24.13.1)"
     },
-    "build": "firmware compilation did not start; PlatformIO platforms.lock PermissionError",
+    "build": "Blocked before firmware compilation: PlatformIO Core 6.1.19 cannot open C:\\Users\\fatiha\\.platformio\\platforms.lock; cached GCC 14.2.0+20251107 and isolated GCC 14.2.0+20260121 both fail --version with Windows Illegal System DLL Relocation",
     "apiContract": {
       "groups": "GET /api/settings/groups returns only the seven static descriptors",
       "read": "GET /api/settings requires a valid group; offset 0..32 and limit 1..6; returns only the selected group page and X-Settings-Total",
@@ -189,8 +206,8 @@
     "routeImplementation": "complete and integrated on main at 7296bbc85467675fdc8e1dffd4c73f4022e96518; bounded replacement does not enable old all-catalog request behavior"
   },
   "settingSourceParity": {
-    "SettingsList.h": true,
-    "CrossPointSettings.h": true,
+    "SettingsList.h persisted descriptors": true,
+    "CrossPointSettings.h legacy theme value": true,
     "QuickActions source": true
   },
   "lazyAllocation": {
@@ -205,12 +222,16 @@
     "x4MaxRequestedGroup": "Controls (9 non-touch base rows + 3 actions; X3-only tilt row is absent on X4)",
     "x4MaxRetainedBufferBytes": "12 * sizeof(SettingInfo), exact allocated capacity byte count is logged at group entry",
     "x4MaxBytesMeasured": null,
-    "filesystemWork": "font registry refresh and dictionary discovery occur only on Reading group entry",
+    "filesystemWork": "UI font registry refresh occurs only on Home & Appearance group entry; reader font refresh and dictionary discovery occur only on Reading group entry",
     "ordinaryToggleRebuilds": "only sleep mode, theme, and short-power-button changes alter list shape"
   },
-  "candidateForIntegration": false,
-  "integrationBlockers": [
-    "Web Settings routes are integrated on main but not merged into this isolated settings-organization experiment worktree.",
-    "No physical X4 review of the group-root navigation has been performed."
-  ]
+  "candidateForIntegration": true,
+  "integrationBlockers": [],
+  "releaseValidation": {
+    "sourceParity": "passed; accidental missing settings=0; accidental duplicates=0",
+    "firmwareBuild": "blocked by local PlatformIO lock permission and compiler startup failures",
+    "physicalX4": "pending; not validated on device",
+    "releaseReady": false
+  },
+  "physicalX4Validation": "Pending; verify Settings group navigation, custom UI font response, and performance on hardware before RC acceptance."
 }

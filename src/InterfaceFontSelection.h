@@ -7,10 +7,10 @@
 
 namespace InterfaceFontSelection {
 
-// Custom UI faces are deferred for the 1.6.6 physical-X4 stabilization pass
-// until they can be timed on-device. Keep the saved family and loader intact
-// so a later release can re-enable the choice without migration.
-constexpr bool kCustomUiFontsEnabledForCurrentRelease = false;
+// Keep the existing Mini Pack path enabled. Loading remains staged and lazy;
+// ActivityManager keeps it out of Reader, Web, SD-independent, and BLE-heavy
+// activity windows.
+constexpr bool kCustomUiFontsEnabledForCurrentRelease = true;
 
 constexpr bool mayApplyCustomUiFont(const bool featureEnabled, const bool familySelected) {
   return featureEnabled && familySelected;

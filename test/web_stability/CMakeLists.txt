@@ -1,3 +1,4 @@
 add_executable(web_stability_tests WebStabilityPolicyTest.cpp)
+target_include_directories(web_stability_tests PRIVATE ${REPO_ROOT}/lib/I18n)
 target_link_libraries(web_stability_tests PRIVATE crosspoint_test_common GTest::gtest_main)
 gtest_discover_tests(web_stability_tests)

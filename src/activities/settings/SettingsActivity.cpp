@@ -32,7 +32,7 @@
 #include "SdFirmwareUpdateActivity.h"
 #include "SettingsProfilesActivity.h"
 #include "SettingsList.h"
-#include "SettingsGroups.h"
+#include "SettingsGroupDevice.h"
 #include "StatusBarSettingsActivity.h"
 #include "TextSettingsActivity.h"
 #include "VisualPreviewActivity.h"
@@ -163,10 +163,14 @@ void SettingsActivity::rebuildSettingsLists() {
 
   const auto selectedGroup = static_cast<SettingsGroupId>(selectedCategoryIndex);
   std::vector<DictionaryEntry> dictionaries;
-  if (selectedGroup == SettingsGroupId::Reading) {
-    // Refresh registries only when the Reading group is opened; SettingsList
-    // itself stays static and no font/dictionary work runs during navigation.
+  if (!groupListActive &&
+      (selectedGroup == SettingsGroupId::HomeAppearance || selectedGroup == SettingsGroupId::Reading)) {
+    // Discover compatible Mini Pack families only when a font-owning group is
+    // entered. This keeps font I/O out of Settings root and navigation redraws.
     sdFontSystem.refreshIfDirty();
+  }
+  if (selectedGroup == SettingsGroupId::Reading) {
+    // Dictionary discovery remains scoped to Reading group entry.
     DictionaryRegistry::discover(dictionaries);
   }
 
@@ -198,9 +202,6 @@ void SettingsActivity::rebuildSettingsLists() {
   };
   const auto visibleInSelectedGroup = [&](const SettingInfo& setting) {
     if (setting.category == StrId::STR_NONE_OPT || isSleepComposerSetting(setting)) return false;
-    // Keep the Mini Pack UI font deferred for this release; selecting the
-    // Reader group never constructs or loads the hidden interface-font row.
-    if (setting.nameId == StrId::STR_INTERFACE_FONT) return false;
     if ((setting.nameId == StrId::STR_SLEEP_RANDOM_ORDER || setting.action == SettingAction::RandomSleepPool) &&
         SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM) {
       return false;
@@ -284,6 +285,8 @@ void SettingsActivity::rebuildSettingsLists() {
       currentGroupSettings.push_back(std::move(effective));
     } else if (base.nameId == StrId::STR_FONT_FAMILY) {
       currentGroupSettings.push_back(buildFontFamilySetting(&sdFontSystem.registry()));
+    } else if (base.nameId == StrId::STR_INTERFACE_FONT) {
+      currentGroupSettings.push_back(buildInterfaceFontSetting(&sdFontSystem.registry()));
     } else if (base.nameId == StrId::STR_DICTIONARY_FONT) {
       currentGroupSettings.push_back(buildDictionaryFontSetting());
     } else {
@@ -381,7 +384,8 @@ void SettingsActivity::rebuildSettingsLists() {
   switch (selectedGroup) {
     case SettingsGroupId::HomeAppearance:
       reorder(currentGroupSettings, {StrId::STR_UI_THEME, StrId::STR_CAROUSEL_LAYOUT, StrId::STR_RECENT_BOOK_LAYOUT,
-                                     StrId::STR_FINISHED_BOOK_LAYOUT, StrId::STR_VISUAL_PREVIEW, StrId::STR_UI_SCALE,
+                                     StrId::STR_FINISHED_BOOK_LAYOUT, StrId::STR_INTERFACE_FONT,
+                                     StrId::STR_VISUAL_PREVIEW, StrId::STR_UI_SCALE,
                                      StrId::STR_HIDE_BATTERY, StrId::STR_REFRESH_FREQ,
                                      StrId::STR_SUNLIGHT_FADING_FIX});
       break;

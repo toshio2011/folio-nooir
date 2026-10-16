@@ -556,8 +556,7 @@
     const theme = getControlValue('uiTheme');
     const recentLayout = getControlValue('recentBookLayout');
     const finishedLayout = getControlValue('finishedBookLayout');
-    const isFolio = theme === 4;
-    const isCarousel = theme === 5;
+    const isFolio = theme === 4 || theme === 5;
     const spineLayouts = [4, 5];
     const spineIsUsed = isFolio && (spineLayouts.includes(recentLayout) || spineLayouts.includes(finishedLayout));
     const coverIsUsed = !isFolio || !spineLayouts.includes(recentLayout) || !spineLayouts.includes(finishedLayout) ||
@@ -567,7 +566,10 @@
       if (row) row.style.display = visible ? '' : 'none';
     };
 
-    setVisible('carouselLayout', isCarousel);
+    // Theme value 5 is the persisted Folio Nooir Lite alias. Its legacy
+    // Carousel layout value is migrated to the independent Recent/Finished
+    // selectors and no longer controls the active shelf renderer.
+    setVisible('carouselLayout', false);
     setVisible('recentBookLayout', isFolio);
     setVisible('finishedBookLayout', isFolio);
     setVisible('coverProgressStyle', coverIsUsed);

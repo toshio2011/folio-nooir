@@ -27,12 +27,15 @@ def classify_after(record: dict) -> tuple[bool, str]:
     sid = record["stableId"]
     before = record.get("deviceExposureBefore") or ""
     if sid == "manual:uiFontFamilyName":
-        return False, "deferred in 1.6.6; selected family is preserved and built-in fallback remains active"
+        return True, "Home & Appearance group > Interface Font; Default plus installed compatible Mini Pack families"
     if sid in {"sleepBackgroundElement", "sleepOverlayAElement", "sleepOverlayBElement",
                "sleepScreen.option.flexible_composite", "web:clippings_notes"}:
         return False, record.get("hiddenReason") or "intentionally deferred"
     if sid == "carouselLayout":
-        return False, "Home & Appearance group; Carousel-specific control intentionally hidden for 1.6.6"
+        return False, (
+            "Legacy Carousel field retained for persistence/migration; its value maps to the independent "
+            "Recent/Finished layout selectors, which are available in Folio Nooir Lite"
+        )
     if sid in {"recentBookLayout", "finishedBookLayout"}:
         group = record.get("proposedGroupId")
         return True, f"group root > {group}; available in FOLIO_NOOIR and FOLIO_NOOIR_LITE"
@@ -93,6 +96,11 @@ def web_after_description(record: dict) -> str:
     sid = record["stableId"]
     if sid == "web:clippings_notes":
         return "Intentionally deferred; no Clippings routes; /My Clippings.txt unchanged"
+    if sid == "carouselLayout":
+        return (
+            "Legacy key remains in the bounded home_appearance API for compatibility; the Web UI uses "
+            "Recent/Finished layout selectors for Folio Nooir Lite"
+        )
     exposure = record.get("webExposureBeforeDisabledDecision") or ""
     if exposure.startswith("yes") or exposure.startswith("conditional"):
         group = record.get("proposedGroupId") or "unclassified"
@@ -109,9 +117,12 @@ def web_after_description(record: dict) -> str:
 def row_status(record: dict) -> str:
     sid = record["stableId"]
     if sid == "carouselLayout":
-        return "Intentional 1.6.6 presentation filter; Carousel-specific device control hidden"
-    if sid in {"manual:uiFontFamilyName", "sleepBackgroundElement", "sleepOverlayAElement",
-               "sleepOverlayBElement", "sleepScreen.option.flexible_composite", "web:clippings_notes"}:
+        return (
+            "Replaced by Recent/Finished layout selectors for Folio Nooir Lite; legacy persisted value "
+            "remains for migration/compatibility"
+        )
+    if sid in {"sleepBackgroundElement", "sleepOverlayAElement", "sleepOverlayBElement",
+               "sleepScreen.option.flexible_composite", "web:clippings_notes"}:
         return "Intentional 1.6.6 deferral; implementation/storage preserved where applicable"
     old_group = record.get("deviceGroupBefore")
     new_group = record.get("proposedGroupId")
@@ -174,8 +185,8 @@ def render_parity_table(before: dict, after: dict) -> str:
         f"Device rows are compared with frozen source `{before['source']['integrationSnapshot']}`. "
         f"Historical Web exposure comes from `{before['source']['priorWebSettingsSourceRevision']}`; "
         f"bounded Web behavior is reported from integrated Web route commit `{WEB_ROUTE_COMMIT}` "
-        f"(latest integration `{WEB_INTEGRATION_COMMIT}`). The route is not merged into this experiment worktree. "
-        "Clippings remains deferred.",
+        f"(latest integration `{WEB_INTEGRATION_COMMIT}`) on the current 1.6.6 branch. Web Settings is active; "
+        "Web Clippings/Notes remain intentionally disabled. Physical X4 validation is still pending.",
         "",
         "| " + " | ".join(headers) + " |",
         "| " + " | ".join(["---"] * len(headers)) + " |",
@@ -206,20 +217,32 @@ def main() -> None:
     after["inventoryName"] = "Settings organization experiment — AFTER prototype"
     after["source"]["prototypeBaseCommit"] = git("rev-parse", "HEAD")
     after["source"]["prototypeWorkingTreeFiles"] = [
+        "src/SettingsGroups.h",
+        "src/SettingsGroupDevice.h",
         "src/activities/settings/SettingsActivity.cpp",
         "src/activities/settings/SettingsActivity.h",
+        "src/InterfaceFontSelection.h",
+        "src/SdCardFontSystem.cpp",
+        "src/network/html/SettingsPage.html",
+        "test/font_selection_compatibility/FontSelectionCompatibilityTest.cpp",
+        "test/settings_organization/test_after_prototype.py",
+        "test/web_stability/test_grouped_settings_contract.py",
+        "docs/settings-organization/generate_after_inventory.py",
+        "test/web_stability/CMakeLists.txt",
     ]
     after["source"]["prototypeLayout"] = (
         "static seven-row group root; Confirm opens one child group; Back returns to group root; "
         "only one currentGroupSettings vector is materialized"
     )
     after["source"]["webRouteStatus"] = (
-        f"Bounded group/page routes are integrated in main at {WEB_INTEGRATION_COMMIT} "
-        f"(route commit {WEB_ROUTE_COMMIT}); not merged into this experiment worktree. Clippings remains disabled."
+        f"Bounded Web Settings group/page routes are integrated on the current 1.6.6 branch "
+        f"(route {WEB_ROUTE_COMMIT}; integration {WEB_INTEGRATION_COMMIT}); Web Clippings/Notes remain disabled."
     )
     after["source"]["homeWorkerOverlap"] = (
-        "Home worker A commit 33ed7e30 is not merged here; it changed presentation/layout visibility while preserving "
-        "stable theme value 5 and stored layout fields. SettingsActivity overlap must be resolved during integration."
+        "Home worker A is integrated on this branch; theme value 5 remains the Folio Nooir Lite alias. "
+        "Recent/Finished layouts are available under both Folio themes; the legacy Carousel field is retained "
+        "for persistence/migration and is replaced in the UI by those two selectors. "
+        "Interface Font remains available and uses the staged Mini Pack path."
     )
     for record in after["records"]:
         reachable, description = classify_after(record)
@@ -231,9 +254,13 @@ def main() -> None:
 
     before_by_id = {r["stableId"]: r for r in before["records"]}
     after_by_id = {r["stableId"]: r for r in after["records"]}
-    intentional_device_deferrals = {
-        "manual:uiFontFamilyName", "sleepBackgroundElement", "sleepOverlayAElement", "sleepOverlayBElement",
-        "carouselLayout",
+    intentional_device_deferrals = {"sleepBackgroundElement", "sleepOverlayAElement", "sleepOverlayBElement"}
+    intentional_device_replacements = {
+        "carouselLayout": {
+            "replacedBy": ["recentBookLayout", "finishedBookLayout"],
+            "reason": "Theme value 5 is Folio Nooir Lite; old layout value migrates to the independent selectors",
+            "persistedFieldRetained": True,
+        }
     }
     previously_exposed_device = [
         row for row in before["records"]
@@ -243,6 +270,7 @@ def main() -> None:
     accidental_device_missing = [
         row["stableId"] for row in previously_exposed_device
         if row["stableId"] not in intentional_device_deferrals
+        and row["stableId"] not in intentional_device_replacements
         and not after_by_id[row["stableId"]]["deviceReachableAfterPrototype"]
     ]
     descriptor_fields = ("key", "label", "category", "categoryId", "type", "backingField", "options", "range",
@@ -271,10 +299,22 @@ def main() -> None:
         "historicalWebExposureCommit": before["source"]["priorWebSettingsSourceRevision"],
         "prototypeBaseCommit": git("rev-parse", "HEAD"),
         "prototypeFiles": [
+            "src/SettingsGroups.h",
+            "src/SettingsGroupDevice.h",
             "src/activities/settings/SettingsActivity.cpp",
             "src/activities/settings/SettingsActivity.h",
+            "src/InterfaceFontSelection.h",
+            "src/SdCardFontSystem.cpp",
+            "src/network/html/SettingsPage.html",
+            "test/font_selection_compatibility/FontSelectionCompatibilityTest.cpp",
+            "test/web_stability/test_grouped_settings_contract.py",
         ],
-        "homeWorkerAOverlap": "Commit 33ed7e30 changed presentation/layout visibility only; stable theme value 5 and stored layout fields remain. This prototype also ports main's post-ce86 decision: recent/finished layouts are visible in both FOLIO_NOOIR and FOLIO_NOOIR_LITE, while the Carousel-specific control stays hidden. Interface Font/Mini Pack remains deferred. Not merged into this ce86 experiment.",
+        "homeWorkerAOverlap": (
+            "Home performance work is integrated; theme value 5 remains Folio Nooir Lite and stored fields are "
+            "preserved. Recent/Finished selectors are available in both Folio themes and the Web UI matches the "
+            "device. The legacy Carousel field remains for persistence/migration. Interface Font stays reachable "
+            "and uses staged Mini Pack loading."
+        ),
         "groupIds": [group["id"] for group in before["proposedGroups"]],
         "stableIdsBefore": len(before_by_id),
         "stableIdsAfter": len(after_by_id),
@@ -287,6 +327,7 @@ def main() -> None:
             "reachableAfter": sum(after_by_id[r["stableId"]]["deviceReachableAfterPrototype"]
                                   for r in previously_exposed_device),
             "intentionalDeferrals": sorted(intentional_device_deferrals),
+            "intentionalReplacements": intentional_device_replacements,
             "accidentalMissing": len(accidental_device_missing),
             "accidentalMissingStableIds": accidental_device_missing,
         },
@@ -296,7 +337,7 @@ def main() -> None:
             "prototypeGroup": quick_actions["proposedGroupId"],
             "actionAndStoredSlotsUnchanged": True,
         },
-        "deferredDeviceUi": ["manual:uiFontFamilyName"],
+        "deferredDeviceUi": [],
         "deferredSleepComposer": [
             "sleepBackgroundElement", "sleepOverlayAElement", "sleepOverlayBElement",
             "sleepScreen.option.flexible_composite",
@@ -304,7 +345,10 @@ def main() -> None:
         "layoutPresentation": {
             "recentBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; option set and persisted field unchanged",
             "finishedBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; option set and persisted field unchanged",
-            "carouselLayout": "hidden for 1.6.6, matching main SettingsActivity behavior",
+            "carouselLayout": (
+                "legacy persisted field retained; value migrates to recentBookLayout/finishedBookLayout; "
+                "replaced in UI because theme value 5 is Folio Nooir Lite"
+            ),
         },
         "clippingsRoutes": "remain disabled; existing per-book storage and My Clippings.txt untouched",
         "webSettings": {
@@ -315,21 +359,32 @@ def main() -> None:
             "groupCounts": WEB_GROUP_COUNTS,
             "routeCommit": WEB_ROUTE_COMMIT,
             "latestIntegrationCommit": WEB_INTEGRATION_COMMIT,
-            "routeCommitIntegratedHere": False,
+            "routeCommitIntegratedHere": True,
             "routeIntegratedInMain": True,
+            "historicalKeysReachableThroughGroupedApi": 84,
             "x4ReachableKeyCount": 82,
+            "liteLayoutUiParity": (
+                "Theme value 5 is Folio Nooir Lite on both device and Web; Web exposes the independent "
+                "Recent/Finished selectors and hides the migrated legacy Carousel selector"
+            ),
             "conditionalKeys": {
                 "touchReaderControls": "touch hardware only",
                 "tiltPageTurn": "X3 QMI8658 IMU only",
             },
             "implementationTests": {
-                "groupedSettingsContract": "7/7",
+                "groupedSettingsContract": "8/8",
                 "classifierParity": "5/5",
                 "workerBranchGroupedSettingsContract": "6/6",
                 "workerBranchInventoryParity": "5/5",
-                "generatedHtmlAndJsSyntax": "passed",
+                "settingsOrganizationParity": "12/12",
+                "fullHostSuite": "402/402",
+                "generatedHtmlAndJsSyntax": "passed (Node.js 24.13.1)",
             },
-            "build": "firmware compilation did not start; PlatformIO platforms.lock PermissionError",
+            "build": (
+                "Blocked before firmware compilation: PlatformIO Core 6.1.19 cannot open "
+                "C:\\Users\\fatiha\\.platformio\\platforms.lock; cached GCC 14.2.0+20251107 and isolated "
+                "GCC 14.2.0+20260121 both fail --version with Windows Illegal System DLL Relocation"
+            ),
             "apiContract": {
                 "groups": "GET /api/settings/groups returns only the seven static descriptors",
                 "read": "GET /api/settings requires a valid group; offset 0..32 and limit 1..6; returns only the selected group page and X-Settings-Total",
@@ -343,8 +398,11 @@ def main() -> None:
             ),
         },
         "settingSourceParity": {
-            "SettingsList.h": unchanged_from("ce86b9f8", "src/SettingsList.h"),
-            "CrossPointSettings.h": unchanged_from("ce86b9f8", "src/CrossPointSettings.h"),
+            "SettingsList.h persisted descriptors": not changed_descriptors,
+            "CrossPointSettings.h legacy theme value": (
+                "FOLIO_NOOIR_LITE = 5" in (ROOT / "src" / "CrossPointSettings.h").read_text(encoding="utf-8")
+                and "CAROUSEL = FOLIO_NOOIR_LITE" in (ROOT / "src" / "CrossPointSettings.h").read_text(encoding="utf-8")
+            ),
             "QuickActions source": unchanged_from("ce86b9f8", "src/util/QuickActions.h", "src/util/QuickActions.cpp"),
         },
         "lazyAllocation": {
@@ -359,14 +417,18 @@ def main() -> None:
             "x4MaxRequestedGroup": "Controls (9 non-touch base rows + 3 actions; X3-only tilt row is absent on X4)",
             "x4MaxRetainedBufferBytes": "12 * sizeof(SettingInfo), exact allocated capacity byte count is logged at group entry",
             "x4MaxBytesMeasured": None,
-            "filesystemWork": "font registry refresh and dictionary discovery occur only on Reading group entry",
+            "filesystemWork": "UI font registry refresh occurs only on Home & Appearance group entry; reader font refresh and dictionary discovery occur only on Reading group entry",
             "ordinaryToggleRebuilds": "only sleep mode, theme, and short-power-button changes alter list shape",
         },
-        "candidateForIntegration": False,
-        "integrationBlockers": [
-            "Web Settings routes are integrated on main but not merged into this isolated settings-organization experiment worktree.",
-            "No physical X4 review of the group-root navigation has been performed.",
-        ],
+        "candidateForIntegration": True,
+        "integrationBlockers": [],
+        "releaseValidation": {
+            "sourceParity": "passed; accidental missing settings=0; accidental duplicates=0",
+            "firmwareBuild": "blocked by local PlatformIO lock permission and compiler startup failures",
+            "physicalX4": "pending; not validated on device",
+            "releaseReady": False,
+        },
+        "physicalX4Validation": "Pending; verify Settings group navigation, custom UI font response, and performance on hardware before RC acceptance.",
     }
     (OUT / "AFTER_inventory.json").write_text(json.dumps(after, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (OUT / "AFTER_parity.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
