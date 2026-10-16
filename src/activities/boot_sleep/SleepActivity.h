@@ -30,6 +30,7 @@ class SleepActivity final : public Activity {
   void renderDefaultSleepScreen() const;
   void renderSelectedSleepScreen() const;
   void renderPreviewScreen();
+  void drawPreviewControls() const;
   void renderCustomSleepScreen() const;
   bool renderCustomSleepScreenAt(const SleepComposerRect* bounds, std::string* selectedPath) const;
   bool drawCustomImageInBounds(const std::string& path, const SleepComposerRect& bounds,

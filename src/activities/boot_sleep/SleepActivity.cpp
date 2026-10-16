@@ -909,6 +909,18 @@ void SleepActivity::renderPreviewScreen() {
   renderSelectedSleepScreen();
 }
 
+void SleepActivity::drawPreviewControls() const {
+  if (!preview) return;
+  const bool canAdvance = previewMode == CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM ||
+                          (previewMode == CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE &&
+                           sleepComposerHasRandomElement(SETTINGS.sleepBackgroundElement,
+                                                         SETTINGS.sleepOverlayAElement,
+                                                         SETTINGS.sleepOverlayBElement));
+  const char* advanceLabel = canAdvance ? tr(STR_NEXT_PAGE) : "";
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), advanceLabel, "", advanceLabel);
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+}
+
 void SleepActivity::renderSelectedSleepScreen() const {
   const bool renderQuickResume =
       effectiveSleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
@@ -1486,6 +1498,7 @@ bool SleepActivity::renderOverlayPng(const std::string& path, const bool allowOp
   // The BW probe is now the base frame on the panel. The grayscale controller
   // keeps that base while the two detail planes are uploaded, so there is no
   // need to allocate a second full framebuffer just to restore it later.
+  drawPreviewControls();
   renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
 
   // The grayscale planes contain only the overlay's gray detail. Start each
@@ -1497,6 +1510,7 @@ bool SleepActivity::renderOverlayPng(const std::string& path, const bool allowOp
     renderer.setRenderMode(GfxRenderer::BW);
     return true;  // The already displayed BW base remains visible.
   }
+  drawPreviewControls();
   renderer.copyGrayscaleLsbBuffers();
 
   renderer.clearScreen(0x00);
@@ -1505,6 +1519,7 @@ bool SleepActivity::renderOverlayPng(const std::string& path, const bool allowOp
     renderer.setRenderMode(GfxRenderer::BW);
     return true;
   }
+  drawPreviewControls();
   renderer.copyGrayscaleMsbBuffers();
   renderer.setFadingFix(true);
   renderer.displayGrayBuffer();
@@ -1518,6 +1533,7 @@ bool SleepActivity::renderOverlayPng(const std::string& path, const bool allowOp
 void SleepActivity::renderDefaultSleepScreen() const {
   preconditionSleepRefresh(renderer);
   drawSleepDefaultArtwork(renderer, effectiveSleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::LIGHT);
+  drawPreviewControls();
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 }
 
@@ -1538,17 +1554,20 @@ void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap) const {
   }
 
   if (hasGreyscale) {
+    drawPreviewControls();
     renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
     bitmap.rewindToData();
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
     renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+    drawPreviewControls();
     renderer.copyGrayscaleLsbBuffers();
 
     bitmap.rewindToData();
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
     renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+    drawPreviewControls();
     renderer.copyGrayscaleMsbBuffers();
 
     renderer.setFadingFix(true);
@@ -1556,6 +1575,7 @@ void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap) const {
     renderer.setFadingFix(SETTINGS.fadingFix);
     renderer.setRenderMode(GfxRenderer::BW);
   } else {
+    drawPreviewControls();
     displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
   }
 }
@@ -1619,6 +1639,7 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
     renderBitmapSleepScreen(bitmap);
     return;
   }
+  drawPreviewControls();
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 
   // Follow the same bounded grayscale sequence as the normal sleep-cover
@@ -1626,6 +1647,7 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
   // a full framebuffer into temporary heap storage before the gray passes.
   // That old copy was the physical X4 fallback point: when its chunks could
   // not be allocated, the intentionally harsh BW frame remained visible.
+  drawPreviewControls();
   renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
 
   bitmap.rewindToData();
@@ -1636,6 +1658,7 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
     renderer.setRenderMode(GfxRenderer::BW);
     return;
   }
+  drawPreviewControls();
   renderer.copyGrayscaleLsbBuffers();
 
   bitmap.rewindToData();
@@ -1646,6 +1669,7 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
     renderer.setRenderMode(GfxRenderer::BW);
     return;
   }
+  drawPreviewControls();
   renderer.copyGrayscaleMsbBuffers();
 
   renderer.setFadingFix(true);
@@ -1672,12 +1696,14 @@ void SleepActivity::renderBitmapSleepScreenWithBookProgress(const Bitmap& bitmap
   }
 
   if (hasGreyscale) {
+    drawPreviewControls();
     renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
     bitmap.rewindToData();
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
     renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
     drawSleepBookProgressCard(renderer, title, progress, readingSeconds, sessions);
+    drawPreviewControls();
     renderer.copyGrayscaleLsbBuffers();
 
     bitmap.rewindToData();
@@ -1685,6 +1711,7 @@ void SleepActivity::renderBitmapSleepScreenWithBookProgress(const Bitmap& bitmap
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
     renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
     drawSleepBookProgressCard(renderer, title, progress, readingSeconds, sessions);
+    drawPreviewControls();
     renderer.copyGrayscaleMsbBuffers();
 
     renderer.setFadingFix(true);
@@ -1692,6 +1719,7 @@ void SleepActivity::renderBitmapSleepScreenWithBookProgress(const Bitmap& bitmap
     renderer.setFadingFix(SETTINGS.fadingFix);
     renderer.setRenderMode(GfxRenderer::BW);
   } else {
+    drawPreviewControls();
     displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
     renderer.setRenderMode(GfxRenderer::BW);
   }
@@ -1719,12 +1747,14 @@ void SleepActivity::renderBitmapSleepScreenWithClipping(const Bitmap& bitmap, co
   }
 
   if (hasGreyscale) {
+    drawPreviewControls();
     renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
     bitmap.rewindToData();
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
     renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
     drawClippingSleepCard(renderer, cleanedText, cleanedTitle, page);
+    drawPreviewControls();
     renderer.copyGrayscaleLsbBuffers();
 
     bitmap.rewindToData();
@@ -1732,6 +1762,7 @@ void SleepActivity::renderBitmapSleepScreenWithClipping(const Bitmap& bitmap, co
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
     renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
     drawClippingSleepCard(renderer, cleanedText, cleanedTitle, page);
+    drawPreviewControls();
     renderer.copyGrayscaleMsbBuffers();
 
     renderer.setFadingFix(true);
@@ -1739,6 +1770,7 @@ void SleepActivity::renderBitmapSleepScreenWithClipping(const Bitmap& bitmap, co
     renderer.setFadingFix(SETTINGS.fadingFix);
     renderer.setRenderMode(GfxRenderer::BW);
   } else {
+    drawPreviewControls();
     displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
     renderer.setRenderMode(GfxRenderer::BW);
   }
@@ -1973,6 +2005,7 @@ void SleepActivity::renderReadingStatsSleepScreen() const {
   const std::string sessions = std::to_string(snapshot.overview.todaySessions) + " " + tr(STR_SESSION_PLURAL);
   renderer.drawText(SMALL_FONT_ID, pageWidth - side - renderer.getTextWidth(SMALL_FONT_ID, sessions.c_str()), footerY,
                     sessions.c_str());
+  drawPreviewControls();
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 }
 
@@ -1996,6 +2029,7 @@ void SleepActivity::renderReadingCalendarSleepScreen() const {
   if (!StatisticsDate::split(snapshot.todayDateKey, year, month, today)) {
     renderer.drawCenteredText(UI_10_FONT_ID, 120, tr(STR_STATS_CLOCK_UNAVAILABLE), true, EpdFontFamily::BOLD);
     renderer.drawCenteredText(SMALL_FONT_ID, 158, tr(STR_STATS_NO_DATED_HISTORY));
+    drawPreviewControls();
     displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
     return;
   }
@@ -2096,6 +2130,7 @@ void SleepActivity::renderReadingCalendarSleepScreen() const {
     drawSleepMetric(renderer, SMALL_FONT_ID, x, footerTop + metricValueHeight + 4, metricWidth, label,
                     EpdFontFamily::REGULAR);
   }
+  drawPreviewControls();
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 }
 
@@ -2215,6 +2250,7 @@ void SleepActivity::renderReadingSummarySleepScreen() const {
     if (row + 1 < recentCount) renderer.drawLine(side + 8, y + recentRowHeight - 4, side + contentWidth, y + recentRowHeight - 4);
     ++row;
   }
+  drawPreviewControls();
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 }
 
@@ -2289,6 +2325,7 @@ void SleepActivity::renderMinimalStatsSleepScreen() const {
                     EpdFontFamily::BOLD);
   renderer.drawImage(MoonIcon, pageWidth - MOONICON_WIDTH - 16, pageHeight - MOONICON_HEIGHT - 12, MOONICON_WIDTH,
                      MOONICON_HEIGHT);
+  drawPreviewControls();
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 }
 
@@ -2429,6 +2466,7 @@ void SleepActivity::renderToDoSleepScreen() const {
     renderer.drawText(SMALL_FONT_ID, contentX, panelY + panelHeight - 25, "FOLIO NOOIR", true,
                       EpdFontFamily::BOLD);
   }
+  drawPreviewControls();
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 }
 
@@ -3003,6 +3041,7 @@ void SleepActivity::renderFlexibleSleepScreen() const {
   }
 
   renderer.setRenderMode(GfxRenderer::BW);
+  drawPreviewControls();
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 }
 
@@ -3011,10 +3050,12 @@ void SleepActivity::renderLastScreenSleepScreen() const {
   renderer.drawImage(MoonIcon, 0, pageHeight - MOONICON_HEIGHT, MOONICON_WIDTH, MOONICON_HEIGHT);
   // Quick Resume deliberately keeps the reader page; use only the driver
   // shutdown fix here, not the full pre-clear sequence.
+  drawPreviewControls();
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 }
 
 void SleepActivity::renderBlankSleepScreen() const {
   preconditionSleepRefresh(renderer);
+  drawPreviewControls();
   displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
 }

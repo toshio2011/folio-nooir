@@ -191,6 +191,9 @@ class SettingsActivity final : public Activity {
 
   bool preserveQuickResumeTimeoutOn = false;
   bool quickResumeTimeoutAutoEnabled = false;
+  // The shared input manager can still carry a source screen's edge/held
+  // button when Settings is entered. Ignore it until the controls return idle.
+  bool ignoreEntryInputUntilNeutral = false;
 
   OptionPopup optionPopup;
 

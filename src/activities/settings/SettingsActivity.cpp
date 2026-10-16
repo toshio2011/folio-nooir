@@ -54,6 +54,14 @@ void logSettingsDiagnostic(const char* stage, const int detail = -1) {
           static_cast<unsigned>(ESP.getMaxAllocHeap()), logSerial ? 1 : 0, static_cast<int>(esp_reset_reason()));
 }
 
+bool hasActiveButtonInput(const MappedInputManager& input) {
+  if (input.wasAnyPressed() || input.wasAnyReleased()) return true;
+  for (uint8_t index = 0; index < MappedInputManager::kButtonCount; ++index) {
+    if (input.isPressed(static_cast<MappedInputManager::Button>(index))) return true;
+  }
+  return false;
+}
+
 std::string formatValuePickerOption(const StrId nameId, const int value) {
   std::string label = std::to_string(value);
   if (nameId == StrId::STR_UI_SCALE) label += "%";
@@ -299,9 +307,8 @@ void SettingsActivity::rebuildSettingsLists() {
 
   reorder(displaySettings, {
                               StrId::STR_SLEEP_SCREEN,
-                              StrId::STR_SLEEP_BACKGROUND,
-                              StrId::STR_SLEEP_OVERLAY_A,
-                              StrId::STR_SLEEP_OVERLAY_B,
+                              StrId::STR_SLEEP_RANDOM_POOL,
+                              StrId::STR_SLEEP_RANDOM_ORDER,
                               StrId::STR_PREVIEW_SLEEP_SCREEN,
                               StrId::STR_SLEEP_COVER_MODE,
                               StrId::STR_SLEEP_COVER_FILTER,
@@ -390,6 +397,8 @@ void SettingsActivity::onEnter() {
   // being prepared, so establish the screen's input context before accepting
   // input or drawing button hints.
   mappedInput.setReaderMappingMode(false);
+  ignoreEntryInputUntilNeutral = hasActiveButtonInput(mappedInput);
+  if (ignoreEntryInputUntilNeutral) logSettingsDiagnostic("entry_input_gate_armed");
   bluetoothLifecycleState.store(BluetoothLifecycleState::TransitionSensitive, std::memory_order_release);
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
   bluetoothReturnArmed = false;
@@ -431,6 +440,12 @@ void SettingsActivity::onExit() {
 }
 
 void SettingsActivity::loop() {
+  if (ignoreEntryInputUntilNeutral) {
+    if (hasActiveButtonInput(mappedInput)) return;
+    ignoreEntryInputUntilNeutral = false;
+    logSettingsDiagnostic("entry_input_gate_cleared");
+  }
+
   if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
 
   bool hasChangedCategory = false;
@@ -1094,10 +1109,17 @@ void SettingsActivity::render(RenderLock&&) {
       });
 
   // Draw help text
+  const StrId selectedSettingId = selectedSettingIndex > 0 && selectedSettingIndex <= settingsCount
+                                      ? (*currentSettings)[selectedSettingIndex - 1].nameId
+                                      : StrId::STR_NONE_OPT;
+  const bool opensSleepPicker = selectedSettingId == StrId::STR_SLEEP_SCREEN ||
+                                selectedSettingId == StrId::STR_SLEEP_RANDOM_POOL ||
+                                selectedSettingId == StrId::STR_PREVIEW_SLEEP_SCREEN;
   const auto confirmLabel =
       (selectedSettingIndex == 0)
           ? I18N.get(categoryNames[(selectedCategoryIndex + 1) % categoryCount])
-          : (selectedSettingIndex > 0 && (*currentSettings)[selectedSettingIndex - 1].nameId == StrId::STR_TIME_TO_SLEEP
+          : (opensSleepPicker || (selectedSettingIndex > 0 &&
+                                  (*currentSettings)[selectedSettingIndex - 1].nameId == StrId::STR_TIME_TO_SLEEP)
                  ? tr(STR_SELECT)
                  : (selectedSettingIndex > 0 &&
                             (*currentSettings)[selectedSettingIndex - 1].type == SettingType::VALUE
