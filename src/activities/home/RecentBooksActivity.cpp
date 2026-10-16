@@ -168,7 +168,7 @@ bool prepareSpineVisualText(const char* text, std::string& visual) {
 bool spineTextSupported(const GfxRenderer& renderer, const char* text, const int fontId,
                         const EpdFontFamily::Style style) {
   if (text == nullptr || *text == '\0') return false;
-  const auto fontIt = renderer.getFontMap().find(fontId);
+  const auto fontIt = renderer.getFontMap().find(renderer.resolveUiFontId(fontId));
   if (fontIt == renderer.getFontMap().end()) return false;
 
   std::string visual;
