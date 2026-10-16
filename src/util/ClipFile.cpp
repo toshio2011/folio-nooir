@@ -10,9 +10,12 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdint>
+#include <memory>
+#include <new>
 #include <utility>
 
 #include "BookmarkUtil.h"
+#include "ClippingsJsonStream.h"
 
 namespace {
 
@@ -43,6 +46,14 @@ std::string boundedNote(const char* note) {
 
 std::string boundedNote(const std::string& note) { return boundedNote(note.c_str()); }
 
+std::string boundedClippingText(const char* text) {
+  if (!text) return {};
+  constexpr size_t INPUT_LIMIT = ClipFile::MAX_CLIPPING_TEXT_BYTES + 3;
+  size_t inputLength = 0;
+  while (inputLength < INPUT_LIMIT && text[inputLength] != '\0') ++inputLength;
+  return ClipFile::normalizeText(std::string(text, inputLength)).substr(0, ClipFile::MAX_CLIPPING_TEXT_BYTES);
+}
+
 std::string clippingPath(const std::string& bookPath) {
   const std::string bookmarkPath = BookmarkUtil::getBookmarkPath(bookPath);
   const std::string bookmarkDir = BookmarkUtil::getBookmarksDir();
@@ -51,6 +62,106 @@ std::string clippingPath(const std::string& bookPath) {
   }
   // Defensive fallback; BookmarkUtil currently always returns the path above.
   return std::string(CLIPPINGS_DIR) + "book.json";
+}
+
+void decodeClipping(JsonObjectConst item, ClippingEntry& clipping);
+
+// The source JSON is scanned in fixed-size chunks. Only one clipping record
+// is copied into the bounded record buffer at a time.
+class HalFileJsonCursor {
+ public:
+  explicit HalFileJsonCursor(HalFile& file) : file(file) {}
+
+  int peek() {
+    if (position >= length) {
+      const int result = file.read(buffer, sizeof(buffer));
+      if (result <= 0) return -1;
+      position = 0;
+      length = static_cast<size_t>(result);
+    }
+    return buffer[position];
+  }
+
+  int read() {
+    const int value = peek();
+    if (value >= 0) ++position;
+    return value;
+  }
+
+ private:
+  HalFile& file;
+  uint8_t buffer[256]{};
+  size_t position = 0;
+  size_t length = 0;
+};
+
+// JSON may spell each stored string byte with a six-byte Unicode escape.
+// The fixed buffer covers the documented quote/note caps plus field metadata.
+constexpr size_t MAX_CLIPPING_RECORD_JSON_BYTES =
+    6 * (ClipFile::MAX_CLIPPING_TEXT_BYTES + ClipFile::MAX_NOTE_BYTES) + 1024;
+
+bool loadClippingsPageFromFile(const std::string& path, const size_t offset, const size_t outputLimit,
+                              std::vector<ClippingEntry>& clippings, std::vector<std::string>* notes,
+                              size_t& totalCount) {
+  const String backupPath = String(path.c_str()) + ".bak";
+  const String pendingPath = String(path.c_str()) + ".tmp";
+  const String candidates[] = {String(path.c_str()), backupPath, pendingPath};
+  for (size_t index = 0; index < sizeof(candidates) / sizeof(candidates[0]); ++index) {
+    const String& candidate = candidates[index];
+    if (!Storage.exists(candidate.c_str())) continue;
+
+    HalFile file = Storage.open(candidate.c_str());
+    if (!file) {
+      LOG_ERR("CLP", "Could not open clipping JSON %s", candidate.c_str());
+      continue;
+    }
+    std::unique_ptr<char[]> recordBuffer(new (std::nothrow) char[MAX_CLIPPING_RECORD_JSON_BYTES]);
+    if (!recordBuffer) {
+      LOG_ERR("CLP", "Could not allocate bounded clipping record buffer");
+      return false;
+    }
+
+    HalFileJsonCursor cursor(file);
+    JsonDocument record;
+    size_t parsedCount = 0;
+    const auto result = ClippingsJsonStream::parse(
+        cursor, recordBuffer.get(), MAX_CLIPPING_RECORD_JSON_BYTES,
+        [&](char* json, size_t) {
+          record.clear();
+          const auto error = deserializeJson(record, json);
+          if (error) {
+            LOG_ERR("CLP", "Invalid clipping record in %s: %s", candidate.c_str(), error.c_str());
+            return ClippingsJsonStream::RecordStatus::invalid;
+          }
+
+          JsonObjectConst item = record.as<JsonObjectConst>();
+          const char* text = item["text"] | "";
+          if (!text[0] || parsedCount >= ClipFile::MAX_CLIPPINGS_PER_BOOK) {
+            return ClippingsJsonStream::RecordStatus::ignored;
+          }
+
+          const size_t currentIndex = parsedCount++;
+          if (currentIndex >= offset && clippings.size() < outputLimit) {
+            ClippingEntry clipping;
+            decodeClipping(item, clipping);
+            clippings.push_back(std::move(clipping));
+            if (notes) notes->push_back(boundedNote(item["note"] | ""));
+          }
+          return ClippingsJsonStream::RecordStatus::accepted;
+        });
+
+    if (result.valid) {
+      totalCount = parsedCount;
+      if (index != 0) LOG_ERR("CLP", "Recovered clipping JSON from %s", candidate.c_str());
+      return true;
+    }
+
+    LOG_ERR("CLP", "Invalid clipping JSON structure in %s", candidate.c_str());
+    clippings.clear();
+    if (notes) notes->clear();
+    totalCount = 0;
+  }
+  return false;
 }
 
 std::string singleLine(std::string text) {
@@ -102,7 +213,7 @@ bool save(const std::string& bookPath, const std::vector<ClippingEntry>& clippin
 
 void decodeClipping(JsonObjectConst item, ClippingEntry& clipping) {
   const char* text = item["text"] | "";
-  clipping.text = ClipFile::normalizeText(std::string(text)).substr(0, ClipFile::MAX_CLIPPING_TEXT_BYTES);
+  clipping.text = boundedClippingText(text);
   clipping.percentage = std::clamp(item["percentage"] | 0.0f, 0.0f, 1.0f);
   clipping.spineIndex = item["spine"] | static_cast<uint16_t>(0);
   clipping.page = item["page"] | static_cast<uint16_t>(0);
@@ -126,32 +237,32 @@ bool loadRange(const std::string& bookPath, const size_t offset, const size_t li
   clippings.clear();
   if (notes) notes->clear();
   totalCount = 0;
-  JsonDocument doc;
-  if (!PersistableStoreBase::readDocFromFile(clippingPath(bookPath).c_str(), doc)) return false;
-
-  JsonArrayConst array = doc["clippings"].as<JsonArrayConst>();
   const size_t outputLimit = std::min(limit, ClipFile::MAX_CLIPPINGS_PER_BOOK);
   clippings.reserve(outputLimit);
   if (notes) notes->reserve(outputLimit);
-  for (JsonObjectConst item : array) {
-    const char* text = item["text"] | "";
-    if (!text[0]) continue;
-    if (totalCount >= ClipFile::MAX_CLIPPINGS_PER_BOOK) break;
-    if (totalCount >= offset && clippings.size() < outputLimit) {
-      ClippingEntry clipping;
-      decodeClipping(item, clipping);
-      clippings.push_back(std::move(clipping));
-      if (notes) notes->push_back(boundedNote(item["note"] | ""));
-    }
-    ++totalCount;
-  }
-  return true;
+  return loadClippingsPageFromFile(clippingPath(bookPath), offset, outputLimit, clippings, notes, totalCount);
 }
 
 bool loadImpl(const std::string& bookPath, std::vector<ClippingEntry>& clippings,
               std::vector<std::string>* notes) {
-  size_t totalCount = 0;
-  return loadRange(bookPath, 0, ClipFile::MAX_CLIPPINGS_PER_BOOK, clippings, notes, totalCount);
+  clippings.clear();
+  if (notes) notes->clear();
+  JsonDocument doc;
+  if (!PersistableStoreBase::readDocFromFile(clippingPath(bookPath).c_str(), doc)) return false;
+
+  JsonArrayConst array = doc["clippings"].as<JsonArrayConst>();
+  clippings.reserve(ClipFile::MAX_CLIPPINGS_PER_BOOK);
+  if (notes) notes->reserve(ClipFile::MAX_CLIPPINGS_PER_BOOK);
+  for (JsonObjectConst item : array) {
+    const char* text = item["text"] | "";
+    if (!text[0]) continue;
+    if (clippings.size() >= ClipFile::MAX_CLIPPINGS_PER_BOOK) break;
+    ClippingEntry clipping;
+    decodeClipping(item, clipping);
+    clippings.push_back(std::move(clipping));
+    if (notes) notes->push_back(boundedNote(item["note"] | ""));
+  }
+  return true;
 }
 
 bool appendMaster(const std::string& title, const ClippingEntry& clipping) {

@@ -1,0 +1,3 @@
+add_executable(web_clippings_api_tests WebClippingsApiPagingTest.cpp ClippingsJsonStreamTest.cpp)
+target_link_libraries(web_clippings_api_tests PRIVATE crosspoint_test_common GTest::gtest_main)
+gtest_discover_tests(web_clippings_api_tests)

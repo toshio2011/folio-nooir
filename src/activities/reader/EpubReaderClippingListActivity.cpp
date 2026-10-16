@@ -157,19 +157,13 @@ void EpubReaderClippingListActivity::showActions() {
       const ClippingItem item = clippings[selectedIndex];
       std::string detail = "Highlight:\n\n" + escapeHtmlText(item.clipping.text);
       if (!item.note.empty()) detail += "\n\nNote:\n\n" + escapeHtmlText(item.note);
-      detail += "\n\nBook: " + escapeHtmlText(item.bookTitle.empty() ? item.bookPath : item.bookTitle);
-      detail += "\nPage: " + std::to_string(static_cast<unsigned>(item.clipping.page) + 1);
-      detail += "\nSpine: " + std::to_string(static_cast<unsigned>(item.clipping.spineIndex) + 1);
-      detail += "\nProgress: " + std::to_string(static_cast<unsigned>(item.clipping.percentage * 100.0f + 0.5f)) + "%";
-      detail += "\nDate: " + dateLabel(item.clipping.dateKey);
-      if (item.clipping.hasWordRange) {
-        detail += "\nWord range: " + std::to_string(item.clipping.firstWord) + "–" +
-                  std::to_string(item.clipping.lastWord);
-      }
-      detail += "\nStyle mask: " + std::to_string(static_cast<unsigned>(item.clipping.styleMask));
-      if (item.clipping.bold) detail += " (bold)";
+      detail += "\n\nProgress: " +
+                std::to_string(static_cast<unsigned>(item.clipping.percentage * 100.0f + 0.5f)) +
+                "% · Page: " + std::to_string(static_cast<unsigned>(item.clipping.page) + 1) +
+                " · Date: " + dateLabel(item.clipping.dateKey);
+      const std::string title = item.bookTitle.empty() ? item.bookPath : item.bookTitle;
       startActivityForResult(
-          std::make_unique<SynopsisActivity>(renderer, mappedInput, "Clipping details", item.bookTitle, detail),
+          std::make_unique<SynopsisActivity>(renderer, mappedInput, title, "Clipping details", detail),
           nullptr);
     } else if (action == 2) {
       editSelected();
