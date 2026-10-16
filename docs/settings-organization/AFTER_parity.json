@@ -1,0 +1,216 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "ce86b9f8c85d774af297ef11e6f98c4bee9e0729",
+  "historicalWebExposureCommit": "d4a97653",
+  "prototypeBaseCommit": "0d1c87933bd5fc5421ba33989991e141e0cd4adc",
+  "prototypeFiles": [
+    "src/activities/settings/SettingsActivity.cpp",
+    "src/activities/settings/SettingsActivity.h"
+  ],
+  "homeWorkerAOverlap": "Commit 33ed7e30 changed presentation/layout visibility only; stable theme value 5 and stored layout fields remain. This prototype also ports main's post-ce86 decision: recent/finished layouts are visible in both FOLIO_NOOIR and FOLIO_NOOIR_LITE, while the Carousel-specific control stays hidden. Interface Font/Mini Pack remains deferred. Not merged into this ce86 experiment.",
+  "groupIds": [
+    "home_appearance",
+    "sleep",
+    "reading",
+    "controls",
+    "connectivity",
+    "library",
+    "system"
+  ],
+  "stableIdsBefore": 131,
+  "stableIdsAfter": 131,
+  "stableIdSetParity": true,
+  "changedPersistedDescriptorFields": [],
+  "persistedDescriptorParity": true,
+  "oldDeviceGroupsPreservedAsMetadata": true,
+  "deviceExposureCoverage": {
+    "previouslyExposedStableIds": 127,
+    "reachableAfter": 122,
+    "intentionalDeferrals": [
+      "carouselLayout",
+      "manual:uiFontFamilyName",
+      "sleepBackgroundElement",
+      "sleepOverlayAElement",
+      "sleepOverlayBElement"
+    ],
+    "accidentalMissing": 0,
+    "accidentalMissingStableIds": []
+  },
+  "movedDeviceEntries": [
+    {
+      "stableId": "sleepScreen",
+      "before": "home_appearance",
+      "after": "sleep"
+    },
+    {
+      "stableId": "randomSleepOrder",
+      "before": "home_appearance",
+      "after": "sleep"
+    },
+    {
+      "stableId": "action:RandomSleepPool",
+      "before": "home_appearance",
+      "after": "sleep"
+    },
+    {
+      "stableId": "action:ClearFavoriteSleepImage",
+      "before": "home_appearance",
+      "after": "sleep"
+    },
+    {
+      "stableId": "sleepScreenCoverMode",
+      "before": "home_appearance",
+      "after": "sleep"
+    },
+    {
+      "stableId": "sleepScreenCoverFilter",
+      "before": "home_appearance",
+      "after": "sleep"
+    },
+    {
+      "stableId": "todoSleepMode",
+      "before": "home_appearance",
+      "after": "sleep"
+    },
+    {
+      "stableId": "quickResumeSleepScreen",
+      "before": "home_appearance",
+      "after": "sleep"
+    },
+    {
+      "stableId": "action:QuickActions",
+      "before": "reading",
+      "after": "controls"
+    },
+    {
+      "stableId": "action:Network",
+      "before": "system",
+      "after": "connectivity"
+    },
+    {
+      "stableId": "action:Bluetooth",
+      "before": "system",
+      "after": "connectivity"
+    },
+    {
+      "stableId": "action:ToDoList",
+      "before": "system",
+      "after": "library"
+    },
+    {
+      "stableId": "action:KOReaderSync",
+      "before": "system",
+      "after": "connectivity"
+    },
+    {
+      "stableId": "action:OPDSBrowser",
+      "before": "system",
+      "after": "connectivity"
+    },
+    {
+      "stableId": "sleepTimeoutMinutes",
+      "before": "system",
+      "after": "sleep"
+    },
+    {
+      "stableId": "showHiddenFiles",
+      "before": "system",
+      "after": "library"
+    },
+    {
+      "stableId": "removeReadBooksFromRecents",
+      "before": "system",
+      "after": "library"
+    },
+    {
+      "stableId": "moveFinishedToReadFolder",
+      "before": "system",
+      "after": "library"
+    }
+  ],
+  "quickActions": {
+    "oldGroup": "reading",
+    "prototypeGroup": "controls",
+    "actionAndStoredSlotsUnchanged": true
+  },
+  "deferredDeviceUi": [
+    "manual:uiFontFamilyName"
+  ],
+  "deferredSleepComposer": [
+    "sleepBackgroundElement",
+    "sleepOverlayAElement",
+    "sleepOverlayBElement",
+    "sleepScreen.option.flexible_composite"
+  ],
+  "layoutPresentation": {
+    "recentBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; option set and persisted field unchanged",
+    "finishedBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; option set and persisted field unchanged",
+    "carouselLayout": "hidden for 1.6.6, matching main SettingsActivity behavior"
+  },
+  "clippingsRoutes": "remain disabled; existing per-book storage and My Clippings.txt untouched",
+  "webSettings": {
+    "historicalStableKeyCount": 84,
+    "historicalX4KeyCount": 82,
+    "everyHistoricalKeyHasGroup": true,
+    "allHistoricalKeysGroupedExactlyOnce": true,
+    "groupCounts": {
+      "reading": 31,
+      "home_appearance": 21,
+      "controls": 11,
+      "sleep": 7,
+      "connectivity": 7,
+      "library": 5,
+      "system": 2
+    },
+    "routeCommit": "908453f39608169b1dad079e31a94db28415001b",
+    "latestIntegrationCommit": "7296bbc85467675fdc8e1dffd4c73f4022e96518",
+    "routeCommitIntegratedHere": false,
+    "routeIntegratedInMain": true,
+    "x4ReachableKeyCount": 82,
+    "conditionalKeys": {
+      "touchReaderControls": "touch hardware only",
+      "tiltPageTurn": "X3 QMI8658 IMU only"
+    },
+    "implementationTests": {
+      "groupedSettingsContract": "7/7",
+      "classifierParity": "5/5",
+      "workerBranchGroupedSettingsContract": "6/6",
+      "workerBranchInventoryParity": "5/5",
+      "generatedHtmlAndJsSyntax": "passed"
+    },
+    "build": "firmware compilation did not start; PlatformIO platforms.lock PermissionError",
+    "apiContract": {
+      "groups": "GET /api/settings/groups returns only the seven static descriptors",
+      "read": "GET /api/settings requires a valid group; offset 0..32 and limit 1..6; returns only the selected group page and X-Settings-Total",
+      "write": "group-scoped change map capped at 2 KiB and 32 keys; validate all keys against group before applying; save once",
+      "legacyAllCatalogRoute": "must stay disabled; no no-group fallback",
+      "clippings": "remain disabled"
+    },
+    "routeImplementation": "complete and integrated on main at 7296bbc85467675fdc8e1dffd4c73f4022e96518; bounded replacement does not enable old all-catalog request behavior"
+  },
+  "settingSourceParity": {
+    "SettingsList.h": true,
+    "CrossPointSettings.h": true,
+    "QuickActions source": true
+  },
+  "lazyAllocation": {
+    "rootDescriptorCount": 0,
+    "childVectors": 1,
+    "onlyMaterializedOnGroupEntry": true,
+    "clearedOnReturn": true,
+    "capacityRetainedForReuse": true,
+    "capacityLifetime": "retained while Settings is active or stacked under a child; vector storage is released when ActivityManager replaces/destroys Settings",
+    "capacityDiagnostic": "group_enter and group_return log vector capacity * sizeof(SettingInfo); max is the largest group_enter bytes value observed on device",
+    "x4MaxRequestedChildRows": 12,
+    "x4MaxRequestedGroup": "Controls (9 non-touch base rows + 3 actions; X3-only tilt row is absent on X4)",
+    "x4MaxRetainedBufferBytes": "12 * sizeof(SettingInfo), exact allocated capacity byte count is logged at group entry",
+    "x4MaxBytesMeasured": null,
+    "filesystemWork": "font registry refresh and dictionary discovery occur only on Reading group entry",
+    "ordinaryToggleRebuilds": "only sleep mode, theme, and short-power-button changes alter list shape"
+  },
+  "candidateForIntegration": false,
+  "integrationBlockers": [
+    "Web Settings routes are integrated on main but not merged into this isolated settings-organization experiment worktree.",
+    "No physical X4 review of the group-root navigation has been performed."
+  ]
+}

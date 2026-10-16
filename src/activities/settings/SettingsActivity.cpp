@@ -11,6 +11,7 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 
 #include "ButtonRemapActivity.h"
 #include "BleInput.h"
@@ -31,6 +32,7 @@
 #include "SdFirmwareUpdateActivity.h"
 #include "SettingsProfilesActivity.h"
 #include "SettingsList.h"
+#include "SettingsGroups.h"
 #include "StatusBarSettingsActivity.h"
 #include "TextSettingsActivity.h"
 #include "VisualPreviewActivity.h"
@@ -41,9 +43,6 @@
 #include "util/BleMemoryPolicy.h"
 #include "fontIds.h"
 #include "util/QuickActions.h"
-
-const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DISPLAY, StrId::STR_CAT_READER,
-                                                              StrId::STR_CAT_CONTROLS, StrId::STR_CAT_SYSTEM};
 
 namespace {
 constexpr int kMaxValuePickerOptions = 32;
@@ -159,19 +158,17 @@ void SettingsActivity::reclaimStableBluetoothTransientCaches() {
 #endif
 
 void SettingsActivity::rebuildSettingsLists() {
-  displaySettings.clear();
-  readerSettings.clear();
-  controlsSettings.clear();
-  systemSettings.clear();
+  currentGroupSettings.clear();
+  currentSettings = &currentGroupSettings;
 
-  // Pick up any fonts uploaded/deleted over the web server since the last
-  // reader activity ran — otherwise the font-family picker shows stale list.
-  sdFontSystem.refreshIfDirty();
-
-  // Rescan /dictionaries on every rebuild: cheap (one directory listing) and
-  // picks up dictionaries copied to the SD card since the last visit.
+  const auto selectedGroup = static_cast<SettingsGroupId>(selectedCategoryIndex);
   std::vector<DictionaryEntry> dictionaries;
-  DictionaryRegistry::discover(dictionaries);
+  if (selectedGroup == SettingsGroupId::Reading) {
+    // Refresh registries only when the Reading group is opened; SettingsList
+    // itself stays static and no font/dictionary work runs during navigation.
+    sdFontSystem.refreshIfDirty();
+    DictionaryRegistry::discover(dictionaries);
+  }
 
   const bool folioLayoutTheme = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR ||
                                 SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR_LITE;
@@ -199,202 +196,239 @@ void SettingsActivity::rebuildSettingsLists() {
         return false;
     }
   };
-  // Interface Font is hidden for this release. Avoid discovering Mini Pack
-  // families while building a row that the user cannot select; keep the
-  // independent Reader font picker backed by the registry.
-  auto settings = getSettingsList(&sdFontSystem.registry(), &dictionaries, false);
-  const auto visibleCategory = [&](const SettingInfo& setting) -> int {
-    if (setting.category == StrId::STR_NONE_OPT) return -1;
-    if (isSleepComposerSetting(setting)) {
-      return -1;
-    }
+  const auto visibleInSelectedGroup = [&](const SettingInfo& setting) {
+    if (setting.category == StrId::STR_NONE_OPT || isSleepComposerSetting(setting)) return false;
+    // Keep the Mini Pack UI font deferred for this release; selecting the
+    // Reader group never constructs or loads the hidden interface-font row.
+    if (setting.nameId == StrId::STR_INTERFACE_FONT) return false;
     if ((setting.nameId == StrId::STR_SLEEP_RANDOM_ORDER || setting.action == SettingAction::RandomSleepPool) &&
         SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM) {
-      return -1;
+      return false;
     }
-    if (isVisualPreviewSetting(setting.nameId)) return -1;
-    if (setting.nameId == StrId::STR_INTERFACE_FONT) return -1;
-    if (isFolioLayoutSetting(setting.nameId) && !folioLayoutTheme) return -1;
-    if (isCarouselLayoutSetting(setting.nameId)) return -1;
-    if (setting.category == StrId::STR_CAT_DISPLAY) return 0;
-    if (setting.category == StrId::STR_CAT_READER) return setting.inTextSettings ? -1 : 1;
-    if (setting.category == StrId::STR_CAT_CONTROLS)
-      return setting.valuePtr == &CrossPointSettings::pwrBtnFootnoteBack &&
-                     SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::FOOTNOTES ? -1 : 2;
-    return setting.category == StrId::STR_CAT_SYSTEM ? 3 : -1;
+    if (isVisualPreviewSetting(setting.nameId)) return false;
+    if (isFolioLayoutSetting(setting.nameId) && !folioLayoutTheme) return false;
+    // Keep the legacy Carousel-specific control out of Settings for 1.6.6.
+    // Recent/Finished layouts remain available in both Folio themes above.
+    if (isCarouselLayoutSetting(setting.nameId)) return false;
+    if (setting.category == StrId::STR_CAT_READER && setting.inTextSettings) return false;
+    if (setting.category == StrId::STR_CAT_CONTROLS &&
+        setting.valuePtr == &CrossPointSettings::pwrBtnFootnoteBack &&
+        SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::FOOTNOTES) {
+      return false;
+    }
+    if (setting.category != StrId::STR_CAT_DISPLAY && setting.category != StrId::STR_CAT_READER &&
+        setting.category != StrId::STR_CAT_CONTROLS && setting.category != StrId::STR_CAT_SYSTEM) {
+      return false;
+    }
+    return settingsGroupIdFor(setting) == selectedGroup;
   };
-  const bool hasFavoriteSleep = !APP_STATE.favoriteSleepImagePath.empty() ||
-      (!APP_STATE.legacySleepImageDisabled && (Storage.exists("/sleep.bmp") || Storage.exists("/sleep.png")));
-  // Reserve once at this explicit list rebuild, including the actions added
-  // below. Move each descriptor from the temporary list instead of deep-copying
-  // its enum strings/vectors and growing four category arenas geometrically.
-  size_t categorySizes[] = {2U + (hasFavoriteSleep ? 1U : 0U), 6, BoardConfig::hasTouch() ? 0U : 2U,
-                           9U + (BoardConfig::hasTouch() ? 0U : 1U)};
-#if FREEINK_CAP_BLE_HID_HOST
-  ++categorySizes[3];
-#endif
-  std::vector<SettingInfo>* categories[] = {&displaySettings, &readerSettings, &controlsSettings, &systemSettings};
-  for (const auto& setting : settings) {
-    const int category = visibleCategory(setting);
-    if (category >= 0) ++categorySizes[category];
-  }
-  for (size_t i = 0; i < 4; ++i) categories[i]->reserve(categorySizes[i]);
-  for (auto& setting : settings) {
-    const int category = visibleCategory(setting);
-    if (category >= 0) categories[category]->push_back(std::move(setting));
-  }
-
-  // Device-only display action. The favorite path lives in CrossPointState,
-  // not CrossPointSettings, so it is intentionally kept out of the web
-  // settings API and added only when a favorite is actually configured.
-  if (hasFavoriteSleep) {
-    displaySettings.push_back(
-        SettingInfo::Action(StrId::STR_CLEAR_FAVORITE_SLEEP, SettingAction::ClearFavoriteSleepImage));
-  }
-  displaySettings.push_back(SettingInfo::Action(StrId::STR_VISUAL_PREVIEW, SettingAction::VisualPreview));
-  if (SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE) {
-    auto sleepPreview = SettingInfo::Action(StrId::STR_PREVIEW_SLEEP_SCREEN, SettingAction::SleepScreenPreview);
-    sleepPreview.category = StrId::STR_CAT_DISPLAY;
-    displaySettings.push_back(std::move(sleepPreview));
-  }
-
-  // Append device-only ACTION items
-  if (!BoardConfig::hasTouch()) {
-    controlsSettings.insert(controlsSettings.begin(),
-                            SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS, SettingAction::RemapFrontButtons));
-    controlsSettings.insert(controlsSettings.begin() + 1,
-                            SettingInfo::Action(StrId::STR_REMAP_READER_FRONT_BUTTONS,
-                                                SettingAction::RemapReaderFrontButtons));
-  }
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
-#if FREEINK_CAP_BLE_HID_HOST
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_BLUETOOTH, SettingAction::Bluetooth));
-#endif
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_CLOCK_WEATHER_SYNC, SettingAction::ClockWeatherSync));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_TODO_LIST, SettingAction::ToDoList));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_SETTINGS_PROFILES, SettingAction::SettingsProfiles));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
-  // TODO: Touch devices need their own firmware update path/artifacts before OTA is exposed.
-  if (!BoardConfig::hasTouch()) {
-    systemSettings.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
-  }
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
-  readerSettings.insert(readerSettings.begin(),
-                        SettingInfo::Action(StrId::STR_TEXT_SETTINGS, SettingAction::TextSettings));
-  readerSettings.insert(readerSettings.begin() + 1,
-                        SettingInfo::Action(StrId::STR_DICTIONARY_SETTINGS, SettingAction::DictionarySettings));
-  readerSettings.insert(readerSettings.begin() + 2,
-                        SettingInfo::Action(StrId::STR_DICTIONARY_INDEXES, SettingAction::DictionaryIndexes));
-  readerSettings.insert(readerSettings.begin() + 3,
-                        SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts));
-  readerSettings.push_back(SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
-  readerSettings.push_back(SettingInfo::Action(StrId::STR_QUICK_ACTIONS, SettingAction::QuickActions));
-
-  // Keep the four tabs as the stable settings categories, but present each
-  // category in a predictable, task-oriented order.  This is deliberately a
-  // UI-only sort: SettingInfo keys, categories, and actions are untouched, so
-  // persistence, profiles, and the web settings API keep their existing
-  // behavior.  Stable sorting also keeps any future setting that is not yet in
-  // one of these lists at the end instead of silently hiding it.
-  const auto reorder = [](std::vector<SettingInfo>& settings, const std::vector<StrId>& preferred) {
-    const auto rank = [&preferred](const StrId id) {
-      const auto it = std::find(preferred.begin(), preferred.end(), id);
-      return it == preferred.end() ? preferred.size() : static_cast<size_t>(std::distance(preferred.begin(), it));
-    };
-    std::stable_sort(settings.begin(), settings.end(), [&rank](const SettingInfo& left, const SettingInfo& right) {
-      return rank(left.nameId) < rank(right.nameId);
-    });
+  const auto supportedOnThisBoard = [](const SettingInfo& setting) {
+    if (!BoardConfig::hasTouch() && setting.nameId == StrId::STR_TOUCH_READER_CONTROLS) return false;
+    if (BoardConfig::hasTouch() &&
+        (setting.nameId == StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION ||
+         setting.nameId == StrId::STR_SUNLIGHT_FADING_FIX)) {
+      return false;
+    }
+    return true;
   };
 
-  reorder(displaySettings, {
-                              StrId::STR_SLEEP_SCREEN,
-                              StrId::STR_SLEEP_RANDOM_POOL,
-                              StrId::STR_SLEEP_RANDOM_ORDER,
-                              StrId::STR_PREVIEW_SLEEP_SCREEN,
-                              StrId::STR_SLEEP_COVER_MODE,
-                              StrId::STR_SLEEP_COVER_FILTER,
-                              StrId::STR_CLEAR_FAVORITE_SLEEP,
-                              StrId::STR_TODO_SLEEP_MODE,
-                              StrId::STR_QUICK_RESUME_TIMEOUT,
-                              StrId::STR_UI_THEME,
-                              StrId::STR_CAROUSEL_LAYOUT,
-                              StrId::STR_RECENT_BOOK_LAYOUT,
-                              StrId::STR_FINISHED_BOOK_LAYOUT,
-                              StrId::STR_VISUAL_PREVIEW,
-                              StrId::STR_UI_SCALE,
-                              StrId::STR_HIDE_BATTERY,
-                              StrId::STR_REFRESH_FREQ,
-                              StrId::STR_SUNLIGHT_FADING_FIX,
-                          });
-  reorder(readerSettings, {
-                             StrId::STR_TEXT_SETTINGS,
-                             StrId::STR_PAGE_NUMBER_MODE,
-                             StrId::STR_DICTIONARY,
-                             StrId::STR_DICTIONARY_SETTINGS,
-                             StrId::STR_DICTIONARY_INDEXES,
-                             StrId::STR_MANAGE_FONTS,
-                             StrId::STR_IMAGES,
-                             StrId::STR_ORIENTATION,
-                             StrId::STR_CUSTOMISE_STATUS_BAR,
-                         });
-  reorder(controlsSettings, {
-                               StrId::STR_REMAP_FRONT_BUTTONS,
-                               StrId::STR_REMAP_READER_FRONT_BUTTONS,
-                               StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION,
-                               StrId::STR_SIDE_BTN_LAYOUT,
-                               StrId::STR_SIDE_LONG_PRESS_ACTION,
-                               StrId::STR_LONG_PRESS_BEHAVIOR,
-                               StrId::STR_SHORT_PWR_BTN,
-                               StrId::STR_LONG_PWR_BTN,
-                               StrId::STR_LONG_PRESS_MENU,
-                               StrId::STR_TOUCH_READER_CONTROLS,
-                               StrId::STR_TILT_PAGE_TURN,
-                               StrId::STR_PWR_BTN_FOOTNOTE_BACK,
-                               StrId::STR_BACK_SHORT_TO_FILE_BROWSER,
-                           });
-  reorder(systemSettings, {
-                             StrId::STR_TIME_TO_SLEEP,
-                             StrId::STR_RESUME_READER_ON_WAKE,
-                              StrId::STR_WIFI_NETWORKS,
-#if FREEINK_CAP_BLE_HID_HOST
-                              StrId::STR_BLUETOOTH,
-#endif
-                              StrId::STR_CLOCK_WEATHER_SYNC,
-                             StrId::STR_WEATHER_SYNC_ENABLED,
-                             StrId::STR_OPDS_SERVERS,
-                             StrId::STR_KOREADER_SYNC,
-                             StrId::STR_TODO_LIST,
-                             StrId::STR_SETTINGS_PROFILES,
-                             StrId::STR_CLEAR_READING_CACHE,
-                             StrId::STR_SHOW_HIDDEN_FILES,
-                             StrId::STR_REMOVE_READ_FROM_RECENTS,
-                             StrId::STR_MOVE_FINISHED_TO_READ,
-                             StrId::STR_CHECK_UPDATES,
-                             StrId::STR_SD_FIRMWARE_UPDATE,
-                             StrId::STR_LANGUAGE,
-                         });
+  const auto& baseSettings = getBaseSettingsList();
+  size_t rowCount = 0;
+  for (const auto& setting : baseSettings) {
+    if (supportedOnThisBoard(setting) && visibleInSelectedGroup(setting)) ++rowCount;
+  }
+  if (selectedGroup == SettingsGroupId::Reading && !dictionaries.empty()) ++rowCount;
 
-  // Update currentSettings pointer and count for the active category
-  switch (selectedCategoryIndex) {
-    case 0:
-      currentSettings = &displaySettings;
+  const bool hasFavoriteSleep =
+      selectedGroup == SettingsGroupId::Sleep &&
+      (!APP_STATE.favoriteSleepImagePath.empty() ||
+       (!APP_STATE.legacySleepImageDisabled && (Storage.exists("/sleep.bmp") || Storage.exists("/sleep.png"))));
+  size_t actionCount = 0;
+  switch (selectedGroup) {
+    case SettingsGroupId::HomeAppearance:
+      actionCount = 1;  // Visual Preview
       break;
-    case 1:
-      currentSettings = &readerSettings;
+    case SettingsGroupId::Sleep:
+      actionCount = (hasFavoriteSleep ? 1U : 0U) +
+                    (SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE ? 1U : 0U);
       break;
-    case 2:
-      currentSettings = &controlsSettings;
+    case SettingsGroupId::Reading:
+      actionCount = 5;
       break;
-    case 3:
-      currentSettings = &systemSettings;
+    case SettingsGroupId::Controls:
+      actionCount = 1U + (BoardConfig::hasTouch() ? 0U : 2U);
+      break;
+    case SettingsGroupId::Connectivity:
+      actionCount = 3;
+#if FREEINK_CAP_BLE_HID_HOST
+      ++actionCount;
+#endif
+      break;
+    case SettingsGroupId::Library:
+      actionCount = 1;
+      break;
+    case SettingsGroupId::System:
+      actionCount = 5 + (BoardConfig::hasTouch() ? 0U : 1U);
+      break;
+    case SettingsGroupId::Unknown:
       break;
   }
-  settingsCount = static_cast<int>(currentSettings->size());
+  currentGroupSettings.reserve(rowCount + actionCount);
+
+  for (const auto& base : baseSettings) {
+    if (!supportedOnThisBoard(base) || !visibleInSelectedGroup(base)) continue;
+
+    if (base.nameId == StrId::STR_SLEEP_SCREEN) {
+      SettingInfo effective = base;
+      configureSleepSetting(effective);
+      currentGroupSettings.push_back(std::move(effective));
+    } else if (base.nameId == StrId::STR_FONT_FAMILY) {
+      currentGroupSettings.push_back(buildFontFamilySetting(&sdFontSystem.registry()));
+    } else if (base.nameId == StrId::STR_DICTIONARY_FONT) {
+      currentGroupSettings.push_back(buildDictionaryFontSetting());
+    } else {
+      currentGroupSettings.push_back(base);
+    }
+  }
+  if (selectedGroup == SettingsGroupId::Reading && !dictionaries.empty()) {
+    currentGroupSettings.push_back(buildDictionarySetting(dictionaries));
+  }
+
+  // Device-only actions are added only to the selected group's one child list.
+  // They remain absent from the shared Web descriptor catalog.
+  switch (selectedGroup) {
+    case SettingsGroupId::HomeAppearance:
+      currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_VISUAL_PREVIEW, SettingAction::VisualPreview));
+      break;
+    case SettingsGroupId::Sleep:
+      if (hasFavoriteSleep) {
+        currentGroupSettings.push_back(
+            SettingInfo::Action(StrId::STR_CLEAR_FAVORITE_SLEEP, SettingAction::ClearFavoriteSleepImage));
+      }
+      if (SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE) {
+        currentGroupSettings.push_back(
+            SettingInfo::Action(StrId::STR_PREVIEW_SLEEP_SCREEN, SettingAction::SleepScreenPreview));
+      }
+      break;
+    case SettingsGroupId::Reading:
+      currentGroupSettings.insert(
+          currentGroupSettings.begin(), SettingInfo::Action(StrId::STR_TEXT_SETTINGS, SettingAction::TextSettings));
+      currentGroupSettings.insert(currentGroupSettings.begin() + 1,
+                                   SettingInfo::Action(StrId::STR_DICTIONARY_SETTINGS,
+                                                       SettingAction::DictionarySettings));
+      currentGroupSettings.insert(currentGroupSettings.begin() + 2,
+                                   SettingInfo::Action(StrId::STR_DICTIONARY_INDEXES,
+                                                       SettingAction::DictionaryIndexes));
+      currentGroupSettings.insert(
+          currentGroupSettings.begin() + 3, SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts));
+      currentGroupSettings.push_back(
+          SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
+      break;
+    case SettingsGroupId::Controls:
+      currentGroupSettings.push_back(SettingInfo::Action(STR_QUICK_ACTIONS, SettingAction::QuickActions));
+      if (!BoardConfig::hasTouch()) {
+        currentGroupSettings.insert(
+            currentGroupSettings.begin(), SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS,
+                                                              SettingAction::RemapFrontButtons));
+        currentGroupSettings.insert(
+            currentGroupSettings.begin() + 1,
+            SettingInfo::Action(StrId::STR_REMAP_READER_FRONT_BUTTONS, SettingAction::RemapReaderFrontButtons));
+      }
+      break;
+    case SettingsGroupId::Connectivity:
+      currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
+#if FREEINK_CAP_BLE_HID_HOST
+      currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_BLUETOOTH, SettingAction::Bluetooth));
+#endif
+      currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
+      currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
+      break;
+    case SettingsGroupId::Library:
+      currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_TODO_LIST, SettingAction::ToDoList));
+      break;
+    case SettingsGroupId::System:
+      currentGroupSettings.push_back(
+          SettingInfo::Action(StrId::STR_CLOCK_WEATHER_SYNC, SettingAction::ClockWeatherSync));
+      currentGroupSettings.push_back(
+          SettingInfo::Action(StrId::STR_SETTINGS_PROFILES, SettingAction::SettingsProfiles));
+      currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
+      if (!BoardConfig::hasTouch()) {
+        currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
+      }
+      currentGroupSettings.push_back(
+          SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
+      currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
+      break;
+    case SettingsGroupId::Unknown:
+      break;
+  }
+
+  const auto reorder = [](std::vector<SettingInfo>& settings, const std::initializer_list<StrId> preferred) {
+    // Move preferred rows into place in the already allocated child vector.
+    // This keeps the same ordering without allocating a temporary rank table
+    // or stable_sort buffer on group entry.
+    auto next = settings.begin();
+    for (const auto id : preferred) {
+      const auto found = std::find_if(next, settings.end(), [id](const SettingInfo& setting) {
+        return setting.nameId == id;
+      });
+      if (found == settings.end()) continue;
+      std::rotate(next, found, found + 1);
+      ++next;
+    }
+  };
+
+  switch (selectedGroup) {
+    case SettingsGroupId::HomeAppearance:
+      reorder(currentGroupSettings, {StrId::STR_UI_THEME, StrId::STR_CAROUSEL_LAYOUT, StrId::STR_RECENT_BOOK_LAYOUT,
+                                     StrId::STR_FINISHED_BOOK_LAYOUT, StrId::STR_VISUAL_PREVIEW, StrId::STR_UI_SCALE,
+                                     StrId::STR_HIDE_BATTERY, StrId::STR_REFRESH_FREQ,
+                                     StrId::STR_SUNLIGHT_FADING_FIX});
+      break;
+    case SettingsGroupId::Sleep:
+      reorder(currentGroupSettings, {StrId::STR_SLEEP_SCREEN, StrId::STR_SLEEP_RANDOM_POOL,
+                                     StrId::STR_SLEEP_RANDOM_ORDER, StrId::STR_PREVIEW_SLEEP_SCREEN,
+                                     StrId::STR_SLEEP_COVER_MODE, StrId::STR_SLEEP_COVER_FILTER,
+                                     StrId::STR_CLEAR_FAVORITE_SLEEP, StrId::STR_TODO_SLEEP_MODE,
+                                     StrId::STR_QUICK_RESUME_TIMEOUT, StrId::STR_TIME_TO_SLEEP});
+      break;
+    case SettingsGroupId::Reading:
+      reorder(currentGroupSettings, {StrId::STR_TEXT_SETTINGS, StrId::STR_PAGE_NUMBER_MODE, StrId::STR_DICTIONARY,
+                                     StrId::STR_DICTIONARY_SETTINGS, StrId::STR_DICTIONARY_INDEXES,
+                                     StrId::STR_MANAGE_FONTS, StrId::STR_IMAGES, StrId::STR_ORIENTATION,
+                                     StrId::STR_CUSTOMISE_STATUS_BAR});
+      break;
+    case SettingsGroupId::Controls:
+      reorder(currentGroupSettings, {StrId::STR_REMAP_FRONT_BUTTONS, StrId::STR_REMAP_READER_FRONT_BUTTONS,
+                                     StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION, StrId::STR_SIDE_BTN_LAYOUT,
+                                     StrId::STR_SIDE_LONG_PRESS_ACTION, StrId::STR_LONG_PRESS_BEHAVIOR,
+                                     StrId::STR_SHORT_PWR_BTN, StrId::STR_LONG_PWR_BTN, StrId::STR_LONG_PRESS_MENU,
+                                     StrId::STR_TOUCH_READER_CONTROLS, StrId::STR_TILT_PAGE_TURN,
+                                     StrId::STR_PWR_BTN_FOOTNOTE_BACK, StrId::STR_BACK_SHORT_TO_FILE_BROWSER,
+                                     StrId::STR_QUICK_ACTIONS});
+      break;
+    case SettingsGroupId::Connectivity:
+      reorder(currentGroupSettings, {StrId::STR_WIFI_NETWORKS, StrId::STR_BLUETOOTH, StrId::STR_OPDS_SERVERS,
+                                     StrId::STR_KOREADER_SYNC});
+      break;
+    case SettingsGroupId::Library:
+      reorder(currentGroupSettings, {StrId::STR_TODO_LIST, StrId::STR_SHOW_HIDDEN_FILES,
+                                     StrId::STR_REMOVE_READ_FROM_RECENTS, StrId::STR_MOVE_FINISHED_TO_READ});
+      break;
+    case SettingsGroupId::System:
+      reorder(currentGroupSettings, {StrId::STR_TIME_TO_SLEEP, StrId::STR_RESUME_READER_ON_WAKE,
+                                     StrId::STR_CLOCK_WEATHER_SYNC, StrId::STR_WEATHER_SYNC_ENABLED,
+                                     StrId::STR_SETTINGS_PROFILES, StrId::STR_CLEAR_READING_CACHE,
+                                     StrId::STR_SHOW_HIDDEN_FILES, StrId::STR_REMOVE_READ_FROM_RECENTS,
+                                     StrId::STR_MOVE_FINISHED_TO_READ, StrId::STR_CHECK_UPDATES,
+                                     StrId::STR_SD_FIRMWARE_UPDATE, StrId::STR_LANGUAGE});
+      break;
+    case SettingsGroupId::Unknown:
+      break;
+  }
+
+  settingsCount = static_cast<int>(currentGroupSettings.size());
 }
-
 void SettingsActivity::onEnter() {
   // Settings always uses the global front-button assignments. A Reader can
   // leave its reader-specific mapping active while an activity transition is
@@ -412,23 +446,25 @@ void SettingsActivity::onEnter() {
   logSettingsDiagnostic("onEnter_begin");
   Activity::onEnter();
 
-  // Reset selection to first category
+  // Start at the small static group list. Child descriptors are not built
+  // until the user opens a group.
   selectedCategoryIndex = 0;
+  selectedGroupListIndex = 0;
   selectedSettingIndex = 0;
+  groupListActive = true;
+  currentGroupSettings.clear();
+  currentSettings = &currentGroupSettings;
+  settingsCount = 0;
   preserveQuickResumeTimeoutOn =
       SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT;
   quickResumeTimeoutAutoEnabled = false;
   syncQuickResumeTimeoutForSleepScreen(/*sleepScreenChanged=*/true, /*quickResumeTimeoutChanged=*/false);
 
-  rebuildSettingsLists();
-  logSettingsDiagnostic("onEnter_ready", settingsCount);
-  const std::vector<SettingInfo>* owners[] = {&displaySettings, &readerSettings, &controlsSettings, &systemSettings};
-  for (size_t i = 0; i < 4; ++i) {
-    LOG_INF("SETDIAG", "owner=category_%u ptr=%p size=%u capacity=%u bytes=%u",
-            static_cast<unsigned>(i), static_cast<const void*>(owners[i]->data()),
-            static_cast<unsigned>(owners[i]->size()), static_cast<unsigned>(owners[i]->capacity()),
-            static_cast<unsigned>(owners[i]->capacity() * sizeof(SettingInfo)));
-  }
+  logSettingsDiagnostic("group_list_ready", categoryCount);
+  LOG_INF("SETDIAG", "owner=lazy_group_list groups=%u selected_children=0 capacity=%u bytes=%u",
+          static_cast<unsigned>(categoryCount),
+          static_cast<unsigned>(currentGroupSettings.capacity()),
+          static_cast<unsigned>(currentGroupSettings.capacity() * sizeof(SettingInfo)));
 
   // Trigger first update
   requestUpdate();
@@ -451,67 +487,55 @@ void SettingsActivity::loop() {
   }
 
   if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
-
-  bool hasChangedCategory = false;
-
-  auto applyCategorySelection = [this] {
-    switch (selectedCategoryIndex) {
-      case 0:
-        currentSettings = &displaySettings;
-        break;
-      case 1:
-        currentSettings = &readerSettings;
-        break;
-      case 2:
-        currentSettings = &controlsSettings;
-        break;
-      case 3:
-        currentSettings = &systemSettings;
-        break;
-    }
-    settingsCount = static_cast<int>(currentSettings->size());
-  };
-
-  // Handle actions with early return
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    if (selectedSettingIndex == 0) {
-      selectedCategoryIndex = (selectedCategoryIndex < categoryCount - 1) ? (selectedCategoryIndex + 1) : 0;
-      hasChangedCategory = true;
-      requestUpdate();
-    } else {
-      toggleCurrentSetting();
-      requestUpdate();
-      return;
-    }
-  }
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    if (selectedSettingIndex > 0) {
-      selectedSettingIndex = 0;
-      requestUpdate();
-    } else {
-      logSettingsDiagnostic("return_home_requested");
-      SETTINGS.saveToFile();
-      onGoHome();
-    }
-    return;
-  }
-
   const auto& metrics = UITheme::getInstance().getMetrics();
+  const int listTop = metrics.topPadding + metrics.headerHeight +
+                      (groupListActive ? 0 : metrics.tabBarHeight) + metrics.verticalSpacing;
+  const int listHeight = renderer.getScreenHeight() -
+                         (metrics.topPadding + metrics.headerHeight + (groupListActive ? 0 : metrics.tabBarHeight) +
+                          metrics.buttonHintsHeight + metrics.verticalSpacing * 2);
   int tx = 0;
   int ty = 0;
-  const int tabTop = metrics.topPadding + metrics.headerHeight;
-  const int listTop = metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight + metrics.verticalSpacing;
-  const int listHeight =
-      renderer.getScreenHeight() - (metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight +
-                                    metrics.buttonHintsHeight + metrics.verticalSpacing * 2);
-  auto buildTabs = [&]() {
-    std::vector<TabInfo> tabs;
-    tabs.reserve(categoryCount);
-    for (int i = 0; i < categoryCount; i++) {
-      tabs.push_back({I18N.get(categoryNames[i]), selectedCategoryIndex == i});
-    }
-    return tabs;
+
+  const auto enterSelectedGroup = [this] {
+    selectedCategoryIndex = selectedGroupListIndex;
+    groupListActive = false;
+    selectedSettingIndex = 1;
+    rebuildSettingsLists();
+    if (settingsCount == 0) selectedSettingIndex = 0;
+    logSettingsDiagnostic("group_enter", selectedCategoryIndex);
+    LOG_INF("SETDIAG", "stage=group_enter group=%s children=%u capacity=%u bytes=%u",
+            settingsGroupKey(static_cast<SettingsGroupId>(selectedCategoryIndex)),
+            static_cast<unsigned>(currentGroupSettings.size()),
+            static_cast<unsigned>(currentGroupSettings.capacity()),
+            static_cast<unsigned>(currentGroupSettings.capacity() * sizeof(SettingInfo)));
+    requestUpdate();
+  };
+  const auto returnToGroupList = [this] {
+    groupListActive = true;
+    selectedGroupListIndex = selectedCategoryIndex;
+    selectedSettingIndex = 0;
+    currentGroupSettings.clear();
+    currentSettings = &currentGroupSettings;
+    settingsCount = 0;
+    logSettingsDiagnostic("group_return", selectedCategoryIndex);
+    LOG_INF("SETDIAG", "stage=group_return group=%s children=0 retained_capacity=%u bytes=%u",
+            settingsGroupKey(static_cast<SettingsGroupId>(selectedCategoryIndex)),
+            static_cast<unsigned>(currentGroupSettings.capacity()),
+            static_cast<unsigned>(currentGroupSettings.capacity() * sizeof(SettingInfo)));
+    requestUpdate();
+  };
+
+  const int groupPageItems = GUI.getListPageItems(listHeight, false);
+  const auto groupIndexFromPoint = [&](const int y, int& groupIndex) {
+    if (y < listTop || y >= listTop + listHeight) return false;
+    const int rowStep = GUI.getListRowStep(false);
+    if (rowStep <= 0) return false;
+    const int pageStart = selectedGroupListIndex / groupPageItems * groupPageItems;
+    const int row = (y - listTop) / rowStep;
+    const int touched = pageStart + row;
+    if (row < 0 || row >= groupPageItems || touched < 0 || touched >= categoryCount) return false;
+    groupIndex = touched;
+    return true;
   };
   auto settingIndexFromPoint = [&](const int x, const int y, int& settingIndex) {
     (void)x;
@@ -528,76 +552,92 @@ void SettingsActivity::loop() {
     return true;
   };
 
-  if (mappedInput.wasScreenTouchDown(tx, ty)) {
-    int touchedCategory = -1;
-    const auto tabs = buildTabs();
-    if (GUI.tabIndexFromPoint(renderer, Rect{0, tabTop, renderer.getScreenWidth(), metrics.tabBarHeight}, tabs, tx, ty,
-                              touchedCategory)) {
-      if (selectedCategoryIndex != touchedCategory || selectedSettingIndex != 0) {
-        selectedCategoryIndex = touchedCategory;
-        selectedSettingIndex = 0;
-        applyCategorySelection();
-        requestUpdate();
-      }
-      return;
+  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    if (groupListActive) {
+      logSettingsDiagnostic("return_home_requested");
+      SETTINGS.saveToFile();
+      onGoHome();
+    } else {
+      returnToGroupList();
     }
+    return;
+  }
 
-    int touchedSetting = -1;
-    if (settingIndexFromPoint(tx, ty, touchedSetting)) {
-      if (selectedSettingIndex != touchedSetting) {
-        selectedSettingIndex = touchedSetting;
-        requestUpdate();
+  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+    if (groupListActive) {
+      enterSelectedGroup();
+    } else if (selectedSettingIndex > 0) {
+      toggleCurrentSetting();
+      requestUpdate();
+    }
+    return;
+  }
+
+  if (mappedInput.wasScreenTouchDown(tx, ty)) {
+    if (groupListActive) {
+      int touchedGroup = -1;
+      if (groupIndexFromPoint(ty, touchedGroup)) {
+        if (selectedGroupListIndex != touchedGroup) {
+          selectedGroupListIndex = touchedGroup;
+          requestUpdate();
+        }
+        return;
       }
-      return;
+    } else {
+      int touchedSetting = -1;
+      if (settingIndexFromPoint(tx, ty, touchedSetting)) {
+        if (selectedSettingIndex != touchedSetting) {
+          selectedSettingIndex = touchedSetting;
+          requestUpdate();
+        }
+        return;
+      }
     }
   }
 
   if (mappedInput.wasScreenTapped(tx, ty)) {
-    int tappedCategory = -1;
-    const auto tabs = buildTabs();
-    if (GUI.tabIndexFromPoint(renderer, Rect{0, tabTop, renderer.getScreenWidth(), metrics.tabBarHeight}, tabs, tx, ty,
-                              tappedCategory)) {
-      selectedCategoryIndex = tappedCategory;
-      selectedSettingIndex = 0;
-      applyCategorySelection();
-      requestUpdate();
-      return;
-    }
-
-    int tappedSetting = -1;
-    if (settingIndexFromPoint(tx, ty, tappedSetting)) {
-      selectedSettingIndex = tappedSetting;
-      toggleCurrentSetting();
-      requestUpdate();
-      return;
+    if (groupListActive) {
+      int tappedGroup = -1;
+      if (groupIndexFromPoint(ty, tappedGroup)) {
+        selectedGroupListIndex = tappedGroup;
+        enterSelectedGroup();
+        return;
+      }
+    } else {
+      int tappedSetting = -1;
+      if (settingIndexFromPoint(tx, ty, tappedSetting)) {
+        selectedSettingIndex = tappedSetting;
+        toggleCurrentSetting();
+        requestUpdate();
+        return;
+      }
     }
   }
 
   // Handle navigation
-  const auto& navMetrics = UITheme::getInstance().getMetrics();
-  const int settingsListHeight =
-      renderer.getScreenHeight() - (navMetrics.topPadding + navMetrics.headerHeight + navMetrics.tabBarHeight +
-                                    navMetrics.buttonHintsHeight + navMetrics.verticalSpacing * 2);
-  const int settingsPageItems = GUI.getListPageItems(settingsListHeight, false);
+  const int settingsPageItems = groupPageItems;
   const auto swipe = mappedInput.wasSwipe();
   if (swipe == MappedInputManager::SwipeDir::Up) {
-    selectedSettingIndex = selectedSettingIndex == 0 ? 1
-                                                     : ButtonNavigator::nextPageIndex(
-                                                           selectedSettingIndex, settingsCount + 1, settingsPageItems);
+    if (groupListActive) {
+      selectedGroupListIndex = ButtonNavigator::nextIndex(selectedGroupListIndex, categoryCount);
+    } else {
+      selectedSettingIndex = ButtonNavigator::nextPageIndex(selectedSettingIndex, settingsCount + 1,
+                                                            settingsPageItems);
+    }
     requestUpdate();
     return;
   }
   if (swipe == MappedInputManager::SwipeDir::Down) {
-    selectedSettingIndex =
-        ButtonNavigator::previousPageIndex(selectedSettingIndex, settingsCount + 1, settingsPageItems);
+    if (groupListActive) {
+      selectedGroupListIndex = ButtonNavigator::previousIndex(selectedGroupListIndex, categoryCount);
+    } else {
+      selectedSettingIndex = ButtonNavigator::previousPageIndex(selectedSettingIndex, settingsCount + 1,
+                                                                settingsPageItems);
+    }
     requestUpdate();
     return;
   }
 
-  // The front direction buttons move through setting rows, while the side
-  // rocker changes tabs. Keep Settings on the explicit physical-style logical
-  // buttons here instead of NavNext/NavPrevious: those aliases combine front
-  // and side inputs for list and Reader navigation.
   const auto moveToPreviousRow = [this] {
     selectedSettingIndex = ButtonNavigator::previousIndex(selectedSettingIndex, settingsCount + 1);
     requestUpdate();
@@ -606,33 +646,49 @@ void SettingsActivity::loop() {
     selectedSettingIndex = ButtonNavigator::nextIndex(selectedSettingIndex, settingsCount + 1);
     requestUpdate();
   };
-  const auto moveToPreviousTab = [this, &hasChangedCategory, &applyCategorySelection] {
-    hasChangedCategory = true;
-    selectedCategoryIndex = ButtonNavigator::previousIndex(selectedCategoryIndex, categoryCount);
-    selectedSettingIndex = 0;
-    applyCategorySelection();
+  const auto moveToPreviousGroup = [this] {
+    selectedGroupListIndex = ButtonNavigator::previousIndex(selectedGroupListIndex, categoryCount);
     requestUpdate();
   };
-  const auto moveToNextTab = [this, &hasChangedCategory, &applyCategorySelection] {
-    hasChangedCategory = true;
-    selectedCategoryIndex = ButtonNavigator::nextIndex(selectedCategoryIndex, categoryCount);
-    selectedSettingIndex = 0;
-    applyCategorySelection();
+  const auto moveToNextGroup = [this] {
+    selectedGroupListIndex = ButtonNavigator::nextIndex(selectedGroupListIndex, categoryCount);
     requestUpdate();
   };
 
-  buttonNavigator.onRelease({MappedInputManager::Button::Left}, moveToPreviousRow);
-  buttonNavigator.onRelease({MappedInputManager::Button::Right}, moveToNextRow);
-  buttonNavigator.onRelease({MappedInputManager::Button::Up}, moveToPreviousTab);
-  buttonNavigator.onRelease({MappedInputManager::Button::Down}, moveToNextTab);
-  buttonNavigator.onContinuous({MappedInputManager::Button::Left}, moveToPreviousRow);
-  buttonNavigator.onContinuous({MappedInputManager::Button::Right}, moveToNextRow);
-  buttonNavigator.onContinuous({MappedInputManager::Button::Up}, moveToPreviousTab);
-  buttonNavigator.onContinuous({MappedInputManager::Button::Down}, moveToNextTab);
-
-  if (hasChangedCategory) {
-    selectedSettingIndex = (selectedSettingIndex == 0) ? 0 : 1;
-    applyCategorySelection();
+  if (groupListActive) {
+    buttonNavigator.onRelease({MappedInputManager::Button::Left}, moveToPreviousGroup);
+    buttonNavigator.onRelease({MappedInputManager::Button::Right}, moveToNextGroup);
+    buttonNavigator.onRelease({MappedInputManager::Button::Up}, moveToPreviousGroup);
+    buttonNavigator.onRelease({MappedInputManager::Button::Down}, moveToNextGroup);
+    buttonNavigator.onContinuous({MappedInputManager::Button::Left}, moveToPreviousGroup);
+    buttonNavigator.onContinuous({MappedInputManager::Button::Right}, moveToNextGroup);
+    buttonNavigator.onContinuous({MappedInputManager::Button::Up}, moveToPreviousGroup);
+    buttonNavigator.onContinuous({MappedInputManager::Button::Down}, moveToNextGroup);
+  } else {
+    buttonNavigator.onRelease({MappedInputManager::Button::Left}, moveToPreviousRow);
+    buttonNavigator.onRelease({MappedInputManager::Button::Right}, moveToNextRow);
+    buttonNavigator.onRelease({MappedInputManager::Button::Up}, [this, settingsPageItems] {
+      selectedSettingIndex = ButtonNavigator::previousPageIndex(selectedSettingIndex, settingsCount + 1,
+                                                                 settingsPageItems);
+      requestUpdate();
+    });
+    buttonNavigator.onRelease({MappedInputManager::Button::Down}, [this, settingsPageItems] {
+      selectedSettingIndex = ButtonNavigator::nextPageIndex(selectedSettingIndex, settingsCount + 1,
+                                                            settingsPageItems);
+      requestUpdate();
+    });
+    buttonNavigator.onContinuous({MappedInputManager::Button::Left}, moveToPreviousRow);
+    buttonNavigator.onContinuous({MappedInputManager::Button::Right}, moveToNextRow);
+    buttonNavigator.onContinuous({MappedInputManager::Button::Up}, [this, settingsPageItems] {
+      selectedSettingIndex = ButtonNavigator::previousPageIndex(selectedSettingIndex, settingsCount + 1,
+                                                                 settingsPageItems);
+      requestUpdate();
+    });
+    buttonNavigator.onContinuous({MappedInputManager::Button::Down}, [this, settingsPageItems] {
+      selectedSettingIndex = ButtonNavigator::nextPageIndex(selectedSettingIndex, settingsCount + 1,
+                                                            settingsPageItems);
+      requestUpdate();
+    });
   }
 }
 
@@ -646,6 +702,8 @@ void SettingsActivity::toggleCurrentSetting() {
   const bool sleepScreenChanged = setting.nameId == StrId::STR_SLEEP_SCREEN ||
                                   setting.valuePtr == &CrossPointSettings::sleepScreen;
   const bool quickResumeTimeoutChanged = setting.valuePtr == &CrossPointSettings::quickResumeSleepScreen;
+  const bool listShapeChanged = sleepScreenChanged || setting.valuePtr == &CrossPointSettings::uiTheme ||
+                                setting.valuePtr == &CrossPointSettings::shortPwrBtn;
 
   if (setting.nameId == StrId::STR_TIME_TO_SLEEP) {
     openSleepTimeoutPicker();
@@ -664,11 +722,14 @@ void SettingsActivity::toggleCurrentSetting() {
                                     : static_cast<uint8_t>(setting.enumStringValues.size());
     if (totalValues > 2) {
       const auto valuePtr = setting.valuePtr;
-      auto onSelect = [this, valuePtr, sleepScreenChanged, quickResumeTimeoutChanged](int idx) {
+      auto onSelect = [this, valuePtr, sleepScreenChanged, quickResumeTimeoutChanged, listShapeChanged](int idx) {
         SETTINGS.*valuePtr = idx;
         syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
         SETTINGS.saveToFile();
-        rebuildSettingsLists();
+        if (listShapeChanged) {
+          rebuildSettingsLists();
+          selectedSettingIndex = std::min(selectedSettingIndex, settingsCount);
+        }
       };
       if (!setting.enumStringValues.empty()) {
         optionPopup.show(setting.nameId, setting.enumStringValues, currentValue, std::move(onSelect));
@@ -687,11 +748,14 @@ void SettingsActivity::toggleCurrentSetting() {
     const uint8_t cur = setting.valueGetter();
     if (totalValues > 2) {
       const auto valueSetter = setting.valueSetter;
-      auto onSelect = [this, valueSetter, sleepScreenChanged, quickResumeTimeoutChanged](int idx) {
+      auto onSelect = [this, valueSetter, sleepScreenChanged, quickResumeTimeoutChanged, listShapeChanged](int idx) {
         valueSetter(idx);
         syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
         SETTINGS.saveToFile();
-        rebuildSettingsLists();
+        if (listShapeChanged) {
+          rebuildSettingsLists();
+          selectedSettingIndex = std::min(selectedSettingIndex, settingsCount);
+        }
       };
       if (!setting.enumStringValues.empty()) {
         optionPopup.show(setting.nameId, setting.enumStringValues, cur, std::move(onSelect));
@@ -727,7 +791,6 @@ void SettingsActivity::toggleCurrentSetting() {
       optionPopup.show(setting.nameId, options, currentIndex, [this, valuePtr, minimum, step](const int index) {
         SETTINGS.*valuePtr = static_cast<uint8_t>(minimum + index * step);
         SETTINGS.saveToFile();
-        rebuildSettingsLists();
       });
       requestUpdate();
       return;
@@ -864,8 +927,10 @@ void SettingsActivity::toggleCurrentSetting() {
 
   syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
   SETTINGS.saveToFile();
-  rebuildSettingsLists();
-  selectedSettingIndex = std::min(selectedSettingIndex, settingsCount);
+  if (listShapeChanged) {
+    rebuildSettingsLists();
+    selectedSettingIndex = std::min(selectedSettingIndex, settingsCount);
+  }
 }
 
 void SettingsActivity::syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged) {
@@ -1017,7 +1082,6 @@ void SettingsActivity::openQuickActionsPicker() {
                            break;
                        }
                        SETTINGS.saveToFile();
-                       rebuildSettingsLists();
                      });
     requestUpdate();
   });
@@ -1040,23 +1104,32 @@ void SettingsActivity::render(RenderLock&&) {
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_SETTINGS_TITLE),
                  CROSSPOINT_VERSION);
 
-  std::vector<TabInfo> tabs;
-  tabs.reserve(categoryCount);
-  for (int i = 0; i < categoryCount; i++) {
-    tabs.push_back({I18N.get(categoryNames[i]), selectedCategoryIndex == i});
-  }
-  GUI.drawTabBar(renderer, Rect{0, metrics.topPadding + metrics.headerHeight, pageWidth, metrics.tabBarHeight}, tabs,
-                 selectedSettingIndex == 0);
-
-  const auto& settings = *currentSettings;
-  GUI.drawList(
-      renderer,
-      Rect{0, metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight + metrics.verticalSpacing, pageWidth,
-           pageHeight - (metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight + metrics.buttonHintsHeight +
-                         metrics.verticalSpacing * 2)},
-      settingsCount, selectedSettingIndex - 1,
-      [&settings](int index) { return std::string(I18N.get(settings[index].nameId)); }, nullptr, nullptr,
-      [&settings](int i) {
+  const int groupListTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int groupListHeight = pageHeight - (metrics.topPadding + metrics.headerHeight +
+                                             metrics.buttonHintsHeight + metrics.verticalSpacing * 2);
+  if (groupListActive) {
+    // This root contains only seven static labels. Children are built on
+    // demand after confirmation, keeping the initial screen allocation-free.
+    GUI.drawList(renderer, Rect{0, groupListTop, pageWidth, groupListHeight}, categoryCount,
+                 selectedGroupListIndex,
+                 [](const int index) {
+                   return std::string(I18N.get(
+                       settingsGroupLabelId(static_cast<SettingsGroupId>(index))));
+                 }, nullptr, nullptr, nullptr, false, nullptr, nullptr,
+                 [](const int) { return true; });
+  } else {
+    GUI.drawSubHeader(renderer,
+                      Rect{0, metrics.topPadding + metrics.headerHeight, pageWidth, metrics.tabBarHeight},
+                      I18N.get(settingsGroupLabelId(static_cast<SettingsGroupId>(selectedCategoryIndex))));
+    const auto& settings = *currentSettings;
+    GUI.drawList(
+        renderer,
+        Rect{0, metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight + metrics.verticalSpacing, pageWidth,
+             pageHeight - (metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight +
+                           metrics.buttonHintsHeight + metrics.verticalSpacing * 2)},
+        settingsCount, selectedSettingIndex - 1,
+        [&settings](int index) { return std::string(I18N.get(settings[index].nameId)); }, nullptr, nullptr,
+        [&settings](int i) {
         const auto& setting = settings[i];
         std::string valueText = "";
         if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
@@ -1092,43 +1165,44 @@ void SettingsActivity::render(RenderLock&&) {
             if (setting.nameId == StrId::STR_UI_SCALE) valueText += "%";
           }
         }
-        return valueText;
-      },
-      true, nullptr,
-      [&settings](const int index) -> int {
-        const auto& setting = settings[index];
-        if (setting.type != SettingType::TOGGLE || setting.valuePtr == nullptr) return -1;
-        return SETTINGS.*(setting.valuePtr) ? 1 : 0;
-      },
-      [&settings](const int index) {
-        const auto& setting = settings[index];
-        if (setting.type == SettingType::ACTION) {
-          return setting.action != SettingAction::ClearFavoriteSleepImage;
-        }
-        if (setting.type == SettingType::VALUE) return setting.nameId == StrId::STR_TIME_TO_SLEEP;
-        if (setting.type != SettingType::ENUM) return false;
-        const size_t optionCount = setting.enumStringValues.empty() ? setting.enumValues.size()
-                                                                      : setting.enumStringValues.size();
-        return optionCount > 2;
-      });
+          return valueText;
+        },
+        true, nullptr,
+        [&settings](const int index) -> int {
+          const auto& setting = settings[index];
+          if (setting.type != SettingType::TOGGLE || setting.valuePtr == nullptr) return -1;
+          return SETTINGS.*(setting.valuePtr) ? 1 : 0;
+        },
+        [&settings](const int index) {
+          const auto& setting = settings[index];
+          if (setting.type == SettingType::ACTION) {
+            return setting.action != SettingAction::ClearFavoriteSleepImage;
+          }
+          if (setting.type == SettingType::VALUE) return setting.nameId == StrId::STR_TIME_TO_SLEEP;
+          if (setting.type != SettingType::ENUM) return false;
+          const size_t optionCount = setting.enumStringValues.empty() ? setting.enumValues.size()
+                                                                        : setting.enumStringValues.size();
+          return optionCount > 2;
+        });
+  }
 
   // Draw help text
-  const StrId selectedSettingId = selectedSettingIndex > 0 && selectedSettingIndex <= settingsCount
+  const StrId selectedSettingId = !groupListActive && selectedSettingIndex > 0 && selectedSettingIndex <= settingsCount
                                       ? (*currentSettings)[selectedSettingIndex - 1].nameId
                                       : StrId::STR_NONE_OPT;
   const bool opensSleepPicker = selectedSettingId == StrId::STR_SLEEP_SCREEN ||
                                 selectedSettingId == StrId::STR_SLEEP_RANDOM_POOL ||
                                 selectedSettingId == StrId::STR_PREVIEW_SLEEP_SCREEN;
-  const auto confirmLabel =
-      (selectedSettingIndex == 0)
-          ? I18N.get(categoryNames[(selectedCategoryIndex + 1) % categoryCount])
-          : (opensSleepPicker || (selectedSettingIndex > 0 &&
-                                  (*currentSettings)[selectedSettingIndex - 1].nameId == StrId::STR_TIME_TO_SLEEP)
-                 ? tr(STR_SELECT)
-                 : (selectedSettingIndex > 0 &&
-                            (*currentSettings)[selectedSettingIndex - 1].type == SettingType::VALUE
-                        ? tr(STR_SELECT)
-                        : tr(STR_TOGGLE)));
+  const auto confirmLabel = groupListActive
+                                ? tr(STR_SELECT)
+                                : (opensSleepPicker || (selectedSettingIndex > 0 &&
+                                                        (*currentSettings)[selectedSettingIndex - 1].nameId ==
+                                                            StrId::STR_TIME_TO_SLEEP)
+                                       ? tr(STR_SELECT)
+                                       : (selectedSettingIndex > 0 &&
+                                                  (*currentSettings)[selectedSettingIndex - 1].type == SettingType::VALUE
+                                              ? tr(STR_SELECT)
+                                              : tr(STR_TOGGLE)));
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

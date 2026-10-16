@@ -1,0 +1,159 @@
+import json
+import re
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+DOCS = ROOT / "docs" / "settings-organization"
+ACTIVITY_CPP = ROOT / "src" / "activities" / "settings" / "SettingsActivity.cpp"
+ACTIVITY_H = ROOT / "src" / "activities" / "settings" / "SettingsActivity.h"
+GROUPS_H = ROOT / "src" / "SettingsGroups.h"
+
+
+class SettingsGroupPrototypeTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.before = json.loads((DOCS / "BEFORE_inventory.json").read_text(encoding="utf-8"))
+        cls.after = json.loads((DOCS / "AFTER_inventory.json").read_text(encoding="utf-8"))
+        cls.report = json.loads((DOCS / "AFTER_parity.json").read_text(encoding="utf-8"))
+        cls.cpp = ACTIVITY_CPP.read_text(encoding="utf-8")
+        cls.header = ACTIVITY_H.read_text(encoding="utf-8")
+        cls.group_header = GROUPS_H.read_text(encoding="utf-8")
+
+    def test_all_setting_ids_and_persistence_descriptors_are_unchanged(self):
+        before = {row["stableId"]: row for row in self.before["records"]}
+        after = {row["stableId"]: row for row in self.after["records"]}
+        self.assertEqual(set(before), set(after))
+        fields = ("key", "label", "category", "categoryId", "type", "backingField", "options", "range", "default")
+        for stable_id, old in before.items():
+            if old["type"] in {"action", "web_feature", "enum_option"}:
+                continue
+            self.assertEqual({key: old.get(key) for key in fields},
+                             {key: after[stable_id].get(key) for key in fields}, stable_id)
+        self.assertTrue(self.report["persistedDescriptorParity"])
+
+    def test_only_one_lazy_child_vector_is_kept(self):
+        self.assertIn("std::vector<SettingInfo> currentGroupSettings;", self.header)
+        for old_name in ("displaySettings", "readerSettings", "controlsSettings", "systemSettings"):
+            self.assertNotIn(old_name, self.header)
+        self.assertIn("groupListActive = true", self.cpp)
+        self.assertIn("currentGroupSettings.clear();", self.cpp)
+        self.assertIn("const auto& baseSettings = getBaseSettingsList();", self.cpp)
+        self.assertNotIn("getSettingsList(", self.cpp)
+        self.assertNotIn("GUI.drawTabBar", self.cpp)
+
+    def test_child_ordering_uses_no_temporary_heap_container(self):
+        self.assertIn("std::initializer_list<StrId> preferred", self.cpp)
+        self.assertIn("std::rotate(next, found, found + 1)", self.cpp)
+        self.assertNotIn("std::stable_sort(settings.begin()", self.cpp)
+
+    def test_folio_lite_layout_visibility_and_carousel_filter_match_main(self):
+        self.assertIn("const bool folioLayoutTheme", self.cpp)
+        self.assertIn("SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR_LITE", self.cpp)
+        self.assertIn("isFolioLayoutSetting(setting.nameId) && !folioLayoutTheme", self.cpp)
+        self.assertIn("if (isCarouselLayoutSetting(setting.nameId)) return false;", self.cpp)
+        rows = {row["stableId"]: row for row in self.after["records"]}
+        for stable_id in ("recentBookLayout", "finishedBookLayout"):
+            self.assertTrue(rows[stable_id]["deviceReachableAfterPrototype"])
+            self.assertIn("FOLIO_NOOIR and FOLIO_NOOIR_LITE",
+                          rows[stable_id]["deviceExposureAfterPrototype"])
+        self.assertFalse(rows["carouselLayout"]["deviceReachableAfterPrototype"])
+        self.assertIn("intentionally hidden", rows["carouselLayout"]["deviceExposureAfterPrototype"])
+        self.assertEqual(self.report["layoutPresentation"]["carouselLayout"],
+                         "hidden for 1.6.6, matching main SettingsActivity behavior")
+
+    def test_group_enter_return_and_quick_actions_move_are_explicit(self):
+        self.assertIn('logSettingsDiagnostic("group_enter", selectedCategoryIndex)', self.cpp)
+        self.assertIn('logSettingsDiagnostic("group_return", selectedCategoryIndex)', self.cpp)
+        action_section = self.cpp.split("// Device-only actions are added only", 1)[1]
+        controls = action_section.split("case SettingsGroupId::Controls:", 1)[1].split(
+            "case SettingsGroupId::Connectivity:", 1)[0]
+        self.assertIn("SettingAction::QuickActions", controls)
+        quick = next(row for row in self.after["records"] if row["stableId"] == "action:QuickActions")
+        self.assertEqual(quick["deviceGroupBefore"], "reading")
+        self.assertEqual(quick["deviceGroupAfterPrototype"], "controls")
+
+    def test_all_historical_web_keys_have_one_unchanged_group_contract(self):
+        arrays = {}
+        for match in re.finditer(r"static constexpr const char\* (\w+)\[\] = \{(.*?)\};", self.group_header, re.S):
+            arrays[match.group(1)] = re.findall(r'"([^"\\]+)"', match.group(2))
+        expected = set(self.before["summary"]["oldWebStableKeysList"])
+        for key in expected:
+            self.assertEqual(sum(key in keys for keys in arrays.values()), 1, key)
+        self.assertEqual(len(expected), 84)
+        self.assertEqual(self.before["summary"]["oldWebX4StableKeys"], 82)
+        self.assertEqual(self.report["webSettings"]["everyHistoricalKeyHasGroup"], True)
+        self.assertIn("not merged into this isolated settings-organization experiment worktree",
+                      self.report["integrationBlockers"][0])
+
+    def test_bounded_web_contract_never_restores_all_catalog_access(self):
+        contract = self.report["webSettings"]["apiContract"]
+        self.assertIn("only the seven static descriptors", contract["groups"])
+        self.assertIn("requires a valid group", contract["read"])
+        self.assertIn("2 KiB", contract["write"])
+        self.assertIn("must stay disabled", contract["legacyAllCatalogRoute"])
+        self.assertTrue(all(self.report["settingSourceParity"].values()))
+
+    def test_device_group_actions_cover_existing_child_routes(self):
+        expected = {
+            "HomeAppearance": {"VisualPreview"},
+            "Sleep": {"ClearFavoriteSleepImage", "SleepScreenPreview"},
+            "Reading": {"TextSettings", "DictionarySettings", "DictionaryIndexes", "DownloadFonts",
+                        "CustomiseStatusBar"},
+            "Controls": {"RemapFrontButtons", "RemapReaderFrontButtons", "QuickActions"},
+            "Connectivity": {"Network", "Bluetooth", "KOReaderSync", "OPDSBrowser"},
+            "Library": {"ToDoList"},
+            "System": {"ClockWeatherSync", "SettingsProfiles", "ClearCache", "CheckForUpdates",
+                       "SdFirmwareUpdate", "Language"},
+        }
+        action_code = self.cpp.split("// Device-only actions are added only", 1)[1]
+        for group, actions in expected.items():
+            block = action_code.split(f"case SettingsGroupId::{group}:", 1)[1].split(
+                "case SettingsGroupId::", 1)[0]
+            for action in actions:
+                self.assertIn(f"SettingAction::{action}", block, f"{group}: {action}")
+
+    def test_parity_report_and_markdown_table_have_requested_full_schema(self):
+        coverage = self.report["deviceExposureCoverage"]
+        self.assertEqual(coverage["previouslyExposedStableIds"], 127)
+        self.assertEqual(coverage["reachableAfter"], 122)
+        self.assertEqual(coverage["accidentalMissing"], 0)
+        self.assertEqual(sum(self.report["webSettings"]["groupCounts"].values()), 84)
+        self.assertEqual(self.report["webSettings"]["x4ReachableKeyCount"], 82)
+        table = (DOCS / "PARITY_TABLE.md").read_text(encoding="utf-8")
+        headers = [
+            "Setting ID", "Old Group", "New Group", "Device Before", "Device After", "Web Before",
+            "Web After", "Persisted Field", "Options", "Status",
+        ]
+        header_line = "| " + " | ".join(headers) + " |"
+        self.assertIn(header_line, table)
+        self.assertEqual(sum(line.startswith("| ") for line in table.splitlines()) - 2,
+                         len(self.after["records"]))
+
+    def test_intended_deferrals_are_not_counted_as_accidental_losses(self):
+        self.assertEqual(self.report["deferredDeviceUi"], ["manual:uiFontFamilyName"])
+        self.assertEqual(len(self.report["deferredSleepComposer"]), 4)
+        for stable_id in ("manual:uiFontFamilyName", "sleepBackgroundElement", "sleepOverlayAElement",
+                          "sleepOverlayBElement", "sleepScreen.option.flexible_composite", "web:clippings_notes"):
+            row = next(item for item in self.after["records"] if item["stableId"] == stable_id)
+            self.assertFalse(row["deviceReachableAfterPrototype"])
+
+    def test_every_other_previously_reachable_device_setting_stays_reachable(self):
+        deferred = {
+            "manual:uiFontFamilyName", "sleepBackgroundElement", "sleepOverlayAElement",
+            "sleepOverlayBElement", "sleepScreen.option.flexible_composite", "web:clippings_notes",
+            "carouselLayout",
+        }
+        after = {row["stableId"]: row for row in self.after["records"]}
+        for row in self.before["records"]:
+            if row["stableId"] in deferred:
+                continue
+            old_exposure = row.get("deviceExposureBefore") or ""
+            if not old_exposure or old_exposure.startswith(("not exposed", "not selectable")):
+                continue
+            self.assertTrue(after[row["stableId"]]["deviceReachableAfterPrototype"], row["stableId"])
+
+
+if __name__ == "__main__":
+    unittest.main()

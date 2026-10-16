@@ -713,7 +713,7 @@ def make_inventory(web_revision: str | None, label: str) -> dict:
             "webSettingsDeferralCommit": "4eb9b811af823344a36950725614f9ab3e341544",
             "clippingsDeferralCommit": "4eb9b811af823344a36950725614f9ab3e341544",
             "interfaceFontDecision": "Worker E commit ce86b9f8 disables custom UI font application and preserves selection; row is still present in this exact source and row-hide remains pending",
-            "homeWorkerOverlap": "Worker A is editing SettingsList/SettingsActivity on a separate branch; this inventory uses ce86b9f8 only and is not merged with that branch.",
+            "homeWorkerOverlap": "Home worker A is integrated separately at 33ed7e30; it changed presentation/layout visibility, preserving stable theme value 5 and stored layout fields. This inventory remains frozen to ce86b9f8 and does not include or merge A; SettingsActivity overlap must be resolved during integration.",
         },
         "summary": {
             "baseRecords": len([r for r in records if r.get("sourceScope") in {"base_list", "text_settings"}]),
@@ -749,7 +749,7 @@ def main() -> None:
         f"- Historical Web exposure source: `{before['source']['priorWebSettingsSourceRevision']}` (`d4a97653`), where `/settings` GET and `/api/settings` GET/POST are registered.",
         "- Current Web routes remain disabled by Worker C commit `4eb9b811`; Clippings routes remain disabled. No route was re-enabled to make this inventory.",
         "- Custom Interface Font application is deferred by Worker E at `ce86b9f8`; its settings row is still visible in this exact source and the approved row hide is pending.",
-        "- Home worker A is editing `SettingsList.h` and `SettingsActivity.cpp` separately; this source inventory is isolated at `ce86b9f8`.",
+        "- Home worker A's separate commit `33ed7e30` changed presentation/layout visibility and preserved stable theme value 5 and stored layout fields. This inventory remains isolated at `ce86b9f8`; it does not merge A, and `SettingsActivity.cpp` overlap must be resolved at integration.",
         "",
         "## Counts",
         "",

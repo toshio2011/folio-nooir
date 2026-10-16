@@ -4,7 +4,7 @@
   "source": {
     "integrationSnapshot": "ce86b9f8c85d774af297ef11e6f98c4bee9e0729",
     "branchAtInventory": "codex/folio-nooir-1.6.6-settings-org-experiment",
-    "worktreeHead": "d61e9117ea3828de32ada4319307f4140276d0d2",
+    "worktreeHead": "0d1c87933bd5fc5421ba33989991e141e0cd4adc",
     "deviceSettingsSource": "src/SettingsList.h + CrossPointSettings.h + SettingsActivity.cpp at ce86b9f8",
     "priorWebSettingsSourceRevision": "d4a97653",
     "priorWebRouteExposureVerified": true,
@@ -13,7 +13,7 @@
     "webSettingsDeferralCommit": "4eb9b811af823344a36950725614f9ab3e341544",
     "clippingsDeferralCommit": "4eb9b811af823344a36950725614f9ab3e341544",
     "interfaceFontDecision": "Worker E commit ce86b9f8 disables custom UI font application and preserves selection; row is still present in this exact source and row-hide remains pending",
-    "homeWorkerOverlap": "Worker A is editing SettingsList/SettingsActivity on a separate branch; this inventory uses ce86b9f8 only and is not merged with that branch."
+    "homeWorkerOverlap": "Home worker A is integrated separately at 33ed7e30; it changed presentation/layout visibility, preserving stable theme value 5 and stored layout fields. This inventory remains frozen to ce86b9f8 and does not include or merge A; SettingsActivity overlap must be resolved during integration."
   },
   "summary": {
     "baseRecords": 89,

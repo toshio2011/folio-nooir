@@ -1,10 +1,10 @@
 # Settings organization experiment — BEFORE inventory
 
-- Exact device/settings source snapshot: `d61e9117ea3828de32ada4319307f4140276d0d2` (`ce86b9f8`).
+- Exact device/settings source snapshot: `0d1c87933bd5fc5421ba33989991e141e0cd4adc` (`ce86b9f8`).
 - Historical Web exposure source: `d4a97653` (`d4a97653`), where `/settings` GET and `/api/settings` GET/POST are registered.
 - Current Web routes remain disabled by Worker C commit `4eb9b811`; Clippings routes remain disabled. No route was re-enabled to make this inventory.
 - Custom Interface Font application is deferred by Worker E at `ce86b9f8`; its settings row is still visible in this exact source and the approved row hide is pending.
-- Home worker A is editing `SettingsList.h` and `SettingsActivity.cpp` separately; this source inventory is isolated at `ce86b9f8`.
+- Home worker A's separate commit `33ed7e30` changed presentation/layout visibility and preserved stable theme value 5 and stored layout fields. This inventory remains isolated at `ce86b9f8`; it does not merge A, and `SettingsActivity.cpp` overlap must be resolved at integration.
 
 ## Counts
 
