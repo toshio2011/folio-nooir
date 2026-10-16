@@ -94,7 +94,11 @@ inline uint8_t choose(const uint16_t configuredMask, const Order order, Sequence
   for (const auto mode : kStableModes) count += (candidates & bitForMode(mode)) != 0;
   if (count <= 1) {
     for (const auto mode : kStableModes) {
-      if (candidates & bitForMode(mode)) return mode;
+      const uint16_t modeBit = bitForMode(mode);
+      if (candidates & modeBit) {
+        if (order == Order::Shuffle) state.remainingMask &= static_cast<uint16_t>(~modeBit);
+        return mode;
+      }
     }
   }
 
