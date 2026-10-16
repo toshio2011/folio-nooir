@@ -2369,7 +2369,6 @@ void CrossPointWebServer::handleGetSettings() const {
           case CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP: return 13;
           case CrossPointSettings::SLEEP_SCREEN_MODE::COVER_PROGRESS: return 14;
           case CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM: return 15;
-          case CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE: return 16;
           default:
             return SETTINGS.sleepScreen <= CrossPointSettings::SLEEP_SCREEN_MODE::COVER
                        ? static_cast<uint8_t>(SETTINGS.sleepScreen)
@@ -2394,14 +2393,13 @@ void CrossPointWebServer::handleGetSettings() const {
           case 13: return I18N.get(StrId::STR_READING_SUMMARY_SLEEP);
           case 14: return I18N.get(StrId::STR_SLEEP_COVER_PROGRESS);
           case 15: return I18N.get(StrId::STR_SLEEP_RANDOM);
-          case 16: return I18N.get(StrId::STR_SLEEP_FLEXIBLE);
           default: return I18N.get(StrId::STR_READING_SUMMARY_SLEEP);
         }
       };
       output.fieldString("type", "enum");
       output.fieldInt("value", sleepValue());
       output.beginArray("options");
-      for (uint8_t option = 0; option < 17; ++option) output.arrayString(sleepOption(option));
+      for (uint8_t option = 0; option < 16; ++option) output.arrayString(sleepOption(option));
       output.endArray();
       output.endObject();
       if (!output.closed && !output.countOnly && (currentIndex == 0u || (currentIndex & 7u) == 0u)) output.flush();
@@ -2456,8 +2454,7 @@ void CrossPointWebServer::handleGetSettings() const {
       }
       if (setting.nameId == StrId::STR_SLEEP_SCREEN) {
         emitSleepScreen();
-      } else if (isSleepComposerSetting(setting) &&
-                 SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE) {
+      } else if (isSleepComposerSetting(setting)) {
         continue;
       } else if (setting.nameId == StrId::STR_FONT_FAMILY) {
         emitReaderFontFamily();

@@ -193,8 +193,11 @@ void SettingsActivity::rebuildSettingsLists() {
   auto settings = getSettingsList(&sdFontSystem.registry(), &dictionaries);
   const auto visibleCategory = [&](const SettingInfo& setting) -> int {
     if (setting.category == StrId::STR_NONE_OPT) return -1;
-    if (isSleepComposerSetting(setting) &&
-        SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE) {
+    if (isSleepComposerSetting(setting)) {
+      return -1;
+    }
+    if (setting.nameId == StrId::STR_PREVIEW_SLEEP_SCREEN &&
+        SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE) {
       return -1;
     }
     if (isVisualPreviewSetting(setting.nameId)) return -1;
@@ -644,10 +647,6 @@ void SettingsActivity::toggleCurrentSetting() {
         syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
         SETTINGS.saveToFile();
         rebuildSettingsLists();
-        if (sleepScreenChanged &&
-            SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE) {
-          openSleepScreenPreview();
-        }
       };
       if (!setting.enumStringValues.empty()) {
         optionPopup.show(setting.nameId, setting.enumStringValues, currentValue, std::move(onSelect));
@@ -671,10 +670,6 @@ void SettingsActivity::toggleCurrentSetting() {
         syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
         SETTINGS.saveToFile();
         rebuildSettingsLists();
-        if (sleepScreenChanged &&
-            SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE) {
-          openSleepScreenPreview();
-        }
       };
       if (!setting.enumStringValues.empty()) {
         optionPopup.show(setting.nameId, setting.enumStringValues, cur, std::move(onSelect));

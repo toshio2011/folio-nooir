@@ -586,7 +586,6 @@ inline void configureSleepSetting(SettingInfo& sleepSetting) {
       case CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP: return 13;
       case CrossPointSettings::SLEEP_SCREEN_MODE::COVER_PROGRESS: return 14;
       case CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM: return 15;
-      case CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE: return 16;
       default:
         return SETTINGS.sleepScreen <= CrossPointSettings::SLEEP_SCREEN_MODE::COVER ? SETTINGS.sleepScreen : 3;
     }
@@ -609,7 +608,6 @@ inline void configureSleepSetting(SettingInfo& sleepSetting) {
       case 13: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP; break;
       case 14: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::COVER_PROGRESS; break;
       case 15: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM; break;
-      case 16: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE; break;
       default: SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::READING_SUMMARY_SLEEP; break;
     }
   };
@@ -622,7 +620,6 @@ inline void configureSleepSetting(SettingInfo& sleepSetting) {
   sleepSetting.enumStringValues.push_back(I18N.get(StrId::STR_READING_SUMMARY_SLEEP));
   sleepSetting.enumStringValues.push_back(I18N.get(StrId::STR_SLEEP_COVER_PROGRESS));
   sleepSetting.enumStringValues.push_back(I18N.get(StrId::STR_SLEEP_RANDOM));
-  sleepSetting.enumStringValues.push_back(I18N.get(StrId::STR_SLEEP_FLEXIBLE));
 }
 
 inline bool isSleepComposerSetting(const SettingInfo& setting) {
