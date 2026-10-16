@@ -54,6 +54,35 @@ TEST(SpineShelfPlanner, DimensionsAreDeterministicAndBottomAligned) {
   }
 }
 
+TEST(SpineShelfPlanner, FocusFrameBoundsIncludeTheCompleteRightBorder) {
+  const Rect finalSlot{74, 138, 46, 174};
+  const auto frame = SpineShelfPlanner::focusFrameFor(finalSlot);
+
+  ASSERT_TRUE(frame.valid());
+  EXPECT_EQ(frame.left, finalSlot.x - 1);
+  EXPECT_EQ(frame.right, finalSlot.x + finalSlot.width);
+  EXPECT_EQ(frame.top, finalSlot.y - 1);
+  EXPECT_EQ(frame.bottom, finalSlot.y + finalSlot.height - 1);
+  EXPECT_TRUE(frame.updateBounds.contains(frame.left, frame.top));
+  EXPECT_TRUE(frame.updateBounds.contains(frame.right, frame.top));
+  EXPECT_TRUE(frame.updateBounds.contains(frame.left, frame.bottom));
+  EXPECT_TRUE(frame.updateBounds.contains(frame.right, frame.bottom));
+  EXPECT_EQ(frame.updateBounds.width, finalSlot.width + 2);
+  EXPECT_EQ(frame.updateBounds.height, finalSlot.height + 1);
+
+  // Computing a focus region must not change the final geometry shared by
+  // rendering and hit testing.
+  EXPECT_EQ(finalSlot.x, 74);
+  EXPECT_EQ(finalSlot.y, 138);
+  EXPECT_EQ(finalSlot.width, 46);
+  EXPECT_EQ(finalSlot.height, 174);
+}
+
+TEST(SpineShelfPlanner, FocusFrameRejectsSlotsTooSmallForTheThreeSidedStroke) {
+  EXPECT_FALSE(SpineShelfPlanner::focusFrameFor(Rect{10, 10, 2, 20}).valid());
+  EXPECT_FALSE(SpineShelfPlanner::focusFrameFor(Rect{10, 10, 20, 2}).valid());
+}
+
 TEST(SpineShelfPlanner, TallerAvailableRegionProducesBookLikeProportions) {
   const auto input = books();
   const Rect bounds{0, 0, 480, 280};

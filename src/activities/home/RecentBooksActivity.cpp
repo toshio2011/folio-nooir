@@ -420,19 +420,17 @@ void drawSpineShelfFurniture(const GfxRenderer& renderer, const SpineShelfPlanne
 
 void drawSpineSlotFocusOutline(const GfxRenderer& renderer, const SpineShelfPlanner::Rect& rect,
                                const bool selected) {
-  if (rect.width <= 2 || rect.height <= 2) return;
+  const auto frame = SpineShelfPlanner::focusFrameFor(rect);
+  if (!frame.valid()) return;
 
   // The book's own bottom border meets the shelf and closes this three-sided
   // outline. Keep the focus stroke one pixel outside the cached slot so it can
   // be erased with white strokes without redrawing the book face, thumbnail,
-  // or shelf. One pixel also fits the tight gap in the two-row layout.
-  const int left = rect.x - 1;
-  const int right = rect.x + rect.width;
-  const int top = rect.y - 1;
-  const int bottom = rect.y + rect.height - 1;
-  renderer.drawLine(left, top, right, top, selected);
-  renderer.drawLine(left, top, left, bottom, selected);
-  renderer.drawLine(right, top, right, bottom, selected);
+  // or shelf. Its explicit inclusive bounds include the outer right stroke.
+  // One pixel also fits the tight gap in the two-row layout.
+  renderer.drawLine(frame.left, frame.top, frame.right, frame.top, selected);
+  renderer.drawLine(frame.left, frame.top, frame.left, frame.bottom, selected);
+  renderer.drawLine(frame.right, frame.top, frame.right, frame.bottom, selected);
 }
 
 void drawSpinePageSelectionMarker(const GfxRenderer& renderer, const SpineShelfPlanner::Page& page,
@@ -3895,6 +3893,12 @@ void RecentBooksActivity::render(RenderLock&&) {
   const auto labels = mappedInput.mapLabels(tr(STR_MENU), tr(STR_OPEN), tr(STR_LIBRARY),
                                             activeTab == 1 ? tr(STR_FINISHED) : tr(STR_RECENT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  // Spine navigation retains the shelf in the framebuffer and updates only
+  // the focus strokes. Reassert the selected frame after all content and hint
+  // cleanup so no later paint can cover one side before the full-panel update.
+  if ((spineLayout || twoRowSpineLayout) && visibleBookCount > 0) {
+    drawSnapshotSelectionOutline(layout, selectorIndex, true);
+  }
   renderer.displayBuffer();
   markStatsReturnFrameReady();
   if (manualSingleRefresh && !retrievingBookCache) manualSingleRefresh = false;

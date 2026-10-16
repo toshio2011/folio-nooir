@@ -58,6 +58,29 @@ struct Rect {
   }
 };
 
+// The Home focus frame is painted just outside a slot so erasing it cannot
+// remove the book's own edge. Keep its complete inclusive paint extent with
+// the final slot geometry so renderers and host tests agree on every border
+// pixel, including the right stroke.
+struct FocusFrame {
+  int left = 0;
+  int right = -1;
+  int top = 0;
+  int bottom = -1;
+  Rect updateBounds{};
+
+  bool valid() const { return right >= left && bottom >= top; }
+};
+
+inline FocusFrame focusFrameFor(const Rect& slot) {
+  if (slot.width <= 2 || slot.height <= 2) return {};
+  const int left = slot.x - 1;
+  const int right = slot.x + slot.width;
+  const int top = slot.y - 1;
+  const int bottom = slot.y + slot.height - 1;
+  return FocusFrame{left, right, top, bottom, Rect{left, top, right - left + 1, bottom - top + 1}};
+}
+
 struct Slot {
   size_t itemIndex = 0;
   Rect rect{};
