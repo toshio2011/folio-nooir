@@ -880,7 +880,10 @@
       const response = await fetch('/api/clock-weather?_=' + Date.now(), options);
       if (!response.ok) throw new Error('Failed to load clock/weather state');
       const state = await response.json();
-      if (expectedToken !== groupLoadToken || currentGroupId !== 'system') return;
+      if (expectedToken !== groupLoadToken || currentGroupId !== 'system') {
+        if (currentGroupId !== 'system') clockWeatherState = null;
+        return;
+      }
       clockWeatherState = state;
       renderClockWeather();
       setClockWeatherBusy(clockWeatherRequestInFlight);
@@ -981,7 +984,10 @@
       const resp = await fetch('/api/wifi', options);
       if (!resp.ok) throw new Error('Failed to load');
       const networks = await resp.json();
-      if (expectedToken !== groupLoadToken || currentGroupId !== 'connectivity') return;
+      if (expectedToken !== groupLoadToken || currentGroupId !== 'connectivity') {
+        if (currentGroupId !== 'connectivity') wifiNetworks = [];
+        return;
+      }
       wifiNetworks = networks;
       renderWifiSection();
     } catch (e) {
@@ -1104,7 +1110,10 @@
       const resp = await fetch('/api/opds', options);
       if (!resp.ok) throw new Error('Failed to load');
       const servers = await resp.json();
-      if (expectedToken !== groupLoadToken || currentGroupId !== 'connectivity') return;
+      if (expectedToken !== groupLoadToken || currentGroupId !== 'connectivity') {
+        if (currentGroupId !== 'connectivity') opdsServers = [];
+        return;
+      }
       opdsServers = servers;
       renderOpdsSection();
     } catch (e) {

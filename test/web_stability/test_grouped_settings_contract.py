@@ -50,6 +50,11 @@ class GroupedSettingsContractTest(unittest.TestCase):
         self.assertIn("if (token !== groupLoadToken) { rows.length = 0; return; }", PAGE)
         self.assertIn("if (activeGroupController) activeGroupController.abort();", PAGE)
 
+    def test_late_group_extras_do_not_retain_state_after_leaving_their_group(self):
+        self.assertIn("if (currentGroupId !== 'system') clockWeatherState = null;", PAGE)
+        self.assertIn("if (currentGroupId !== 'connectivity') wifiNetworks = [];", PAGE)
+        self.assertIn("if (currentGroupId !== 'connectivity') opdsServers = [];", PAGE)
+
 
 if __name__ == "__main__":
     unittest.main()
