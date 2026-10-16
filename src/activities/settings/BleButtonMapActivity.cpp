@@ -10,17 +10,25 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 
-// Logical functions offered for binding. Page navigation + confirm cover Free2 /
-// Free3; the directions are included so a remote can also drive menu navigation.
+namespace {
+constexpr unsigned long kLearnTimeoutMs = 30000;
+}
+
+// New bindings target virtual physical buttons or safe ActivityManager
+// shortcuts. Existing PageForward/PageBack mappings remain loadable and work as
+// before, but new learning does not create activity-specific actions.
 const BleButtonMapActivity::Fn BleButtonMapActivity::kFunctions[] = {
-    {MappedInputManager::Button::PageForward, StrId::STR_BT_PAGE_FORWARD},
-    {MappedInputManager::Button::PageBack, StrId::STR_BT_PAGE_BACK},
-    {MappedInputManager::Button::Confirm, StrId::STR_CONFIRM},
-    {MappedInputManager::Button::Back, StrId::STR_BACK},
-    {MappedInputManager::Button::Up, StrId::STR_DIR_UP},
-    {MappedInputManager::Button::Down, StrId::STR_DIR_DOWN},
-    {MappedInputManager::Button::Left, StrId::STR_DIR_LEFT},
-    {MappedInputManager::Button::Right, StrId::STR_DIR_RIGHT},
+    {bleinput::mapping::kButtonAction, static_cast<uint8_t>(MappedInputManager::Button::Back), StrId::STR_BACK},
+    {bleinput::mapping::kButtonAction, static_cast<uint8_t>(MappedInputManager::Button::Confirm), StrId::STR_CONFIRM},
+    {bleinput::mapping::kButtonAction, static_cast<uint8_t>(MappedInputManager::Button::Left), StrId::STR_DIR_LEFT},
+    {bleinput::mapping::kButtonAction, static_cast<uint8_t>(MappedInputManager::Button::Right), StrId::STR_DIR_RIGHT},
+    {bleinput::mapping::kButtonAction, static_cast<uint8_t>(MappedInputManager::Button::Up), StrId::STR_DIR_UP},
+    {bleinput::mapping::kButtonAction, static_cast<uint8_t>(MappedInputManager::Button::Down), StrId::STR_DIR_DOWN},
+    {bleinput::mapping::kShortcutAction, bleinput::mapping::kShortcutHome, StrId::STR_HOME},
+    {bleinput::mapping::kShortcutAction, bleinput::mapping::kShortcutLibrary, StrId::STR_LIBRARY},
+    {bleinput::mapping::kShortcutAction, bleinput::mapping::kShortcutRecent, StrId::STR_RECENT},
+    {bleinput::mapping::kShortcutAction, bleinput::mapping::kShortcutClippings, StrId::STR_CLIPPINGS},
+    {0xFF, 0xFF, StrId::STR_DELETE, true},
 };
 const uint8_t BleButtonMapActivity::kFunctionCount =
     static_cast<uint8_t>(sizeof(kFunctions) / sizeof(kFunctions[0]));
@@ -30,6 +38,9 @@ void BleButtonMapActivity::onEnter() {
   step = Step::WaitForKey;
   capturedCount = 0;
   functionIndex = 0;
+  waitStartedAt = millis();
+  unsupportedNoticeShown = false;
+  noticeUntil = 0;
   mappedInput.setBleCaptureMode(true);
   requestUpdate();
 }
@@ -39,44 +50,21 @@ void BleButtonMapActivity::onExit() {
   Activity::onExit();
 }
 
-bool BleButtonMapActivity::assignCapturedSignature(MappedInputManager::Button button) {
-  if (capturedCount == 0 || capturedCount > MappedInputManager::kBleSignatureMaxEvents) return false;
-  const uint8_t btn = static_cast<uint8_t>(button);
-  auto matches = [&](const CrossPointSettings::BleKeyMapEntry& entry) {
-    const uint8_t count = entry.signatureCount > 0 ? entry.signatureCount : 1;
-    if (count != capturedCount) return false;
-    for (uint8_t i = 0; i < count; ++i) {
-      const uint16_t encoded = entry.signatureCount > 0
-                                   ? entry.signature[i]
-                                   : (static_cast<uint16_t>(entry.keyKind) << 8) | entry.keyValue;
-      if (static_cast<uint8_t>(encoded >> 8) != capturedKinds[i] ||
-          static_cast<uint8_t>(encoded & 0xFF) != capturedValues[i])
-        return false;
-    }
-    return true;
-  };
-  // Update an existing binding for this key, if present.
-  for (auto& e : SETTINGS.bleKeyMap) {
-    if (e.button != 0xFF && matches(e)) {
-      e.button = btn;
-      SETTINGS.saveToFile();
-      return true;
-    }
+bleinput::mapping::AssignResult BleButtonMapActivity::applyCapturedChoice(const Fn& choice) {
+  bleinput::mapping::CapturedIdentity captured[MappedInputManager::kBleSignatureMaxEvents] = {};
+  if (capturedCount == 0 || capturedCount > MappedInputManager::kBleSignatureMaxEvents)
+    return bleinput::mapping::AssignResult::Invalid;
+  for (uint8_t i = 0; i < capturedCount; ++i) captured[i] = {capturedKinds[i], capturedValues[i]};
+
+  const auto result = choice.remove
+                          ? bleinput::mapping::remove(SETTINGS.bleKeyMap, captured, capturedCount)
+                          : bleinput::mapping::assign(SETTINGS.bleKeyMap, captured, capturedCount,
+                                                      choice.actionType, choice.target);
+  if (result == bleinput::mapping::AssignResult::Added || result == bleinput::mapping::AssignResult::Replaced ||
+      result == bleinput::mapping::AssignResult::Removed) {
+    SETTINGS.saveToFile();
   }
-  // Otherwise take a free slot.
-  for (auto& e : SETTINGS.bleKeyMap) {
-    if (e.button == 0xFF || e.keyKind == 0xFF) {
-      e.keyKind = capturedKinds[0];
-      e.keyValue = capturedValues[0];
-      e.button = btn;
-      e.signatureCount = capturedCount;
-      for (uint8_t i = 0; i < capturedCount; ++i)
-        e.signature[i] = (static_cast<uint16_t>(capturedKinds[i]) << 8) | capturedValues[i];
-      SETTINGS.saveToFile();
-      return true;
-    }
-  }
-  return false;  // table full
+  return result;
 }
 
 void BleButtonMapActivity::loop() {
@@ -86,13 +74,25 @@ void BleButtonMapActivity::loop() {
     return;
   }
 
+  if (bleinput::mapping::learnTimedOut(waitStartedAt, millis(), kLearnTimeoutMs)) {
+    // Leave Learn mode automatically so it cannot capture input forever.
+    finish();
+    return;
+  }
+
   if (step == Step::WaitForKey) {
+    if (mappedInput.bleCaptureSawUnsupported() && !unsupportedNoticeShown) {
+      unsupportedNoticeShown = true;
+      requestUpdate();
+    }
     uint8_t count = 0;
     if (mappedInput.takeCapturedBleSignature(capturedKinds, capturedValues,
                                              MappedInputManager::kBleSignatureMaxEvents, count)) {
       capturedCount = count;
       functionIndex = 0;
       step = Step::SelectFunction;
+      waitStartedAt = millis();
+      unsupportedNoticeShown = false;
       requestUpdate();
     }
     return;
@@ -109,13 +109,29 @@ void BleButtonMapActivity::loop() {
   });
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    if (!assignCapturedSignature(kFunctions[functionIndex].button)) {
-      // Table full: surface it instead of silently dropping the binding.
-      errorUntil = millis() + 2500;
+    const auto result = applyCapturedChoice(kFunctions[functionIndex]);
+    switch (result) {
+      case bleinput::mapping::AssignResult::Added:
+      case bleinput::mapping::AssignResult::Replaced:
+        noticeString = StrId::STR_BT_MAP_SAVED;
+        break;
+      case bleinput::mapping::AssignResult::Removed:
+        noticeString = StrId::STR_BT_MAP_REMOVED;
+        break;
+      case bleinput::mapping::AssignResult::NotFound:
+        noticeString = StrId::STR_BT_MAP_NOT_FOUND;
+        break;
+      case bleinput::mapping::AssignResult::Full:
+      case bleinput::mapping::AssignResult::Invalid:
+        noticeString = StrId::STR_BT_MAP_FULL;
+        break;
     }
+    noticeUntil = millis() + 2500;
     // Back to capturing so the user can map the next remote button.
     step = Step::WaitForKey;
     capturedCount = 0;
+    waitStartedAt = millis();
+    unsupportedNoticeShown = false;
     requestUpdate();
   }
 }
@@ -138,7 +154,7 @@ void BleButtonMapActivity::render(RenderLock&&) {
     // Show the current mappings so the user sees progress.
     int row = 0;
     for (const auto& e : SETTINGS.bleKeyMap) {
-      if (e.button == 0xFF) continue;
+      if (!bleinput::mapping::entryIsValid(e)) continue;
       char keyName[24];
       const uint16_t first = e.signatureCount > 0 ? e.signature[0]
                                                    : (static_cast<uint16_t>(e.keyKind) << 8) | e.keyValue;
@@ -146,10 +162,18 @@ void BleButtonMapActivity::render(RenderLock&&) {
                             sizeof(keyName));
       const char* fnName = "";
       for (uint8_t i = 0; i < kFunctionCount; i++) {
-        if (static_cast<uint8_t>(kFunctions[i].button) == e.button) {
+        if (!kFunctions[i].remove && kFunctions[i].actionType == e.actionType &&
+            ((e.actionType == bleinput::mapping::kButtonAction && kFunctions[i].target == e.button) ||
+             (e.actionType == bleinput::mapping::kShortcutAction && kFunctions[i].target == e.shortcut))) {
           fnName = I18N.get(kFunctions[i].label);
           break;
         }
+      }
+      if (fnName[0] == '\0' && e.actionType == bleinput::mapping::kButtonAction) {
+        if (e.button == static_cast<uint8_t>(MappedInputManager::Button::PageForward))
+          fnName = I18N.get(StrId::STR_BT_PAGE_FORWARD);
+        else if (e.button == static_cast<uint8_t>(MappedInputManager::Button::PageBack))
+          fnName = I18N.get(StrId::STR_BT_PAGE_BACK);
       }
       char line[64];
       if (e.signatureCount > 1) {
@@ -176,8 +200,12 @@ void BleButtonMapActivity::render(RenderLock&&) {
         [this](int i) { return std::string(I18N.get(kFunctions[i].label)); }, nullptr, nullptr, nullptr, false);
   }
 
-  if (static_cast<int32_t>(errorUntil - millis()) > 0) {
-    GUI.drawHelpText(renderer, Rect{0, pageHeight - metrics.buttonHintsHeight - 22, pageWidth, 20}, tr(STR_BT_MAP_FULL));
+  if (static_cast<int32_t>(noticeUntil - millis()) > 0) {
+    GUI.drawHelpText(renderer, Rect{0, pageHeight - metrics.buttonHintsHeight - 22, pageWidth, 20},
+                     I18N.get(noticeString));
+  } else if (step == Step::WaitForKey && mappedInput.bleCaptureSawUnsupported()) {
+    GUI.drawHelpText(renderer, Rect{0, pageHeight - metrics.buttonHintsHeight - 22, pageWidth, 20},
+                     tr(STR_BT_MAP_UNSUPPORTED));
   }
 
   const char* confirm = step == Step::WaitForKey ? "" : tr(STR_SELECT);

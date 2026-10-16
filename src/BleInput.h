@@ -104,9 +104,13 @@ bool takeNotification(char* out, size_t outLen);
 void suppressNextDisconnectNotice();
 
 // Encode a decoded key event into the stable (kind, value) identity used by the
-// settings map. kind: 0 = SpecialKey, 1 = HID usage. Returns false when the event
+// settings map. kind: 0 = SpecialKey, 1 = legacy/untyped usage. Returns false when the event
 // carries no usable identity (no special key and no usage code).
 bool encodeKey(const freeink::KeyEvent& ev, uint8_t& kind, uint8_t& value);
+// Safe identity for Learn mode: special keys are already normalized; ordinary
+// usages are learnable only when FreeInk identified the HID Keyboard page.
+// Unclassified/synthetic report bytes are rejected instead of persisted.
+bool encodeLearnedKey(const freeink::KeyEvent& ev, uint8_t& kind, uint8_t& value);
 
 // Human-readable name for a stored (kind, value) identity, for the mapping UI.
 // Writes a null-terminated string into out (e.g. "Page Down", "Key 0x4B").

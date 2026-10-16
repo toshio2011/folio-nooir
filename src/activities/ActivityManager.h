@@ -115,6 +115,7 @@ class ActivityManager {
   void goToFileBrowser(std::string path = {});
   void goToFolioShelf(uint8_t tab = 1);
   void goToRecentBooks();
+  void goToClippings();
   void goToReadingStats();
   void goToToDoList();
   void goToBrowser();

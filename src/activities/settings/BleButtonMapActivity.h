@@ -26,26 +26,30 @@ class BleButtonMapActivity final : public Activity {
  private:
   // Logical functions a remote button can be bound to.
   struct Fn {
-    MappedInputManager::Button button;
+    uint8_t actionType;
+    uint8_t target;
     StrId label;
+    bool remove = false;
   };
   static const Fn kFunctions[];
   static const uint8_t kFunctionCount;
 
   enum class Step { WaitForKey, SelectFunction };
   Step step = Step::WaitForKey;
+  unsigned long waitStartedAt = 0;
+  bool unsupportedNoticeShown = false;
 
   uint8_t capturedCount = 0;
   uint8_t capturedKinds[MappedInputManager::kBleSignatureMaxEvents] = {};
   uint8_t capturedValues[MappedInputManager::kBleSignatureMaxEvents] = {};
   int functionIndex = 0;
 
-  // Transient "mapping table full" banner.
-  unsigned long errorUntil = 0;
+  // Transient assignment feedback, including explicit remove/not-found results.
+  unsigned long noticeUntil = 0;
+  StrId noticeString = StrId::STR_BT_MAP_FULL;
 
   ButtonNavigator buttonNavigator;
 
-  // Bind the captured key to the chosen logical button in SETTINGS.bleKeyMap and
-  // persist. Returns false when the table is full and the key is new.
-  bool assignCapturedSignature(MappedInputManager::Button button);
+  // Assign, replace, or remove the captured bounded identity and persist it.
+  bleinput::mapping::AssignResult applyCapturedChoice(const Fn& choice);
 };

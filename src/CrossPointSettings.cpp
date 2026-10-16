@@ -173,11 +173,18 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["bleControllerPreset"] = bleControllerPreset;
   JsonArray bleMap = doc["bleKeyMap"].to<JsonArray>();
   for (const auto& entry : bleKeyMap) {
-    if (entry.keyKind == 0xFF || entry.button == 0xFF) continue;
+    if (!bleinput::mapping::entryIsValid(entry)) continue;
     JsonObject item = bleMap.add<JsonObject>();
     item["k"] = entry.keyKind;
     item["v"] = entry.keyValue;
-    item["b"] = entry.button;
+    if (entry.actionType == bleinput::mapping::kShortcutAction) {
+      // Older firmware sees b=0xFF and safely skips this new mapping instead
+      // of treating a shortcut index as a physical button.
+      item["t"] = bleinput::mapping::kShortcutAction;
+      item["a"] = entry.shortcut;
+    } else {
+      item["b"] = entry.button;
+    }
     if (entry.signatureCount > 1 && entry.signatureCount <= BLE_SIGNATURE_MAX_EVENTS) {
       JsonArray signature = item["s"].to<JsonArray>();
       for (uint8_t i = 0; i < entry.signatureCount; ++i) signature.add(entry.signature[i]);
@@ -523,15 +530,18 @@ bool CrossPointSettings::fromJsonForProfile(JsonVariantConst doc, const bool pre
     uint8_t slot = 0;
     for (JsonObjectConst item : storedBleMap) {
       if (slot >= BLE_MAP_CAPACITY) break;
-      const uint8_t kind = item["k"] | (uint8_t)0xFF;
-      const uint8_t button = item["b"] | (uint8_t)0xFF;
-      if (kind > 1 || button >= MappedInputManager::kButtonCount) {
+      bleinput::mapping::PersistedEntry persisted{};
+      persisted.keyKind = item["k"] | (uint8_t)0xFF;
+      persisted.keyValue = item["v"] | (uint8_t)0;
+      persisted.button = item["b"] | (uint8_t)0xFF;
+      persisted.actionType = item["t"] | (uint8_t)0xFF;
+      persisted.shortcut = item["a"] | (uint8_t)0xFF;
+      if (persisted.keyKind > 2 ||
+          (persisted.actionType != 0xFF && persisted.actionType != bleinput::mapping::kButtonAction &&
+           persisted.actionType != bleinput::mapping::kShortcutAction)) {
         needsResave = true;
         continue;
       }
-      bleKeyMap[slot].keyKind = kind;
-      bleKeyMap[slot].keyValue = item["v"] | (uint8_t)0;
-      bleKeyMap[slot].button = button;
       JsonArrayConst signature = item["s"];
       if (!signature.isNull()) {
         uint8_t count = 0;
@@ -542,19 +552,22 @@ bool CrossPointSettings::fromJsonForProfile(JsonVariantConst doc, const bool pre
             break;
           }
           const uint16_t value = encoded | (uint16_t)0xFFFF;
-          if (value == 0xFFFF || (value >> 8) > 1) {
+          if (value == 0xFFFF || (value >> 8) > 2) {
             valid = false;
             break;
           }
-          bleKeyMap[slot].signature[count++] = value;
+          persisted.signature[count++] = value;
         }
-        if (valid && count > 1 && ((bleKeyMap[slot].signature[0] >> 8) == kind) &&
-            ((bleKeyMap[slot].signature[0] & 0xFF) == bleKeyMap[slot].keyValue)) {
-          bleKeyMap[slot].signatureCount = count;
-        } else {
-          bleKeyMap[slot].signatureCount = 0;
+        if (!valid || count < 2 || ((persisted.signature[0] >> 8) != persisted.keyKind) ||
+            ((persisted.signature[0] & 0xFF) != persisted.keyValue)) {
           needsResave = true;
+          continue;
         }
+        persisted.signatureCount = count;
+      }
+      if (!bleinput::mapping::fromPersisted(persisted, bleKeyMap[slot])) {
+        needsResave = true;
+        continue;
       }
       slot++;
     }

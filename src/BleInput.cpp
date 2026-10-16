@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <atomic>
 
+#include "util/BleKeyMapping.h"
+
 #if FREEINK_CAP_BLE_HID_HOST
 #include "CrossPointSettings.h"
 #include "activities/Activity.h"  // completes Activity for ActivityManager's unique_ptr members
@@ -739,6 +741,13 @@ bool encodeKey(const freeink::KeyEvent& ev, uint8_t& kind, uint8_t& value) {
   return false;
 }
 
+bool encodeLearnedKey(const freeink::KeyEvent& ev, uint8_t& kind, uint8_t& value) {
+  if (mapping::encodeNormalizedSpecialForLearning(ev.specialNormalized,
+                                                  static_cast<uint8_t>(ev.special), kind, value))
+    return true;
+  return mapping::encodeKeyboardUsageForLearning(ev.usagePage, ev.keycode, kind, value);
+}
+
 namespace {
 const char* specialName(uint8_t value) {
   switch (static_cast<freeink::SpecialKey>(value)) {
@@ -783,6 +792,10 @@ void describeKey(uint8_t kind, uint8_t value, char* out, size_t outLen) {
       out[outLen - 1] = '\0';
       return;
     }
+  }
+  if (kind == 2) {
+    snprintf(out, outLen, "Keyboard 0x%02X", static_cast<unsigned>(value));
+    return;
   }
   // Printable ASCII usage handled as a generic key code; show the raw value.
   snprintf(out, outLen, "Key 0x%02X", static_cast<unsigned>(value));

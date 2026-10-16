@@ -25,6 +25,7 @@
 #include "home/ReadingStatsActivity.h"
 #include "network/CrossPointWebServerActivity.h"
 #include "reader/ReaderActivity.h"
+#include "reader/EpubReaderClippingListActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
 #include "util/EpubDiagnostics.h"
@@ -216,6 +217,29 @@ void ActivityManager::loop() {
     if (!closingInput) suppressRestoredReaderInput = false;
     return;
   }
+
+#if FREEINK_CAP_BLE_HID_HOST
+  uint8_t bleShortcut = 0xFF;
+  if (mappedInput.takeBleShortcut(bleShortcut) && !sleepTransitionPending) {
+    switch (bleShortcut) {
+      case bleinput::mapping::kShortcutHome:
+        goHome();
+        break;
+      case bleinput::mapping::kShortcutLibrary:
+        if (prepareWebExclusiveExit()) goToFileBrowser();
+        break;
+      case bleinput::mapping::kShortcutRecent:
+        goToRecentBooks();
+        break;
+      case bleinput::mapping::kShortcutClippings:
+        goToClippings();
+        break;
+      default:
+        break;
+    }
+    return;
+  }
+#endif
 
   if (currentActivity && !sleepTransitionPending) {
     if (!currentActivity->isHomeActivity() && mappedInput.wasHomeGesture()) {
@@ -573,6 +597,11 @@ void ActivityManager::goToFolioShelf(const uint8_t tab) {
 void ActivityManager::goToRecentBooks() {
   if (!prepareWebExclusiveExit()) return;
   replaceActivity(std::make_unique<RecentBooksActivity>(renderer, mappedInput));
+}
+
+void ActivityManager::goToClippings() {
+  if (!prepareWebExclusiveExit()) return;
+  replaceActivity(std::make_unique<EpubReaderClippingListActivity>(renderer, mappedInput, "", "All books", true));
 }
 
 void ActivityManager::goToReadingStats() {

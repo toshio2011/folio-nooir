@@ -19,6 +19,11 @@ constexpr unsigned long BLE_SIGNATURE_TIMEOUT_MS = 700;
 // Also suppress repeats of the same logical action across adjacent HID reports.
 // 280 ms remains responsive for deliberate reading while preventing double turns.
 constexpr unsigned long BLE_ACTION_DEBOUNCE_MS = 280;
+static_assert(MappedInputManager::kButtonCount == bleinput::mapping::kLegacyButtonCount,
+              "BLE map button count must track MappedInputManager::Button values");
+static_assert(static_cast<uint8_t>(MappedInputManager::Button::Down) + 1 ==
+                  bleinput::mapping::kPhysicalButtonCount,
+              "BLE Learn physical targets must remain Back/Confirm/Left/Right/Up/Down");
 }  // namespace
 
 bool MappedInputManager::isNavDirectionSwapped() const {
@@ -342,6 +347,11 @@ bool MappedInputManager::isPressed(const Button button) const {
 
 void MappedInputManager::setBleCaptureMode(const bool enabled) {
   bleCaptureMode = enabled;
+  if (enabled) {
+    bleCaptureSawUnsupportedInput = false;
+    blePendingShortcut = -1;
+    for (uint8_t i = 0; i < bleinput::mapping::kMapCapacity; ++i) bleShortcutActive[i] = false;
+  }
   bleHasCaptured = false;
   bleCaptureQuietUntil = 0;
   bleCaptureStartedAt = 0;
@@ -386,6 +396,7 @@ bool MappedInputManager::takeCapturedBleSignature(uint8_t* kinds, uint8_t* value
   count = copied;
   bleHasCaptured = false;
   bleCapturedCount = 0;
+  bleCaptureSawUnsupportedInput = false;
   return count > 0;
 }
 
@@ -401,6 +412,11 @@ void MappedInputManager::pollBle() {
       bleActiveKinds[i] = 0;
       bleActiveValues[i] = 0;
       bleLastDispatchAt[i] = 0;
+    }
+    for (uint8_t i = 0; i < bleinput::mapping::kShortcutCount; ++i) bleLastShortcutDispatchAt[i] = 0;
+    blePendingShortcut = -1;
+    for (uint8_t i = 0; i < bleinput::mapping::kMapCapacity; ++i) {
+      bleShortcutActive[i] = false;
     }
     blePendingMap = -1;
     blePendingIndex = 0;
@@ -425,14 +441,20 @@ void MappedInputManager::pollBle() {
 
   freeink::KeyEvent event;
   while (BleHid.popKey(event)) {
-    uint8_t kind = 0xFF;
-    uint8_t value = 0;
-    if (!bleinput::encodeKey(event, kind, value)) {
+    uint8_t legacyKind = 0xFF;
+    uint8_t legacyValue = 0;
+    if (!bleinput::encodeKey(event, legacyKind, legacyValue)) {
+      if (bleCaptureMode) bleCaptureSawUnsupportedInput = true;
 #if FREEINK_CAP_BLE_HID_HOST
-      bleinput::recordDecodedKey(event, kind, value, 0xFF, bleinput::InputDisposition::Unusable, false);
+      bleinput::recordDecodedKey(event, legacyKind, legacyValue, 0xFF, bleinput::InputDisposition::Unusable, false);
 #endif
       continue;
     }
+    uint8_t learnedKind = 0xFF;
+    uint8_t learnedValue = 0;
+    const bool hasSafeLearnIdentity = bleinput::encodeLearnedKey(event, learnedKind, learnedValue);
+    uint8_t kind = hasSafeLearnIdentity ? learnedKind : legacyKind;
+    uint8_t value = hasSafeLearnIdentity ? learnedValue : legacyValue;
     uint8_t mappedButton = 0xFF;
     if (bleCaptureMode) {
       // Capture a bounded decoded signature for one physical press. The quiet
@@ -442,6 +464,14 @@ void MappedInputManager::pollBle() {
       // release or firmware repeat. Capturing those phases would turn one
       // physical click into a multi-event mapping and make the next release
       // look like a second action.
+      if (!hasSafeLearnIdentity) {
+        bleCaptureSawUnsupportedInput = true;
+#if FREEINK_CAP_BLE_HID_HOST
+        bleinput::recordDecodedKey(event, legacyKind, legacyValue, 0xFC,
+                                   bleinput::InputDisposition::Unusable, false);
+#endif
+        continue;
+      }
       if (event.phase != freeink::KeyPhase::Press) {
 #if FREEINK_CAP_BLE_HID_HOST
         bleinput::recordDecodedKey(event, kind, value, 0xFE, bleinput::InputDisposition::Captured, false);
@@ -451,16 +481,15 @@ void MappedInputManager::pollBle() {
       if (!bleHasCaptured) {
         bleCaptureStartedAt = millis();
         bleCapturedCount = 0;
-        bleCapturedKind = kind;
-        bleCapturedValue = value;
         bleHasCaptured = true;
       }
-      if (bleCapturedCount < kBleSignatureMaxEvents) {
-        bleCapturedKinds[bleCapturedCount] = kind;
-        bleCapturedValues[bleCapturedCount] = value;
-        ++bleCapturedCount;
+      const auto captureResult = bleinput::mapping::addCapturedIdentity(
+          bleCapturedKinds, bleCapturedValues, kBleSignatureMaxEvents, bleCapturedCount, kind, value);
+      if (captureResult == bleinput::mapping::CaptureResult::Added) {
+        // Repeated copies of one key do not keep Learn open. Distinct usages
+        // from a rolling-code remote may still form its bounded signature.
+        bleCaptureQuietUntil = millis() + BLE_CAPTURE_QUIET_MS;
       }
-      bleCaptureQuietUntil = millis() + BLE_CAPTURE_QUIET_MS;
       mappedButton = 0xFE;  // captured by the mapping screen, not dispatched
 #if FREEINK_CAP_BLE_HID_HOST
       bleinput::recordDecodedKey(event, kind, value, mappedButton, bleinput::InputDisposition::Captured, false);
@@ -474,21 +503,31 @@ void MappedInputManager::pollBle() {
     const bool isRelease = event.phase == freeink::KeyPhase::Release;
     const bool isRepeat = event.phase == freeink::KeyPhase::Repeat;
 
-    auto entryCount = [](const CrossPointSettings::BleKeyMapEntry& entry) -> uint8_t {
-      return entry.signatureCount > 0 ? entry.signatureCount : 1;
-    };
+    uint8_t matchedKind = legacyKind;
+    uint8_t matchedValue = legacyValue;
     auto entryMatches = [&](const CrossPointSettings::BleKeyMapEntry& entry, const uint8_t index) {
-      if (entry.button >= kButtonCount || index >= entryCount(entry)) return false;
-      if (entry.signatureCount > 0) {
-        const uint16_t encoded = entry.signature[index];
-        return static_cast<uint8_t>(encoded >> 8) == kind && static_cast<uint8_t>(encoded & 0xFF) == value;
+      if (hasSafeLearnIdentity && bleinput::mapping::matchesAt(entry, learnedKind, learnedValue, index)) {
+        matchedKind = learnedKind;
+        matchedValue = learnedValue;
+        return true;
       }
-      return index == 0 && entry.keyKind == kind && entry.keyValue == value;
+      if (bleinput::mapping::matchesAt(entry, legacyKind, legacyValue, index)) {
+        matchedKind = legacyKind;
+        matchedValue = legacyValue;
+        return true;
+      }
+      return false;
     };
     auto applyButton = [&](const uint8_t button, const freeink::KeyPhase phase) {
       if (button >= kButtonCount) return;
-      if (phase == freeink::KeyPhase::Release) {
-        if (!bleHeld[button]) return;
+      const auto inputPhase = phase == freeink::KeyPhase::Release
+                                  ? bleinput::mapping::InputPhase::Release
+                                  : (phase == freeink::KeyPhase::Repeat ? bleinput::mapping::InputPhase::Repeat
+                                                                        : bleinput::mapping::InputPhase::Press);
+      const auto transition = bleinput::mapping::transition(inputPhase, bleHeld[button], bleActiveBinding[button],
+                                                            now, bleLastDispatchAt[button],
+                                                            BLE_ACTION_DEBOUNCE_MS);
+      if (transition == bleinput::mapping::ButtonTransition::Released) {
         bleHeld[button] = false;
         bleHeldSince[button] = 0;
         bleActiveBinding[button] = false;
@@ -497,52 +536,78 @@ void MappedInputManager::pollBle() {
         mappedButton = button;
         return;
       }
-      if (phase == freeink::KeyPhase::Repeat) {
-        if (!bleActiveBinding[button]) return;
+      if (transition == bleinput::mapping::ButtonTransition::Repeated) {
         bleHeld[button] = true;
         bleActivityThisFrame = true;
         mappedButton = button;
         return;
       }
-      const unsigned long last = bleLastDispatchAt[button];
-      if (last != 0 && now - last < BLE_ACTION_DEBOUNCE_MS) {
+      if (transition == bleinput::mapping::ButtonTransition::Debounced) {
         debounceRejected = true;
         return;
       }
+      if (transition != bleinput::mapping::ButtonTransition::Pressed) return;
       bleLastDispatchAt[button] = now;
-      if (bleHeld[button]) {
-        // A duplicate press while the same physical control is held is not a
-        // second click. Keep hold state intact and let the activity's one
-        // repeat owner decide whether to act continuously.
-        debounceRejected = true;
-        return;
-      }
       bleHeld[button] = true;
       bleHeldSince[button] = now;
       bleActiveBinding[button] = true;
-      bleActiveKinds[button] = kind;
-      bleActiveValues[button] = value;
+      bleActiveKinds[button] = matchedKind;
+      bleActiveValues[button] = matchedValue;
       blePressEdge[button] = true;
       bleActivityThisFrame = true;
       mappedButton = button;
     };
-    auto dispatch = [&](const CrossPointSettings::BleKeyMapEntry& entry) {
-      applyButton(entry.button, event.phase);
+    auto dispatch = [&](const CrossPointSettings::BleKeyMapEntry& entry, const uint8_t mapIndex) {
+      const auto action = bleinput::mapping::resolve(entry);
+      if (action.type == bleinput::mapping::ResolvedActionType::Invalid) return;
+      if (action.type == bleinput::mapping::ResolvedActionType::Shortcut) {
+        if (event.phase != freeink::KeyPhase::Press || mapIndex >= bleinput::mapping::kMapCapacity) return;
+        if (bleShortcutActive[mapIndex]) {
+          debounceRejected = true;
+          return;
+        }
+        if (action.target >= bleinput::mapping::kShortcutCount ||
+            (bleLastShortcutDispatchAt[action.target] != 0 &&
+             !bleinput::mapping::debounceElapsed(now, bleLastShortcutDispatchAt[action.target],
+                                                 BLE_ACTION_DEBOUNCE_MS))) {
+          debounceRejected = true;
+          return;
+        }
+        bleLastShortcutDispatchAt[action.target] = now;
+        bleShortcutActive[mapIndex] = true;
+        blePendingShortcut = static_cast<int8_t>(action.target);
+        bleActivityThisFrame = true;
+        mappedButton = 0xFD;  // shortcut queued for ActivityManager
+        return;
+      }
+      applyButton(action.target, event.phase);
     };
 
     // Releases and repeats belong to the binding that consumed the original
     // press. Resolve them before signature recognition so they can never start
     // or advance a new multi-report mapping.
     if (isRelease || isRepeat) {
+      for (uint8_t mapIndex = 0; mapIndex < CrossPointSettings::BLE_MAP_CAPACITY; ++mapIndex) {
+        const auto& entry = SETTINGS.bleKeyMap[mapIndex];
+        if (bleinput::mapping::resolve(entry).type != bleinput::mapping::ResolvedActionType::Shortcut ||
+            !bleShortcutActive[mapIndex] ||
+            !entryMatches(entry, 0))
+          continue;
+        mappingFound = true;
+        if (isRelease) bleShortcutActive[mapIndex] = false;
+      }
       for (uint8_t button = 0; button < kButtonCount; ++button) {
-        if (!bleActiveBinding[button] || bleActiveKinds[button] != kind || bleActiveValues[button] != value) continue;
+        const bool activeIdentityMatches =
+            (bleActiveKinds[button] == legacyKind && bleActiveValues[button] == legacyValue) ||
+            (hasSafeLearnIdentity && bleActiveKinds[button] == learnedKind &&
+             bleActiveValues[button] == learnedValue);
+        if (!bleActiveBinding[button] || !activeIdentityMatches) continue;
         mappingFound = true;
         applyButton(button, event.phase);
       }
-      if (isRelease && blePendingMap >= 0) {
-        blePendingMap = -1;
-        blePendingIndex = 0;
-        blePendingLastEvent = 0;
+      if (blePendingMap >= 0 && isRelease &&
+          bleinput::mapping::releaseKeepsPendingSignature(bleinput::mapping::InputPhase::Release)) {
+        signaturePending = true;
       }
     }
 
@@ -553,8 +618,8 @@ void MappedInputManager::pollBle() {
         ++blePendingIndex;
         blePendingLastEvent = now;
         mappingFound = true;
-        if (blePendingIndex >= entryCount(pending)) {
-          dispatch(pending);
+        if (blePendingIndex >= bleinput::mapping::entryCount(pending)) {
+          dispatch(pending, static_cast<uint8_t>(blePendingMap));
           blePendingMap = -1;
           blePendingIndex = 0;
         } else {
@@ -569,19 +634,21 @@ void MappedInputManager::pollBle() {
     // If no signature was pending, start one from this event or dispatch a
     // legacy single-event binding immediately.
     if (!isRelease && !isRepeat && blePendingMap < 0 && !mappingFound) {
-      for (uint8_t mapIndex = 0; mapIndex < CrossPointSettings::BLE_MAP_CAPACITY; ++mapIndex) {
+      const int8_t mapIndex = bleinput::mapping::findFirstMatch(
+          SETTINGS.bleKeyMap, hasSafeLearnIdentity ? learnedKind : legacyKind,
+          hasSafeLearnIdentity ? learnedValue : legacyValue, legacyKind, legacyValue, 0);
+      if (mapIndex >= 0) {
         const auto& entry = SETTINGS.bleKeyMap[mapIndex];
         if (!entryMatches(entry, 0)) continue;
         mappingFound = true;
-        if (entryCount(entry) > 1) {
-          blePendingMap = static_cast<int8_t>(mapIndex);
+        if (bleinput::mapping::entryCount(entry) > 1) {
+          blePendingMap = mapIndex;
           blePendingIndex = 1;
           blePendingLastEvent = now;
           signaturePending = true;
         } else {
-          dispatch(entry);
+          dispatch(entry, static_cast<uint8_t>(mapIndex));
         }
-        break;
       }
     }
 #if FREEINK_CAP_BLE_HID_HOST
@@ -594,6 +661,13 @@ void MappedInputManager::pollBle() {
     bleinput::recordDecodedKey(event, kind, value, mappedButton, disposition, mappedButton != 0xFF);
 #endif
   }
+}
+
+bool MappedInputManager::takeBleShortcut(uint8_t& action) {
+  if (blePendingShortcut < 0) return false;
+  action = static_cast<uint8_t>(blePendingShortcut);
+  blePendingShortcut = -1;
+  return action < bleinput::mapping::kShortcutCount;
 }
 
 bool MappedInputManager::wasAnyPressed() const {

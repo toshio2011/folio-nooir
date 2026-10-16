@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include "util/QuickActions.h"
+#include "util/BleKeyMapping.h"
 #include "util/SleepComposer.h"
 #include "util/SleepScreenMode.h"
 
@@ -414,23 +415,12 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   static constexpr uint8_t BLE_CONTROLLER_PRESET_GENERIC = 0;
   static constexpr uint8_t BLE_CONTROLLER_PRESET_YISER_J6_RING = 1;
   uint8_t bleControllerPreset = BLE_CONTROLLER_PRESET_GENERIC;
-  // Remote-button mapping table: each slot binds a decoded BLE key identity to a
-  // logical MappedInputManager::Button. Fixed-capacity POD (no heap), persisted
-  // manually in JsonSettingsIO (like the front-button remap). 0xFF = empty/unassigned.
-  // Headroom for several buttons plus optional presets and rolling-code remotes
-  // (some buttons emit more than one code). Each entry is 3 bytes.
-  static constexpr uint8_t BLE_MAP_CAPACITY = 10;
-  static constexpr uint8_t BLE_SIGNATURE_MAX_EVENTS = 8;
-  struct BleKeyMapEntry {
-    uint8_t keyKind = 0xFF;   // 0 = SpecialKey, 1 = HID usage code; 0xFF = empty slot
-    uint8_t keyValue = 0;     // (uint8_t)freeink::SpecialKey, or the raw HID usage id
-    uint8_t button = 0xFF;    // (uint8_t)MappedInputManager::Button; 0xFF = unassigned
-    // Optional bounded decoded-event signature. signatureCount == 0 retains
-    // the legacy single-event representation; the first event is duplicated
-    // in keyKind/keyValue for old web/settings readers.
-    uint8_t signatureCount = 0;
-    uint16_t signature[BLE_SIGNATURE_MAX_EVENTS] = {};
-  };
+  // Remote-button mapping table: each slot binds a compact decoded HID identity
+  // to an existing physical logical button or a safe navigation shortcut.
+  // Fixed-capacity POD storage keeps lookup allocation-free and bounded.
+  static constexpr uint8_t BLE_MAP_CAPACITY = bleinput::mapping::kMapCapacity;
+  static constexpr uint8_t BLE_SIGNATURE_MAX_EVENTS = bleinput::mapping::kSignatureMaxEvents;
+  using BleKeyMapEntry = bleinput::mapping::KeyMapEntry;
   BleKeyMapEntry bleKeyMap[BLE_MAP_CAPACITY] = {};
   // Reader font settings
   uint8_t fontFamily = NOTOSERIF;

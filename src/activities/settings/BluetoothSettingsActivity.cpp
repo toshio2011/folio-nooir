@@ -62,7 +62,7 @@ void BluetoothSettingsActivity::setBanner(const char* text) {
 
 void BluetoothSettingsActivity::rebuildMenuRows() {
   menuRows.clear();
-  menuRows.reserve(11);
+  menuRows.reserve(12);
   menuRows.push_back({Action::ToggleBt, StrId::STR_BLUETOOTH});
   menuRows.push_back({Action::NoDeviceTimeout, StrId::STR_BT_NO_DEVICE_TIMEOUT});
   if (SETTINGS.bluetoothEnabled) {
@@ -78,6 +78,7 @@ void BluetoothSettingsActivity::rebuildMenuRows() {
     menuRows.push_back({Action::PresetFree2, StrId::STR_BT_PRESET_FREE2});
     menuRows.push_back({Action::PresetFree3, StrId::STR_BT_PRESET_FREE3});
     menuRows.push_back({Action::PresetYiser, StrId::STR_BT_PRESET_YISER});
+    menuRows.push_back({Action::ResetDefaults, StrId::STR_BT_RESET_MAP_DEFAULTS});
     menuRows.push_back({Action::ClearMap, StrId::STR_BT_CLEAR_MAP});
   }
   if (menuIndex >= static_cast<int>(menuRows.size())) menuIndex = 0;
@@ -124,6 +125,28 @@ void BluetoothSettingsActivity::applyYiserPreset() {
   set(3, freeink::SpecialKey::Right, Btn::Right);
   set(4, freeink::SpecialKey::Enter, Btn::Confirm);
   set(5, freeink::SpecialKey::Escape, Btn::Back);
+  SETTINGS.saveToFile();
+}
+
+void BluetoothSettingsActivity::resetMappingsToDefaults() {
+  SETTINGS.bleControllerPreset = CrossPointSettings::BLE_CONTROLLER_PRESET_GENERIC;
+  BleHid.setInputPreset(freeink::InputPreset::GenericHid);
+  const bleinput::mapping::DefaultBinding defaults[] = {
+      {{0, static_cast<uint8_t>(freeink::SpecialKey::Right)}, bleinput::mapping::kButtonAction,
+       static_cast<uint8_t>(MappedInputManager::Button::Right)},
+      {{0, static_cast<uint8_t>(freeink::SpecialKey::Left)}, bleinput::mapping::kButtonAction,
+       static_cast<uint8_t>(MappedInputManager::Button::Left)},
+      {{0, static_cast<uint8_t>(freeink::SpecialKey::PageDown)}, bleinput::mapping::kButtonAction,
+       static_cast<uint8_t>(MappedInputManager::Button::Right)},
+      {{0, static_cast<uint8_t>(freeink::SpecialKey::PageUp)}, bleinput::mapping::kButtonAction,
+       static_cast<uint8_t>(MappedInputManager::Button::Left)},
+      {{0, static_cast<uint8_t>(freeink::SpecialKey::Enter)}, bleinput::mapping::kButtonAction,
+       static_cast<uint8_t>(MappedInputManager::Button::Confirm)},
+      {{0, static_cast<uint8_t>(freeink::SpecialKey::Escape)}, bleinput::mapping::kButtonAction,
+       static_cast<uint8_t>(MappedInputManager::Button::Back)},
+  };
+  bleinput::mapping::resetToDefaults(SETTINGS.bleKeyMap, defaults,
+                                     static_cast<uint8_t>(sizeof(defaults) / sizeof(defaults[0])));
   SETTINGS.saveToFile();
 }
 
@@ -263,6 +286,11 @@ void BluetoothSettingsActivity::handleMenuConfirm() {
     case Action::PresetYiser:
       applyYiserPreset();
       setBanner(tr(STR_BT_PRESET_YISER));
+      requestUpdate();
+      break;
+    case Action::ResetDefaults:
+      resetMappingsToDefaults();
+      setBanner("Default remote mappings restored");
       requestUpdate();
       break;
     case Action::ClearMap:
@@ -511,6 +539,7 @@ void BluetoothSettingsActivity::render(RenderLock&&) {
         [this](int i) {
 #if FREEINK_CAP_BLE_HID_HOST
           if (menuRows[i].action == Action::Diagnostics) return std::string("Input Diagnostics");
+          if (menuRows[i].action == Action::ResetDefaults) return std::string("Reset remote mappings to defaults");
 #endif
           return std::string(I18N.get(menuRows[i].label));
         }, nullptr, nullptr,

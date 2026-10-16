@@ -2,6 +2,8 @@
 
 #include <HalGPIO.h>
 
+#include "util/BleKeyMapping.h"
+
 class GfxRenderer;
 
 class MappedInputManager {
@@ -60,11 +62,13 @@ class MappedInputManager {
   // activities. Call once per frame after BleHid.poll().
   void pollBle();
   bool bleHadActivityThisFrame() const { return bleActivityThisFrame; }
+  bool takeBleShortcut(uint8_t& action);
 
   // Mapping screens temporarily capture an unmapped remote key instead of
   // dispatching it to the active activity.
   static constexpr uint8_t kBleSignatureMaxEvents = 8;
   void setBleCaptureMode(bool enabled);
+  bool bleCaptureSawUnsupported() const { return bleCaptureSawUnsupportedInput; }
   bool takeCapturedBleKey(uint8_t& kind, uint8_t& value);
   bool takeCapturedBleSignature(uint8_t* kinds, uint8_t* values, uint8_t capacity, uint8_t& count);
 
@@ -109,16 +113,18 @@ class MappedInputManager {
   uint8_t bleActiveKinds[kButtonCount] = {};
   uint8_t bleActiveValues[kButtonCount] = {};
   bool bleActivityThisFrame = false;
+  int8_t blePendingShortcut = -1;
+  bool bleShortcutActive[bleinput::mapping::kMapCapacity] = {};
   bool bleCaptureMode = false;
+  bool bleCaptureSawUnsupportedInput = false;
   bool bleHasCaptured = false;
   unsigned long bleCaptureQuietUntil = 0;
   unsigned long bleCaptureStartedAt = 0;
   uint8_t bleCapturedCount = 0;
   uint8_t bleCapturedKinds[kBleSignatureMaxEvents] = {};
   uint8_t bleCapturedValues[kBleSignatureMaxEvents] = {};
-  uint8_t bleCapturedKind = 0xFF;
-  uint8_t bleCapturedValue = 0;
   unsigned long bleLastDispatchAt[kButtonCount] = {};
+  unsigned long bleLastShortcutDispatchAt[bleinput::mapping::kShortcutCount] = {};
   int8_t blePendingMap = -1;
   uint8_t blePendingIndex = 0;
   unsigned long blePendingLastEvent = 0;

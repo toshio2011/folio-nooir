@@ -45,6 +45,7 @@ class BluetoothSettingsActivity final : public Activity {
     PresetFree2,
     PresetFree3,
     PresetYiser,
+    ResetDefaults,
     ClearMap
   };
   struct MenuRow {
@@ -82,6 +83,7 @@ class BluetoothSettingsActivity final : public Activity {
   void beginPairedConnect();
   void applyPreset(bool free3);
   void applyYiserPreset();
+  void resetMappingsToDefaults();
   void setBanner(const char* text);
 
   std::string deviceLabel(int index) const;   // scan list row text

@@ -1,0 +1,3 @@
+add_executable(ble_input_mapping_tests BleInputMappingTest.cpp)
+target_link_libraries(ble_input_mapping_tests PRIVATE GTest::gtest_main crosspoint_test_common)
+gtest_discover_tests(ble_input_mapping_tests)
