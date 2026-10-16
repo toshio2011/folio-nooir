@@ -7,6 +7,7 @@
 
 #include "util/QuickActions.h"
 #include "util/SleepComposer.h"
+#include "util/SleepScreenMode.h"
 
 class CrossPointSettings : public PersistableStore<CrossPointSettings> {
  private:
@@ -47,6 +48,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     FLEXIBLE_COMPOSITE = SleepScreenModeValue::FLEXIBLE_COMPOSITE,
     SLEEP_SCREEN_MODE_COUNT
   };
+  enum RANDOM_SLEEP_ORDER { RANDOM_SLEEP_ORDER_RANDOM = 0, RANDOM_SLEEP_ORDER_SHUFFLE = 1, RANDOM_SLEEP_ORDER_COUNT };
   enum TODO_SLEEP_MODE {
     TODO_UNCHECKED = 0,
     TODO_COMPLETED = 1,
@@ -327,6 +329,10 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t sleepBackgroundElement = static_cast<uint8_t>(SleepComposerElement::CurrentBookCover);
   uint8_t sleepOverlayAElement = static_cast<uint8_t>(SleepComposerElement::ReadingCalendar);
   uint8_t sleepOverlayBElement = static_cast<uint8_t>(SleepComposerElement::ClockDate);
+  // New installs start with a small two-mode shuffle. Legacy settings files
+  // without these keys are migrated to the complete pre-pool Random behavior.
+  uint16_t randomSleepModeMask = RandomSleepPool::kNewInstallDefaultMask;
+  uint8_t randomSleepOrder = RANDOM_SLEEP_ORDER_SHUFFLE;
   // Sleep screen cover mode settings
   uint8_t sleepScreenCoverMode = FIT;
   // Sleep screen cover filter

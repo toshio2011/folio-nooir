@@ -5,6 +5,7 @@
 
 #include "activities/Activity.h"
 #include "util/SleepComposer.h"
+#include "util/SleepScreenMode.h"
 
 class Bitmap;
 
@@ -67,6 +68,7 @@ class SleepActivity final : public Activity {
 
   bool fromTimeout = false;
   uint8_t previewMode = 0;
+  RandomSleepPool::SequenceState previewRandomSequence{};
   bool preview = false;
   bool ignoreInitialConfirm = false;
   bool previewPreviousDarkMode = false;

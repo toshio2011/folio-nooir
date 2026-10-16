@@ -29,6 +29,11 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   uint8_t readerActivityLoadCount = 0;
   bool lastSleepFromReader = false;
   bool showBootScreen = true;
+  // Compact Random Sleep cycle state. This is written with the existing
+  // state snapshot at sleep; preview keeps a separate stack-local copy.
+  uint16_t randomSleepShuffleRemainingMask = 0;
+  uint16_t randomSleepShufflePoolMask = 0;
+  uint32_t randomSleepSequenceState = 0;
   // Resolved sleep mode for this in-memory transition only. Deliberately
   // omitted from toJson/fromJson so Random is rerolled at the next sleep.
   uint8_t activeSleepScreenMode = 0;

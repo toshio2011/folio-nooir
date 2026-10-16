@@ -12,6 +12,7 @@
 #include <PngToBmpConverter.h>
 #include <SdCardFontSystem.h>
 #include <Txt.h>
+#include <WiFi.h>
 #include <Xtc.h>
 #include <FontCacheManager.h>
 #include <esp_heap_caps.h>
@@ -159,6 +160,13 @@ struct SleepRenderCompletion {
     LOG_INF("SLP", "sleep_refresh_complete free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
             static_cast<unsigned>(ESP.getMaxAllocHeap()));
     EpubDiagnostics::phaseRecord("sleep_refresh_complete");
+    const size_t beforeFree = ESP.getFreeHeap();
+    const size_t beforeLargest = ESP.getMaxAllocHeap();
+    ImageBlock::releaseRenderCache();
+    renderer.releaseGrayscaleStripScratch();
+    LOG_INF("SLPMEM", "stage=render_temporaries_released image_cache=0 gray_scratch=0 free=%u->%u largest=%u->%u",
+            static_cast<unsigned>(beforeFree), static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(beforeLargest), static_cast<unsigned>(ESP.getMaxAllocHeap()));
     LOG_INF("SLP", "sleep_final_cleanup free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
             static_cast<unsigned>(ESP.getMaxAllocHeap()));
     EpubDiagnostics::phaseRecord("sleep_final_cleanup");
@@ -704,8 +712,14 @@ void SleepActivity::onEnter() {
     previewPreviousDarkMode = renderer.isDarkMode();
     ignoreInitialConfirm = mappedInput.isPressed(MappedInputManager::Button::Confirm) ||
                            mappedInput.wasReleased(MappedInputManager::Button::Confirm);
+    previewRandomSequence = {APP_STATE.randomSleepShuffleRemainingMask, APP_STATE.randomSleepShufflePoolMask,
+                             APP_STATE.randomSleepSequenceState};
+    const auto order = SETTINGS.randomSleepOrder == CrossPointSettings::RANDOM_SLEEP_ORDER_RANDOM
+                           ? RandomSleepPool::Order::Random
+                           : RandomSleepPool::Order::Shuffle;
     effectiveSleepScreen = previewMode == CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM
-                               ? chooseRandomSleepScreenMode()
+                               ? RandomSleepPool::choose(SETTINGS.randomSleepModeMask, order, previewRandomSequence,
+                                                        static_cast<uint32_t>(millis()) ^ 0xA511E9B3u)
                                : previewMode;
     if (effectiveSleepScreen >= CrossPointSettings::SLEEP_SCREEN_MODE_COUNT ||
         effectiveSleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM) {
@@ -735,6 +749,21 @@ void SleepActivity::onEnter() {
           BleHid.isConnecting() ? 1 : 0, bleinput::readerBleReturnPending() ? 1 : 0,
           bleinput::reAdmissionPending() ? 1 : 0);
 #endif
+  // The outgoing activity has already performed owner-specific teardown
+  // (including Web/DNS/mDNS/socket shutdown). This idempotent boundary check
+  // catches any residual station/AP radio state before sleep memory reclaim.
+  const int wifiModeBeforeSleep = static_cast<int>(WiFi.getMode());
+  if (WiFi.getMode() != WIFI_MODE_NULL) {
+    WiFi.scanDelete();
+    WiFi.disconnect(false, false);
+    const bool wifiStopped = WiFi.mode(WIFI_MODE_NULL);
+    LOG_INF("SLEEP", "wifi_quiesced result=%d mode=%d previous_mode=%d free=%u largest=%u",
+            wifiStopped ? 1 : 0, static_cast<int>(WiFi.getMode()), wifiModeBeforeSleep,
+            static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  } else {
+    LOG_INF("SLEEP", "wifi_quiesced already_off mode=%d previous_mode=%d", static_cast<int>(WiFi.getMode()),
+            wifiModeBeforeSleep);
+  }
   EpubDiagnostics::Scope diagnostics("sleep_render_start", "sleep_render_end");
   Activity::onEnter();
   effectiveSleepScreen = SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM
@@ -793,6 +822,23 @@ void SleepActivity::onEnter() {
   }
   if (currentBackgroundPreserved) renderer.restoreBwBuffer();
 
+  int bleRunning = 0;
+  int bleConnected = 0;
+  int bleConnecting = 0;
+#if FREEINK_CAP_BLE_HID_HOST
+  bleRunning = BleHid.isRunning() ? 1 : 0;
+  bleConnected = BleHid.isConnected() ? 1 : 0;
+  bleConnecting = BleHid.isConnecting() ? 1 : 0;
+#endif
+  LOG_INF("SLEEP", "sleep_final_ready mode=%u order=%s free=%u largest=%u ble=%d ble_connected=%d ble_connecting=%d "
+                    "wifi_on=%d wifi_mode=%d outgoing_activity_exit=complete ui_font_assets_resident=%d "
+                    "sleep_boundary_reclaim=complete image_cache_released=1 gray_scratch_released=1",
+          static_cast<unsigned>(effectiveSleepScreen),
+          SETTINGS.randomSleepOrder == CrossPointSettings::RANDOM_SLEEP_ORDER_RANDOM ? "random" : "shuffle",
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()), bleRunning,
+          bleConnected, bleConnecting, WiFi.getMode() != WIFI_MODE_NULL ? 1 : 0, static_cast<int>(WiFi.getMode()),
+          sdFontSystem.interfaceFontResident() ? 1 : 0);
+
   renderSelectedSleepScreen();
 }
 
@@ -804,6 +850,7 @@ void SleepActivity::onExit() {
     renderer.setFadingFix(SETTINGS.fadingFix);
     renderer.releaseGrayscaleStripScratch();
     ImageBlock::releaseRenderCache();
+    previewRandomSequence = {};
     sleepPngPreflightComplete = false;
     sleepPngAllocationAllowed = false;
     currentBackgroundPreserved = false;
@@ -833,7 +880,11 @@ void SleepActivity::loop() {
   }
 
   if (previewMode == CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM) {
-    effectiveSleepScreen = chooseRandomSleepScreenMode();
+    const auto order = SETTINGS.randomSleepOrder == CrossPointSettings::RANDOM_SLEEP_ORDER_RANDOM
+                           ? RandomSleepPool::Order::Random
+                           : RandomSleepPool::Order::Shuffle;
+    effectiveSleepScreen = RandomSleepPool::choose(SETTINGS.randomSleepModeMask, order, previewRandomSequence,
+                                                    static_cast<uint32_t>(millis()) ^ 0xA511E9B3u);
   } else if (previewMode != CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE ||
              !sleepComposerHasRandomElement(SETTINGS.sleepBackgroundElement, SETTINGS.sleepOverlayAElement,
                                             SETTINGS.sleepOverlayBElement)) {

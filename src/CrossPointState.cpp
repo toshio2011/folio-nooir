@@ -32,6 +32,9 @@ void CrossPointState::toJson(JsonDocument& doc) const {
   doc["readerActivityLoadCount"] = readerActivityLoadCount;
   doc["lastSleepFromReader"] = lastSleepFromReader;
   doc["showBootScreen"] = showBootScreen;
+  doc["randomSleepShuffleRemainingMask"] = randomSleepShuffleRemainingMask;
+  doc["randomSleepShufflePoolMask"] = randomSleepShufflePoolMask;
+  doc["randomSleepSequenceState"] = randomSleepSequenceState;
 }
 
 bool CrossPointState::fromJson(JsonVariantConst doc) {
@@ -57,5 +60,8 @@ bool CrossPointState::fromJson(JsonVariantConst doc) {
   readerActivityLoadCount = doc["readerActivityLoadCount"] | static_cast<uint8_t>(0);
   lastSleepFromReader = doc["lastSleepFromReader"] | false;
   showBootScreen = doc["showBootScreen"] | true;
+  randomSleepShuffleRemainingMask = doc["randomSleepShuffleRemainingMask"] | static_cast<uint16_t>(0);
+  randomSleepShufflePoolMask = doc["randomSleepShufflePoolMask"] | static_cast<uint16_t>(0);
+  randomSleepSequenceState = doc["randomSleepSequenceState"] | static_cast<uint32_t>(0);
   return true;
 }

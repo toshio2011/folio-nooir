@@ -1,0 +1,3 @@
+add_executable(random_sleep_pool_test RandomSleepPoolTest.cpp)
+target_link_libraries(random_sleep_pool_test PRIVATE GTest::gtest_main crosspoint_test_common)
+gtest_discover_tests(random_sleep_pool_test)

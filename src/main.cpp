@@ -15,6 +15,7 @@
 #include <Logging.h>
 #include <SPI.h>
 #include <WiFi.h>
+#include <esp_system.h>
 #include <builtinFonts/all.h>
 
 #include <cstring>
@@ -193,15 +194,30 @@ static bool loadSleepFrameBuffer() {
 
 // Enter deep sleep mode
 void enterDeepSleep(bool fromTimeout = false) {
+  // Latch before selecting/persisting the final mode so no lifecycle service
+  // can admit new BLE work while sleep state is being committed.
+  deepSleepInProgress = true;
   EpubDiagnostics::startPhase();
   EpubDiagnostics::phaseRecord("sleep_request", fromTimeout ? 2 : 1);
   LOG_INF("SLEEP", "sleep_requested timeout=%d free=%u largest=%u", fromTimeout ? 1 : 0,
           static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
-  APP_STATE.activeSleepScreenMode = SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM
-                                        ? chooseRandomSleepScreenMode()
-                                        : SETTINGS.sleepScreen;
+  if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM) {
+    RandomSleepPool::SequenceState sequence{APP_STATE.randomSleepShuffleRemainingMask,
+                                            APP_STATE.randomSleepShufflePoolMask,
+                                            APP_STATE.randomSleepSequenceState};
+    const auto order = SETTINGS.randomSleepOrder == CrossPointSettings::RANDOM_SLEEP_ORDER_RANDOM
+                           ? RandomSleepPool::Order::Random
+                           : RandomSleepPool::Order::Shuffle;
+    APP_STATE.activeSleepScreenMode = RandomSleepPool::choose(
+        SETTINGS.randomSleepModeMask, order, sequence, static_cast<uint32_t>(esp_random()));
+    APP_STATE.randomSleepShuffleRemainingMask = sequence.remainingMask;
+    APP_STATE.randomSleepShufflePoolMask = sequence.activePoolMask;
+    APP_STATE.randomSleepSequenceState = sequence.randomState;
+  } else {
+    APP_STATE.activeSleepScreenMode = SETTINGS.sleepScreen;
+  }
 
   const bool isQuickResumeSleep =
       APP_STATE.activeSleepScreenMode == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
@@ -212,25 +228,12 @@ void enterDeepSleep(bool fromTimeout = false) {
   APP_STATE.saveToFile();
   EpubDiagnostics::phaseRecord("sleep_state_persisted");
 
-  // Commit to sleeping before goToSleep() runs the outgoing activity's onExit():
-  // a WiFi activity would otherwise silentRestart() here and reboot instead.
-  deepSleepInProgress = true;
-
-  // Phase 1/2: prevent any main-loop BLE rearm, then synchronously reclaim both
-  // radios before ActivityManager constructs/renders the sleep screen.
+  // The latch above prevents BLE admission/rearm and suppresses the network
+  // activities' silent restart while their normal onExit() teardown runs.
+  // BLE is stopped here; Web/DNS/mDNS/socket teardown and Wi-Fi shutdown occur
+  // in the outgoing network activity before SleepActivity renders.
   LOG_INF("SLEEP", "sleep_quiesce_begin free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(ESP.getMaxAllocHeap()));
-  WiFi.scanDelete();
-  if (WiFi.getMode() != WIFI_MODE_NULL) {
-    WiFi.disconnect(false, false);
-    const bool wifiStopped = WiFi.mode(WIFI_OFF);
-    LOG_INF("SLEEP", "wifi_stopped result=%d mode=%d free=%u largest=%u", wifiStopped ? 1 : 0,
-            static_cast<int>(WiFi.getMode()), static_cast<unsigned>(ESP.getFreeHeap()),
-            static_cast<unsigned>(ESP.getMaxAllocHeap()));
-  } else {
-    LOG_INF("SLEEP", "wifi_stopped already_off free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
-            static_cast<unsigned>(ESP.getMaxAllocHeap()));
-  }
   if (SETTINGS.bluetoothEnabled || BleHid.isRunning()) {
     bleinput::clearReaderBleReturnPending();
     if (BleHid.isRunning()) {
@@ -241,6 +244,21 @@ void enterDeepSleep(bool fromTimeout = false) {
   }
 
   activityManager.goToSleep(fromTimeout);
+  int bleRunningAfterRender = 0;
+  int bleConnectedAfterRender = 0;
+  int bleConnectingAfterRender = 0;
+#if FREEINK_CAP_BLE_HID_HOST
+  bleRunningAfterRender = BleHid.isRunning() ? 1 : 0;
+  bleConnectedAfterRender = BleHid.isConnected() ? 1 : 0;
+  bleConnectingAfterRender = BleHid.isConnecting() ? 1 : 0;
+#endif
+  LOG_INF("SLEEP", "sleep_final_cleanup_done ble=%d ble_connected=%d ble_connecting=%d wifi_on=%d wifi_mode=%d "
+                    "outgoing_activity_exit=complete ui_font_assets_resident=%d sleep_boundary_reclaim=complete "
+                    "render_temporaries_released=1 free=%u largest=%u",
+          bleRunningAfterRender, bleConnectedAfterRender, bleConnectingAfterRender,
+          WiFi.getMode() != WIFI_MODE_NULL ? 1 : 0, static_cast<int>(WiFi.getMode()),
+          sdFontSystem.interfaceFontResident() ? 1 : 0,
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
   LOG_INF("SLEEP", "sleep_screen_ready free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(ESP.getMaxAllocHeap()));
   EpubDiagnostics::phaseRecord("sleep_screen_ready");

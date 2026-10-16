@@ -15,6 +15,7 @@
 #include "SettingsList.h"
 #include "FontSelectionCompatibility.h"
 #include "fontIds.h"
+#include "util/RandomSleepPreferences.h"
 
 namespace {
 
@@ -138,7 +139,8 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
     // These two compatibility-aware enum fields are serialized explicitly
     // below so their raw legacy values never pass through visible-option
     // clamping.
-    if (strcmp(info.key, "fontFamily") == 0 || strcmp(info.key, "dictionaryFontFamily") == 0) continue;
+    if (strcmp(info.key, "fontFamily") == 0 || strcmp(info.key, "dictionaryFontFamily") == 0 ||
+        strcmp(info.key, "randomSleepOrder") == 0) continue;
     // Dynamic entries (KOReader etc.) are stored in their own files — skip.
     if (!info.valuePtr && !info.stringOffset) continue;
 
@@ -196,6 +198,7 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   // Sleep screen uses a UI index map so the legacy Cover + Custom option can
   // be hidden without renumbering the persisted modes.
   doc["sleepScreen"] = sleepScreen;
+  RandomSleepPool::writePreferences(doc, randomSleepModeMask, randomSleepOrder);
   doc["dictionaryFontFamily"] = dictionaryFontFamily;
   doc["dictionaryFontSize"] = dictionaryFontSize;
   doc["quickActionSlot1"] = quickActionSlot1;
@@ -405,6 +408,12 @@ bool CrossPointSettings::fromJsonForProfile(JsonVariantConst doc, const bool pre
     needsResave = true;
   }
   s.sleepScreen = loadedSleepScreen;
+
+  // Existing settings without the pool keys retain the full old Random pool
+  // and Random ordering. New installs never load a settings document and keep
+  // the struct's compact Cover + Custom / Shuffle defaults.
+  needsResave = RandomSleepPool::readPreferences(doc, s.randomSleepModeMask, s.randomSleepOrder,
+                                                 preserveMissingManualFields) || needsResave;
 
   if (!currentSleepModeLayout) needsResave = true;
 

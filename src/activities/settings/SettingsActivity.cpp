@@ -8,6 +8,7 @@
 #include <esp_system.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 
@@ -196,8 +197,8 @@ void SettingsActivity::rebuildSettingsLists() {
     if (isSleepComposerSetting(setting)) {
       return -1;
     }
-    if (setting.nameId == StrId::STR_PREVIEW_SLEEP_SCREEN &&
-        SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE) {
+    if ((setting.nameId == StrId::STR_SLEEP_RANDOM_ORDER || setting.action == SettingAction::RandomSleepPool) &&
+        SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM) {
       return -1;
     }
     if (isVisualPreviewSetting(setting.nameId)) return -1;
@@ -239,9 +240,11 @@ void SettingsActivity::rebuildSettingsLists() {
         SettingInfo::Action(StrId::STR_CLEAR_FAVORITE_SLEEP, SettingAction::ClearFavoriteSleepImage));
   }
   displaySettings.push_back(SettingInfo::Action(StrId::STR_VISUAL_PREVIEW, SettingAction::VisualPreview));
-  auto sleepPreview = SettingInfo::Action(StrId::STR_PREVIEW_SLEEP_SCREEN, SettingAction::SleepScreenPreview);
-  sleepPreview.category = StrId::STR_CAT_DISPLAY;
-  displaySettings.push_back(std::move(sleepPreview));
+  if (SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE) {
+    auto sleepPreview = SettingInfo::Action(StrId::STR_PREVIEW_SLEEP_SCREEN, SettingAction::SleepScreenPreview);
+    sleepPreview.category = StrId::STR_CAT_DISPLAY;
+    displaySettings.push_back(std::move(sleepPreview));
+  }
 
   // Append device-only ACTION items
   if (!BoardConfig::hasTouch()) {
@@ -773,6 +776,9 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::SleepScreenPreview:
         openSleepScreenPreview();
         break;
+      case SettingAction::RandomSleepPool:
+        openRandomSleepPoolPicker();
+        break;
       case SettingAction::ClearFavoriteSleepImage:
         APP_STATE.favoriteSleepImagePath.clear();
         if (!APP_STATE.favoriteSleepImageBmpPath.empty()) {
@@ -875,6 +881,55 @@ void SettingsActivity::openSleepScreenPreview() {
         logSettingsDiagnostic("sleep_preview_return");
         requestUpdate();
       });
+}
+
+void SettingsActivity::openRandomSleepPoolPicker(const int selectedIndex) {
+  struct PoolOption {
+    uint8_t mode;
+    StrId label;
+  };
+  static constexpr std::array<PoolOption, RandomSleepPool::kStableModes.size()> optionsByMode = {{
+      {SleepScreenModeValue::DARK, StrId::STR_DARK},
+      {SleepScreenModeValue::LIGHT, StrId::STR_LIGHT},
+      {SleepScreenModeValue::CUSTOM, StrId::STR_CUSTOM},
+      {SleepScreenModeValue::COVER, StrId::STR_COVER},
+      {SleepScreenModeValue::BLANK, StrId::STR_SLEEP_MODE_BLANK},
+      {SleepScreenModeValue::QUICK_RESUME, StrId::STR_QUICK_RESUME},
+      {SleepScreenModeValue::OVERLAY, StrId::STR_PAGE_OVERLAY},
+      {SleepScreenModeValue::COVER_OVERLAY, StrId::STR_SLEEP_MODE_COVER_OVERLAY},
+      {SleepScreenModeValue::READING_STATS_SLEEP, StrId::STR_SLEEP_MODE_READING_STATS},
+      {SleepScreenModeValue::MINIMAL_STATS, StrId::STR_SLEEP_MODE_MINIMAL_STATS},
+      {SleepScreenModeValue::CLIPPING_COVER, StrId::STR_SLEEP_MODE_CLIPPING_COVER},
+      {SleepScreenModeValue::TODO_LIST, StrId::STR_TODO_LIST},
+      {SleepScreenModeValue::READING_CALENDAR_SLEEP, StrId::STR_READING_CALENDAR_SLEEP},
+      {SleepScreenModeValue::READING_SUMMARY_SLEEP, StrId::STR_READING_SUMMARY_SLEEP},
+      {SleepScreenModeValue::COVER_PROGRESS, StrId::STR_SLEEP_COVER_PROGRESS},
+  }};
+
+  std::vector<std::string> labels;
+  labels.reserve(optionsByMode.size() + 1);
+  size_t currentIndex = 0;
+  for (size_t i = 0; i < optionsByMode.size(); ++i) {
+    const auto& option = optionsByMode[i];
+    const bool enabled = (SETTINGS.randomSleepModeMask & RandomSleepPool::bitForMode(option.mode)) != 0;
+    labels.emplace_back(enabled ? "[x] " : "[ ] ");
+    labels.back() += tr(option.label);
+    if (static_cast<int>(i) == selectedIndex) currentIndex = i;
+  }
+  labels.emplace_back(tr(STR_DONE));
+  const int doneIndex = static_cast<int>(optionsByMode.size());
+  if (selectedIndex >= doneIndex) currentIndex = doneIndex;
+
+  optionPopup.show(tr(STR_SLEEP_RANDOM_POOL), labels, static_cast<int>(currentIndex), [this](int idx) {
+    if (idx < 0 || idx >= static_cast<int>(optionsByMode.size())) return;
+    const uint16_t selectedBit = RandomSleepPool::bitForMode(optionsByMode[static_cast<size_t>(idx)].mode);
+    SETTINGS.randomSleepModeMask ^= selectedBit;
+    APP_STATE.randomSleepShuffleRemainingMask = 0;
+    APP_STATE.randomSleepShufflePoolMask = 0;
+    SETTINGS.saveToFile();
+    openRandomSleepPoolPicker(idx);
+  });
+  requestUpdate();
 }
 
 void SettingsActivity::openSleepTimeoutPicker() {

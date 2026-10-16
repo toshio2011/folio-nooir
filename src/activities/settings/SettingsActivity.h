@@ -36,6 +36,7 @@ enum class SettingAction {
   SettingsProfiles,
   VisualPreview,
   SleepScreenPreview,
+  RandomSleepPool,
   ClearFavoriteSleepImage,
   QuickActions,
 };
@@ -103,11 +104,12 @@ struct SettingInfo {
     return s;
   }
 
-  static SettingInfo Action(StrId nameId, SettingAction action) {
+  static SettingInfo Action(StrId nameId, SettingAction action, StrId category = StrId::STR_NONE_OPT) {
     SettingInfo s;
     s.nameId = nameId;
     s.type = SettingType::ACTION;
     s.action = action;
+    s.category = category;
     return s;
   }
 
@@ -213,6 +215,7 @@ class SettingsActivity final : public Activity {
   void toggleCurrentSetting();
   void openSleepTimeoutPicker();
   void openSleepScreenPreview();
+  void openRandomSleepPoolPicker(int selectedIndex = 0);
   void openQuickActionsPicker();
   void rebuildSettingsLists();
   void syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged);
