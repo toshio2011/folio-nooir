@@ -15,6 +15,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "docs" / "settings-organization"
+# Keep the BEFORE device inventory pinned to the exact frozen experiment
+# source even while SettingsActivity is being prototyped in this worktree.
+DEVICE_SOURCE_REVISION = "ce86b9f8"
 GROUPS = [
     {"id": "home_appearance", "label": "Home & Appearance", "labelId": "STR_CAT_DISPLAY"},
     {"id": "sleep", "label": "Sleep", "labelId": "STR_SLEEP_SCREEN"},
@@ -274,6 +277,8 @@ def proposed_group(record: dict) -> str:
         return "sleep"
     if action == "VisualPreview" or category_id == "STR_CAT_DISPLAY":
         return "home_appearance"
+    if action == "QuickActions":
+        return "controls"
     if category_id in {"STR_CAT_READER", "STR_CUSTOMISE_STATUS_BAR"} or sid in {"fontFamily", "fontSize", "dictionaryFontFamily", "dictionaryFontSize", "dictionaryName"}:
         return "reading"
     if category_id == "STR_CAT_CONTROLS" or sid.startswith("quickActionSlot") or sid.startswith("frontButton") or sid.startswith("readerFrontButton") or action in {"RemapFrontButtons", "RemapReaderFrontButtons", "QuickActions"}:
@@ -484,6 +489,13 @@ def annotate(record: dict) -> None:
     if sid in {"frontButtonFollowOrientation", "fadingFix"}:
         web_before = "conditional: omitted on touch devices"
     record["deviceExposureBefore"] = device
+    old_group_by_category = {
+        "Display": "home_appearance",
+        "Reader": "reading",
+        "Controls": "controls",
+        "System": "system",
+    }
+    record["deviceGroupBefore"] = old_group_by_category.get(cat)
     record["webExposureBeforeDisabledDecision"] = web_before
     record["currentWebSettingsRoute"] = "disabled/not registered in source snapshot ce86b9f8" if record["type"] != "action" else "n/a"
     record["intentionallyHidden"] = hidden
@@ -491,12 +503,13 @@ def annotate(record: dict) -> None:
 
 
 def make_inventory(web_revision: str | None, label: str) -> dict:
-    # Device descriptors/defaults come from the exact current integration snapshot.
-    # Only the Web routing source is read historically to reconstruct the pre-deferral baseline.
-    settings = read("src/SettingsList.h")
-    cross = read("src/CrossPointSettings.h")
-    sleep = read("src/util/SleepComposer.h")
-    activity = read("src/activities/settings/SettingsActivity.cpp")
+    # Device descriptors/defaults/action exposure come from the frozen source,
+    # not this worktree's in-progress SettingsActivity experiment. Only the
+    # Web routing source is read historically for the pre-deferral baseline.
+    settings = read("src/SettingsList.h", DEVICE_SOURCE_REVISION)
+    cross = read("src/CrossPointSettings.h", DEVICE_SOURCE_REVISION)
+    sleep = read("src/util/SleepComposer.h", DEVICE_SOURCE_REVISION)
+    activity = read("src/activities/settings/SettingsActivity.cpp", DEVICE_SOURCE_REVISION)
     web = read("src/network/CrossPointWebServer.cpp", web_revision)
     start = settings.index("std::vector<SettingInfo> v = {")
     list_end = settings.index("    return v;", start)

@@ -74,6 +74,12 @@ class SettingsGroupParityTest(unittest.TestCase):
         self.assertTrue(flexible["intentionallyHidden"])
         self.assertEqual(flexible["enumValue"], 17)
 
+    def test_quick_actions_are_regrouped_without_changing_the_old_location(self):
+        quick_actions = next(row for row in self.inventory["records"]
+                             if row["stableId"] == "action:QuickActions")
+        self.assertEqual(quick_actions["deviceGroupBefore"], "reading")
+        self.assertEqual(quick_actions["proposedGroupId"], "controls")
+
     def test_group_id_list_stays_at_one_level(self):
         text = HEADER.read_text(encoding="utf-8")
         ids = re.findall(r'\{SettingsGroupId::\w+, "([a-z_]+)",', text)
