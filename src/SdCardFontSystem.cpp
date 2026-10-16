@@ -165,6 +165,32 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
 }
 
 void SdCardFontSystem::ensureUiLoaded(GfxRenderer& renderer) {
+  const bool familySelected = SETTINGS.uiFontFamilyName[0] != '\0';
+  if (!InterfaceFontSelection::mayApplyCustomUiFont(
+          InterfaceFontSelection::kCustomUiFontsEnabledForCurrentRelease, familySelected)) {
+    const bool customAssetsResident = !uiManager_.currentFamilyName().empty() || uiLoadInProgress_;
+    if (customAssetsResident) {
+      renderer.clearUiFontOverrides();
+      uiManager_.unloadAll(renderer, false);
+      renderer.clearUiTextPreparation();
+      uiLoadInProgress_ = false;
+      uiLoadingFamily_.clear();
+      uiLoadingStep_ = 0;
+    }
+    if (!uiAttemptedFamily_.empty()) uiAttemptedFamily_.clear();
+    if (!familySelected) {
+      return;
+    }
+
+    if (!uiDeferredFallbackLogged_) {
+      LOG_INF("UIFONT", "saved_family=%s state=deferred selection_preserved=1 source=built_in_fallback reason=custom UI fonts disabled for 1.6.6 X4 validation",
+              SETTINGS.uiFontFamilyName);
+      logBuiltInUiRoles(SETTINGS.uiFontFamilyName, "custom UI fonts deferred for physical X4 timing");
+      uiDeferredFallbackLogged_ = true;
+    }
+    return;
+  }
+
   const bool registryWasDirty = registryDirty_.exchange(false, std::memory_order_acquire);
   if (registryWasDirty) {
     LOG_DBG("SDFS", "UI registry dirty — re-discovering fonts");
@@ -399,7 +425,8 @@ void SdCardFontSystem::releaseInterfaceFontCaches() {
 #if NOOIR_SD_FONT_DIAGNOSTICS
   uiManager_.logMemoryStats("before_interface_font_unload");
 #endif
-  if (SETTINGS.uiFontFamilyName[0] != '\0') {
+  if (SETTINGS.uiFontFamilyName[0] != '\0' &&
+      (!uiManager_.currentFamilyName().empty() || uiLoadInProgress_)) {
     LOG_INF("UIFONT", "unload family=%s selection_preserved=1 reason=heavy activity boundary",
             SETTINGS.uiFontFamilyName);
     logBuiltInUiRoles(SETTINGS.uiFontFamilyName, "custom assets unloaded at heavy boundary");

@@ -7,6 +7,15 @@
 
 namespace InterfaceFontSelection {
 
+// Custom UI faces are deferred for the 1.6.6 physical-X4 stabilization pass
+// until they can be timed on-device. Keep the saved family and loader intact
+// so a later release can re-enable the choice without migration.
+constexpr bool kCustomUiFontsEnabledForCurrentRelease = false;
+
+constexpr bool mayApplyCustomUiFont(const bool featureEnabled, const bool familySelected) {
+  return featureEnabled && familySelected;
+}
+
 // Interface-font faces are deliberately narrower than reader font faces. The
 // 8 pt role is used for compact labels; 10 pt and 12 pt also need bold titles.
 // The cpfont style bits match EpdFontFamily's REGULAR/BOLD/ITALIC/BOLD_ITALIC

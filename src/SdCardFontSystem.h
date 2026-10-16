@@ -109,6 +109,7 @@ class SdCardFontSystem {
   std::atomic<bool> uiReloadRequested_{false};
   std::string uiAttemptedFamily_;
   std::string uiLoadingFamily_;
+  bool uiDeferredFallbackLogged_ = false;
   uint8_t uiLoadingStep_ = 0;
   bool uiLoadInProgress_ = false;
 
