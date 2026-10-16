@@ -1,0 +1,3 @@
+add_executable(web_stability_tests WebStabilityPolicyTest.cpp)
+target_link_libraries(web_stability_tests PRIVATE crosspoint_test_common GTest::gtest_main)
+gtest_discover_tests(web_stability_tests)

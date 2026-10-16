@@ -48,7 +48,7 @@
     }</style>
 </head>
 <body>
-  <header><h1>Folio <span class="noo">Nooir</span></h1><nav aria-label="Main navigation"><a href="/">Device</a><a href="/library">Bookshelf</a><a href="/stats">Reading Stats</a><a href="/todo" class="active" aria-current="page">To-Do List</a><a href="/files">Transfer</a><a href="/clippings">Clippings</a><a href="/settings">Settings</a><a href="/fonts">Typography</a></nav></header>
+  <header><h1>Folio <span class="noo">Nooir</span></h1><nav aria-label="Main navigation"><a href="/">Device</a><a href="/library">Bookshelf</a><a href="/stats">Reading Stats</a><a href="/todo" class="active" aria-current="page">To-Do List</a><a href="/files">Transfer</a><a href="/fonts">Typography</a></nav></header>
   <main><div class="toolbar"><h2>To-Do List</h2><span id="summary" class="muted"></span><button onclick="load()">Refresh</button><button onclick="clearCompleted()">Clear completed</button></div><p id="message" class="muted">Loading…</p><div class="add-row"><input id="newText" placeholder="Add a task…" maxlength="256" onkeydown="if(event.key==='Enter')addTask()"><button onclick="addTask()">Add</button></div><section id="tasks"></section></main>
   <script>
     const esc=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

@@ -20,6 +20,7 @@
 #include "fontIds.h"
 #include "util/QrUtils.h"
 #include "SdCardFontSystem.h"
+#include "network/WebExitLifecyclePolicy.h"
 #include "activities/RenderLock.h"
 #include <TaskWatchdog.h>
 
@@ -152,12 +153,22 @@ void CrossPointWebServerActivity::onEnter() {
 }
 
 bool CrossPointWebServerActivity::prepareForExit() {
-  if (webExitPrepared) {
-    return !webServer && WiFi.getMode() == WIFI_MODE_NULL &&
-           esp_netif_get_handle_from_ifkey("WIFI_STA_DEF") == nullptr &&
-           esp_netif_get_handle_from_ifkey("WIFI_AP_DEF") == nullptr;
+  const auto currentResources = [this] {
+    return WebExitLifecyclePolicy::Resources{
+        !webServer,
+        WiFi.getMode() == WIFI_MODE_NULL,
+        esp_netif_get_handle_from_ifkey("WIFI_STA_DEF") == nullptr,
+        esp_netif_get_handle_from_ifkey("WIFI_AP_DEF") == nullptr,
+    };
+  };
+  if (WebExitLifecyclePolicy::maySkipCleanup(webExitPrepared, currentResources())) {
+    return true;
   }
-  webExitPrepared = true;
+  // The first attempt may leave the radio or a netif alive. Keep the prepared
+  // flag false until observable teardown is complete so the ActivityManager's
+  // next preflight retries cleanup instead of getting stuck behind a stale
+  // "already prepared" flag.
+  webExitPrepared = false;
   logWebMemory("exit_begin");
   logDefaultWifiNetifs("exit_begin_netifs");
   state = WebServerActivityState::SHUTTING_DOWN;
@@ -206,7 +217,12 @@ bool CrossPointWebServerActivity::prepareForExit() {
           static_cast<int>(WiFi.getMode()));
   logWebMemory("wifi_destroyed");
   const bool netifsDestroyed = logDefaultWifiNetifs("wifi_destroyed_netifs");
-  return radioStopped && !webServer && WiFi.getMode() == WIFI_MODE_NULL && netifsDestroyed;
+  const bool resourcesReleased = WebExitLifecyclePolicy::complete(currentResources());
+  webExitPrepared = radioStopped && resourcesReleased;
+  LOG_INF("WEBMEM", "stage=exit_attempt result=%s radio=%s server_stopped=%d mode_null=%d netifs_destroyed=%d",
+          resourcesReleased && radioStopped ? "ok" : "retry", radioStopped ? "ok" : "failed",
+          !webServer ? 1 : 0, WiFi.getMode() == WIFI_MODE_NULL ? 1 : 0, netifsDestroyed ? 1 : 0);
+  return radioStopped && resourcesReleased;
 }
 
 void CrossPointWebServerActivity::onExit() {

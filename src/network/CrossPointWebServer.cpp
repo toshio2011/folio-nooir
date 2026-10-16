@@ -37,7 +37,7 @@
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
 #include "WebDAVHandler.h"
-#include "WebClippingsHandler.h"
+#include "WebSettingsMemoryPolicy.h"
 #include "WifiCredentialStore.h"
 #include "WeatherStore.h"
 #include "ToDoStore.h"
@@ -393,34 +393,17 @@ struct SettingsJsonStream {
   void endArray() { append(']'); }
 };
 
-// Wi-Fi/server buffers are already active when a route starts. This floor is
-// intentionally Web-specific: it is derived from the observed settings
-// request's lowest stable working point, not from the BLE admission floors.
-// The settings response uses a 256-byte stack writer and static descriptor
-// references. Physical measurements showed up to 24,548 bytes of transient
-// heap pressure for a 9,489-byte response, so budget a conservative 3x body
-// allowance plus 12 KiB reserve. This applies per page and is not a BLE floor.
-constexpr size_t kWebSettingsMinFreeHeap = 20 * 1024;
-constexpr size_t kWebSettingsMinLargestBlock = 8 * 1024;
-constexpr size_t kWebSettingsSafetyReserve = 12 * 1024;
-constexpr size_t kWebSettingsObservedPeakMultiplier = 3;
-
 bool webSettingsMemoryAdmitted(WebServer* server, const size_t responseBytes) {
   const size_t freeHeap = ESP.getFreeHeap();
   const size_t largest = ESP.getMaxAllocHeap();
-  const size_t maxSize = static_cast<size_t>(-1);
-  const size_t projectedTransport =
-      responseBytes > (maxSize - kWebSettingsSafetyReserve) / kWebSettingsObservedPeakMultiplier
-          ? maxSize
-          : kWebSettingsSafetyReserve + responseBytes * kWebSettingsObservedPeakMultiplier;
-  const size_t requiredFree = std::max(kWebSettingsMinFreeHeap, projectedTransport);
-  const bool admitted = freeHeap >= requiredFree && largest >= kWebSettingsMinLargestBlock;
+  const size_t requiredFree = WebSettingsMemoryPolicy::requiredFreeHeap(responseBytes);
+  const bool admitted = WebSettingsMemoryPolicy::admitted(freeHeap, largest, responseBytes);
   LOG_INF("WEBMEM", "stage=settings_guard result=%s bytes=%u free=%u largest=%u required=%u reserve=%u ratio=%u largest_floor=%u",
           admitted ? "allow" : "reject", static_cast<unsigned>(responseBytes),
           static_cast<unsigned>(freeHeap), static_cast<unsigned>(largest), static_cast<unsigned>(requiredFree),
-          static_cast<unsigned>(kWebSettingsSafetyReserve),
-          static_cast<unsigned>(kWebSettingsObservedPeakMultiplier),
-          static_cast<unsigned>(kWebSettingsMinLargestBlock));
+          static_cast<unsigned>(WebSettingsMemoryPolicy::kSafetyReserve),
+          static_cast<unsigned>(WebSettingsMemoryPolicy::kObservedPeakMultiplier),
+          static_cast<unsigned>(WebSettingsMemoryPolicy::kMinLargestBlock));
   if (!admitted && server) {
     server->send(503, "text/plain", "Web memory temporarily unavailable");
   }
@@ -535,7 +518,6 @@ void CrossPointWebServer::begin() {
   server->on("/api/stats/export", HTTP_GET, [this] { handleStatsExport(); });
   server->on("/api/book", HTTP_GET, [this] { handleGetBookInfo(); });
   server->on("/api/book", HTTP_POST, [this] { handlePostBookUpdate(); });
-  WebClippingsHandler::registerRoutes(server.get());
   server->on("/api/files", HTTP_GET, [this] { handleFileListData(); });
   server->on("/download", HTTP_GET, [this] { handleDownload(); });
 
@@ -554,13 +536,14 @@ void CrossPointWebServer::begin() {
   // Delete file/folder endpoint
   server->on("/delete", HTTP_POST, [this] { handleDelete(); });
 
-  // Settings endpoints
-  server->on("/settings", HTTP_GET, [this] { handleSettingsPage(); });
+  // 1.6.6 physical-X4 RC deferral: keep the Web Settings implementation
+  // available for a later measured pass, but do not expose it while repeated
+  // settings responses are under investigation on low-heap devices.
   server->on("/todo", HTTP_GET, [this] { handleToDoPage(); });
   server->on("/api/todo", HTTP_GET, [this] { handleGetToDo(); });
   server->on("/api/todo", HTTP_POST, [this] { handlePostToDo(); });
-  server->on("/api/settings", HTTP_GET, [this] { handleGetSettings(); });
-  server->on("/api/settings", HTTP_POST, [this] { handlePostSettings(); });
+  // WebClippingsHandler remains unregistered for this RC. Its ClipFile-backed
+  // records, reader notes, and /My Clippings.txt export remain unchanged.
 
   // Font management endpoints
   server->on("/fonts", HTTP_GET, [this] { handleFontsPage(); });
