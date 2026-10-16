@@ -163,7 +163,7 @@ void EpubReaderClippingListActivity::showActions() {
                 " · Date: " + dateLabel(item.clipping.dateKey);
       const std::string title = item.bookTitle.empty() ? item.bookPath : item.bookTitle;
       startActivityForResult(
-          std::make_unique<SynopsisActivity>(renderer, mappedInput, title, "Clipping details", detail),
+          std::make_unique<SynopsisActivity>(renderer, mappedInput, title, "", detail),
           nullptr);
     } else if (action == 2) {
       editSelected();
