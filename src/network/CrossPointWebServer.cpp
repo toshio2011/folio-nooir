@@ -36,6 +36,8 @@
 #include "HalClock.h"
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
+#include "SettingsGroups.h"
+#include "WebSettingsApiPolicy.h"
 #include "WebDAVHandler.h"
 #include "WebSettingsMemoryPolicy.h"
 #include "WifiCredentialStore.h"
@@ -537,8 +539,13 @@ void CrossPointWebServer::begin() {
   server->on("/delete", HTTP_POST, [this] { handleDelete(); });
 
   // 1.6.6 physical-X4 RC deferral: keep the Web Settings implementation
-  // available for a later measured pass, but do not expose it while repeated
-  // settings responses are under investigation on low-heap devices.
+  // grouped routes keep each response and submitted update bounded to one
+  // selected settings group. The legacy ungrouped/all-catalog contract is not
+  // registered. Clippings remains deferred for this RC.
+  server->on("/settings", HTTP_GET, [this] { handleSettingsPage(); });
+  server->on("/api/settings/groups", HTTP_GET, [this] { handleGetSettingsGroups(); });
+  server->on("/api/settings", HTTP_GET, [this] { handleGetSettings(); });
+  server->on("/api/settings", HTTP_POST, [this] { handlePostSettings(); });
   server->on("/todo", HTTP_GET, [this] { handleToDoPage(); });
   server->on("/api/todo", HTTP_GET, [this] { handleGetToDo(); });
   server->on("/api/todo", HTTP_POST, [this] { handlePostToDo(); });
@@ -2233,36 +2240,114 @@ void CrossPointWebServer::handleSettingsPage() const {
   LOG_DBG("WEB", "Served settings page");
 }
 
+void CrossPointWebServer::handleGetSettingsGroups() const {
+  WebRouteTrace routeTrace(server.get(), "/api/settings/groups", "fixed_group_descriptors");
+  if (server->args() != 0) {
+    LOG_INF("WEBRT", "route=/api/settings/groups status=400 reason=unexpected_arguments args=%d", server->args());
+    server->send(400, "text/plain", "Unexpected query arguments");
+    return;
+  }
+  if (!webSettingsMemoryAdmitted(server.get(), 0)) return;
+
+  const auto emitGroups = [](SettingsJsonStream& output) {
+    output.raw("[");
+    bool first = true;
+    for (const auto& group : settingsGroupDescriptors()) {
+      if (!first) output.raw(",");
+      first = false;
+      output.beginObject();
+      output.fieldString("id", group.key);
+      output.fieldString("name", I18N.get(group.labelId));
+      output.endObject();
+    }
+    output.raw("]");
+    output.flush();
+  };
+
+  SettingsJsonStream counter(nullptr, true);
+  emitGroups(counter);
+  const size_t contentLength = counter.bytesWritten();
+  if (!webSettingsMemoryAdmitted(server.get(), contentLength)) return;
+  server->setContentLength(contentLength);
+  server->send(200, "application/json", "");
+  SettingsJsonStream output(server.get());
+  emitGroups(output);
+  const bool responseComplete = !output.closed && output.totalBytes == contentLength &&
+                                output.transportBytesAccepted == contentLength;
+  if (!responseComplete && server->client().connected()) server->client().stop();
+  LOG_INF("WEBRT", "route=/api/settings/groups status=%d response_count=%u bytes=%u result=%s free=%lu largest=%lu",
+          responseComplete ? 200 : 500, static_cast<unsigned>(settingsGroupDescriptors().size()),
+          static_cast<unsigned>(contentLength), responseComplete ? "ok" : "incomplete",
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+}
+
 void CrossPointWebServer::handleGetSettings() const {
-  WebRouteTrace routeTrace(server.get(), "/api/settings", "bounded_paged_stream");
+  WebRouteTrace routeTrace(server.get(), "/api/settings", "grouped_bounded_paged_stream");
   logSettingsStage("handler_entered", 0, nullptr, server.get());
   LOG_DBG("WEB", "[SETTINGS] GET start free=%lu min=%lu largest=%lu", static_cast<unsigned long>(ESP.getFreeHeap()),
           static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   if (!webSettingsMemoryAdmitted(server.get(), 0)) return;
 
-  const bool paged = server->hasArg("offset") || server->hasArg("limit");
-  size_t pageOffset = 0;
-  size_t pageEnd = static_cast<size_t>(-1);
-  if (paged) {
-    const long parsedOffset = server->hasArg("offset") ? server->arg("offset").toInt() : 0;
-    const long parsedLimit = server->hasArg("limit") ? server->arg("limit").toInt() : 6;
-    if (parsedOffset < 0 || parsedLimit <= 0) {
-      server->send(400, "text/plain", "Invalid settings page");
+  if (server->args() < 1 || server->args() > 3) {
+    LOG_INF("WEBRT", "route=/api/settings method=GET status=400 reason=argument_count args=%d", server->args());
+    server->send(400, "text/plain", "A settings group is required");
+    return;
+  }
+  bool groupSeen = false;
+  bool offsetSeen = false;
+  bool limitSeen = false;
+  for (int i = 0; i < server->args(); ++i) {
+    const String name = server->argName(i);
+    if (name == "group" && !groupSeen) groupSeen = true;
+    else if (name == "offset" && !offsetSeen) offsetSeen = true;
+    else if (name == "limit" && !limitSeen) limitSeen = true;
+    else {
+      LOG_INF("WEBRT", "route=/api/settings method=GET status=400 reason=unexpected_argument arg=%.24s", name.c_str());
+      server->send(400, "text/plain", "Unexpected or duplicate query argument");
       return;
     }
-    pageOffset = static_cast<size_t>(parsedOffset);
-    const size_t pageLimit = std::min<size_t>(static_cast<size_t>(parsedLimit), 8);
-    const size_t maxSize = static_cast<size_t>(-1);
-    pageEnd = pageLimit > maxSize - pageOffset ? maxSize : pageOffset + pageLimit;
   }
+  if (!groupSeen) {
+    LOG_INF("WEBRT", "route=/api/settings method=GET status=400 reason=missing_group");
+    server->send(400, "text/plain", "A settings group is required");
+    return;
+  }
+
+  const String groupArg = server->arg("group");
+  SettingsGroupId selectedGroup = SettingsGroupId::Unknown;
+  if (groupArg.length() > 24 || !WebSettingsApiPolicy::parseGroup(groupArg.c_str(), selectedGroup)) {
+    LOG_INF("WEBRT", "route=/api/settings method=GET status=400 reason=invalid_group group=%.24s", groupArg.c_str());
+    server->send(400, "text/plain", "Unknown settings group");
+    return;
+  }
+  const String offsetArg = offsetSeen ? server->arg("offset") : String();
+  const String limitArg = limitSeen ? server->arg("limit") : String();
+  WebSettingsApiPolicy::PageWindow page{};
+  if (!WebSettingsApiPolicy::makePageWindow(offsetSeen ? offsetArg.c_str() : nullptr,
+                                            limitSeen ? limitArg.c_str() : nullptr, page)) {
+    LOG_INF("WEBRT", "route=/api/settings method=GET status=400 reason=invalid_page group=%s offset=%.12s limit=%.12s",
+            settingsGroupKey(selectedGroup), offsetSeen ? offsetArg.c_str() : "0",
+            limitSeen ? limitArg.c_str() : "6");
+    server->send(400, "text/plain", "Invalid settings page");
+    return;
+  }
+  const size_t pageOffset = page.offset;
+  const size_t pageEnd = page.end;
+  // Web font uploads/deletions mark the registry dirty. Refresh only when the
+  // selected group exposes the font-family picker; refreshIfDirty is a no-op
+  // on later pages and for every other settings group.
+  if (selectedGroup == SettingsGroupId::Reading) sdFontSystem.refreshIfDirty();
+  LOG_INF("WEBRT", "route=/api/settings method=GET group=%s offset=%u limit=%u status=processing free=%lu largest=%lu",
+          settingsGroupKey(selectedGroup), static_cast<unsigned>(pageOffset), static_cast<unsigned>(page.limit),
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
 
   // Count the exact response length, then emit through one reused 256-byte
   // buffer with a fixed Content-Length. Static settings are visited by
   // reference. The dynamic font and sleep-screen rows are written directly
   // from their owners instead of constructing SettingInfo copies with
   // duplicated option vectors and captured family-name copies.
-  const auto emitSettings = [this, pageOffset, pageEnd](SettingsJsonStream& output, WebServer* web,
-                                                        const bool diagnostics) {
+  const auto emitSettings = [this, selectedGroup, pageOffset, pageEnd](SettingsJsonStream& output, WebServer* web,
+                                                                       const bool diagnostics) {
     output.raw("[");
     bool seenFirst = false;
     unsigned index = 0;
@@ -2270,7 +2355,7 @@ void CrossPointWebServer::handleGetSettings() const {
 
     const auto beginDescriptor = [&](const char* key, const StrId nameId, const StrId category,
                                      unsigned& currentIndex) {
-      if (output.closed || !key) return false;
+      if (output.closed || !key || !WebSettingsApiPolicy::isWebWritableKey(key, selectedGroup)) return false;
       currentIndex = index++;
       if (currentIndex < pageOffset || currentIndex >= pageEnd) return false;
       if (diagnostics && (currentIndex & 7u) == 0u) logSettingsStage("descriptor", currentIndex, key, web);
@@ -2462,14 +2547,13 @@ void CrossPointWebServer::handleGetSettings() const {
   const size_t selectedDescriptorEnd = std::min<size_t>(pageEnd, countedDescriptors);
   const unsigned pageDescriptorCount = static_cast<unsigned>(
       selectedDescriptorEnd > selectedDescriptorStart ? selectedDescriptorEnd - selectedDescriptorStart : 0);
-  logSettingsStage("counted_response", countedDescriptors, nullptr, server.get());
+  logSettingsStage("counted_group_response", countedDescriptors, settingsGroupKey(selectedGroup), server.get());
   if (!webSettingsMemoryAdmitted(server.get(), contentLength)) return;
 
   // NetworkClient::write waits for socket writability but its return count is
   // bytes accepted by lwIP, not proof of remote ACK. The socket queue depth is
-  // not exposed here, so paged callers keep each response's live transport
-  // footprint bounded; the no-query API retains the complete-array contract
-  // and is admitted only when its measured-size budget fits.
+  // not exposed here, so each selected-group page keeps its live transport
+  // footprint bounded to at most six descriptors.
   const int clientFd = server->client().fd();
   int sendBufferBytes = 0;
   socklen_t sendBufferLength = sizeof(sendBufferBytes);
@@ -2477,11 +2561,12 @@ void CrossPointWebServer::handleGetSettings() const {
                                    ? getsockopt(clientFd, SOL_SOCKET, SO_SNDBUF, &sendBufferBytes,
                                                 &sendBufferLength)
                                    : -1;
-  LOG_INF("WEBRT", "route=/api/settings phase=transport fd=%d sndbuf_query=%s sndbuf=%d queue_depth=not_exposed mode=lwip_send_queue chunk=%u page=%d offset=%u end=%u",
+  LOG_INF("WEBRT", "route=/api/settings phase=transport group=%s fd=%d sndbuf_query=%s sndbuf=%d queue_depth=not_exposed mode=lwip_send_queue chunk=%u offset=%u end=%u",
+          settingsGroupKey(selectedGroup),
           clientFd, sendBufferResult == 0 ? "ok" : "unavailable", sendBufferBytes,
-          static_cast<unsigned>(SettingsJsonStream::kBufferSize), paged ? 1 : 0,
+          static_cast<unsigned>(SettingsJsonStream::kBufferSize),
           static_cast<unsigned>(pageOffset), static_cast<unsigned>(pageEnd));
-  if (paged) server->sendHeader("X-Settings-Total", String(countedDescriptors));
+  server->sendHeader("X-Settings-Total", String(countedDescriptors));
   server->setContentLength(contentLength);
   logSettingsStage("before_response_object", 0, nullptr, server.get());
   server->send(200, "application/json", "");
@@ -2491,8 +2576,9 @@ void CrossPointWebServer::handleGetSettings() const {
   const bool responseComplete = !output.closed && output.totalBytes == contentLength &&
                                 output.transportBytesAccepted == contentLength;
   if (!responseComplete && server->client().connected()) server->client().stop();
-  LOG_INF("WEBRT", "route=/api/settings phase=response_complete result=%s page_descriptors=%u total_descriptors=%u chunks=%u accepted=%u/%u free=%lu largest=%lu",
-          responseComplete ? "ok" : "incomplete", pageDescriptorCount, emittedTotalDescriptors,
+  LOG_INF("WEBRT", "route=/api/settings phase=response_complete group=%s offset=%u count=%u total=%u result=%s chunks=%u accepted=%u/%u free=%lu largest=%lu",
+          settingsGroupKey(selectedGroup), static_cast<unsigned>(pageOffset), pageDescriptorCount, emittedTotalDescriptors,
+          responseComplete ? "ok" : "incomplete",
           static_cast<unsigned>(output.transportChunks),
           static_cast<unsigned>(output.transportBytesAccepted), static_cast<unsigned>(contentLength),
           static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
@@ -2501,30 +2587,133 @@ void CrossPointWebServer::handleGetSettings() const {
 }
 
 void CrossPointWebServer::handlePostSettings() {
-  WebRouteTrace routeTrace(server.get(), "/api/settings", "buffered_request_bounded");
+  WebRouteTrace routeTrace(server.get(), "/api/settings", "group_map_bounded_request");
   LOG_DBG("WEB", "[SETTINGS] POST start free=%lu min=%lu largest=%lu", static_cast<unsigned long>(ESP.getFreeHeap()),
           static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
-  if (!server->hasArg("plain")) {
-    server->send(400, "text/plain", "Missing JSON body");
+  if (server->args() != 2) {
+    LOG_INF("WEBRT", "route=/api/settings method=POST status=400 reason=argument_count args=%d", server->args());
+    server->send(400, "text/plain", "A settings group and JSON body are required");
     return;
   }
+  bool groupSeen = false;
+  bool bodySeen = false;
+  for (int i = 0; i < server->args(); ++i) {
+    const String name = server->argName(i);
+    if (name == "group" && !groupSeen) groupSeen = true;
+    else if (name == "plain" && !bodySeen) bodySeen = true;
+    else {
+      LOG_INF("WEBRT", "route=/api/settings method=POST status=400 reason=unexpected_argument arg=%.24s", name.c_str());
+      server->send(400, "text/plain", "Unexpected or duplicate request argument");
+      return;
+    }
+  }
+  if (!groupSeen || !bodySeen) {
+    LOG_INF("WEBRT", "route=/api/settings method=POST status=400 reason=missing_group_or_body");
+    server->send(400, "text/plain", "A settings group and JSON body are required");
+    return;
+  }
+
+  const String groupArg = server->arg("group");
+  SettingsGroupId selectedGroup = SettingsGroupId::Unknown;
+  if (groupArg.length() > 24 || !WebSettingsApiPolicy::parseGroup(groupArg.c_str(), selectedGroup)) {
+    LOG_INF("WEBRT", "route=/api/settings method=POST status=400 reason=invalid_group group=%.24s", groupArg.c_str());
+    server->send(400, "text/plain", "Unknown settings group");
+    return;
+  }
+
+  // WebServer retains the parsed body in its request state. Check the declared
+  // size before `arg()` makes another String copy or ArduinoJson allocates its
+  // document. The 2 KiB cap allows normal multi-change groups while bounding
+  // their transient request/document footprint on X4.
+  const int bodyBytes = server->clientContentLength();
+  if (!WebSettingsApiPolicy::validGroupRequestBytes(bodyBytes)) {
+    const int status = bodyBytes > static_cast<int>(WebSettingsApiPolicy::kMaxGroupRequestBytes) ? 413 : 400;
+    LOG_INF("WEBRT", "route=/api/settings method=POST group=%s status=%d reason=body_size bytes=%d cap=%u free=%lu largest=%lu",
+            settingsGroupKey(selectedGroup), status, bodyBytes,
+            static_cast<unsigned>(WebSettingsApiPolicy::kMaxGroupRequestBytes),
+            static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+    server->send(status, "text/plain", status == 413 ? "Settings request exceeds 2 KiB" : "Missing or invalid JSON body");
+    return;
+  }
+  if (!webSettingsMemoryAdmitted(server.get(), static_cast<size_t>(bodyBytes))) return;
 
   String body = server->arg("plain");
   JsonDocument doc;
   const DeserializationError err = deserializeJson(doc, body);
   if (err) {
+    LOG_INF("WEBRT", "route=/api/settings method=POST group=%s status=400 reason=json_error bytes=%d error=%s",
+            settingsGroupKey(selectedGroup), bodyBytes, err.c_str());
     server->send(400, "text/plain", String("Invalid JSON: ") + err.c_str());
     return;
   }
+  if (!doc.is<JsonObject>()) {
+    LOG_INF("WEBRT", "route=/api/settings method=POST group=%s status=400 reason=json_not_object", settingsGroupKey(selectedGroup));
+    server->send(400, "text/plain", "Settings body must be a JSON object");
+    return;
+  }
+
+  JsonObjectConst changes = doc.as<JsonObjectConst>();
+  const size_t changeCount = changes.size();
+  if (!WebSettingsApiPolicy::validSettingsPostShape(selectedGroup, bodyBytes, changeCount)) {
+    LOG_INF("WEBRT", "route=/api/settings method=POST group=%s status=400 reason=change_count count=%u cap=%u",
+            settingsGroupKey(selectedGroup), static_cast<unsigned>(changeCount),
+            static_cast<unsigned>(WebSettingsApiPolicy::kMaxGroupChanges));
+    server->send(400, "text/plain", "Settings group change count is invalid");
+    return;
+  }
+
+  // Reject every invalid, unknown, or cross-group key before touching settings.
+  // The group classifier is the single source of truth shared with the device
+  // settings inventory. Hidden Flexible Sleep composer keys remain unwritable.
+  const bool allKeysInGroup = WebSettingsApiPolicy::allKeysBelongToGroup(
+      changes.begin(), changes.end(), selectedGroup,
+      [](const JsonPairConst& pair) { return pair.key().c_str(); });
+  bool allKeysKnown = allKeysInGroup;
+  if (allKeysKnown) {
+    for (JsonPairConst pair : changes) {
+      const char* key = pair.key().c_str();
+      const bool special = std::strcmp(key, "sleepScreen") == 0 || std::strcmp(key, "fontFamily") == 0 ||
+                           std::strcmp(key, "dictionaryFontFamily") == 0;
+      bool found = special;
+      if (!found) {
+        for (const auto& setting : getBaseSettingsList()) {
+          if (setting.key && std::strcmp(setting.key, key) == 0 && setting.type != SettingType::ACTION) {
+            found = true;
+            break;
+          }
+        }
+      }
+      if (!found) {
+        allKeysKnown = false;
+        LOG_INF("WEBRT", "route=/api/settings method=POST group=%s status=400 reason=unknown_key key=%.32s",
+                settingsGroupKey(selectedGroup), key);
+        break;
+      }
+    }
+  }
+  if (!allKeysInGroup || !allKeysKnown) {
+    LOG_INF("WEBRT", "route=/api/settings method=POST group=%s status=400 reason=%s count=%u",
+            settingsGroupKey(selectedGroup), allKeysInGroup ? "unknown_key" : "out_of_group_key",
+            static_cast<unsigned>(changeCount));
+    server->send(400, "text/plain", "Unknown or out-of-group settings key; no changes applied");
+    return;
+  }
+
   // WebServer and ArduinoJson both need the request while parsing, but the
   // settings walk does not. Release the body before applying settings.
   body = String();
+  // Make a newly uploaded/deleted family visible before resolving the web
+  // picker index. This remains dirty-flagged, and only runs when that key was
+  // included in the selected Reading group's change map.
+  if (selectedGroup == SettingsGroupId::Reading && doc["fontFamily"].is<JsonVariant>()) {
+    sdFontSystem.refreshIfDirty();
+  }
 
   int applied = 0;
   bool changed = false;
 
   const auto applySetting = [&](const SettingInfo& s) {
-    if (!s.key) return;
+    if (!s.key || !WebSettingsApiPolicy::isWebWritableKey(s.key, selectedGroup)) return;
     if (!doc[s.key].is<JsonVariant>()) return;
 
     switch (s.type) {
@@ -2603,6 +2792,7 @@ void CrossPointWebServer::handlePostSettings() {
   // builder deep-copies SD-font names into vectors and std::function captures;
   // the Web API needs only the selected indexes, not those UI objects.
   for (const auto& setting : getBaseSettingsList()) {
+    if (!setting.key || !WebSettingsApiPolicy::isWebWritableKey(setting.key, selectedGroup)) continue;
     if (setting.nameId == StrId::STR_SLEEP_SCREEN || setting.nameId == StrId::STR_FONT_FAMILY ||
         setting.nameId == StrId::STR_INTERFACE_FONT || setting.nameId == StrId::STR_DICTIONARY_FONT) {
       continue;
@@ -2610,7 +2800,7 @@ void CrossPointWebServer::handlePostSettings() {
     applySetting(setting);
   }
 
-  if (doc["sleepScreen"].is<JsonVariant>()) {
+  if (selectedGroup == SettingsGroupId::Sleep && doc["sleepScreen"].is<JsonVariant>()) {
     const int value = doc["sleepScreen"].as<int>();
     if (value >= 0 && value < 16) {
       const auto previous = SETTINGS.sleepScreen;
@@ -2637,7 +2827,7 @@ void CrossPointWebServer::handlePostSettings() {
     }
   }
 
-  if (doc["fontFamily"].is<JsonVariant>()) {
+  if (selectedGroup == SettingsGroupId::Reading && doc["fontFamily"].is<JsonVariant>()) {
     const int value = doc["fontFamily"].as<int>();
     const auto& families = sdFontSystem.registry().getFamilies();
     const int optionCount = static_cast<int>(CrossPointSettings::VISIBLE_BUILTIN_FONT_COUNT + families.size());
@@ -2657,7 +2847,7 @@ void CrossPointWebServer::handlePostSettings() {
     }
   }
 
-  if (doc["dictionaryFontFamily"].is<JsonVariant>()) {
+  if (selectedGroup == SettingsGroupId::Reading && doc["dictionaryFontFamily"].is<JsonVariant>()) {
     const int value = doc["dictionaryFontFamily"].as<int>();
     if (value >= 0 && value < FontSelectionCompatibility::kVisibleDictionaryFontCount) {
       changed |= SETTINGS.dictionaryFontFamily != value;
@@ -2668,6 +2858,9 @@ void CrossPointWebServer::handlePostSettings() {
 
   if (changed) SETTINGS.saveToFile();
 
+  LOG_INF("WEBRT", "route=/api/settings method=POST group=%s response_count=%d status=200 changed=%d free=%lu largest=%lu",
+          settingsGroupKey(selectedGroup), applied, changed ? 1 : 0,
+          static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
   LOG_DBG("WEB", "[SETTINGS] applied=%d complete free=%lu min=%lu largest=%lu", applied,
           static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
           static_cast<unsigned long>(ESP.getMaxAllocHeap()));

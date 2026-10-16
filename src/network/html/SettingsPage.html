@@ -170,6 +170,9 @@
       background-color: #95a5a6;
       cursor: not-allowed;
     }
+    .settings-group-tabs { display:grid; grid-template-columns:1fr; gap:6px; }
+    .settings-group-choice { width:100%; display:flex; justify-content:space-between; align-items:center; padding:10px 14px; text-align:left; color:var(--nooir-ink); background:var(--nooir-card) !important; border:1px solid var(--nooir-line); }
+    .settings-group-choice span { color:var(--nooir-accent); font-size:1.3em; }
     .message {
       padding: 12px;
       border-radius: 4px;
@@ -327,14 +330,26 @@
 </head>
 <body>
   <header class="nooir-header"><h1>Folio <span class="noo">Nooir</span></h1><nav aria-label="Main navigation">
-    <a href="/">Device</a><a href="/library">Bookshelf</a><a href="/stats">Reading Stats</a><a href="/todo">To-Do List</a><a href="/files">Transfer</a><a href="/fonts">Typography</a>
+    <a href="/">Device</a><a href="/library">Bookshelf</a><a href="/stats">Reading Stats</a><a href="/todo">To-Do List</a><a href="/files">Transfer</a><a class="active" href="/settings" aria-current="page">Settings</a><a href="/fonts">Typography</a>
   </nav></header>
 
   <div id="message" class="message"></div>
 
-  <div id="clock-weather-container"></div>
+  <div class="card" id="settings-group-picker">
+    <h2>Settings</h2>
+    <div id="settings-groups" class="settings-group-tabs" aria-label="Settings groups">
+      <span class="loader"></span>
+    </div>
+  </div>
 
-  <div id="settings-container">
+  <div class="card" id="settings-group-header" hidden>
+    <button type="button" onclick="returnToSettingsGroups()">‹ All settings</button>
+    <h2 id="selected-settings-group-title"></h2>
+  </div>
+
+  <div id="clock-weather-container" hidden></div>
+
+  <div id="settings-container" hidden>
     <div class="loader-container">
       <span class="loader"></span>
     </div>
@@ -344,8 +359,8 @@
     <button class="save-btn" id="saveBtn" onclick="saveSettings()">Save Settings</button>
   </div>
 
-  <div id="wifi-container"></div>
-  <div id="opds-container"></div>
+  <div id="wifi-container" hidden></div>
+  <div id="opds-container" hidden></div>
 
   <div class="card">
     <p style="text-align: center; color: #95a5a6; margin: 0;">
@@ -354,7 +369,11 @@
   </div>
 
 <script>
-  let allSettings = [];
+  let currentSettings = [];
+  let settingsGroups = [];
+  let currentGroupId = '';
+  let groupLoadToken = 0;
+  let activeGroupController = null;
   let originalValues = {};
   let preserveQuickResumeTimeoutOn = false;
   let quickResumeTimeoutAutoEnabled = false;
@@ -439,7 +458,7 @@
   }
 
   function findSetting(key) {
-    return allSettings.find(function(s) { return s.key === key; });
+    return currentSettings.find(function(s) { return s.key === key; });
   }
 
   function getControl(key) {
@@ -570,85 +589,188 @@
     markChanged();
   }
 
-  async function loadSettings() {
+  function hasUnsavedSettings() {
+    return currentSettings.some(function(setting) {
+      const value = getValue(setting);
+      return value !== undefined && value !== originalValues[setting.key];
+    });
+  }
+
+  function renderSettingsGroupTabs() {
+    const container = document.getElementById('settings-groups');
+    container.innerHTML = settingsGroups.map(function(group) {
+      return '<button type="button" class="settings-group-choice" onclick="selectSettingsGroup(\'' + group.id + '\')">' +
+        escapeHtml(group.name) + ' <span aria-hidden="true">›</span></button>';
+    }).join('');
+  }
+
+  function returnToSettingsGroups() {
+    if (hasUnsavedSettings() && !confirm('Discard unsaved changes in this group?')) return;
+    ++groupLoadToken;
+    if (activeGroupController) activeGroupController.abort();
+    activeGroupController = null;
+    currentGroupId = '';
+    currentSettings = [];
+    originalValues = {};
+    clearGroupExtras();
+    document.getElementById('settings-group-picker').hidden = false;
+    document.getElementById('settings-group-header').hidden = true;
+    document.getElementById('settings-container').hidden = true;
+    document.getElementById('settings-container').innerHTML = '';
+    document.getElementById('save-container').style.display = 'none';
+  }
+
+  function clearGroupExtras() {
+    document.getElementById('clock-weather-container').hidden = true;
+    document.getElementById('wifi-container').hidden = true;
+    document.getElementById('opds-container').hidden = true;
+    document.getElementById('clock-weather-container').innerHTML = '';
+    document.getElementById('wifi-container').innerHTML = '';
+    document.getElementById('opds-container').innerHTML = '';
+    clockWeatherState = null;
+    wifiNetworks = [];
+    opdsServers = [];
+  }
+
+  async function loadGroupExtras(groupId, token) {
+    clearGroupExtras();
+    if (groupId === 'system') {
+      const container = document.getElementById('clock-weather-container');
+      container.hidden = false;
+      await loadClockWeather(false, token);
+      if (token !== groupLoadToken) { container.hidden = true; container.innerHTML = ''; }
+      return;
+    }
+    if (groupId === 'connectivity') {
+      const wifi = document.getElementById('wifi-container');
+      const opds = document.getElementById('opds-container');
+      wifi.hidden = false;
+      opds.hidden = false;
+      await loadWifiNetworks(token);
+      if (token !== groupLoadToken) { wifi.hidden = true; wifi.innerHTML = ''; return; }
+      await loadOpdsServers(token);
+      if (token !== groupLoadToken) { opds.hidden = true; opds.innerHTML = ''; }
+    }
+  }
+
+  async function selectSettingsGroup(groupId) {
+    if (!settingsGroups.some(function(group) { return group.id === groupId; })) return;
+    if (groupId === currentGroupId && currentSettings.length) return;
+    if (hasUnsavedSettings() && !confirm('Discard unsaved changes in this group?')) {
+      renderSettingsGroupTabs();
+      return;
+    }
+
+    const token = ++groupLoadToken;
+    if (activeGroupController) activeGroupController.abort();
+    const controller = new AbortController();
+    activeGroupController = controller;
+    currentGroupId = groupId;
+    currentSettings = [];
+    originalValues = {};
+    document.getElementById('settings-group-picker').hidden = true;
+    document.getElementById('settings-group-header').hidden = false;
+    document.getElementById('selected-settings-group-title').textContent =
+      (settingsGroups.find(function(item) { return item.id === groupId; }) || {}).name || 'Settings';
+    clearGroupExtras();
+    document.getElementById('settings-container').hidden = false;
+    document.getElementById('settings-container').innerHTML =
+      '<div class="loader-container"><span class="loader"></span></div>';
+    document.getElementById('save-container').style.display = 'none';
+    const group = settingsGroups.find(function(item) { return item.id === groupId; });
+    const rows = [];
+
     try {
-      // Pull a few setting rows per request, sequentially. Each response is
-      // consumed and closed before the next starts, bounding the device's
-      // synchronous TCP/lwIP transmit queue instead of bursting the full list.
-      allSettings = [];
-      const defaultPageSize = 6;
       let offset = 0;
-      let total = -1;
+      let total = null;
       let pageCount = 0;
-      while (pageCount < 64 && (total < 0 || offset < total)) {
-        let limit = defaultPageSize;
-        let rows = null;
-        while (rows === null) {
-          const response = await fetch('/api/settings?offset=' + offset + '&limit=' + limit);
-          if (!response.ok) {
-            const errorText = await response.text();
-            if (response.status === 503 && limit > 1) {
-              limit = Math.max(1, Math.floor(limit / 2));
-              continue;
-            }
-            throw new Error('Failed to load settings: ' + response.status + ' ' + errorText);
-          }
-          const pageTotal = Number(response.headers.get('X-Settings-Total'));
-          if (!Number.isSafeInteger(pageTotal) || pageTotal < 0 || pageTotal > 256) {
-            throw new Error('Invalid settings page count');
-          }
-          total = pageTotal;
-          rows = await response.json();
-          if (!Array.isArray(rows) || (rows.length === 0 && offset < total)) {
-            throw new Error('Incomplete settings page');
-          }
+      while (total === null || offset < total) {
+        if (token !== groupLoadToken) { rows.length = 0; return; }
+        if (pageCount >= 6) throw new Error('Settings group exceeds its page bound');
+        const response = await fetch('/api/settings?group=' + encodeURIComponent(groupId) +
+          '&offset=' + offset + '&limit=6', {cache: 'no-store', signal: controller.signal});
+        if (token !== groupLoadToken) { rows.length = 0; return; }
+        if (!response.ok) throw new Error('Failed to load settings: ' + response.status + ' ' + await response.text());
+        const pageTotal = Number(response.headers.get('X-Settings-Total'));
+        if (!Number.isSafeInteger(pageTotal) || pageTotal < 0 || pageTotal > 32) {
+          throw new Error('Invalid settings group count');
         }
-        allSettings.push(...rows);
-        offset += rows.length;
+        const page = await response.json();
+        if (token !== groupLoadToken) { rows.length = 0; return; }
+        if (!Array.isArray(page) || page.length > 6 || (page.length === 0 && offset < pageTotal)) {
+          throw new Error('Incomplete settings group page');
+        }
+        if (total !== null && total !== pageTotal) throw new Error('Settings group changed while paging');
+        total = pageTotal;
+        rows.push(...page);
+        offset += page.length;
         pageCount += 1;
       }
-      if (total < 0 || offset !== total) throw new Error('Settings response was incomplete');
+      if (token !== groupLoadToken) { rows.length = 0; return; }
 
-      // Store original values
-      originalValues = {};
-      allSettings.forEach(function(s) {
-        originalValues[s.key] = s.value;
+      currentSettings = rows;
+      currentSettings.forEach(function(setting) { originalValues[setting.key] = setting.value; });
+      const categories = {};
+      currentSettings.forEach(function(setting) {
+        if (!categories[setting.category]) categories[setting.category] = [];
+        categories[setting.category].push(setting);
       });
 
-      // Group by category
-      const groups = {};
-      allSettings.forEach(function(s) {
-        if (!groups[s.category]) groups[s.category] = [];
-        groups[s.category].push(s);
-      });
-
-      const container = document.getElementById('settings-container');
       let html = '';
-
-      for (const category in groups) {
-        html += '<div class="card"><h2>' + escapeHtml(category) + '</h2>';
-        groups[category].forEach(function(s) {
-          html += '<div class="setting-row" id="row-setting-' + s.key + '">' +
-            '<span class="setting-name">' + escapeHtml(s.name) + '</span>' +
-            '<span class="setting-control">' + renderControl(s) + '</span>' +
-            '</div>';
-        });
-        html += '</div>';
+      if (currentSettings.length === 0) {
+        html = '<div class="card empty" role="status">No settings are available in this group.</div>';
+      } else {
+        for (const category in categories) {
+          html += '<div class="card"><h2>' + escapeHtml(category || group.name) + '</h2>';
+          categories[category].forEach(function(setting) {
+            html += '<div class="setting-row" id="row-setting-' + setting.key + '">' +
+              '<span class="setting-name">' + escapeHtml(setting.name) + '</span>' +
+              '<span class="setting-control">' + renderControl(setting) + '</span></div>';
+          });
+          html += '</div>';
+        }
       }
-
-      container.innerHTML = html;
+      document.getElementById('settings-container').innerHTML = html;
       updateSettingsVisibility();
       document.getElementById('save-container').style.display = '';
       document.getElementById('saveBtn').disabled = true;
+      document.getElementById('saveBtn').textContent = 'Save Settings';
       preserveQuickResumeTimeoutOn = getControlValue('quickResumeSleepScreen') === 1;
       quickResumeTimeoutAutoEnabled = false;
-      if (syncQuickResumeTimeoutForSleepScreen(true, false)) {
-        markChanged();
-      }
+      if (syncQuickResumeTimeoutForSleepScreen(true, false)) markChanged();
+      await loadGroupExtras(groupId, token);
+      if (activeGroupController === controller) activeGroupController = null;
     } catch (e) {
       console.error(e);
+      if (token !== groupLoadToken) {
+        rows.length = 0;
+        if (activeGroupController === controller) activeGroupController = null;
+        return;
+      }
+      if (activeGroupController === controller) activeGroupController = null;
       document.getElementById('settings-container').innerHTML =
-        '<div class="card"><p style="text-align:center;color:#e74c3c;">Failed to load settings</p></div>';
+        '<div class="card error" role="status">' + escapeHtml(e.message || 'Failed to load settings') +
+        '<p><button type="button" onclick="selectSettingsGroup(\'' + groupId + '\')">Try again</button></p></div>';
+      document.getElementById('save-container').style.display = 'none';
+    }
+  }
+
+  async function initializeSettingsPage() {
+    try {
+      const response = await fetch('/api/settings/groups', {cache: 'no-store'});
+      if (!response.ok) throw new Error('Failed to load settings groups: ' + response.status);
+      const groups = await response.json();
+      if (!Array.isArray(groups) || groups.length !== 7 ||
+          groups.some(function(group) { return !group.id || !group.name; })) {
+        throw new Error('Invalid settings group list');
+      }
+      settingsGroups = groups;
+      renderSettingsGroupTabs();
+      document.getElementById('settings-group-picker').hidden = false;
+    } catch (e) {
+      console.error(e);
+      document.getElementById('settings-groups').innerHTML =
+        '<span class="error" role="status">' + escapeHtml(e.message || 'Failed to load settings groups') + '</span>';
     }
   }
 
@@ -659,7 +781,7 @@
 
     // Collect only changed values
     const changes = {};
-    allSettings.forEach(function(s) {
+    currentSettings.forEach(function(s) {
       const current = getValue(s);
       if (current !== undefined && current !== originalValues[s.key]) {
         changes[s.key] = current;
@@ -673,10 +795,14 @@
     }
 
     try {
-      const response = await fetch('/api/settings', {
+      const body = JSON.stringify(changes);
+      if (new Blob([body]).size > 2048 || Object.keys(changes).length > 32) {
+        throw new Error('This group update exceeds the 2 KiB request limit.');
+      }
+      const response = await fetch('/api/settings?group=' + encodeURIComponent(currentGroupId), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(changes)
+        body: body
       });
 
       if (!response.ok) {
@@ -697,8 +823,6 @@
 
     btn.textContent = 'Save Settings';
   }
-
-  loadSettings();
 
   // --- One-shot clock and weather sync ---
   let clockWeatherState = null;
@@ -748,16 +872,23 @@
     });
   }
 
-  async function loadClockWeather(force = false) {
+  async function loadClockWeather(force = false, expectedToken = groupLoadToken) {
     if (clockWeatherRequestInFlight && !force) return;
     try {
-      const response = await fetch('/api/clock-weather?_=' + Date.now(), {cache: 'no-store'});
+      const options = {cache: 'no-store'};
+      if (activeGroupController && expectedToken === groupLoadToken) options.signal = activeGroupController.signal;
+      const response = await fetch('/api/clock-weather?_=' + Date.now(), options);
       if (!response.ok) throw new Error('Failed to load clock/weather state');
-      clockWeatherState = await response.json();
+      const state = await response.json();
+      if (expectedToken !== groupLoadToken || currentGroupId !== 'system') return;
+      clockWeatherState = state;
       renderClockWeather();
       setClockWeatherBusy(clockWeatherRequestInFlight);
     } catch (e) {
+      if (expectedToken !== groupLoadToken) return;
       console.error('Clock/weather load error:', e);
+      const container = document.getElementById('clock-weather-container');
+      container.innerHTML = '<div class="card error" role="status">Clock and weather settings could not be loaded.</div>';
     }
   }
 
@@ -794,8 +925,6 @@
       setClockWeatherBusy(false);
     }
   }
-
-  loadClockWeather();
 
   // --- Wi-Fi Network Management ---
   // Renders an editable list of saved Wi-Fi networks using /api/wifi endpoints.
@@ -845,14 +974,21 @@
     container.innerHTML = html;
   }
 
-  async function loadWifiNetworks() {
+  async function loadWifiNetworks(expectedToken = groupLoadToken) {
     try {
-      const resp = await fetch('/api/wifi');
+      const options = {};
+      if (activeGroupController && expectedToken === groupLoadToken) options.signal = activeGroupController.signal;
+      const resp = await fetch('/api/wifi', options);
       if (!resp.ok) throw new Error('Failed to load');
-      wifiNetworks = await resp.json();
+      const networks = await resp.json();
+      if (expectedToken !== groupLoadToken || currentGroupId !== 'connectivity') return;
+      wifiNetworks = networks;
       renderWifiSection();
     } catch (e) {
+      if (expectedToken !== groupLoadToken) return;
       console.error('Wi-Fi load error:', e);
+      document.getElementById('wifi-container').innerHTML =
+        '<div class="card error" role="status">Wi-Fi networks could not be loaded.</div>';
     }
   }
 
@@ -961,14 +1097,21 @@
     container.innerHTML = html;
   }
 
-  async function loadOpdsServers() {
+  async function loadOpdsServers(expectedToken = groupLoadToken) {
     try {
-      const resp = await fetch('/api/opds');
+      const options = {};
+      if (activeGroupController && expectedToken === groupLoadToken) options.signal = activeGroupController.signal;
+      const resp = await fetch('/api/opds', options);
       if (!resp.ok) throw new Error('Failed to load');
-      opdsServers = await resp.json();
+      const servers = await resp.json();
+      if (expectedToken !== groupLoadToken || currentGroupId !== 'connectivity') return;
+      opdsServers = servers;
       renderOpdsSection();
     } catch (e) {
+      if (expectedToken !== groupLoadToken) return;
       console.error('OPDS load error:', e);
+      document.getElementById('opds-container').innerHTML =
+        '<div class="card error" role="status">OPDS servers could not be loaded.</div>';
     }
   }
 
@@ -1024,8 +1167,7 @@
     }
   }
 
-  loadWifiNetworks();
-  loadOpdsServers();
+  initializeSettingsPage();
 </script>
 </body>
 </html>
