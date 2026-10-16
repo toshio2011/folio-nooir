@@ -913,14 +913,14 @@ void SettingsActivity::openRandomSleepPoolPicker(const int selectedIndex) {
     const auto& option = optionsByMode[i];
     const bool enabled = (SETTINGS.randomSleepModeMask & RandomSleepPool::bitForMode(option.mode)) != 0;
     labels.emplace_back(enabled ? "[x] " : "[ ] ");
-    labels.back() += tr(option.label);
+    labels.back() += I18N.get(option.label);
     if (static_cast<int>(i) == selectedIndex) currentIndex = i;
   }
   labels.emplace_back(tr(STR_DONE));
   const int doneIndex = static_cast<int>(optionsByMode.size());
   if (selectedIndex >= doneIndex) currentIndex = doneIndex;
 
-  optionPopup.show(tr(STR_SLEEP_RANDOM_POOL), labels, static_cast<int>(currentIndex), [this](int idx) {
+  optionPopup.show(StrId::STR_SLEEP_RANDOM_POOL, labels, static_cast<int>(currentIndex), [this](int idx) {
     if (idx < 0 || idx >= static_cast<int>(optionsByMode.size())) return;
     const uint16_t selectedBit = RandomSleepPool::bitForMode(optionsByMode[static_cast<size_t>(idx)].mode);
     SETTINGS.randomSleepModeMask ^= selectedBit;
