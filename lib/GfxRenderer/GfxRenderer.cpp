@@ -217,10 +217,21 @@ void GfxRenderer::bindArabicFallbackForPointSize(const int primaryFontId, const 
 
 int GfxRenderer::resolveTextFontId(const int fontId, const char* text, const EpdFontFamily::Style style) const {
   const int scaledFontId = scaleUiFontId(fontId);
+  diagnoseUiFontRoute(fontId, scaledFontId, style);
   if (fallbackFontMap_.empty() || text == nullptr || *text == '\0') {
     return scaledFontId;
   }
-  const auto fbIt = fallbackFontMap_.find(scaledFontId);
+  // CJK fallbacks are registered against the built-in UI role IDs. A custom
+  // UI face changes the primary ID, so look up the corresponding logical role
+  // after applying UI scaling but before applying the custom-family override.
+  // For the enlarged 12 pt role the scaled built-in target may be 14 pt; when
+  // a custom UI family is active, the existing scale policy keeps its 12 pt
+  // face, so use the original role's size-matched fallback in that case.
+  const int scaledRoleId = scaleUiFontRoleId(fontId);
+  auto fbIt = fallbackFontMap_.find(scaledRoleId);
+  if (fbIt == fallbackFontMap_.end() && scaledRoleId != fontId && isUiFontOverride(scaledFontId)) {
+    fbIt = fallbackFontMap_.find(fontId);
+  }
   if (fbIt == fallbackFontMap_.end()) {
     return scaledFontId;  // no fallback registered for this font
   }
@@ -244,6 +255,35 @@ int GfxRenderer::resolveTextFontId(const int fontId, const char* text, const Epd
     }
   }
   return scaledFontId;
+}
+
+void GfxRenderer::diagnoseUiFontRoute(const int requestedFontId, const int mappedFontId,
+                                     const EpdFontFamily::Style style) const {
+  struct UiRoleDiagnostic {
+    int fontId;
+    const char* name;
+  };
+  static constexpr UiRoleDiagnostic kUiRoles[] = {
+      {SMALL_FONT_ID, "small_8pt"}, {UI_10_FONT_ID, "ui_10pt"}, {UI_12_FONT_ID, "ui_12pt"}};
+
+  size_t roleIndex = 0;
+  for (; roleIndex < sizeof(kUiRoles) / sizeof(kUiRoles[0]); ++roleIndex) {
+    if (kUiRoles[roleIndex].fontId == requestedFontId) break;
+  }
+  if (roleIndex == sizeof(kUiRoles) / sizeof(kUiRoles[0])) return;
+
+  const uint8_t styleIndex = static_cast<uint8_t>(style) & 0x03;
+  const uint16_t diagnosticBit = static_cast<uint16_t>(1U << (roleIndex * 4 + styleIndex));
+  if ((uiFontRouteDiagnosticMask_ & diagnosticBit) != 0) return;
+  uiFontRouteDiagnosticMask_ |= diagnosticBit;
+
+  const auto styleIt = uiFontOverrideStyleMask_.find(mappedFontId);
+  const bool customFace = styleIt != uiFontOverrideStyleMask_.end() &&
+                          (styleIt->second & (1U << styleIndex)) != 0 && isUiFontOverride(mappedFontId);
+  static constexpr const char* kStyleNames[] = {"regular", "bold", "italic", "bold_italic"};
+  LOG_INF("UIFONT", "render role=%s style=%s source=%s requested_id=%d mapped_id=%d",
+          kUiRoles[roleIndex].name, kStyleNames[styleIndex], customFace ? "custom" : "built_in_fallback",
+          requestedFontId, mappedFontId);
 }
 
 int GfxRenderer::resolveArabicFallbackFontId(const int fontId, const uint32_t cp,
@@ -366,18 +406,14 @@ int GfxRenderer::getRenderedTextAdvanceX(const int fontId, const char* renderedT
   return fp4::toPixel(widthFP);
 }
 
-int GfxRenderer::scaleUiFontId(const int fontId) const {
+int GfxRenderer::scaleUiFontRoleId(const int fontId) const {
   if (!uiScaleTextEnabled || uiScalePercent == 100) {
-    const auto it = uiFontOverrideMap_.find(fontId);
-    return it != uiFontOverrideMap_.end() ? it->second : fontId;
+    return fontId;
   }
 
   const bool smaller = uiScalePercent < 95;
   const bool larger = uiScalePercent > 105;
-  if (!smaller && !larger) {
-    const auto it = uiFontOverrideMap_.find(fontId);
-    return it != uiFontOverrideMap_.end() ? it->second : fontId;
-  }
+  if (!smaller && !larger) return fontId;
 
   int scaledFontId = fontId;
   if (fontId == SMALL_FONT_ID) {
@@ -390,13 +426,20 @@ int GfxRenderer::scaleUiFontId(const int fontId) const {
     // safe fallback for slim builds that omit the larger font bundle.
     else scaledFontId = fontMap.count(NOTOSERIF_14_FONT_ID) ? NOTOSERIF_14_FONT_ID : UI_12_FONT_ID;
   }
-  auto it = uiFontOverrideMap_.find(scaledFontId);
+  return scaledFontId;
+}
+
+int GfxRenderer::scaleUiFontId(const int fontId) const {
+  const int scaledRoleId = scaleUiFontRoleId(fontId);
+  auto it = uiFontOverrideMap_.find(scaledRoleId);
   if (it != uiFontOverrideMap_.end()) return it->second;
   // UI scale's larger UI_12 target is a 14 pt built-in reader font. Keep the
   // selected interface family rather than silently switching families.
   it = uiFontOverrideMap_.find(fontId);
-  return it != uiFontOverrideMap_.end() ? it->second : scaledFontId;
+  return it != uiFontOverrideMap_.end() ? it->second : scaledRoleId;
 }
+
+int GfxRenderer::resolveUiFontId(const int fontId) const { return scaleUiFontId(fontId); }
 
 void GfxRenderer::prepareUiTextIfNeeded(const int fontId, const char* text,
                                         const EpdFontFamily::Style style) const {

@@ -41,6 +41,30 @@ constexpr InterfaceFontRole kInterfaceFontRoles[] = {
     {UI_12_FONT_ID, 12, InterfaceFontSelection::styleMaskForPointSize(12)},
 };
 
+const char* interfaceRoleName(const int fontId) {
+  for (const auto& role : kInterfaceFontRoles) {
+    if (role.fontId == fontId) {
+      switch (role.pointSize) {
+        case 8:
+          return "small_8pt";
+        case 10:
+          return "ui_10pt";
+        case 12:
+          return "ui_12pt";
+      }
+    }
+  }
+  return "unknown";
+}
+
+void logBuiltInUiRoles(const char* family, const char* reason) {
+  for (const auto& role : kInterfaceFontRoles) {
+    LOG_INF("UIFONT", "role=%s pt=%u family=%s source=built_in_fallback custom_mask=0x00 fallback_mask=0x%02X reason=%s",
+            interfaceRoleName(role.fontId), static_cast<unsigned>(role.pointSize), family ? family : "Default",
+            static_cast<unsigned>(role.styleMask), reason ? reason : "default selected");
+  }
+}
+
 }  // namespace
 
 void SdCardFontSystem::begin(GfxRenderer& renderer) {
@@ -164,6 +188,7 @@ void SdCardFontSystem::ensureUiLoaded(GfxRenderer& renderer) {
     if (!currentFamily.empty()) {
       renderer.clearUiFontOverrides();
       uiManager_.unloadAll(renderer, false);
+      logBuiltInUiRoles("Default", "default selected");
     }
     uiAttemptedFamily_.clear();
     return;
@@ -179,7 +204,8 @@ void SdCardFontSystem::ensureUiLoaded(GfxRenderer& renderer) {
 
   const auto* family = registry_.findFamily(wantedFamily);
   if (!InterfaceFontSelection::isCompatibleFamily(family, sizeof(SETTINGS.uiFontFamilyName))) {
-    LOG_DBG("SDFS", "Interface font unavailable: %s (using built-in UI)", wantedFamily.c_str());
+    LOG_INF("UIFONT", "select family=%s source=built_in_fallback reason=family missing or incomplete", wantedFamily.c_str());
+    logBuiltInUiRoles(wantedFamily.c_str(), "family missing or incomplete");
     uiManager_.unloadAll(renderer, false);
     if (strcmp(SETTINGS.uiFontFamilyName, wantedFamily.c_str()) == 0) {
       SETTINGS.uiFontFamilyName[0] = '\0';
@@ -189,8 +215,18 @@ void SdCardFontSystem::ensureUiLoaded(GfxRenderer& renderer) {
     return;
   }
 
+  LOG_INF("UIFONT", "select family=%s registry_index=%d persisted=1 compatible=1", wantedFamily.c_str(),
+          registry_.getFamilyIndex(wantedFamily));
+  for (const auto& role : kInterfaceFontRoles) {
+    const auto* file = family->findFile(role.pointSize);
+    LOG_INF("UIFONT", "path role=%s pt=%u path=%s", interfaceRoleName(role.fontId),
+            static_cast<unsigned>(role.pointSize), file ? file->path.c_str() : "missing");
+  }
+
   if (!uiManager_.beginFamilyUiSizes(*family, renderer)) {
-    LOG_ERR("SDFS", "Failed to start interface font: %s (using built-in UI)", wantedFamily.c_str());
+    LOG_ERR("UIFONT", "select family=%s source=built_in_fallback reason=Mini Pack start failed",
+            wantedFamily.c_str());
+    logBuiltInUiRoles(wantedFamily.c_str(), "Mini Pack start failed");
     if (strcmp(SETTINGS.uiFontFamilyName, wantedFamily.c_str()) == 0) {
       SETTINGS.uiFontFamilyName[0] = '\0';
       SETTINGS.saveToFile();
@@ -202,7 +238,8 @@ void SdCardFontSystem::ensureUiLoaded(GfxRenderer& renderer) {
   uiLoadingFamily_ = wantedFamily;
   uiLoadingStep_ = 0;
   uiLoadInProgress_ = true;
-  LOG_DBG("SDFS", "Starting interface font load: %s", wantedFamily.c_str());
+  LOG_INF("UIFONT", "family=%s Mini Pack load started; processing 8/10/12 pt roles in order",
+          wantedFamily.c_str());
 }
 
 bool SdCardFontSystem::progressUiLoad(GfxRenderer& renderer) {
@@ -215,7 +252,8 @@ bool SdCardFontSystem::progressUiLoad(GfxRenderer& renderer) {
       SETTINGS.uiFontFamilyName[0] = '\0';
       SETTINGS.saveToFile();
     }
-    LOG_DBG("SDFS", "Interface font fallback (%s): %s", reason, uiLoadingFamily_.c_str());
+    LOG_ERR("UIFONT", "family=%s source=built_in_fallback reason=%s", uiLoadingFamily_.c_str(), reason);
+    logBuiltInUiRoles(uiLoadingFamily_.c_str(), reason);
     uiAttemptedFamily_.clear();
     uiLoadingFamily_.clear();
     uiLoadingStep_ = 0;
@@ -238,7 +276,12 @@ bool SdCardFontSystem::progressUiLoad(GfxRenderer& renderer) {
   bool hasCustomRole = false;
   for (const auto& role : kInterfaceFontRoles) {
     const int id = uiManager_.getFontIdForPointSize(role.pointSize);
-    if (id == 0) continue;
+    if (id == 0) {
+      LOG_INF("UIFONT", "role=%s pt=%u family=%s source=built_in_fallback custom_mask=0x00 fallback_mask=0x%02X font_id=0 reason=no requested face loaded",
+              interfaceRoleName(role.fontId), static_cast<unsigned>(role.pointSize), uiLoadingFamily_.c_str(),
+              static_cast<unsigned>(role.styleMask));
+      continue;
+    }
     const auto fontIt = renderer.getFontMap().find(id);
     if (fontIt == renderer.getFontMap().end()) {
       return fallbackToBuiltIn("font registration incomplete");
@@ -267,6 +310,13 @@ bool SdCardFontSystem::progressUiLoad(GfxRenderer& renderer) {
       return fallbackToBuiltIn("font family replacement failed");
     }
     renderer.setUiFontOverride(role.fontId, id, role.fontId, loadedMask & role.styleMask);
+    const uint8_t customMask = loadedMask & role.styleMask;
+    const uint8_t fallbackMask = role.styleMask & static_cast<uint8_t>(~customMask);
+    const char* source = customMask == 0 ? "built_in_fallback" :
+                         fallbackMask == 0 ? "custom" : "mixed_custom_and_built_in";
+    LOG_INF("UIFONT", "role=%s pt=%u family=%s source=%s custom_mask=0x%02X fallback_mask=0x%02X font_id=%d",
+            interfaceRoleName(role.fontId), static_cast<unsigned>(role.pointSize), uiLoadingFamily_.c_str(), source,
+            static_cast<unsigned>(customMask), static_cast<unsigned>(fallbackMask), id);
   }
 
   if (!hasCustomRole) {
@@ -275,7 +325,8 @@ bool SdCardFontSystem::progressUiLoad(GfxRenderer& renderer) {
 
   // Built-in UI IDs remain the Arabic fallback, so missing Arabic glyphs do
   // not break localized navigation or menus.
-  LOG_DBG("SDFS", "Loaded interface font family: %s", uiLoadingFamily_.c_str());
+  LOG_INF("UIFONT", "family=%s Mini Pack load complete; custom UI role mappings active",
+          uiLoadingFamily_.c_str());
   uiAttemptedFamily_ = uiLoadingFamily_;
   uiLoadingFamily_.clear();
   uiLoadingStep_ = 0;
@@ -348,6 +399,11 @@ void SdCardFontSystem::releaseInterfaceFontCaches() {
 #if NOOIR_SD_FONT_DIAGNOSTICS
   uiManager_.logMemoryStats("before_interface_font_unload");
 #endif
+  if (SETTINGS.uiFontFamilyName[0] != '\0') {
+    LOG_INF("UIFONT", "unload family=%s selection_preserved=1 reason=heavy activity boundary",
+            SETTINGS.uiFontFamilyName);
+    logBuiltInUiRoles(SETTINGS.uiFontFamilyName, "custom assets unloaded at heavy boundary");
+  }
   // Remove renderer overrides before deleting the SD-owned font objects.
   // Keep the persisted family choice so ensureUiLoaded() can restore it after
   // the heavy activity ends.

@@ -106,6 +106,9 @@ class GfxRenderer {
   // SD styles that should be prepared for each UI override. Roles provided by
   // the built-in fallback face need no SD reads or decompression.
   std::map<int, uint8_t> uiFontOverrideStyleMask_;
+  // Bound route diagnostics to one line per logical UI role/style after each
+  // override change. This is reset with the mappings and retains no strings.
+  mutable uint16_t uiFontRouteDiagnosticMask_ = 0;
   struct UiPreparedText {
     uint32_t hash = 0;
     int fontId = 0;
@@ -129,11 +132,13 @@ class GfxRenderer {
   // fontId unchanged. The whole string is routed as a unit so each draw/measure
   // call stays single-font (consistent bit depth, metrics, wrapping).
   int resolveTextFontId(int fontId, const char* text, EpdFontFamily::Style style) const;
+  void diagnoseUiFontRoute(int requestedFontId, int mappedFontId, EpdFontFamily::Style style) const;
   int resolveArabicFallbackFontId(int fontId, uint32_t cp, EpdFontFamily::Style style) const;
   int resolveArabicGlyphFontId(int primaryFontId, int currentFontId, uint32_t cp,
                                EpdFontFamily::Style style) const;
   bool hasArabicFallbackCandidate(int fontId, const char* text, EpdFontFamily::Style style) const;
   int getRenderedTextAdvanceX(int fontId, const char* renderedText, EpdFontFamily::Style style) const;
+  int scaleUiFontRoleId(int fontId) const;
   int scaleUiFontId(int fontId) const;
   void prepareUiTextIfNeeded(int fontId, const char* text, EpdFontFamily::Style style) const;
   int getSmallCapsTextAdvanceX(int fontId, const char* text, EpdFontFamily::Style style) const;
@@ -228,6 +233,9 @@ class GfxRenderer {
     }
     return false;
   }
+  // Return the font ID that UI rendering uses for this logical role. Also used
+  // by Home's spine glyph preflight so it checks the same face drawText uses.
+  int resolveUiFontId(int fontId) const;
   // Point size alone does not make a Reader font a UI owner. Latin-only
   // families never acquire a CJK fallback mapping, even at 8/10/12 pt.
   bool isUiFontReferenced(int fontId) const {
@@ -246,11 +254,13 @@ class GfxRenderer {
     uiFontOverrideMap_[builtinFontId] = sdFontId;
     uiFontOverrideStyleMask_[sdFontId] = sdStyleMask;
     if (arabicFallbackFontId != 0) arabicFallbackFontMap_[sdFontId] = arabicFallbackFontId;
+    uiFontRouteDiagnosticMask_ = 0;
   }
   void clearUiFontOverrides() {
     for (const auto& entry : uiFontOverrideMap_) arabicFallbackFontMap_.erase(entry.second);
     uiFontOverrideMap_.clear();
     uiFontOverrideStyleMask_.clear();
+    uiFontRouteDiagnosticMask_ = 0;
     uiPreparedTextCount_ = 0;
     uiPreparedTextNext_ = 0;
   }
