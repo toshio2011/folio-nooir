@@ -29,7 +29,6 @@
 namespace {
 #if NOOIR_INTERFACE_FONT_DIAGNOSTICS
 uint8_t interfaceFontPrepDiagnosticRecords = 0;
-uint8_t interfaceFontPrepHitDiagnosticRecords = 0;
 #endif
 
 
@@ -464,23 +463,35 @@ void GfxRenderer::prepareUiTextIfNeeded(const int fontId, const char* text,
   hash *= kFnvPrime;
   const uint8_t styleMask = static_cast<uint8_t>(1U << styleIndex);
 
+  auto fontIt = sdCardFonts_.find(fontId);
+  if (fontIt == sdCardFonts_.end() || fontIt->second == nullptr) return;
+
+  int cachedEntryIndex = -1;
   for (uint8_t i = 0; i < uiPreparedTextCount_; ++i) {
-    const auto& entry = uiPreparedText_[i];
+    auto& entry = uiPreparedText_[i];
     if (entry.hash == hash && entry.fontId == fontId && entry.styleMask == styleMask) {
+      // SdCardFont keeps one current mini-glyph set per style. A different
+      // label can replace that set while this bounded key cache still holds
+      // the old label. Verify the glyphs are still resident before taking the
+      // fast path; otherwise draw-time misses reopen the .cpfont per glyph.
+      if (fontIt->second->hasPreparedGlyphs(text, styleMask)) {
+        entry.prepared = true;
+        return;
+      }
+      if (!entry.prepared) return;  // Failed preparation is memoized until this key is evicted.
+      cachedEntryIndex = i;
 #if NOOIR_INTERFACE_FONT_DIAGNOSTICS
-      if (interfaceFontPrepHitDiagnosticRecords < 48) {
-        LOG_INF("UIFONT", "hit font=%d style=0x%02X hash=%08lX", fontId, styleMask,
+      if (interfaceFontPrepDiagnosticRecords < 48) {
+        LOG_INF("UIFONT", "stale_key font=%d style=0x%02X hash=%08lX action=prewarm", fontId, styleMask,
                 static_cast<unsigned long>(hash));
-        ++interfaceFontPrepHitDiagnosticRecords;
+        ++interfaceFontPrepDiagnosticRecords;
       }
 #endif
-      return;
+      break;
     }
   }
 
-  auto fontIt = sdCardFonts_.find(fontId);
-  if (fontIt == sdCardFonts_.end() || fontIt->second == nullptr) return;
-  if (fontIt->second->hasPreparedGlyphs(text, styleMask)) {
+  if (cachedEntryIndex < 0 && fontIt->second->hasPreparedGlyphs(text, styleMask)) {
 #if NOOIR_INTERFACE_FONT_DIAGNOSTICS
     if (interfaceFontPrepDiagnosticRecords < 48) {
       LOG_INF("UIFONT", "cover font=%d style=0x%02X hash=%08lX", fontId, styleMask,
@@ -489,9 +500,9 @@ void GfxRenderer::prepareUiTextIfNeeded(const int fontId, const char* text,
     }
 #endif
     if (uiPreparedTextCount_ < UI_PREPARED_TEXT_CAP) {
-      uiPreparedText_[uiPreparedTextCount_++] = {hash, fontId, styleMask};
+      uiPreparedText_[uiPreparedTextCount_++] = {hash, fontId, styleMask, true};
     } else {
-      uiPreparedText_[uiPreparedTextNext_] = {hash, fontId, styleMask};
+      uiPreparedText_[uiPreparedTextNext_] = {hash, fontId, styleMask, true};
       uiPreparedTextNext_ = static_cast<uint8_t>((uiPreparedTextNext_ + 1) % UI_PREPARED_TEXT_CAP);
     }
     return;
@@ -513,10 +524,13 @@ void GfxRenderer::prepareUiTextIfNeeded(const int fontId, const char* text,
   }
 #endif
 
-  if (uiPreparedTextCount_ < UI_PREPARED_TEXT_CAP) {
-    uiPreparedText_[uiPreparedTextCount_++] = {hash, fontId, styleMask};
+  const bool prepared = fontIt->second->hasPreparedGlyphs(text, styleMask);
+  if (cachedEntryIndex >= 0) {
+    uiPreparedText_[cachedEntryIndex].prepared = prepared;
+  } else if (uiPreparedTextCount_ < UI_PREPARED_TEXT_CAP) {
+    uiPreparedText_[uiPreparedTextCount_++] = {hash, fontId, styleMask, prepared};
   } else {
-    uiPreparedText_[uiPreparedTextNext_] = {hash, fontId, styleMask};
+    uiPreparedText_[uiPreparedTextNext_] = {hash, fontId, styleMask, prepared};
     uiPreparedTextNext_ = static_cast<uint8_t>((uiPreparedTextNext_ + 1) % UI_PREPARED_TEXT_CAP);
   }
 }

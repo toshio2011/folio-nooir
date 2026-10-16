@@ -113,6 +113,7 @@ class GfxRenderer {
     uint32_t hash = 0;
     int fontId = 0;
     uint8_t styleMask = 0;
+    bool prepared = false;
   };
   // Small preparation-key cache only; this does not retain rendered strings
   // or glyph bitmaps.
