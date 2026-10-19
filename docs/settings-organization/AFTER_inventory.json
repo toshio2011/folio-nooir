@@ -14,7 +14,7 @@
     "clippingsDeferralCommit": "4eb9b811af823344a36950725614f9ab3e341544",
     "interfaceFontDecision": "Worker E commit ce86b9f8 disables custom UI font application and preserves selection; row is still present in this exact source and row-hide remains pending",
     "homeWorkerOverlap": "Home worker A is integrated on this branch; theme value 5 remains the Folio Nooir Lite alias. Recent/Finished layouts are available under both Folio themes; the legacy Carousel field is retained for persistence/migration and is replaced in the UI by those two selectors. The saved Interface Font selection remains stored, while the row is hidden and the built-in UI font is used.",
-    "prototypeBaseCommit": "6e3d96bcac86de122251a1448322bcf489c4bf29",
+    "prototypeBaseCommit": "a734fe8275c03861bac6bc6cdef976620d2456df",
     "prototypeWorkingTreeFiles": [
       "src/SettingsGroups.h",
       "src/SettingsGroupDevice.h",
