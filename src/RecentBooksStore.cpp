@@ -289,7 +289,8 @@ RecentBook RecentBooksStore::getDataFromBook(std::string path) const {
     // Handle XTC file
     Xtc xtc(path, "/.crosspoint");
     if (xtc.load()) {
-      RecentBook result{path, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath()};
+      RecentBook result{path, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath(),
+                        xtc.getSynopsis().substr(0, 384)};
       applyMetadataOverride(result);
       return result;
     }
