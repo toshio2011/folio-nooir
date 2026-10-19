@@ -234,7 +234,7 @@
       "generatedHtmlAndJsSyntax": "passed (Node.js)",
       "fullHostSuite": "Not confirmed from current sources: 347 existing CTest binaries passed and 26 were Not Run because executables were missing; MSVC also crashed while compiling CMake's trivial compiler probe."
     },
-    "build": "One combined gh_release firmware build pending compiler repair.",
+    "build": "Combined gh_release build succeeded at source commit 8e20e4fa53f62d8d726a39a416e94d91d5eabf77 using toolchain-riscv32-esp 14.2.0+20251107; 62,364/327,680 B RAM and 5,939,537/6,553,600 B flash used. Candidate binary is 5,953,680 B, SHA-256 4FB6048F51B4474503DFF907D6456242B63555A7CFD92898415DF9C3A14ECC81.",
     "apiContract": {
       "groups": "GET /api/settings/groups returns only the seven static descriptors",
       "read": "GET /api/settings requires a valid group; offset 0..32 and limit 1..6; returns only the selected group page and X-Settings-Total",
