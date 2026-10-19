@@ -7,6 +7,7 @@
 
 #include "XtcParser.h"
 
+#include <ArduinoJson.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
 #include <Logging.h>
@@ -67,6 +68,7 @@ XtcError XtcParser::open(const char* filepath) {
       m_file.close();
       return m_lastError;
     }
+    readNooirRichMetadata();
     // Trim excess capacity from metadata strings
     m_title.shrink_to_fit();
     m_author.shrink_to_fit();
@@ -105,6 +107,7 @@ void XtcParser::close() {
   m_chapters.clear();
   m_title.clear();
   m_author.clear();
+  m_synopsis.clear();
   m_hasChapters = false;
   memset(&m_header, 0, sizeof(m_header));
 }
@@ -187,6 +190,35 @@ XtcError XtcParser::readAuthor() {
 
   LOG_DBG("XTC", "Author: %s", m_author.c_str());
   return XtcError::OK;
+}
+
+// Optional MangaNooir 1.0.x footer: [UTF-8 JSON][u32 size][NOOIRMD1].
+// The legacy XTC page offsets and bitmap layout are unchanged.
+// Missing/malformed trailers are ignored so old and third-party books still open.
+void XtcParser::readNooirRichMetadata() {
+  m_synopsis.clear();
+  constexpr size_t TRAILER_BYTES = 12;
+  constexpr uint32_t MAX_JSON_BYTES = 8192;
+  const uint64_t size = m_file.fileSize64();
+  if (size <= TRAILER_BYTES || !m_file.seek64(size - TRAILER_BYTES)) return;
+  uint8_t tail[TRAILER_BYTES] = {};
+  if (m_file.read(tail, sizeof(tail)) != sizeof(tail)) return;
+  if (memcmp(tail + 4, "NOOIRMD1", 8) != 0) return;
+  const uint32_t len = static_cast<uint32_t>(tail[0]) | (static_cast<uint32_t>(tail[1]) << 8) |
+                       (static_cast<uint32_t>(tail[2]) << 16) | (static_cast<uint32_t>(tail[3]) << 24);
+  if (len == 0 || len > MAX_JSON_BYTES || size < TRAILER_BYTES + len ||
+      size - TRAILER_BYTES - len < m_header.dataOffset) return;
+  if (!m_file.seek64(size - TRAILER_BYTES - len)) return;
+  std::string bytes(len, '\0');
+  if (m_file.read(reinterpret_cast<uint8_t*>(&bytes[0]), len) != len) return;
+
+  JsonDocument doc;
+  if (deserializeJson(doc, bytes) != DeserializationError::Ok) return;
+  const char* description = doc["description"] | "";
+  if (description && *description) {
+    m_synopsis = std::string(description).substr(0, 4096);
+    m_synopsis.shrink_to_fit();
+  }
 }
 
 XtcError XtcParser::readFirstPageInfo() {
