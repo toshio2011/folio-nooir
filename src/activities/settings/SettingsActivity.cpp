@@ -308,8 +308,13 @@ void SettingsActivity::rebuildSettingsLists() {
 
   const bool folioLayoutTheme = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR ||
                                 SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR_LITE;
+  const bool liteLayoutTheme = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR_LITE;
   const auto isFolioLayoutSetting = [](const StrId id) {
     return id == StrId::STR_RECENT_BOOK_LAYOUT || id == StrId::STR_FINISHED_BOOK_LAYOUT;
+  };
+  const auto isLiteLayoutSetting = [](const SettingInfo& setting) {
+    return setting.key && (strcmp(setting.key, "liteRecentBookLayout") == 0 ||
+                           strcmp(setting.key, "liteFinishedBookLayout") == 0);
   };
   const auto isCarouselLayoutSetting = [](const StrId id) { return id == StrId::STR_CAROUSEL_LAYOUT; };
   const auto isVisualPreviewSetting = [](const StrId id) {
@@ -342,9 +347,11 @@ void SettingsActivity::rebuildSettingsLists() {
       return false;
     }
     if (isVisualPreviewSetting(setting.nameId)) return false;
-    if (isFolioLayoutSetting(setting.nameId) && !folioLayoutTheme) return false;
+    if (isFolioLayoutSetting(setting.nameId)) {
+      if (!folioLayoutTheme || isLiteLayoutSetting(setting) != liteLayoutTheme) return false;
+    }
     // Keep the legacy Carousel-specific control out of Settings for 1.6.6.
-    // Recent/Finished layouts remain available in both Folio themes above.
+    // Main Folio and Lite have separate Recent/Finished layout rows above.
     if (isCarouselLayoutSetting(setting.nameId)) return false;
     if (setting.category == StrId::STR_CAT_READER && setting.inTextSettings) return false;
     if (setting.category == StrId::STR_CAT_CONTROLS &&
@@ -377,7 +384,10 @@ void SettingsActivity::rebuildSettingsLists() {
   size_t actionCount = 0;
   switch (selectedGroup) {
     case SettingsGroupId::HomeAppearance:
-      actionCount = 1;  // Visual Preview
+      // Lite's display choices are edited directly in its own settings rows.
+      // The shared Visual Preview edits main Folio layout preferences, so do
+      // not offer it while Lite is selected.
+      actionCount = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR_LITE ? 0U : 1U;
       break;
     case SettingsGroupId::Sleep:
       actionCount = (hasFavoriteSleep ? 1U : 0U) +

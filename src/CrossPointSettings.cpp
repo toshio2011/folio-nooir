@@ -15,8 +15,23 @@
 #include "SettingsList.h"
 #include "FontSelectionCompatibility.h"
 #include "fontIds.h"
+#include "Serialization/PersistableStorePolicy.h"
+#include "util/FolioLiteLayoutPolicy.h"
 #include "util/HomeThemePolicy.h"
 #include "util/RandomSleepPreferences.h"
+
+static_assert(FolioLiteLayoutPolicy::FOLIO_LAYOUT_GRID == CrossPointSettings::FOLIO_LAYOUT_GRID);
+static_assert(FolioLiteLayoutPolicy::FOLIO_LAYOUT_THREE_COVERS == CrossPointSettings::FOLIO_LAYOUT_THREE_COVERS);
+static_assert(FolioLiteLayoutPolicy::FOLIO_LAYOUT_THREE_COVER_CAROUSEL ==
+              CrossPointSettings::FOLIO_LAYOUT_THREE_COVER_CAROUSEL);
+static_assert(FolioLiteLayoutPolicy::FOLIO_LAYOUT_FIVE_COVER_CAROUSEL ==
+              CrossPointSettings::FOLIO_LAYOUT_FIVE_COVER_CAROUSEL);
+static_assert(FolioLiteLayoutPolicy::FOLIO_LAYOUT_SPINE == CrossPointSettings::FOLIO_LAYOUT_SPINE);
+static_assert(FolioLiteLayoutPolicy::FOLIO_LAYOUT_TWO_ROW_SPINE == CrossPointSettings::FOLIO_LAYOUT_TWO_ROW_SPINE);
+static_assert(CrossPointSettings::CAROUSEL_LAYOUT_THREE_COVER == 0);
+static_assert(CrossPointSettings::CAROUSEL_LAYOUT_FIVE_COVER == 1);
+static_assert(CrossPointSettings::FOLIO_LITE_LAYOUT_THREE_COVER_CAROUSEL == 0);
+static_assert(CrossPointSettings::FOLIO_LITE_LAYOUT_FIVE_COVER_CAROUSEL == 1);
 
 namespace {
 
@@ -107,7 +122,7 @@ bool CrossPointSettings::loadFromFile() {
   // action before an ordinary save is allowed to replace them.
   const bool candidateExists = Storage.exists(getFilePath()) || Storage.exists("/.crosspoint/settings.json.bak") ||
                                Storage.exists("/.crosspoint/settings.json.tmp");
-  settingsRecoveryRequired = candidateExists;
+  settingsRecoveryRequired = persistable::settingsRecoveryRequired(ok, candidateExists);
   if (candidateExists) {
     LOG_ERR("CPS", "settings_source=defaults save_guard=1");
   }
@@ -309,20 +324,32 @@ bool CrossPointSettings::fromJsonForProfile(JsonVariantConst doc, const bool pre
     }
   }
 
-  // Theme value 5 used to select the standalone Carousel presentation. If an
-  // older settings file has no independent Recent/Finished layout keys, carry
-  // its explicit 3/5-cover choice forward once. Files that already stored
-  // Folio layouts keep those choices, and carouselLayout remains intact for
-  // downgrade compatibility.
-  const bool recentLayoutMissing = doc["recentBookLayout"].isNull();
-  const bool finishedLayoutMissing = doc["finishedBookLayout"].isNull();
-  const auto carouselLayoutMigration = HomeThemePolicy::migrateLegacyCarouselLayout(
+  // The former Carousel theme stored its visible 3/5 choice in carouselLayout;
+  // the neighboring Recent/Finished keys belong to the main Folio theme and
+  // must not be used to initialize or overwrite those preferences. Early 1.6.6
+  // Lite builds without the legacy key fall back to their Lite-visible layout.
+  const bool liteRecentLayoutMissing = doc["liteRecentBookLayout"].isNull();
+  const bool liteFinishedLayoutMissing = doc["liteFinishedBookLayout"].isNull();
+  const auto legacyLiteLayoutMigration = HomeThemePolicy::migrateLegacyCarouselLayout(
       s.uiTheme, UI_THEME::FOLIO_NOOIR_LITE, s.carouselLayout, !doc["carouselLayout"].isNull(),
-      !recentLayoutMissing, recentBookLayout, !finishedLayoutMissing, finishedBookLayout,
-      CAROUSEL_LAYOUT_THREE_COVER, FOLIO_LAYOUT_THREE_COVER_CAROUSEL, FOLIO_LAYOUT_FIVE_COVER_CAROUSEL);
-  if (carouselLayoutMigration.applied) {
-    recentBookLayout = carouselLayoutMigration.recentBookLayout;
-    finishedBookLayout = carouselLayoutMigration.finishedBookLayout;
+      !liteRecentLayoutMissing, s.liteRecentBookLayout, !liteFinishedLayoutMissing, s.liteFinishedBookLayout,
+      CAROUSEL_LAYOUT_THREE_COVER, FOLIO_LITE_LAYOUT_THREE_COVER_CAROUSEL,
+      FOLIO_LITE_LAYOUT_FIVE_COVER_CAROUSEL);
+  if (legacyLiteLayoutMigration.applied) {
+    s.liteRecentBookLayout = legacyLiteLayoutMigration.recentLayout;
+    s.liteFinishedBookLayout = legacyLiteLayoutMigration.finishedLayout;
+    needsResave = true;
+  }
+  if (doc["liteRecentBookLayout"].isNull()) {
+    liteRecentBookLayout = uiTheme != UI_THEME::FOLIO_NOOIR_LITE
+                               ? FOLIO_LITE_LAYOUT_FIVE_COVER_CAROUSEL
+                           : FolioLiteLayoutPolicy::fromFolioLayout(recentBookLayout);
+    needsResave = true;
+  }
+  if (doc["liteFinishedBookLayout"].isNull()) {
+    liteFinishedBookLayout = uiTheme != UI_THEME::FOLIO_NOOIR_LITE
+                                 ? FOLIO_LITE_LAYOUT_FIVE_COVER_CAROUSEL
+                             : FolioLiteLayoutPolicy::fromFolioLayout(finishedBookLayout);
     needsResave = true;
   }
 

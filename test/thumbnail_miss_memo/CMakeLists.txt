@@ -1,0 +1,5 @@
+add_executable(thumbnail_miss_memo_test ThumbnailMissMemoTest.cpp)
+target_link_libraries(thumbnail_miss_memo_test PRIVATE GTest::gtest_main crosspoint_test_common)
+
+include(GoogleTest)
+gtest_discover_tests(thumbnail_miss_memo_test)

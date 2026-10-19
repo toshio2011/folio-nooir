@@ -33,6 +33,7 @@ bool hasCurrentRc1ProfileShape(JsonVariantConst profile) {
       "featuredShowCover",      "featuredShowFileType",   "featuredShowAuthor",      "featuredShowSynopsis",
       "featuredShowStatus",     "featuredShowProgress",    "featuredShowStartedDate",
       "featuredShowFinishedDate", "featuredShowReadingTime", "featuredShowSessions",
+      "liteRecentBookLayout", "liteFinishedBookLayout",
   };
   for (const char* key : requiredCurrentKeys) {
     if (profile[key].isNull()) return false;

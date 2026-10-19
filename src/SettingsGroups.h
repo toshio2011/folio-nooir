@@ -81,6 +81,7 @@ inline SettingsGroupId settingsGroupIdForSettingKey(const char* key) {
   static constexpr const char* homeKeys[] = {
       "hideBatteryPercentage", "refreshFrequency",       "uiTheme",                 "carouselLayout",
       "recentBookLayout",       "finishedBookLayout",    "coverProgressStyle",      "featuredShowCover",
+      "liteRecentBookLayout",   "liteFinishedBookLayout",
       "featuredShowFileType",   "featuredShowAuthor",    "featuredShowSynopsis",    "featuredShowStatus",
       "featuredShowProgress",   "featuredShowStartedDate", "featuredShowFinishedDate", "featuredShowReadingTime",
       "featuredShowSessions",   "spineDecorationStyle",  "spineAppearanceMode",     "uiScalePercent",

@@ -4,7 +4,10 @@
 #include <Logging.h>
 #include <ObfuscationUtils.h>
 
+#include <array>
 #include <cstring>
+
+#include "Serialization/PersistableStorePolicy.h"
 
 namespace {
 
@@ -23,6 +26,14 @@ const char* settingsCandidateName(const size_t index) {
     default:
       return "tmp";
   }
+}
+
+void logSettingsCandidateSummary(
+    const std::array<persistable::SettingsCandidateResult, 3>& results, const char* selected) {
+  LOG_INF("PERSIST", "settings_candidates main=%s bak=%s tmp=%s selected=%s",
+          persistable::settingsCandidateResultName(results[0]),
+          persistable::settingsCandidateResultName(results[1]),
+          persistable::settingsCandidateResultName(results[2]), selected);
 }
 
 }  // namespace
@@ -135,10 +146,12 @@ bool PersistableStoreBase::readDocFromFile(const char* path, JsonDocument& doc) 
   const String backupPath = String(path) + ".bak";
   const String tmpPath = String(path) + ".tmp";
   const String candidates[] = {String(path), backupPath, tmpPath};
+  std::array<persistable::SettingsCandidateResult, 3> candidateResults{};
 
   for (size_t i = 0; i < (sizeof(candidates) / sizeof(candidates[0])); ++i) {
     const String& candidate = candidates[i];
     if (!Storage.exists(candidate.c_str())) {
+      candidateResults[i] = persistable::SettingsCandidateResult::Missing;
       if (settingsPath) {
         LOG_INF("PERSIST", "settings_candidate=%s exists=0 read=0 parse=0 validation=0",
                 settingsCandidateName(i));
@@ -150,6 +163,7 @@ bool PersistableStoreBase::readDocFromFile(const char* path, JsonDocument& doc) 
     bool parsed = false;
     bool valid = false;
     if (json.isEmpty()) {
+      candidateResults[i] = persistable::SettingsCandidateResult::Unreadable;
       LOG_ERR("PERSIST", "Failed to read %s (empty)", candidate.c_str());
       if (settingsPath) {
         LOG_INF("PERSIST", "settings_candidate=%s exists=1 read=0 parse=0 validation=0", settingsCandidateName(i));
@@ -162,6 +176,8 @@ bool PersistableStoreBase::readDocFromFile(const char* path, JsonDocument& doc) 
     if (!error) {
       parsed = true;
       valid = !settingsPath || isSemanticallyValidSettingsDocument(doc.as<JsonVariantConst>());
+      candidateResults[i] = valid ? persistable::SettingsCandidateResult::Valid
+                                   : persistable::SettingsCandidateResult::Incompatible;
       if (settingsPath) {
         LOG_INF("PERSIST", "settings_candidate=%s exists=1 read=1 parse=1 validation=%d", settingsCandidateName(i),
                 valid);
@@ -177,9 +193,11 @@ bool PersistableStoreBase::readDocFromFile(const char* path, JsonDocument& doc) 
         LOG_ERR("PERSIST", "Recovered %s from pending write %s", path, candidate.c_str());
       }
       if (settingsPath) LOG_INF("PERSIST", "settings_source=%s", settingsCandidateName(i));
+      if (settingsPath) logSettingsCandidateSummary(candidateResults, settingsCandidateName(i));
       return true;
     }
     parsed = false;
+    candidateResults[i] = persistable::SettingsCandidateResult::Malformed;
     if (settingsPath) {
       LOG_INF("PERSIST", "settings_candidate=%s exists=1 read=1 parse=0 validation=0", settingsCandidateName(i));
     }
@@ -187,7 +205,10 @@ bool PersistableStoreBase::readDocFromFile(const char* path, JsonDocument& doc) 
   }
 
   // Missing documents are normal on first boot; malformed documents are not.
-  if (settingsPath) LOG_ERR("PERSIST", "settings_source=defaults");
+  if (settingsPath) {
+    LOG_ERR("PERSIST", "settings_source=defaults");
+    logSettingsCandidateSummary(candidateResults, "defaults");
+  }
   return false;
 }
 

@@ -556,22 +556,29 @@
     const theme = getControlValue('uiTheme');
     const recentLayout = getControlValue('recentBookLayout');
     const finishedLayout = getControlValue('finishedBookLayout');
-    const isFolio = theme === 4 || theme === 5;
-    const spineLayouts = [4, 5];
-    const spineIsUsed = isFolio && (spineLayouts.includes(recentLayout) || spineLayouts.includes(finishedLayout));
-    const coverIsUsed = !isFolio || !spineLayouts.includes(recentLayout) || !spineLayouts.includes(finishedLayout) ||
+    const liteRecentLayout = getControlValue('liteRecentBookLayout');
+    const liteFinishedLayout = getControlValue('liteFinishedBookLayout');
+    const isMainFolio = theme === 4;
+    const isLite = theme === 5;
+    const isFolio = isMainFolio || isLite;
+    const mainSpineLayouts = [4, 5];
+    const spineIsUsed = isLite
+      ? liteRecentLayout === 2 || liteFinishedLayout === 2
+      : isMainFolio && (mainSpineLayouts.includes(recentLayout) || mainSpineLayouts.includes(finishedLayout));
+    const coverIsUsed = !isFolio || !spineIsUsed ||
       getControlValue('featuredShowCover') === 1;
     const setVisible = function(key, visible) {
       const row = document.getElementById('row-setting-' + key);
       if (row) row.style.display = visible ? '' : 'none';
     };
 
-    // Theme value 5 is the persisted Folio Nooir Lite alias. Its legacy
-    // Carousel layout value is migrated to the independent Recent/Finished
-    // selectors and no longer controls the active shelf renderer.
+    // Theme value 5 is Folio Nooir Lite (formerly Carousel). Keep its four
+    // layout choices independent from the main Folio Nooir preferences.
     setVisible('carouselLayout', false);
-    setVisible('recentBookLayout', isFolio);
-    setVisible('finishedBookLayout', isFolio);
+    setVisible('recentBookLayout', isMainFolio);
+    setVisible('finishedBookLayout', isMainFolio);
+    setVisible('liteRecentBookLayout', isLite);
+    setVisible('liteFinishedBookLayout', isLite);
     setVisible('coverProgressStyle', coverIsUsed);
     setVisible('spineDecorationStyle', spineIsUsed);
     setVisible('spineAppearanceMode', spineIsUsed);
@@ -585,6 +592,7 @@
   function handleSettingChanged(key) {
     syncQuickResumeTimeoutForSleepScreen(key === 'sleepScreen', key === 'quickResumeSleepScreen');
     if (key === 'shortPwrBtn' || key === 'uiTheme' || key === 'recentBookLayout' || key === 'finishedBookLayout' ||
+        key === 'liteRecentBookLayout' || key === 'liteFinishedBookLayout' ||
         key === 'featuredShowCover' || key === 'spineAppearanceMode') {
       updateSettingsVisibility();
     }

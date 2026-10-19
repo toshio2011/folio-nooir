@@ -1,0 +1,5 @@
+add_executable(folio_lite_layout_test FolioLiteLayoutTest.cpp)
+target_link_libraries(folio_lite_layout_test PRIVATE GTest::gtest_main crosspoint_test_common)
+
+include(GoogleTest)
+gtest_discover_tests(folio_lite_layout_test)

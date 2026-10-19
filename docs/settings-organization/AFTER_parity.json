@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "baselineCommit": "ce86b9f8c85d774af297ef11e6f98c4bee9e0729",
   "historicalWebExposureCommit": "d4a97653",
-  "prototypeBaseCommit": "f90b5a2a7feb4e5dff5a11c06acbb3c6fada7e8a",
+  "prototypeBaseCommit": "a1d78c9d1cb281980beef8cfa708c042f5c19a45",
   "prototypeFiles": [
     "src/SettingsGroups.h",
     "src/SettingsGroupDevice.h",
@@ -10,6 +10,8 @@
     "src/activities/settings/SettingsActivity.h",
     "src/activities/home/RecentBooksActivity.cpp",
     "src/activities/home/RecentBooksActivity.h",
+    "src/util/FolioLiteLayoutPolicy.h",
+    "src/util/HomeThemePolicy.h",
     "src/activities/reader/EpubReaderActivity.cpp",
     "src/util/BleMemoryPolicy.h",
     "src/CrossPointState.cpp",
@@ -26,7 +28,7 @@
     "test/web_stability/test_grouped_settings_contract.py",
     "docs/settings-organization/generate_after_inventory.py"
   ],
-  "homeWorkerAOverlap": "Folio Nooir Lite uses the same featured synopsis, statistics, and layout choices as Folio Nooir. Theme value 5 and stored fields are preserved. Recent/Finished selectors are available in both Folio themes and the Web UI matches the device. The legacy Carousel field remains for persistence/migration. Custom UI font selection is hidden for 1.6.6 and the built-in UI font is used.",
+  "homeWorkerAOverlap": "Folio Nooir Lite (former Carousel, theme value 5) restores the complete original Carousel page and adds Spine/Grid only in its book-display region. Recent/Finished preferences are Lite-specific; the main Folio Nooir renderer and persisted layout fields remain untouched. The old Carousel key migrates into Lite's selectors. Custom UI font selection is hidden for 1.6.6 and the built-in UI font is used.",
   "groupIds": [
     "home_appearance",
     "sleep",
@@ -37,8 +39,13 @@
     "system"
   ],
   "stableIdsBefore": 131,
-  "stableIdsAfter": 131,
-  "stableIdSetParity": true,
+  "stableIdsAfter": 134,
+  "stableIdSetParity": false,
+  "newStableIds": [
+    "action:DeviceInfo",
+    "liteFinishedBookLayout",
+    "liteRecentBookLayout"
+  ],
   "changedPersistedDescriptorFields": [],
   "persistedDescriptorParity": true,
   "historicalDeviceBaseline": {
@@ -48,8 +55,11 @@
     "allBaselineStableIdsPresent": true,
     "missingStableIds": [],
     "additionalStableIdsInCurrentInventory": [
+      "action:DeviceInfo",
       "action:RandomSleepPool",
       "action:SleepScreenPreview",
+      "liteFinishedBookLayout",
+      "liteRecentBookLayout",
       "randomSleepOrder",
       "sleepBackgroundElement",
       "sleepOverlayAElement",
@@ -71,10 +81,10 @@
       "x4WebSettingKeyCount": 81
     },
     "current166": {
-      "stableIdCount": 131,
-      "deviceReachableCount": 122,
-      "webSettingKeyCount": 84,
-      "x4WebSettingKeyCount": 82
+      "stableIdCount": 134,
+      "deviceReachableCount": 125,
+      "webSettingKeyCount": 86,
+      "x4WebSettingKeyCount": 84
     },
     "baselineComparison": {
       "missingStableIds": [],
@@ -92,6 +102,8 @@
       "accidentalDeviceGaps": [],
       "missingWebKeys": [],
       "additionalCurrentWebKeys": [
+        "liteFinishedBookLayout",
+        "liteRecentBookLayout",
         "randomSleepOrder"
       ],
       "ungroupedCurrentWebKeys": [],
@@ -101,7 +113,7 @@
     "intentionalExclusions": {
       "flexibleSleep": "Hidden from user UI; stored enum values and implementation are retained.",
       "customUiFont": "Hidden from user UI; saved value is retained and built-in UI font is used.",
-      "legacyCarouselLayout": "Legacy persisted value remains; Recent and Finished layout selectors replace its UI path.",
+      "legacyCarouselLayout": "Legacy persisted value remains; it initializes only Lite's new Recent and Finished settings.",
       "webOnlyClippingsAndNotes": "Web-only Clippings/Notes routes remain disabled; on-device Notes and My Clippings.txt export stay."
     },
     "x3X4Guards": {
@@ -109,6 +121,10 @@
       "tiltPageTurn": "X3 QMI8658 IMU only; excluded on X4"
     },
     "pass": true
+  },
+  "countDefinitions": {
+    "device": "The 1.6.5 baseline has 124 stable IDs and 121 device-reachable entries; the current 1.6.6 inventory has 134 stable IDs and 125 reachable entries. Stable IDs include non-setting actions and enum options.",
+    "web": "The 1.6.5 baseline has 83 Web keys (81 X4). A later pre-deferral 1.6.6 inventory has 84 (82 X4) because randomSleepOrder was added after 1.6.5. The current inventory has 86 (84 X4)."
   },
   "newDeviceActions": [
     {
@@ -136,10 +152,10 @@
     "intentionalReplacements": {
       "carouselLayout": {
         "replacedBy": [
-          "recentBookLayout",
-          "finishedBookLayout"
+          "liteRecentBookLayout",
+          "liteFinishedBookLayout"
         ],
-        "reason": "Theme value 5 is Folio Nooir Lite; old layout value migrates to the independent selectors",
+        "reason": "Theme value 5 is Folio Nooir Lite; the old Carousel value initializes its independent selectors",
         "persistedFieldRetained": true
       }
     },
@@ -249,19 +265,23 @@
     "sleepScreen.option.flexible_composite"
   ],
   "layoutPresentation": {
-    "recentBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; same synopsis/stats panel; option set and persisted field unchanged",
-    "finishedBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; same synopsis/stats panel; option set and persisted field unchanged",
-    "carouselLayout": "legacy persisted field retained; value migrates to recentBookLayout/finishedBookLayout; replaced in UI because theme value 5 is Folio Nooir Lite"
+    "recentBookLayout": "Folio Nooir main theme only; option set and persisted field unchanged",
+    "finishedBookLayout": "Folio Nooir main theme only; option set and persisted field unchanged",
+    "liteRecentBookLayout": "Folio Nooir Lite only; original Carousel page retained; choices are 3 Carousel, 5 Carousel, Spine, Grid",
+    "liteFinishedBookLayout": "Folio Nooir Lite only; original Carousel page retained; choices are 3 Carousel, 5 Carousel, Spine, Grid",
+    "carouselLayout": "legacy persisted field retained; value initializes liteRecentBookLayout/liteFinishedBookLayout; main Folio layout keys remain untouched"
   },
   "clippingsRoutes": "remain disabled; existing per-book storage and My Clippings.txt untouched",
   "webSettings": {
     "historicalStableKeyCount": 84,
     "historicalX4KeyCount": 82,
+    "currentStableKeyCount": 86,
+    "currentX4StableKeyCount": 84,
     "everyHistoricalKeyHasGroup": true,
     "allHistoricalKeysGroupedExactlyOnce": true,
     "groupCounts": {
       "reading": 31,
-      "home_appearance": 21,
+      "home_appearance": 23,
       "controls": 11,
       "sleep": 7,
       "connectivity": 7,
@@ -272,9 +292,9 @@
     "latestIntegrationCommit": "7296bbc85467675fdc8e1dffd4c73f4022e96518",
     "routeCommitIntegratedHere": true,
     "routeIntegratedInMain": true,
-    "historicalKeysReachableThroughGroupedApi": 84,
-    "x4ReachableKeyCount": 82,
-    "liteLayoutUiParity": "Theme value 5 is Folio Nooir Lite; device and Web expose the independent Recent/Finished layout selectors and hide the migrated legacy Carousel selector. The device Lite theme keeps the same synopsis and statistics presentation as Folio Nooir.",
+    "historicalKeysReachableThroughGroupedApi": 86,
+    "x4ReachableKeyCount": 84,
+    "liteLayoutUiParity": "Theme value 5 is Folio Nooir Lite; device and Web expose its own independent Recent/Finished selectors. The original Carousel page remains intact, with only its book display region switching. Folio Nooir main-theme layout selectors and renderer remain separate.",
     "conditionalKeys": {
       "touchReaderControls": "touch hardware only",
       "tiltPageTurn": "X3 QMI8658 IMU only"
@@ -283,11 +303,11 @@
       "groupedSettingsContract": "8/8",
       "settingsOrganizationParity": "24/24",
       "pythonSuitesTotal": "32/32 across settings_organization and web_stability",
-      "generatedHtmlAndJsSyntax": "passed (Node.js; 9 inline HTML scripts checked)",
-      "bleMemoryPolicyHostSuite": "Blocked locally: CMake/MSVC compiler setup failed its compiler probe; no current C++ test result.",
-      "fullHostSuite": "Not run to completion: CMake/MSVC reported a Program Database manager mismatch (C1902), then failed to identify supported C++ features; no current full-suite result."
+      "generatedHtmlAndJsSyntax": "passed (Node.js; 1 inline SettingsPage script parsed)",
+      "bleMemoryPolicyHostSuite": "passed as part of the 432/432 CTest host suite",
+      "fullHostSuite": "passed; 432/432 CTest tests"
     },
-    "build": "Passed consolidated gh_release build; exact artifact and toolchain metadata are in releaseBuild.",
+    "build": "Pending the one consolidated gh_release build; artifact and toolchain metadata will be recorded afterward.",
     "apiContract": {
       "groups": "GET /api/settings/groups returns only the seven static descriptors",
       "read": "GET /api/settings requires a valid group; offset 0..32 and limit 1..6; returns only the selected group page and X-Settings-Total",
@@ -322,27 +342,27 @@
   "integrationBlockers": [],
   "releaseValidation": {
     "sourceParity": "passed; accidental missing settings=0; accidental duplicates=0",
-    "firmwareBuild": "passed; gh_release built from source commit f90b5a2a7feb4e5dff5a11c06acbb3c6fada7e8a",
+    "firmwareBuild": "pending the consolidated build of the corrected source",
     "physicalX4": "pending; not validated on device",
     "releaseReady": false
   },
   "releaseBuild": {
-    "status": "passed",
-    "environment": "gh_release",
+    "status": "pending consolidated build",
+    "environment": "gh_release; not yet run for this worktree",
     "branch": "codex/folio-nooir-1.6.6",
-    "sourceCommit": "f90b5a2a7feb4e5dff5a11c06acbb3c6fada7e8a",
-    "artifactPath": "artifacts/firmware.bin",
-    "artifactBytes": 5954272,
-    "artifactSha256": "2BB52FCACE5CBCDFDB484DC16F41FDC2C67DC6E2438BF5227D4793433957DF86",
-    "platformioPlatform": "espressif32 55.3.37",
-    "arduinoCore": "3.3.7",
-    "espIdf": "5.5.2",
-    "riscvToolchain": "14.2.0+20251107",
-    "esptool": "5.1.2",
-    "ramUsedBytes": 62364,
-    "ramTotalBytes": 327680,
-    "flashUsedBytes": 5940127,
-    "flashTotalBytes": 6553600,
+    "sourceCommit": null,
+    "artifactPath": null,
+    "artifactBytes": null,
+    "artifactSha256": null,
+    "platformioPlatform": null,
+    "arduinoCore": null,
+    "espIdf": null,
+    "riscvToolchain": null,
+    "esptool": null,
+    "ramUsedBytes": null,
+    "ramTotalBytes": null,
+    "flashUsedBytes": null,
+    "flashTotalBytes": null,
     "physicalX4": "pending; not validated on device"
   },
   "physicalX4Validation": "Pending; verify first Home responsiveness, Settings navigation, Device Info, Web re-entry, sleep/wake, Reader Bluetooth, and input mapping on hardware before RC acceptance."

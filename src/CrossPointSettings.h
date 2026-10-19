@@ -286,6 +286,16 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     CAROUSEL_LAYOUT_COUNT
   };
 
+  // Folio Nooir Lite keeps its own Recent/Finished layout choices so changing
+  // the Lite shelf never changes the main Folio Nooir presentation.
+  enum FOLIO_LITE_BOOK_LAYOUT {
+    FOLIO_LITE_LAYOUT_THREE_COVER_CAROUSEL = 0,
+    FOLIO_LITE_LAYOUT_FIVE_COVER_CAROUSEL = 1,
+    FOLIO_LITE_LAYOUT_SPINE = 2,
+    FOLIO_LITE_LAYOUT_GRID = 3,
+    FOLIO_LITE_BOOK_LAYOUT_COUNT
+  };
+
   enum COVER_PROGRESS_STYLE {
     COVER_PROGRESS_NONE = 0,
     COVER_PROGRESS_PERCENTAGE = 1,
@@ -471,6 +481,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t finishedBookLayout = FOLIO_LAYOUT_GRID;
   // The standalone Carousel theme defaults to its existing 5-cover layout.
   uint8_t carouselLayout = CAROUSEL_LAYOUT_FIVE_COVER;
+  uint8_t liteRecentBookLayout = FOLIO_LITE_LAYOUT_FIVE_COVER_CAROUSEL;
+  uint8_t liteFinishedBookLayout = FOLIO_LITE_LAYOUT_FIVE_COVER_CAROUSEL;
   // Shared cover marker. Bookmark remains the default used by the 1.6.4
   // Folio shelf; older profiles missing this key keep the same presentation.
   uint8_t coverProgressStyle = COVER_PROGRESS_BOOKMARK;

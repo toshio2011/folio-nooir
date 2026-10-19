@@ -32,7 +32,9 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
     def test_all_setting_ids_and_persistence_descriptors_are_unchanged(self):
         before = {row["stableId"]: row for row in self.before["records"]}
         after = {row["stableId"]: row for row in self.after["records"]}
-        self.assertEqual(set(before), set(after))
+        self.assertTrue(set(before).issubset(after))
+        self.assertEqual(set(after) - set(before),
+                         {"liteRecentBookLayout", "liteFinishedBookLayout", "action:DeviceInfo"})
         fields = ("key", "label", "category", "categoryId", "type", "backingField", "options", "range", "default")
         for stable_id, old in before.items():
             if old["type"] in {"action", "web_feature", "enum_option"}:
@@ -60,22 +62,26 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
     def test_folio_lite_layout_visibility_and_carousel_filter_match_main(self):
         self.assertIn("const bool folioLayoutTheme", self.cpp)
         self.assertIn("SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR_LITE", self.cpp)
-        self.assertIn("isFolioLayoutSetting(setting.nameId) && !folioLayoutTheme", self.cpp)
+        self.assertIn("if (isFolioLayoutSetting(setting.nameId))", self.cpp)
+        self.assertIn("isLiteLayoutSetting(setting) != liteLayoutTheme", self.cpp)
         self.assertIn("if (isCarouselLayoutSetting(setting.nameId)) return false;", self.cpp)
         rows = {row["stableId"]: row for row in self.after["records"]}
         for stable_id in ("recentBookLayout", "finishedBookLayout"):
             self.assertTrue(rows[stable_id]["deviceReachableAfterPrototype"])
-            self.assertIn("FOLIO_NOOIR and FOLIO_NOOIR_LITE",
-                          rows[stable_id]["deviceExposureAfterPrototype"])
+            self.assertIn("main theme only", rows[stable_id]["deviceExposureAfterPrototype"])
+        for stable_id in ("liteRecentBookLayout", "liteFinishedBookLayout"):
+            self.assertTrue(rows[stable_id]["deviceReachableAfterPrototype"])
+            self.assertIn("Folio Nooir Lite only", rows[stable_id]["deviceExposureAfterPrototype"])
         self.assertFalse(rows["carouselLayout"]["deviceReachableAfterPrototype"])
-        self.assertIn("Legacy Carousel field retained", rows["carouselLayout"]["deviceExposureAfterPrototype"])
+        self.assertIn("initializes Lite's independent", rows["carouselLayout"]["deviceExposureAfterPrototype"])
         self.assertIn("legacy persisted field retained", self.report["layoutPresentation"]["carouselLayout"])
         self.assertEqual(self.report["deviceExposureCoverage"]["intentionalReplacements"]["carouselLayout"]["replacedBy"],
-                         ["recentBookLayout", "finishedBookLayout"])
-        self.assertIn("featuredShowSynopsis", self.home_cpp)
-        self.assertIn("drawStats();", self.home_cpp)
-        self.assertNotIn("if (!liteTheme)", self.home_cpp)
-        self.assertNotIn("layout.detailHeight = 0", self.home_cpp)
+                         ["liteRecentBookLayout", "liteFinishedBookLayout"])
+        self.assertIn("if (isFolioNooirLiteTheme(SETTINGS.uiTheme))", self.home_cpp)
+        self.assertIn("renderCarousel(activeBookLayout()", self.home_cpp)
+        self.assertIn("liteBookDisplayLayout", self.home_cpp)
+        self.assertIn("migrateLegacyCarouselLayout", (ROOT / "src" / "CrossPointSettings.cpp").read_text(encoding="utf-8"))
+        self.assertIn("main Folio theme", (ROOT / "src" / "CrossPointSettings.cpp").read_text(encoding="utf-8"))
 
     def test_single_section_reader_and_controls_tabs_render_settings_directly(self):
         self.assertIn("bool tabUsesAccordion(const int tab)", self.cpp)
@@ -86,7 +92,8 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
     def test_home_clears_stale_theme_switch_input_and_resets_wake_selection(self):
         self.assertIn("ignoreEntryInputUntilNeutral = hasActiveHomeInput(mappedInput);", self.home_cpp)
         self.assertIn("if (ignoreEntryInputUntilNeutral)", self.home_cpp)
-        self.assertIn("HOME_ENTRY_INPUT_GATE_MAX_MS", self.home_cpp)
+        self.assertIn("if (hasActiveHomeInput(mappedInput)) return;", self.home_cpp)
+        self.assertNotIn("HOME_ENTRY_INPUT_GATE_MAX_MS", self.home_cpp)
         self.assertIn("isFolioShelfTheme(SETTINGS.uiTheme)", self.home_cpp)
         self.assertIn("version == FOLIO_HOME_PREVIOUS_VERSION", self.home_cpp)
         self.assertIn("APP_STATE.selectFirstHomeBookAfterWake", self.home_cpp)
@@ -127,7 +134,8 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
             {
                 "action:RandomSleepPool", "action:SleepScreenPreview", "randomSleepOrder",
                 "sleepBackgroundElement", "sleepOverlayAElement", "sleepOverlayBElement",
-                "sleepScreen.option.flexible_composite",
+                "sleepScreen.option.flexible_composite", "liteRecentBookLayout", "liteFinishedBookLayout",
+                "action:DeviceInfo",
             },
         )
 
@@ -179,8 +187,10 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
         self.assertEqual(coverage["previouslyExposedStableIds"], 127)
         self.assertEqual(coverage["reachableAfter"], 122)
         self.assertEqual(coverage["accidentalMissing"], 0)
-        self.assertEqual(sum(self.report["webSettings"]["groupCounts"].values()), 84)
-        self.assertEqual(self.report["webSettings"]["x4ReachableKeyCount"], 82)
+        self.assertEqual(sum(self.report["webSettings"]["groupCounts"].values()), 86)
+        self.assertEqual(self.report["webSettings"]["currentStableKeyCount"], 86)
+        self.assertEqual(self.report["webSettings"]["currentX4StableKeyCount"], 84)
+        self.assertEqual(self.report["webSettings"]["x4ReachableKeyCount"], 84)
         table = (DOCS / "PARITY_TABLE.md").read_text(encoding="utf-8")
         headers = [
             "Setting ID", "Old Group", "New Group", "Device Before", "Device After", "Web Before",
@@ -210,7 +220,8 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
                 continue
             if row["stableId"] == "carouselLayout":
                 self.assertFalse(after[row["stableId"]]["deviceReachableAfterPrototype"])
-                self.assertIn("maps", after[row["stableId"]]["deviceExposureAfterPrototype"])
+                self.assertIn("initializes Lite's independent",
+                              after[row["stableId"]]["deviceExposureAfterPrototype"])
                 continue
             old_exposure = row.get("deviceExposureBefore") or ""
             if not old_exposure or old_exposure.startswith(("not exposed", "not selectable")):

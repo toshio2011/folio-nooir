@@ -5,26 +5,26 @@
 namespace HomeThemePolicy {
 
 struct LegacyCarouselLayoutMigration {
-  uint8_t recentBookLayout;
-  uint8_t finishedBookLayout;
+  uint8_t recentLayout;
+  uint8_t finishedLayout;
   bool applied;
 };
 
-// Theme value 5 is retained for old settings files. When those files predate
-// the independent Recent/Finished selectors, map their Carousel choice once
-// and leave any explicitly stored Folio layout untouched.
+// Theme value 5 is retained for old settings files. Its legacy Carousel
+// selector initializes only Lite's new Recent/Finished selectors; the main
+// Folio settings are never part of this migration.
 constexpr LegacyCarouselLayoutMigration migrateLegacyCarouselLayout(
     const uint8_t uiTheme, const uint8_t liteThemeValue, const uint8_t carouselLayout,
-    const bool hasCarouselLayout, const bool hasRecentLayout, const uint8_t recentLayout,
-    const bool hasFinishedLayout, const uint8_t finishedLayout, const uint8_t threeCoverValue,
-    const uint8_t threeCoverLayout, const uint8_t fiveCoverLayout) {
-  if (uiTheme != liteThemeValue || !hasCarouselLayout || (hasRecentLayout && hasFinishedLayout)) {
-    return {recentLayout, finishedLayout, false};
+    const bool hasCarouselLayout, const bool hasLiteRecentLayout, const uint8_t liteRecentLayout,
+    const bool hasLiteFinishedLayout, const uint8_t liteFinishedLayout, const uint8_t threeCoverValue,
+    const uint8_t liteThreeCoverLayout, const uint8_t liteFiveCoverLayout) {
+  if (uiTheme != liteThemeValue || !hasCarouselLayout || (hasLiteRecentLayout && hasLiteFinishedLayout)) {
+    return {liteRecentLayout, liteFinishedLayout, false};
   }
 
-  const uint8_t migratedLayout = carouselLayout == threeCoverValue ? threeCoverLayout : fiveCoverLayout;
-  return {hasRecentLayout ? recentLayout : migratedLayout,
-          hasFinishedLayout ? finishedLayout : migratedLayout, true};
+  const uint8_t migratedLayout = carouselLayout == threeCoverValue ? liteThreeCoverLayout : liteFiveCoverLayout;
+  return {hasLiteRecentLayout ? liteRecentLayout : migratedLayout,
+          hasLiteFinishedLayout ? liteFinishedLayout : migratedLayout, true};
 }
 
 }  // namespace HomeThemePolicy

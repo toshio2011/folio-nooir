@@ -10,9 +10,11 @@
 #include "CrossPointSettings.h"
 #include "RecentBooksStore.h"
 #include "activities/Activity.h"
+#include "components/themes/folio_nooir/CarouselTheme.h"
 #include "util/ButtonNavigator.h"
 #include "util/CoverStackGeometry.h"
 #include "util/SpineShelfPlanner.h"
+#include "util/ThumbnailMissMemo.h"
 #include "components/OptionPopup.h"
 
 struct FolioShelfLayout;
@@ -54,6 +56,9 @@ class RecentBooksActivity final : public Activity {
     bool normalUnavailable = false;
   };
   std::array<CarouselHqProbe, 10> carouselHqProbes{};
+  ThumbnailMissMemo normalThumbnailMisses;
+  CarouselLayout liteCarouselLayoutCache{};
+  bool liteCarouselLayoutCacheValid = false;
   static constexpr size_t CAROUSEL_SOURCE_CACHE_SIZE = 6;
   struct CarouselSourceCacheEntry {
     bool valid = false;
@@ -128,9 +133,9 @@ class RecentBooksActivity final : public Activity {
   bool snapshotRestored = false;
   // Ignore the input that launched the preceding activity until it returns to
   // neutral; otherwise a held Settings button can leak into the new shelf.
-  // Bound the gate so a stale input state cannot make Home appear frozen.
+  // The gate clears only after the previous activity's input is released.
   bool ignoreEntryInputUntilNeutral = false;
-  unsigned long entryInputGateStartedMs = 0;
+  const char* renderDiagnosticReason = "queued";
   uint64_t snapshotPresentationKeyValue = 0;
   std::array<uint64_t, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> snapshotBookVisualKeys{};
   bool snapshotDynamicNeedsPatch = false;
@@ -139,6 +144,7 @@ class RecentBooksActivity final : public Activity {
   size_t snapshotSelectorIndex = SIZE_MAX;
   struct SpinePageWindow {
     std::array<SpineShelfPlanner::Book, SpineShelfPlanner::MAX_BOOKS> books{};
+    std::array<size_t, SpineShelfPlanner::MAX_BOOKS> recentIndexes{};
     SpineShelfPlanner::Page page{};
     mutable std::array<bool, SpineShelfPlanner::MAX_BOOKS> thumbnailUnavailable{};
     size_t pageNumber = 0;
@@ -154,6 +160,7 @@ class RecentBooksActivity final : public Activity {
   SpinePageWindow spinePageWindow{};
   struct TwoRowSpinePageWindow {
     std::array<SpineShelfPlanner::Book, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> books{};
+    std::array<size_t, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> recentIndexes{};
     SpineShelfPlanner::TwoRowPage page{};
     mutable std::array<bool, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> thumbnailUnavailable{};
     size_t pageNumber = 0;

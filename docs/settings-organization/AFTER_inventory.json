@@ -13,8 +13,8 @@
     "webSettingsDeferralCommit": "4eb9b811af823344a36950725614f9ab3e341544",
     "clippingsDeferralCommit": "4eb9b811af823344a36950725614f9ab3e341544",
     "interfaceFontDecision": "Worker E commit ce86b9f8 disables custom UI font application and preserves selection; row is still present in this exact source and row-hide remains pending",
-    "homeWorkerOverlap": "Theme value 5 remains the Folio Nooir Lite alias and uses the same featured synopsis, stats, and layout controls as Folio Nooir. Recent/Finished layouts are available under both Folio themes; the legacy Carousel field is retained for persistence/migration and replaced in the UI by those selectors. The saved Interface Font selection remains stored, while the row is hidden and the built-in UI font is used.",
-    "prototypeBaseCommit": "f90b5a2a7feb4e5dff5a11c06acbb3c6fada7e8a",
+    "homeWorkerOverlap": "Theme value 5 is Folio Nooir Lite (formerly Carousel). Its original full Carousel page is restored; only its book display region gains independent Recent/Finished choices for 3 Carousel, 5 Carousel, Spine, and Grid. The main Folio Nooir renderer and layout preferences remain unchanged. The legacy Carousel key initializes Lite's settings on migration and remains for downgrade compatibility. The saved Interface Font selection remains stored, while the row is hidden and the built-in UI font is used.",
+    "prototypeBaseCommit": "a1d78c9d1cb281980beef8cfa708c042f5c19a45",
     "prototypeWorkingTreeFiles": [
       "src/SettingsGroups.h",
       "src/SettingsGroupDevice.h",
@@ -22,6 +22,8 @@
       "src/activities/settings/SettingsActivity.h",
       "src/activities/home/RecentBooksActivity.cpp",
       "src/activities/home/RecentBooksActivity.h",
+      "src/util/FolioLiteLayoutPolicy.h",
+      "src/util/HomeThemePolicy.h",
       "src/activities/reader/EpubReaderActivity.cpp",
       "src/util/BleMemoryPolicy.h",
       "src/CrossPointState.cpp",
@@ -43,22 +45,26 @@
     "webRouteStatus": "Bounded Web Settings group/page routes are integrated on the current 1.6.6 branch (route 908453f39608169b1dad079e31a94db28415001b; integration 7296bbc85467675fdc8e1dffd4c73f4022e96518); Web Clippings/Notes remain disabled."
   },
   "summary": {
-    "baseRecords": 89,
+    "baseRecords": 91,
     "manualDeviceSettings": 17,
     "dynamicDeviceSettings": 1,
-    "deviceActions": 23,
+    "deviceActions": 24,
     "proposedGroupCounts": {
-      "home_appearance": 23,
+      "home_appearance": 25,
       "sleep": 14,
       "reading": 37,
       "controls": 26,
       "connectivity": 15,
-      "library": 7,
-      "system": 9
+      "library": 6,
+      "system": 11
     },
-    "oldWebStableKeys": 84,
+    "oldWebStableKeys": 86,
     "oldWebStableKeysList": [
       "backShortToFileBrowser",
+      "bleControllerPreset",
+      "bleKeyMap",
+      "bluetoothEnabled",
+      "bluetoothNoDeviceTimeoutSeconds",
       "carouselLayout",
       "clockFormat",
       "clockHasBeenSynced",
@@ -84,7 +90,11 @@
       "fontFamily",
       "fontSize",
       "forceParagraphIndents",
+      "frontButtonBack",
+      "frontButtonConfirm",
       "frontButtonFollowOrientation",
+      "frontButtonLeft",
+      "frontButtonRight",
       "guideDots",
       "hideBatteryPercentage",
       "highlightColor",
@@ -97,7 +107,10 @@
       "koServerUrl",
       "koSyncBehavior",
       "koUsername",
+      "language",
       "lineSpacing",
+      "liteFinishedBookLayout",
+      "liteRecentBookLayout",
       "longPressButtonBehavior",
       "longPressMenuFunction",
       "longPwrBtn",
@@ -108,9 +121,17 @@
       "pageNumberMode",
       "paragraphAlignment",
       "pwrBtnFootnoteBack",
+      "quickActionSlot1",
+      "quickActionSlot2",
+      "quickActionSlot3",
+      "quickActionSlot4",
       "quickResumeSleepScreen",
       "randomSleepOrder",
       "readerDarkMode",
+      "readerFrontButtonBack",
+      "readerFrontButtonConfirm",
+      "readerFrontButtonLeft",
+      "readerFrontButtonRight",
       "recentBookLayout",
       "refreshFrequency",
       "removeReadBooksFromRecents",
@@ -120,6 +141,9 @@
       "showHiddenFiles",
       "sideButtonLayout",
       "sideLongPressAction",
+      "sleepBackgroundElement",
+      "sleepOverlayAElement",
+      "sleepOverlayBElement",
       "sleepScreen",
       "sleepScreenCoverFilter",
       "sleepScreenCoverMode",
@@ -143,7 +167,7 @@
       "weatherSyncEnabled",
       "xtcStatusBarMode"
     ],
-    "oldWebX4StableKeys": 82,
+    "oldWebX4StableKeys": 84,
     "oldWebX4StableKeysList": [
       "backShortToFileBrowser",
       "carouselLayout",
@@ -185,6 +209,8 @@
       "koSyncBehavior",
       "koUsername",
       "lineSpacing",
+      "liteFinishedBookLayout",
+      "liteRecentBookLayout",
       "longPressButtonBehavior",
       "longPressMenuFunction",
       "longPwrBtn",
@@ -3777,7 +3803,7 @@
       "hiddenReason": "theme-specific setting",
       "englishLabel": "Carousel layout",
       "proposedGroupId": "home_appearance",
-      "deviceExposureAfterPrototype": "Legacy Carousel field retained for persistence/migration; its value maps to the independent Recent/Finished layout selectors, which are available in Folio Nooir Lite",
+      "deviceExposureAfterPrototype": "Legacy Carousel row hidden; stored key remains and initializes Lite's independent Recent/Finished layout keys during migration",
       "deviceReachableAfterPrototype": false,
       "deviceGroupAfterPrototype": null,
       "stableIdUnchanged": true,
@@ -3849,7 +3875,7 @@
       "hiddenReason": "theme-specific setting",
       "englishLabel": "Recent book layout",
       "proposedGroupId": "home_appearance",
-      "deviceExposureAfterPrototype": "Display tab > Home & Appearance section; available in FOLIO_NOOIR and FOLIO_NOOIR_LITE",
+      "deviceExposureAfterPrototype": "Display tab > Home & Appearance section; Folio Nooir main theme only",
       "deviceReachableAfterPrototype": true,
       "deviceGroupAfterPrototype": "home_appearance",
       "stableIdUnchanged": true,
@@ -3921,7 +3947,7 @@
       "hiddenReason": "theme-specific setting",
       "englishLabel": "Finished book layout",
       "proposedGroupId": "home_appearance",
-      "deviceExposureAfterPrototype": "Display tab > Home & Appearance section; available in FOLIO_NOOIR and FOLIO_NOOIR_LITE",
+      "deviceExposureAfterPrototype": "Display tab > Home & Appearance section; Folio Nooir main theme only",
       "deviceReachableAfterPrototype": true,
       "deviceGroupAfterPrototype": "home_appearance",
       "stableIdUnchanged": true,
@@ -7297,6 +7323,145 @@
       "deviceExposureAfterPrototype": "Clippings/Notes routes remain explicitly deferred for physical X4 safety; /My Clippings.txt remains unchanged",
       "deviceReachableAfterPrototype": false,
       "deviceGroupAfterPrototype": null,
+      "stableIdUnchanged": true,
+      "persistenceAndOptionsUnchanged": false
+    },
+    {
+      "stableId": "liteRecentBookLayout",
+      "key": "liteRecentBookLayout",
+      "label": "STR_RECENT_BOOK_LAYOUT",
+      "category": "Display",
+      "categoryId": "STR_CAT_DISPLAY",
+      "type": "enum",
+      "backingField": "liteRecentBookLayout",
+      "options": [
+        {
+          "label": "STR_LAYOUT_3_COVER_CAROUSEL",
+          "optionIndex": 0,
+          "persistedValue": 0
+        },
+        {
+          "label": "STR_LAYOUT_5_COVER_CAROUSEL",
+          "optionIndex": 1,
+          "persistedValue": 1
+        },
+        {
+          "label": "STR_LAYOUT_SPINE",
+          "optionIndex": 2,
+          "persistedValue": 2
+        },
+        {
+          "label": "STR_LAYOUT_GRID_4X2",
+          "optionIndex": 3,
+          "persistedValue": 3
+        }
+      ],
+      "range": null,
+      "default": {
+        "expression": "FOLIO_LITE_LAYOUT_FIVE_COVER_CAROUSEL",
+        "resolved": 1
+      },
+      "source": {
+        "file": "src/SettingsList.h",
+        "line": 286,
+        "constructor": "Enum"
+      },
+      "sourceScope": "base_list",
+      "deviceExposureBefore": "new in 1.6.6 Lite settings",
+      "webExposureBeforeDisabledDecision": "yes: grouped home_appearance setting",
+      "currentWebSettingsRoute": "GET/POST /api/settings by home_appearance group",
+      "intentionallyHidden": false,
+      "hiddenReason": null,
+      "proposedGroupId": "home_appearance",
+      "deviceExposureAfterPrototype": "Display tab > Home & Appearance section; Folio Nooir Lite only",
+      "deviceReachableAfterPrototype": true,
+      "deviceGroupAfterPrototype": "home_appearance",
+      "stableIdUnchanged": true,
+      "persistenceAndOptionsUnchanged": true
+    },
+    {
+      "stableId": "liteFinishedBookLayout",
+      "key": "liteFinishedBookLayout",
+      "label": "STR_FINISHED_BOOK_LAYOUT",
+      "category": "Display",
+      "categoryId": "STR_CAT_DISPLAY",
+      "type": "enum",
+      "backingField": "liteFinishedBookLayout",
+      "options": [
+        {
+          "label": "STR_LAYOUT_3_COVER_CAROUSEL",
+          "optionIndex": 0,
+          "persistedValue": 0
+        },
+        {
+          "label": "STR_LAYOUT_5_COVER_CAROUSEL",
+          "optionIndex": 1,
+          "persistedValue": 1
+        },
+        {
+          "label": "STR_LAYOUT_SPINE",
+          "optionIndex": 2,
+          "persistedValue": 2
+        },
+        {
+          "label": "STR_LAYOUT_GRID_4X2",
+          "optionIndex": 3,
+          "persistedValue": 3
+        }
+      ],
+      "range": null,
+      "default": {
+        "expression": "FOLIO_LITE_LAYOUT_FIVE_COVER_CAROUSEL",
+        "resolved": 1
+      },
+      "source": {
+        "file": "src/SettingsList.h",
+        "line": 292,
+        "constructor": "Enum"
+      },
+      "sourceScope": "base_list",
+      "deviceExposureBefore": "new in 1.6.6 Lite settings",
+      "webExposureBeforeDisabledDecision": "yes: grouped home_appearance setting",
+      "currentWebSettingsRoute": "GET/POST /api/settings by home_appearance group",
+      "intentionallyHidden": false,
+      "hiddenReason": null,
+      "proposedGroupId": "home_appearance",
+      "deviceExposureAfterPrototype": "Display tab > Home & Appearance section; Folio Nooir Lite only",
+      "deviceReachableAfterPrototype": true,
+      "deviceGroupAfterPrototype": "home_appearance",
+      "stableIdUnchanged": true,
+      "persistenceAndOptionsUnchanged": true
+    },
+    {
+      "stableId": "action:DeviceInfo",
+      "key": null,
+      "label": "STR_DEVICE_INFO",
+      "category": "System",
+      "categoryId": "STR_CAT_SYSTEM",
+      "type": "action",
+      "backingField": null,
+      "options": [],
+      "range": null,
+      "default": {
+        "expression": null,
+        "resolved": null
+      },
+      "action": "DeviceInfo",
+      "source": {
+        "file": "src/activities/settings/SettingsActivity.cpp",
+        "line": 498,
+        "constructor": "Action"
+      },
+      "sourceScope": "device_action",
+      "deviceExposureBefore": "new in 1.6.6; System tab > System section",
+      "webExposureBeforeDisabledDecision": "no",
+      "currentWebSettingsRoute": "n/a",
+      "intentionallyHidden": false,
+      "hiddenReason": null,
+      "proposedGroupId": "system",
+      "deviceExposureAfterPrototype": "System tab > System section",
+      "deviceReachableAfterPrototype": true,
+      "deviceGroupAfterPrototype": "system",
       "stableIdUnchanged": true,
       "persistenceAndOptionsUnchanged": false
     }

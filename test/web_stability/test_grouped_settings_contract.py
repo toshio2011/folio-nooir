@@ -50,12 +50,15 @@ class GroupedSettingsContractTest(unittest.TestCase):
         self.assertIn("if (token !== groupLoadToken) { rows.length = 0; return; }", PAGE)
         self.assertIn("if (activeGroupController) activeGroupController.abort();", PAGE)
 
-    def test_lite_theme_uses_the_same_recent_and_finished_layout_controls_as_device(self):
-        self.assertIn("const isFolio = theme === 4 || theme === 5;", PAGE)
-        self.assertIn("setVisible('recentBookLayout', isFolio);", PAGE)
-        self.assertIn("setVisible('finishedBookLayout', isFolio);", PAGE)
+    def test_lite_theme_has_separate_recent_and_finished_layout_controls(self):
+        self.assertIn("const isMainFolio = theme === 4;", PAGE)
+        self.assertIn("const isLite = theme === 5;", PAGE)
+        self.assertIn("setVisible('recentBookLayout', isMainFolio);", PAGE)
+        self.assertIn("setVisible('finishedBookLayout', isMainFolio);", PAGE)
+        self.assertIn("setVisible('liteRecentBookLayout', isLite);", PAGE)
+        self.assertIn("setVisible('liteFinishedBookLayout', isLite);", PAGE)
         self.assertIn("setVisible('carouselLayout', false);", PAGE)
-        self.assertIn("Carousel layout value is migrated", PAGE)
+        self.assertIn("layout choices independent from the main Folio Nooir preferences", PAGE)
 
     def test_late_group_extras_do_not_retain_state_after_leaving_their_group(self):
         self.assertIn("if (currentGroupId !== 'system') clockWeatherState = null;", PAGE)

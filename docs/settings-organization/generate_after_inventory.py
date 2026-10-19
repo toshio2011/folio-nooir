@@ -47,12 +47,14 @@ def classify_after(record: dict) -> tuple[bool, str]:
         return False, record.get("hiddenReason") or "intentionally deferred"
     if sid == "carouselLayout":
         return False, (
-            "Legacy Carousel field retained for persistence/migration; its value maps to the independent "
-            "Recent/Finished layout selectors, which are available in Folio Nooir Lite"
+            "Legacy Carousel row hidden; stored key remains and initializes Lite's independent Recent/Finished "
+            "layout keys during migration"
         )
+    if sid in {"liteRecentBookLayout", "liteFinishedBookLayout"}:
+        return True, "Display tab > Home & Appearance section; Folio Nooir Lite only"
     if sid in {"recentBookLayout", "finishedBookLayout"}:
         group = record.get("proposedGroupId")
-        return True, f"{DEVICE_PATH_BY_GROUP.get(group, group)}; available in FOLIO_NOOIR and FOLIO_NOOIR_LITE"
+        return True, f"{DEVICE_PATH_BY_GROUP.get(group, group)}; Folio Nooir main theme only"
     if before.startswith("not exposed") or before.startswith("not selectable"):
         return False, before
     if record.get("sourceScope") == "base_list" and record.get("categoryId") == "STR_CAT_READER" and record.get("inTextSettings"):
@@ -73,7 +75,7 @@ def classify_after(record: dict) -> tuple[bool, str]:
 
 WEB_GROUP_COUNTS = {
     "reading": 31,
-    "home_appearance": 21,
+    "home_appearance": 23,
     "controls": 11,
     "sleep": 7,
     "connectivity": 7,
@@ -82,23 +84,24 @@ WEB_GROUP_COUNTS = {
 }
 WEB_ROUTE_COMMIT = "908453f39608169b1dad079e31a94db28415001b"
 WEB_INTEGRATION_COMMIT = "7296bbc85467675fdc8e1dffd4c73f4022e96518"
+PROTOTYPE_BASE_COMMIT = "a1d78c9d1cb281980beef8cfa708c042f5c19a45"
 RELEASE_BUILD = {
-    "status": "passed",
-    "environment": "gh_release",
+    "status": "pending consolidated build",
+    "environment": "gh_release; not yet run for this worktree",
     "branch": "codex/folio-nooir-1.6.6",
-    "sourceCommit": "f90b5a2a7feb4e5dff5a11c06acbb3c6fada7e8a",
-    "artifactPath": "artifacts/firmware.bin",
-    "artifactBytes": 5954272,
-    "artifactSha256": "2BB52FCACE5CBCDFDB484DC16F41FDC2C67DC6E2438BF5227D4793433957DF86",
-    "platformioPlatform": "espressif32 55.3.37",
-    "arduinoCore": "3.3.7",
-    "espIdf": "5.5.2",
-    "riscvToolchain": "14.2.0+20251107",
-    "esptool": "5.1.2",
-    "ramUsedBytes": 62364,
-    "ramTotalBytes": 327680,
-    "flashUsedBytes": 5940127,
-    "flashTotalBytes": 6553600,
+    "sourceCommit": None,
+    "artifactPath": None,
+    "artifactBytes": None,
+    "artifactSha256": None,
+    "platformioPlatform": None,
+    "arduinoCore": None,
+    "espIdf": None,
+    "riscvToolchain": None,
+    "esptool": None,
+    "ramUsedBytes": None,
+    "ramTotalBytes": None,
+    "flashUsedBytes": None,
+    "flashTotalBytes": None,
     "physicalX4": "pending; not validated on device",
 }
 
@@ -143,7 +146,7 @@ def web_after_description(record: dict) -> str:
     if sid == "carouselLayout":
         return (
             "Legacy key remains in the bounded home_appearance API for compatibility; the Web UI uses "
-            "Recent/Finished layout selectors for Folio Nooir Lite"
+            "the Lite Recent/Finished selectors for Folio Nooir Lite"
         )
     exposure = record.get("webExposureBeforeDisabledDecision") or ""
     if exposure.startswith("yes") or exposure.startswith("conditional"):
@@ -162,7 +165,7 @@ def row_status(record: dict) -> str:
     sid = record["stableId"]
     if sid == "carouselLayout":
         return (
-            "Replaced by Recent/Finished layout selectors for Folio Nooir Lite; legacy persisted value "
+            "Replaced by Lite Recent/Finished layout selectors; legacy persisted value "
             "remains for migration/compatibility"
         )
     if sid == "manual:uiFontFamilyName":
@@ -257,7 +260,7 @@ def render_parity_table(before: dict, after: dict, baseline_165: dict, report: d
     ]
     before_by_id = {r["stableId"]: r for r in before["records"]}
     for record in records:
-        old = before_by_id[record["stableId"]]
+        old = before_by_id.get(record["stableId"], record)
         row = [
             record["stableId"],
             old_device_group(old),
@@ -278,6 +281,9 @@ def render_parity_table(before: dict, after: dict, baseline_165: dict, report: d
 def main() -> None:
     before = json.loads(BEFORE_PATH.read_text(encoding="utf-8"))
     baseline_165 = json.loads(BASELINE_165_PATH.read_text(encoding="utf-8"))
+    current_web_key_set = set(before["summary"]["oldWebStableKeysList"]) | {
+        "liteRecentBookLayout", "liteFinishedBookLayout"
+    }
     after = copy.deepcopy(before)
     after["inventoryName"] = "1.6.6 Settings parity — original tabs with accordion sections"
     after["source"]["prototypeBaseCommit"] = git("rev-parse", "HEAD")
@@ -288,6 +294,8 @@ def main() -> None:
         "src/activities/settings/SettingsActivity.h",
         "src/activities/home/RecentBooksActivity.cpp",
         "src/activities/home/RecentBooksActivity.h",
+        "src/util/FolioLiteLayoutPolicy.h",
+        "src/util/HomeThemePolicy.h",
         "src/activities/reader/EpubReaderActivity.cpp",
         "src/util/BleMemoryPolicy.h",
         "src/CrossPointState.cpp",
@@ -315,11 +323,43 @@ def main() -> None:
         f"(route {WEB_ROUTE_COMMIT}; integration {WEB_INTEGRATION_COMMIT}); Web Clippings/Notes remain disabled."
     )
     after["source"]["homeWorkerOverlap"] = (
-        "Theme value 5 remains the Folio Nooir Lite alias and uses the same featured synopsis, stats, "
-        "and layout controls as Folio Nooir. Recent/Finished layouts are available under both Folio themes; "
-        "the legacy Carousel field is retained for persistence/migration and replaced in the UI by those selectors. "
+        "Theme value 5 is Folio Nooir Lite (formerly Carousel). Its original full Carousel page is restored; "
+        "only its book display region gains independent Recent/Finished choices for 3 Carousel, 5 Carousel, "
+        "Spine, and Grid. The main Folio Nooir renderer and layout preferences remain unchanged. "
+        "The legacy Carousel key initializes Lite's settings on migration and remains for downgrade compatibility. "
         "The saved Interface Font selection remains stored, while the row is hidden and the built-in UI font is used."
     )
+    lite_layout_options = [
+        {"label": "STR_LAYOUT_3_COVER_CAROUSEL", "optionIndex": 0, "persistedValue": 0},
+        {"label": "STR_LAYOUT_5_COVER_CAROUSEL", "optionIndex": 1, "persistedValue": 1},
+        {"label": "STR_LAYOUT_SPINE", "optionIndex": 2, "persistedValue": 2},
+        {"label": "STR_LAYOUT_GRID_4X2", "optionIndex": 3, "persistedValue": 3},
+    ]
+    for key, label, line in (
+        ("liteRecentBookLayout", "STR_RECENT_BOOK_LAYOUT", 286),
+        ("liteFinishedBookLayout", "STR_FINISHED_BOOK_LAYOUT", 292),
+    ):
+        after["records"].append({
+            "stableId": key, "key": key, "label": label, "category": "Display",
+            "categoryId": "STR_CAT_DISPLAY", "type": "enum", "backingField": key,
+            "options": copy.deepcopy(lite_layout_options), "range": None,
+            "default": {"expression": "FOLIO_LITE_LAYOUT_FIVE_COVER_CAROUSEL", "resolved": 1},
+            "source": {"file": "src/SettingsList.h", "line": line, "constructor": "Enum"},
+            "sourceScope": "base_list", "deviceExposureBefore": "new in 1.6.6 Lite settings",
+            "webExposureBeforeDisabledDecision": "yes: grouped home_appearance setting",
+            "currentWebSettingsRoute": "GET/POST /api/settings by home_appearance group",
+            "intentionallyHidden": False, "hiddenReason": None, "proposedGroupId": "home_appearance",
+        })
+    after["records"].append({
+        "stableId": "action:DeviceInfo", "key": None, "label": "STR_DEVICE_INFO",
+        "category": "System", "categoryId": "STR_CAT_SYSTEM", "type": "action", "backingField": None,
+        "options": [], "range": None, "default": {"expression": None, "resolved": None},
+        "action": "DeviceInfo", "source": {"file": "src/activities/settings/SettingsActivity.cpp",
+        "line": 498, "constructor": "Action"}, "sourceScope": "device_action",
+        "deviceExposureBefore": "new in 1.6.6; System tab > System section",
+        "webExposureBeforeDisabledDecision": "no", "currentWebSettingsRoute": "n/a",
+        "intentionallyHidden": False, "hiddenReason": None, "proposedGroupId": "system",
+    })
     for record in after["records"]:
         if record["stableId"] == "action:ToDoList":
             record["proposedGroupId"] = "system"
@@ -329,6 +369,21 @@ def main() -> None:
         record["deviceGroupAfterPrototype"] = record.get("proposedGroupId") if reachable else None
         record["stableIdUnchanged"] = True
         record["persistenceAndOptionsUnchanged"] = record["type"] not in {"action", "web_feature", "enum_option"}
+
+    current_keys = sorted({record["key"] for record in after["records"]
+                           if record.get("key") and record["type"] != "action"})
+    after["summary"]["baseRecords"] = sum(record.get("sourceScope") in {"base_list", "text_settings"}
+                                           for record in after["records"])
+    after["summary"]["deviceActions"] = sum(record["type"] == "action" for record in after["records"])
+    after["summary"]["oldWebStableKeys"] = len(current_web_key_set)
+    after["summary"]["oldWebStableKeysList"] = current_keys
+    after["summary"]["oldWebX4StableKeys"] = before["summary"]["oldWebX4StableKeys"] + 2
+    after["summary"]["oldWebX4StableKeysList"] = sorted(
+        set(before["summary"]["oldWebX4StableKeysList"]) | {"liteRecentBookLayout", "liteFinishedBookLayout"})
+    after["summary"]["proposedGroupCounts"] = {
+        group["id"]: sum(record.get("proposedGroupId") == group["id"] for record in after["records"])
+        for group in after["proposedGroups"]
+    }
 
     before_by_id = {r["stableId"]: r for r in before["records"]}
     after_by_id = {r["stableId"]: r for r in after["records"]}
@@ -348,8 +403,8 @@ def main() -> None:
     }
     intentional_device_replacements = {
         "carouselLayout": {
-            "replacedBy": ["recentBookLayout", "finishedBookLayout"],
-            "reason": "Theme value 5 is Folio Nooir Lite; old layout value migrates to the independent selectors",
+            "replacedBy": ["liteRecentBookLayout", "liteFinishedBookLayout"],
+            "reason": "Theme value 5 is Folio Nooir Lite; the old Carousel value initializes its independent selectors",
             "persistedFieldRetained": True,
         }
     }
@@ -388,13 +443,12 @@ def main() -> None:
         if not after_by_id[row["stableId"]]["deviceReachableAfterPrototype"]
     ]
     baseline_web_keys = set(baseline_165["summary"]["oldWebStableKeysList"])
-    current_web_keys = set(web_keys)
     current_grouped_web_rows = [
         row for row in after["records"]
-        if row.get("key") in current_web_keys and row.get("proposedGroupId")
+        if row.get("key") in current_web_key_set and row.get("proposedGroupId")
     ]
     current_grouped_web_key_counts = Counter(row["key"] for row in current_grouped_web_rows)
-    current_web_ungrouped = sorted(key for key in current_web_keys if current_grouped_web_key_counts[key] == 0)
+    current_web_ungrouped = sorted(key for key in current_web_key_set if current_grouped_web_key_counts[key] == 0)
     current_stable_id_counts = Counter(row["stableId"] for row in after["records"])
     current_device_orphans = [
         row["stableId"] for row in after["records"]
@@ -421,7 +475,7 @@ def main() -> None:
         "schemaVersion": 1,
         "baselineCommit": before["source"]["integrationSnapshot"],
         "historicalWebExposureCommit": before["source"]["priorWebSettingsSourceRevision"],
-        "prototypeBaseCommit": git("rev-parse", "HEAD"),
+        "prototypeBaseCommit": PROTOTYPE_BASE_COMMIT,
         "prototypeFiles": [
             "src/SettingsGroups.h",
             "src/SettingsGroupDevice.h",
@@ -429,6 +483,8 @@ def main() -> None:
             "src/activities/settings/SettingsActivity.h",
             "src/activities/home/RecentBooksActivity.cpp",
             "src/activities/home/RecentBooksActivity.h",
+            "src/util/FolioLiteLayoutPolicy.h",
+            "src/util/HomeThemePolicy.h",
             "src/activities/reader/EpubReaderActivity.cpp",
             "src/util/BleMemoryPolicy.h",
             "src/CrossPointState.cpp",
@@ -446,15 +502,16 @@ def main() -> None:
         "docs/settings-organization/generate_after_inventory.py",
         ],
         "homeWorkerAOverlap": (
-            "Folio Nooir Lite uses the same featured synopsis, statistics, and layout choices as Folio Nooir. "
-            "Theme value 5 and stored fields are preserved. Recent/Finished selectors are available in both Folio "
-            "themes and the Web UI matches the device. The legacy Carousel field remains for persistence/migration. "
-            "Custom UI font selection is hidden for 1.6.6 and the built-in UI font is used."
+            "Folio Nooir Lite (former Carousel, theme value 5) restores the complete original Carousel page and "
+            "adds Spine/Grid only in its book-display region. Recent/Finished preferences are Lite-specific; the "
+            "main Folio Nooir renderer and persisted layout fields remain untouched. The old Carousel key "
+            "migrates into Lite's selectors. Custom UI font selection is hidden for 1.6.6 and the built-in UI font is used."
         ),
         "groupIds": [group["id"] for group in before["proposedGroups"]],
         "stableIdsBefore": len(before_by_id),
         "stableIdsAfter": len(after_by_id),
         "stableIdSetParity": set(before_by_id) == set(after_by_id),
+        "newStableIds": sorted(set(after_by_id) - set(before_by_id)),
         "changedPersistedDescriptorFields": changed_descriptors,
         "persistedDescriptorParity": not changed_descriptors,
         "historicalDeviceBaseline": {
@@ -481,8 +538,8 @@ def main() -> None:
             "current166": {
                 "stableIdCount": len(after_by_id),
                 "deviceReachableCount": sum(row["deviceReachableAfterPrototype"] for row in after["records"]),
-                "webSettingKeyCount": len(current_web_keys),
-                "x4WebSettingKeyCount": before["summary"]["oldWebX4StableKeys"],
+                "webSettingKeyCount": len(current_web_key_set),
+                "x4WebSettingKeyCount": before["summary"]["oldWebX4StableKeys"] + 2,
             },
             "baselineComparison": {
                 "missingStableIds": baseline_165_missing,
@@ -492,8 +549,8 @@ def main() -> None:
                 "originalDeviceSettingsUnreachable": baseline_device_unreachable,
                 "intentionalDeviceGaps": baseline_device_intentional_gaps,
                 "accidentalDeviceGaps": baseline_device_accidental_gaps,
-                "missingWebKeys": sorted(baseline_web_keys - current_web_keys),
-                "additionalCurrentWebKeys": sorted(current_web_keys - baseline_web_keys),
+                "missingWebKeys": sorted(baseline_web_keys - current_web_key_set),
+                "additionalCurrentWebKeys": sorted(current_web_key_set - baseline_web_keys),
                 "ungroupedCurrentWebKeys": current_web_ungrouped,
                 "duplicateCurrentWebGroupings": duplicate_current_web_groups,
                 "currentDeviceOrphans": current_device_orphans,
@@ -502,7 +559,7 @@ def main() -> None:
                 "flexibleSleep": "Hidden from user UI; stored enum values and implementation are retained.",
                 "customUiFont": "Hidden from user UI; saved value is retained and built-in UI font is used.",
                 "legacyCarouselLayout": (
-                    "Legacy persisted value remains; Recent and Finished layout selectors replace its UI path."
+                    "Legacy persisted value remains; it initializes only Lite's new Recent and Finished settings."
                 ),
                 "webOnlyClippingsAndNotes": (
                     "Web-only Clippings/Notes routes remain disabled; on-device Notes and My Clippings.txt export stay."
@@ -514,9 +571,20 @@ def main() -> None:
             },
             "pass": not baseline_165_missing and not duplicate_stable_ids and
                     not baseline_165_descriptor_changes and not baseline_device_accidental_gaps and
-                    not (baseline_web_keys - current_web_keys) and not current_web_ungrouped and
+                    not (baseline_web_keys - current_web_key_set) and not current_web_ungrouped and
                     not duplicate_current_web_groups and
                     not current_device_orphans,
+        },
+        "countDefinitions": {
+            "device": (
+                "The 1.6.5 baseline has 124 stable IDs and 121 device-reachable entries; the current 1.6.6 "
+                "inventory has 134 stable IDs and 125 reachable entries. Stable IDs include non-setting actions "
+                "and enum options."
+            ),
+            "web": (
+                "The 1.6.5 baseline has 83 Web keys (81 X4). A later pre-deferral 1.6.6 inventory has 84 "
+                "(82 X4) because randomSleepOrder was added after 1.6.5. The current inventory has 86 (84 X4)."
+            ),
         },
         "newDeviceActions": [
             {
@@ -552,17 +620,21 @@ def main() -> None:
             "sleepScreen.option.flexible_composite",
         ],
         "layoutPresentation": {
-            "recentBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; same synopsis/stats panel; option set and persisted field unchanged",
-            "finishedBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; same synopsis/stats panel; option set and persisted field unchanged",
+            "recentBookLayout": "Folio Nooir main theme only; option set and persisted field unchanged",
+            "finishedBookLayout": "Folio Nooir main theme only; option set and persisted field unchanged",
+            "liteRecentBookLayout": "Folio Nooir Lite only; original Carousel page retained; choices are 3 Carousel, 5 Carousel, Spine, Grid",
+            "liteFinishedBookLayout": "Folio Nooir Lite only; original Carousel page retained; choices are 3 Carousel, 5 Carousel, Spine, Grid",
             "carouselLayout": (
-                "legacy persisted field retained; value migrates to recentBookLayout/finishedBookLayout; "
-                "replaced in UI because theme value 5 is Folio Nooir Lite"
+                "legacy persisted field retained; value initializes liteRecentBookLayout/liteFinishedBookLayout; "
+                "main Folio layout keys remain untouched"
             ),
         },
         "clippingsRoutes": "remain disabled; existing per-book storage and My Clippings.txt untouched",
         "webSettings": {
             "historicalStableKeyCount": len(web_keys),
             "historicalX4KeyCount": before["summary"]["oldWebX4StableKeys"],
+            "currentStableKeyCount": len(current_web_key_set),
+            "currentX4StableKeyCount": before["summary"]["oldWebX4StableKeys"] + 2,
             "everyHistoricalKeyHasGroup": all(key in group_by_key for key in web_keys),
             "allHistoricalKeysGroupedExactlyOnce": (
                 not current_web_ungrouped and not duplicate_current_web_groups
@@ -572,12 +644,12 @@ def main() -> None:
             "latestIntegrationCommit": WEB_INTEGRATION_COMMIT,
             "routeCommitIntegratedHere": True,
             "routeIntegratedInMain": True,
-            "historicalKeysReachableThroughGroupedApi": len(web_keys) - len(current_web_ungrouped),
-            "x4ReachableKeyCount": before["summary"]["oldWebX4StableKeys"],
+            "historicalKeysReachableThroughGroupedApi": len(current_web_key_set) - len(current_web_ungrouped),
+            "x4ReachableKeyCount": before["summary"]["oldWebX4StableKeys"] + 2,
             "liteLayoutUiParity": (
-                "Theme value 5 is Folio Nooir Lite; device and Web expose the independent Recent/Finished "
-                "layout selectors and hide the migrated legacy Carousel selector. The device Lite theme keeps "
-                "the same synopsis and statistics presentation as Folio Nooir."
+                "Theme value 5 is Folio Nooir Lite; device and Web expose its own independent Recent/Finished "
+                "selectors. The original Carousel page remains intact, with only its book display region switching. "
+                "Folio Nooir main-theme layout selectors and renderer remain separate."
             ),
             "conditionalKeys": {
                 "touchReaderControls": "touch hardware only",
@@ -587,16 +659,11 @@ def main() -> None:
                 "groupedSettingsContract": "8/8",
                 "settingsOrganizationParity": "24/24",
                 "pythonSuitesTotal": "32/32 across settings_organization and web_stability",
-                "generatedHtmlAndJsSyntax": "passed (Node.js; 9 inline HTML scripts checked)",
-                "bleMemoryPolicyHostSuite": (
-                    "Blocked locally: CMake/MSVC compiler setup failed its compiler probe; no current C++ test result."
-                ),
-                "fullHostSuite": (
-                    "Not run to completion: CMake/MSVC reported a Program Database manager mismatch (C1902), "
-                    "then failed to identify supported C++ features; no current full-suite result."
-                ),
+                "generatedHtmlAndJsSyntax": "passed (Node.js; 1 inline SettingsPage script parsed)",
+                "bleMemoryPolicyHostSuite": "passed as part of the 432/432 CTest host suite",
+                "fullHostSuite": "passed; 432/432 CTest tests",
             },
-            "build": "Passed consolidated gh_release build; exact artifact and toolchain metadata are in releaseBuild.",
+            "build": "Pending the one consolidated gh_release build; artifact and toolchain metadata will be recorded afterward.",
             "apiContract": {
                 "groups": "GET /api/settings/groups returns only the seven static descriptors",
                 "read": "GET /api/settings requires a valid group; offset 0..32 and limit 1..6; returns only the selected group page and X-Settings-Total",
@@ -637,7 +704,7 @@ def main() -> None:
         "integrationBlockers": [],
         "releaseValidation": {
             "sourceParity": "passed; accidental missing settings=0; accidental duplicates=0",
-            "firmwareBuild": "passed; gh_release built from source commit f90b5a2a7feb4e5dff5a11c06acbb3c6fada7e8a",
+            "firmwareBuild": "pending the consolidated build of the corrected source",
             "physicalX4": "pending; not validated on device",
             "releaseReady": False,
         },

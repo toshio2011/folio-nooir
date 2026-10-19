@@ -2406,6 +2406,8 @@ void GfxRenderer::fillPolygon(const int* xPoints, const int* yPoints, int numPoi
 
 // For performance measurement (using static to allow "const" methods)
 static unsigned long start_ms = 0;
+static unsigned long diagnosticFrameStartMs = 0;
+static uint8_t homeRenderDiagnosticCount = 0;
 
 void GfxRenderer::clearScreen(const uint8_t color) const {
   start_ms = millis();
@@ -2460,9 +2462,22 @@ void GfxRenderer::invertScreen() const {
   }
 }
 
-void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode) const {
+void GfxRenderer::beginDiagnosticFrame() const { diagnosticFrameStartMs = millis(); }
+
+void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode, const char* diagnosticReason) const {
   auto elapsed = millis() - start_ms;
   LOG_DBG("GFX", "Time = %lu ms from clearScreen to displayBuffer", elapsed);
+  if (diagnosticReason != nullptr && homeRenderDiagnosticCount < 16) {
+    const unsigned long drawMs = millis() - diagnosticFrameStartMs;
+    if (drawMs >= 25) {
+      const char* mode = refreshMode == HalDisplay::FULL_REFRESH ? "full"
+                         : refreshMode == HalDisplay::HALF_REFRESH ? "half"
+                                                                  : "fast";
+      LOG_INF("SHELF", "render_before_refresh reason=%s draw_ms=%lu mode=%s",
+              diagnosticReason, drawMs, mode);
+      ++homeRenderDiagnosticCount;
+    }
+  }
   display.displayBuffer(refreshMode, fadingFix);
 }
 
