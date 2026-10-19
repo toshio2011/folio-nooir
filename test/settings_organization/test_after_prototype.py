@@ -11,6 +11,7 @@ ACTIVITY_H = ROOT / "src" / "activities" / "settings" / "SettingsActivity.h"
 GROUPS_H = ROOT / "src" / "SettingsGroups.h"
 FONT_SELECTION_H = ROOT / "src" / "InterfaceFontSelection.h"
 SETTINGS_LIST_H = ROOT / "src" / "SettingsList.h"
+HOME_CPP = ROOT / "src" / "activities" / "home" / "RecentBooksActivity.cpp"
 BASELINE_165 = DOCS / "BASELINE_1.6.5_DEVICE_inventory.json"
 
 
@@ -25,6 +26,7 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
         cls.group_header = GROUPS_H.read_text(encoding="utf-8")
         cls.font_selection = FONT_SELECTION_H.read_text(encoding="utf-8")
         cls.settings_list = SETTINGS_LIST_H.read_text(encoding="utf-8")
+        cls.home_cpp = HOME_CPP.read_text(encoding="utf-8")
         cls.baseline_165 = json.loads(BASELINE_165.read_text(encoding="utf-8"))
 
     def test_all_setting_ids_and_persistence_descriptors_are_unchanged(self):
@@ -70,6 +72,26 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
         self.assertIn("legacy persisted field retained", self.report["layoutPresentation"]["carouselLayout"])
         self.assertEqual(self.report["deviceExposureCoverage"]["intentionalReplacements"]["carouselLayout"]["replacedBy"],
                          ["recentBookLayout", "finishedBookLayout"])
+        self.assertIn("featuredShowSynopsis", self.home_cpp)
+        self.assertIn("drawStats();", self.home_cpp)
+        self.assertNotIn("if (!liteTheme)", self.home_cpp)
+        self.assertNotIn("layout.detailHeight = 0", self.home_cpp)
+
+    def test_single_section_reader_and_controls_tabs_render_settings_directly(self):
+        self.assertIn("bool tabUsesAccordion(const int tab)", self.cpp)
+        self.assertIn("if (!tabUsesAccordion(selectedCategoryIndex)) return settingsCount;", self.cpp)
+        self.assertIn("if (!accordion)", self.cpp)
+        self.assertIn("tabUsesAccordion(selectedCategoryIndex) && selectedSettingIndex == 0", self.cpp)
+
+    def test_home_clears_stale_theme_switch_input_and_resets_wake_selection(self):
+        self.assertIn("ignoreEntryInputUntilNeutral = hasActiveHomeInput(mappedInput);", self.home_cpp)
+        self.assertIn("if (ignoreEntryInputUntilNeutral)", self.home_cpp)
+        self.assertIn("HOME_ENTRY_INPUT_GATE_MAX_MS", self.home_cpp)
+        self.assertIn("isFolioShelfTheme(SETTINGS.uiTheme)", self.home_cpp)
+        self.assertIn("version == FOLIO_HOME_PREVIOUS_VERSION", self.home_cpp)
+        self.assertIn("APP_STATE.selectFirstHomeBookAfterWake", self.home_cpp)
+        self.assertIn("FOLIO_HOME_VERSION = 9", self.home_cpp)
+        self.assertIn("selectFirstHomeBookAfterWake", (ROOT / "src" / "CrossPointState.cpp").read_text(encoding="utf-8"))
 
     def test_accordion_transitions_and_quick_actions_move_are_explicit(self):
         self.assertIn("void SettingsActivity::toggleAccordion()", self.cpp)
@@ -138,9 +160,9 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
                         "CustomiseStatusBar"},
             "Controls": {"RemapFrontButtons", "RemapReaderFrontButtons", "QuickActions"},
             "Connectivity": {"Network", "Bluetooth", "KOReaderSync", "OPDSBrowser"},
-            "Library": {"ToDoList"},
+            "Library": set(),
             "System": {"ClockWeatherSync", "SettingsProfiles", "ClearCache", "CheckForUpdates",
-                       "SdFirmwareUpdate", "Language"},
+                       "SdFirmwareUpdate", "Language", "ToDoList"},
         }
         action_code = self.cpp.split("// Device-only actions are added only", 1)[1]
         for group, actions in expected.items():
@@ -148,6 +170,9 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
                 "case SettingsGroupId::", 1)[0]
             for action in actions:
                 self.assertIn(f"SettingAction::{action}", block, f"{group}: {action}")
+        todo = next(row for row in self.after["records"] if row["stableId"] == "action:ToDoList")
+        self.assertEqual(todo["deviceGroupAfterPrototype"], "system")
+        self.assertIn("System tab > System section", todo["deviceExposureAfterPrototype"])
 
     def test_parity_report_and_markdown_table_have_requested_full_schema(self):
         coverage = self.report["deviceExposureCoverage"]

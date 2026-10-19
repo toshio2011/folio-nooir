@@ -2911,11 +2911,11 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
                         false);
   }
 
-  // Deep rescue tier: only a cold/incomplete-section or heavy image/scratch
-  // event may arm it. The current page/section remains live; this drops only
-  // the shared SD-font layout/glyph caches already proven rebuildable by the
-  // Reader-exit path. It is intentionally after every normal return item and
-  // is still one-shot for this BLE return event.
+  // Deep rescue tier: a cold/incomplete-section or heavy image/scratch event
+  // may arm it, and a failed strict admission at this fully quiescent return
+  // boundary can also request it. The current page/section remains live; this
+  // drops only the shared SD-font layout/glyph caches already proven
+  // rebuildable by the Reader-exit path. It stays one-shot per return event.
   const size_t deepBeforeFree = ESP.getFreeHeap();
   const size_t deepBeforeLargest = ESP.getMaxAllocHeap();
   bool deepReleased = false;
@@ -2929,12 +2929,11 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
   const bool deepRenderWorkIdle = !activityManager.hasPendingRenderWork();
   const bool deepStopRequestClear = !readerSurvivalStopRequested.load(std::memory_order_acquire);
   const bool deepReplayHoldClear = !readerSurvivalReturnHeld.load(std::memory_order_acquire);
-  const bool deepReaderResetReason = readerDeepCacheRescueReason &&
-                                     strcmp(readerDeepCacheRescueReason, "reader_enter_reset") == 0;
   const bool deepSafe = bleinput::readerBleDeepCacheReclaimSafe(
       returnPending, deepQuiescent, deepSectionBuildIdle, deepRenderStable, deepRenderLockFree, deepRenderWorkIdle,
       deepStopRequestClear, deepReplayHoldClear, !readerRenderWaitingForBleStop);
-  const bool deepEligible = readerDeepCacheRescueEligible || (deepReaderResetReason && deepSafe);
+  const bool deepEligible = bleinput::readerBleDeepCacheReclaimEligible(readerDeepCacheRescueEligible,
+                                                                         deepAdmissionNeeded);
   LOG_INF("BLEMEM",
           "reader_deep_reclaim_eligibility generation=%u owner=reader_shared_font_caches eligible=%d "
           "reason=%.24s pending=%d quiescent=%d section_building=%d render_stable=%d render_lock=%d "
@@ -2947,7 +2946,7 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
           deepStopRequestClear ? 0 : 1, deepReplayHoldClear ? 0 : 1,
           readerRenderWaitingForBleStop ? 1 : 0, deepAdmissionNeeded ? 1 : 0,
           static_cast<unsigned>(deepBeforeFree), static_cast<unsigned>(deepBeforeLargest));
-  if (deepEligible && deepSafe && deepAdmissionNeeded) {
+  if (bleinput::readerBleDeepCacheReclaimAllowed(deepEligible, deepSafe, deepAdmissionNeeded)) {
     {
       RenderLock cleanupLock;
       sdFontSystem.releaseReaderCaches();

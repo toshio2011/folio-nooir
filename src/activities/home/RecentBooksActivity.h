@@ -126,6 +126,11 @@ class RecentBooksActivity final : public Activity {
   unsigned long recentCacheWarmupNextMs = 0;
   volatile bool recentCacheWarmupPopupRendered = false;
   bool snapshotRestored = false;
+  // Ignore the input that launched the preceding activity until it returns to
+  // neutral; otherwise a held Settings button can leak into the new shelf.
+  // Bound the gate so a stale input state cannot make Home appear frozen.
+  bool ignoreEntryInputUntilNeutral = false;
+  unsigned long entryInputGateStartedMs = 0;
   uint64_t snapshotPresentationKeyValue = 0;
   std::array<uint64_t, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> snapshotBookVisualKeys{};
   bool snapshotDynamicNeedsPatch = false;
@@ -250,7 +255,7 @@ class RecentBooksActivity final : public Activity {
   bool generateCarouselHqThumbnail(const RecentBook& book, bool force);
   void showMenu();
   void showBookActions();
-  uint64_t snapshotKey() const;
+  uint64_t snapshotKey(bool legacyThemeKey = false) const;
   uint64_t snapshotPresentationKey() const;
   uint64_t bookDynamicKey(const RecentBook& book) const;
   uint64_t bookCoverVisualKey(const RecentBook& book) const;

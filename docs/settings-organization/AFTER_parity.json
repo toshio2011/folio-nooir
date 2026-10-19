@@ -2,21 +2,31 @@
   "schemaVersion": 1,
   "baselineCommit": "ce86b9f8c85d774af297ef11e6f98c4bee9e0729",
   "historicalWebExposureCommit": "d4a97653",
-  "prototypeBaseCommit": "bd506ea7d94de920f706963de05b083c5ca71fc4",
+  "prototypeBaseCommit": "d9d62d5a81972d8ccbe18e62784b59553676e4a5",
   "prototypeFiles": [
     "src/SettingsGroups.h",
     "src/SettingsGroupDevice.h",
     "src/activities/settings/SettingsActivity.cpp",
     "src/activities/settings/SettingsActivity.h",
+    "src/activities/home/RecentBooksActivity.cpp",
+    "src/activities/home/RecentBooksActivity.h",
+    "src/activities/reader/EpubReaderActivity.cpp",
+    "src/util/BleMemoryPolicy.h",
+    "src/CrossPointState.cpp",
+    "src/CrossPointState.h",
+    "src/main.cpp",
     "src/activities/settings/DeviceInfoActivity.cpp",
     "src/activities/settings/DeviceInfoActivity.h",
     "src/InterfaceFontSelection.h",
     "src/SdCardFontSystem.cpp",
     "src/network/html/SettingsPage.html",
     "test/font_selection_compatibility/FontSelectionCompatibilityTest.cpp",
-    "test/web_stability/test_grouped_settings_contract.py"
+    "test/ble_memory_policy/BleMemoryPolicyTest.cpp",
+    "test/settings_organization/test_after_prototype.py",
+    "test/web_stability/test_grouped_settings_contract.py",
+    "docs/settings-organization/generate_after_inventory.py"
   ],
-  "homeWorkerAOverlap": "Folio Nooir Lite keeps the shared, low-cost home renderer without extra metadata, stats, or SD rescans. Theme value 5 and stored fields are preserved. Recent/Finished selectors are available in both Folio themes and the Web UI matches the device. The legacy Carousel field remains for persistence/migration. Custom UI font selection is hidden for 1.6.6 and the built-in UI font is used.",
+  "homeWorkerAOverlap": "Folio Nooir Lite uses the same featured synopsis, statistics, and layout choices as Folio Nooir. Theme value 5 and stored fields are preserved. Recent/Finished selectors are available in both Folio themes and the Web UI matches the device. The legacy Carousel field remains for persistence/migration. Custom UI font selection is hidden for 1.6.6 and the built-in UI font is used.",
   "groupIds": [
     "home_appearance",
     "sleep",
@@ -52,6 +62,53 @@
       "stable ID, storage key, storage field, default, enum option ID/index/value, and numeric range"
     ],
     "translationTextExcludedFromValueComparison": true
+  },
+  "settingsParityAudit": {
+    "original165": {
+      "stableIdCount": 124,
+      "deviceExposedCount": 121,
+      "webSettingKeyCount": 83,
+      "x4WebSettingKeyCount": 81
+    },
+    "current166": {
+      "stableIdCount": 131,
+      "deviceReachableCount": 122,
+      "webSettingKeyCount": 84,
+      "x4WebSettingKeyCount": 82
+    },
+    "baselineComparison": {
+      "missingStableIds": [],
+      "duplicateStableIds": [],
+      "persistedKeysDefaultsEnumsRangesAndOptionsUnchanged": true,
+      "changedPersistedDescriptors": [],
+      "originalDeviceSettingsUnreachable": [
+        "carouselLayout",
+        "manual:uiFontFamilyName"
+      ],
+      "intentionalDeviceGaps": [
+        "carouselLayout",
+        "manual:uiFontFamilyName"
+      ],
+      "accidentalDeviceGaps": [],
+      "missingWebKeys": [],
+      "additionalCurrentWebKeys": [
+        "randomSleepOrder"
+      ],
+      "ungroupedCurrentWebKeys": [],
+      "duplicateCurrentWebGroupings": [],
+      "currentDeviceOrphans": []
+    },
+    "intentionalExclusions": {
+      "flexibleSleep": "Hidden from user UI; stored enum values and implementation are retained.",
+      "customUiFont": "Hidden from user UI; saved value is retained and built-in UI font is used.",
+      "legacyCarouselLayout": "Legacy persisted value remains; Recent and Finished layout selectors replace its UI path.",
+      "webOnlyClippingsAndNotes": "Web-only Clippings/Notes routes remain disabled; on-device Notes and My Clippings.txt export stay."
+    },
+    "x3X4Guards": {
+      "touchReaderControls": "touch hardware only",
+      "tiltPageTurn": "X3 QMI8658 IMU only; excluded on X4"
+    },
+    "pass": true
   },
   "newDeviceActions": [
     {
@@ -146,11 +203,6 @@
       "after": "connectivity"
     },
     {
-      "stableId": "action:ToDoList",
-      "before": "system",
-      "after": "library"
-    },
-    {
       "stableId": "action:KOReaderSync",
       "before": "system",
       "after": "connectivity"
@@ -197,8 +249,8 @@
     "sleepScreen.option.flexible_composite"
   ],
   "layoutPresentation": {
-    "recentBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; option set and persisted field unchanged",
-    "finishedBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; option set and persisted field unchanged",
+    "recentBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; same synopsis/stats panel; option set and persisted field unchanged",
+    "finishedBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; same synopsis/stats panel; option set and persisted field unchanged",
     "carouselLayout": "legacy persisted field retained; value migrates to recentBookLayout/finishedBookLayout; replaced in UI because theme value 5 is Folio Nooir Lite"
   },
   "clippingsRoutes": "remain disabled; existing per-book storage and My Clippings.txt untouched",
@@ -222,19 +274,20 @@
     "routeIntegratedInMain": true,
     "historicalKeysReachableThroughGroupedApi": 84,
     "x4ReachableKeyCount": 82,
-    "liteLayoutUiParity": "Theme value 5 is Folio Nooir Lite on both device and Web; Web exposes the independent Recent/Finished selectors and hides the migrated legacy Carousel selector",
+    "liteLayoutUiParity": "Theme value 5 is Folio Nooir Lite; device and Web expose the independent Recent/Finished layout selectors and hide the migrated legacy Carousel selector. The device Lite theme keeps the same synopsis and statistics presentation as Folio Nooir.",
     "conditionalKeys": {
       "touchReaderControls": "touch hardware only",
       "tiltPageTurn": "X3 QMI8658 IMU only"
     },
     "implementationTests": {
       "groupedSettingsContract": "8/8",
-      "settingsOrganizationParity": "22/22",
-      "pythonSuitesTotal": "30/30 across settings_organization and web_stability",
-      "generatedHtmlAndJsSyntax": "passed (Node.js)",
-      "fullHostSuite": "Not confirmed from current sources: 347 existing CTest binaries passed and 26 were Not Run because executables were missing; MSVC also crashed while compiling CMake's trivial compiler probe."
+      "settingsOrganizationParity": "24/24",
+      "pythonSuitesTotal": "32/32 across settings_organization and web_stability",
+      "generatedHtmlAndJsSyntax": "passed (Node.js; 9 inline HTML scripts checked)",
+      "bleMemoryPolicyHostSuite": "Blocked locally: CMake/MSVC compiler setup failed its compiler probe; no current C++ test result.",
+      "fullHostSuite": "Not run to completion: CMake/MSVC reported a Program Database manager mismatch (C1902), then failed to identify supported C++ features; no current full-suite result."
     },
-    "build": "Combined gh_release build succeeded at source commit 8e20e4fa53f62d8d726a39a416e94d91d5eabf77 using toolchain-riscv32-esp 14.2.0+20251107; 62,364/327,680 B RAM and 5,939,537/6,553,600 B flash used. Candidate binary is 5,953,680 B, SHA-256 4FB6048F51B4474503DFF907D6456242B63555A7CFD92898415DF9C3A14ECC81.",
+    "build": "Pending final consolidated gh_release build for the current 1.6.6 RC changes.",
     "apiContract": {
       "groups": "GET /api/settings/groups returns only the seven static descriptors",
       "read": "GET /api/settings requires a valid group; offset 0..32 and limit 1..6; returns only the selected group page and X-Settings-Total",
@@ -253,7 +306,8 @@
     "staticTabCount": 4,
     "staticAccordionSectionCount": 7,
     "dynamicSettingVectors": 1,
-    "materializedOnlyWhenSectionExpanded": true,
+    "materializedOnlyWhenSectionExpanded": false,
+    "singleGroupTabsRenderDirectly": true,
     "retainedOnNestedActivityReturn": true,
     "releasedOnSettingsExit": true,
     "capacityRetainedForReuse": true,
@@ -268,9 +322,9 @@
   "integrationBlockers": [],
   "releaseValidation": {
     "sourceParity": "passed; accidental missing settings=0; accidental duplicates=0",
-    "firmwareBuild": "blocked by local PlatformIO lock permission and compiler startup failures",
+    "firmwareBuild": "pending final consolidated gh_release build",
     "physicalX4": "pending; not validated on device",
     "releaseReady": false
   },
-  "physicalX4Validation": "Pending; verify Settings group navigation, custom UI font response, and performance on hardware before RC acceptance."
+  "physicalX4Validation": "Pending; verify first Home responsiveness, Settings navigation, Device Info, Web re-entry, sleep/wake, Reader Bluetooth, and input mapping on hardware before RC acceptance."
 }

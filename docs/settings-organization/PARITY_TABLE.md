@@ -2,6 +2,8 @@
 
 Stable IDs and descriptor metadata are compared with the 1.6.5 device baseline `3a66ef9b8b88c538e96ac763878fa899e72a53b1` and the frozen 1.6.6 inventory `ce86b9f8c85d774af297ef11e6f98c4bee9e0729`. Historical Web exposure comes from `d4a97653`; bounded Web behavior is reported from integrated Web route commit `908453f39608169b1dad079e31a94db28415001b` (latest integration `7296bbc85467675fdc8e1dffd4c73f4022e96518`) on the current 1.6.6 branch. Web Settings is active; Web Clippings/Notes remain intentionally disabled. Physical X4 validation is still pending.
 
+Parity audit: 1.6.5 had 124 stable IDs, 121 device entries, and 83 Web keys (81 on X4). Current 1.6.6 has 131 stable IDs, 122 device entries, and 84 Web keys (82 on X4). Missing baseline IDs/Web keys: 0/0; duplicate IDs/groupings: 0/0; unreachable original device entries: carouselLayout, manual:uiFontFamilyName (intentional). Persisted descriptors unchanged: true. Audit: PASS.
+
 | Setting ID | Old Group | New Group | Device Before | Device After | Web Before | Web After | Persisted Field | Options | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | frontButtonBack | controls (button-remap action) | controls | ButtonRemapActivity global mapping | Controls tab > Buttons section; existing button remap child screen | no: not included by old generic /api/settings GET/POST | Not exposed by Web Settings | frontButtonBack | [{"label":"FRONT_HW_BACK","optionIndex":0,"persistedValue":0,"englishLabel":"FRONT_HW_BACK"},{"label":"FRONT_HW_CONFIRM","optionIndex":1,"persistedValue":1,"englishLabel":"FRONT_HW_CONFIRM"},{"label":"FRONT_HW_LEFT","optionIndex":2,"persistedValue":2,"englishLabel":"FRONT_HW_LEFT"},{"label":"FRONT_HW_RIGHT","optionIndex":3,"persistedValue":3,"englishLabel":"FRONT_HW_RIGHT"}] | Reachable; persisted field/options unchanged |
@@ -117,7 +119,7 @@ Stable IDs and descriptor metadata are compared with the 1.6.5 device baseline `
 | action:Network | system | connectivity | conditional/action row | System tab > Connectivity section | no | Not exposed by Web Settings | — | — | Presentation regrouping; persisted field/options unchanged |
 | action:Bluetooth | system | connectivity | conditional/action row | System tab > Connectivity section | no | Not exposed by Web Settings | — | — | Presentation regrouping; persisted field/options unchanged |
 | action:ClockWeatherSync | system | system | conditional/action row | System tab > System section | no | Not exposed by Web Settings | — | — | Existing device action; group placement only |
-| action:ToDoList | system | library | conditional/action row | System tab > Library section | no | Not exposed by Web Settings | — | — | Presentation regrouping; persisted field/options unchanged |
+| action:ToDoList | system | system | conditional/action row | System tab > System section | no | Not exposed by Web Settings | — | — | Existing device action; group placement only |
 | action:SettingsProfiles | system | system | conditional/action row | System tab > System section | no | Not exposed by Web Settings | — | — | Existing device action; group placement only |
 | action:KOReaderSync | system | connectivity | conditional/action row | System tab > Connectivity section | no | Not exposed by Web Settings | — | — | Presentation regrouping; persisted field/options unchanged |
 | action:OPDSBrowser | system | connectivity | conditional/action row | System tab > Connectivity section | no | Not exposed by Web Settings | — | — | Presentation regrouping; persisted field/options unchanged |

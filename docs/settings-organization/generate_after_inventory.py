@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import json
 import subprocess
+from collections import Counter
 from pathlib import Path
 
 
@@ -199,8 +200,12 @@ def old_device_group(record: dict) -> str:
     return "—"
 
 
-def render_parity_table(before: dict, after: dict, baseline_165: dict) -> str:
+def render_parity_table(before: dict, after: dict, baseline_165: dict, report: dict) -> str:
     records = after["records"]
+    audit = report["settingsParityAudit"]
+    base = audit["original165"]
+    current = audit["current166"]
+    comparison = audit["baselineComparison"]
     headers = [
         "Setting ID", "Old Group", "New Group", "Device Before", "Device After",
         "Web Before", "Web After", "Persisted Field", "Options", "Status",
@@ -215,6 +220,18 @@ def render_parity_table(before: dict, after: dict, baseline_165: dict) -> str:
         f"bounded Web behavior is reported from integrated Web route commit `{WEB_ROUTE_COMMIT}` "
         f"(latest integration `{WEB_INTEGRATION_COMMIT}`) on the current 1.6.6 branch. Web Settings is active; "
         "Web Clippings/Notes remain intentionally disabled. Physical X4 validation is still pending.",
+        "",
+        f"Parity audit: 1.6.5 had {base['stableIdCount']} stable IDs, "
+        f"{base['deviceExposedCount']} device entries, and {base['webSettingKeyCount']} Web keys "
+        f"({base['x4WebSettingKeyCount']} on X4). Current 1.6.6 has {current['stableIdCount']} stable IDs, "
+        f"{current['deviceReachableCount']} device entries, and {current['webSettingKeyCount']} Web keys "
+        f"({current['x4WebSettingKeyCount']} on X4). Missing baseline IDs/Web keys: "
+        f"{len(comparison['missingStableIds'])}/{len(comparison['missingWebKeys'])}; duplicate IDs/groupings: "
+        f"{len(comparison['duplicateStableIds'])}/{len(comparison['duplicateCurrentWebGroupings'])}; "
+        f"unreachable original device entries: {', '.join(comparison['originalDeviceSettingsUnreachable']) or 'none'} "
+        f"(intentional). Persisted descriptors unchanged: "
+        f"{str(comparison['persistedKeysDefaultsEnumsRangesAndOptionsUnchanged']).lower()}. "
+        f"Audit: {'PASS' if report['settingsParityAudit']['pass'] else 'FAIL'}.",
         "",
         "| " + " | ".join(headers) + " |",
         "| " + " | ".join(["---"] * len(headers)) + " |",
@@ -250,12 +267,20 @@ def main() -> None:
         "src/SettingsGroupDevice.h",
         "src/activities/settings/SettingsActivity.cpp",
         "src/activities/settings/SettingsActivity.h",
+        "src/activities/home/RecentBooksActivity.cpp",
+        "src/activities/home/RecentBooksActivity.h",
+        "src/activities/reader/EpubReaderActivity.cpp",
+        "src/util/BleMemoryPolicy.h",
+        "src/CrossPointState.cpp",
+        "src/CrossPointState.h",
+        "src/main.cpp",
         "src/activities/settings/DeviceInfoActivity.cpp",
         "src/activities/settings/DeviceInfoActivity.h",
         "src/InterfaceFontSelection.h",
         "src/SdCardFontSystem.cpp",
         "src/network/html/SettingsPage.html",
         "test/font_selection_compatibility/FontSelectionCompatibilityTest.cpp",
+        "test/ble_memory_policy/BleMemoryPolicyTest.cpp",
         "test/settings_organization/test_after_prototype.py",
         "test/web_stability/test_grouped_settings_contract.py",
         "docs/settings-organization/generate_after_inventory.py",
@@ -263,19 +288,22 @@ def main() -> None:
     ]
     after["source"]["prototypeLayout"] = (
         "Original Display, Reader, Controls, and System tabs; lightweight accordion sections within each tab; "
-        "one currentGroupSettings vector is materialized only for the expanded section"
+        "Reading and Controls rows appear directly because each tab has one group; one currentGroupSettings "
+        "vector is materialized for the selected group"
     )
     after["source"]["webRouteStatus"] = (
         f"Bounded Web Settings group/page routes are integrated on the current 1.6.6 branch "
         f"(route {WEB_ROUTE_COMMIT}; integration {WEB_INTEGRATION_COMMIT}); Web Clippings/Notes remain disabled."
     )
     after["source"]["homeWorkerOverlap"] = (
-        "Home worker A is integrated on this branch; theme value 5 remains the Folio Nooir Lite alias. "
-        "Recent/Finished layouts are available under both Folio themes; the legacy Carousel field is retained "
-        "for persistence/migration and is replaced in the UI by those two selectors. "
+        "Theme value 5 remains the Folio Nooir Lite alias and uses the same featured synopsis, stats, "
+        "and layout controls as Folio Nooir. Recent/Finished layouts are available under both Folio themes; "
+        "the legacy Carousel field is retained for persistence/migration and replaced in the UI by those selectors. "
         "The saved Interface Font selection remains stored, while the row is hidden and the built-in UI font is used."
     )
     for record in after["records"]:
+        if record["stableId"] == "action:ToDoList":
+            record["proposedGroupId"] = "system"
         reachable, description = classify_after(record)
         record["deviceExposureAfterPrototype"] = description
         record["deviceReachableAfterPrototype"] = reachable
@@ -331,6 +359,39 @@ def main() -> None:
             group_by_key[record["key"]] = record["proposedGroupId"]
 
     quick_actions = after_by_id["action:QuickActions"]
+    baseline_device_rows = [
+        row for row in baseline_165["records"]
+        if (row.get("deviceExposureBefore") or "")
+        and not row["deviceExposureBefore"].startswith(("not exposed", "not selectable"))
+    ]
+    baseline_device_unreachable = [
+        row["stableId"] for row in baseline_device_rows
+        if not after_by_id[row["stableId"]]["deviceReachableAfterPrototype"]
+    ]
+    baseline_web_keys = set(baseline_165["summary"]["oldWebStableKeysList"])
+    current_web_keys = set(web_keys)
+    current_grouped_web_rows = [
+        row for row in after["records"]
+        if row.get("key") in current_web_keys and row.get("proposedGroupId")
+    ]
+    current_grouped_web_key_counts = Counter(row["key"] for row in current_grouped_web_rows)
+    current_web_ungrouped = sorted(key for key in current_web_keys if current_grouped_web_key_counts[key] == 0)
+    current_stable_id_counts = Counter(row["stableId"] for row in after["records"])
+    current_device_orphans = [
+        row["stableId"] for row in after["records"]
+        if row["deviceReachableAfterPrototype"] and not row.get("proposedGroupId")
+    ]
+    duplicate_stable_ids = sorted(stable_id for stable_id, count in current_stable_id_counts.items() if count > 1)
+    duplicate_current_web_groups = sorted(
+        key for key, count in current_grouped_web_key_counts.items() if count > 1
+    )
+    baseline_device_intentional_gaps = sorted(
+        stable_id for stable_id in baseline_device_unreachable
+        if stable_id in intentional_device_deferrals or stable_id in intentional_device_replacements
+    )
+    baseline_device_accidental_gaps = sorted(
+        set(baseline_device_unreachable) - set(baseline_device_intentional_gaps)
+    )
     moved = [
         {"stableId": r["stableId"], "before": r.get("deviceGroupBefore"), "after": r.get("proposedGroupId")}
         for r in after["records"]
@@ -347,16 +408,26 @@ def main() -> None:
             "src/SettingsGroupDevice.h",
             "src/activities/settings/SettingsActivity.cpp",
             "src/activities/settings/SettingsActivity.h",
+            "src/activities/home/RecentBooksActivity.cpp",
+            "src/activities/home/RecentBooksActivity.h",
+            "src/activities/reader/EpubReaderActivity.cpp",
+            "src/util/BleMemoryPolicy.h",
+            "src/CrossPointState.cpp",
+            "src/CrossPointState.h",
+            "src/main.cpp",
             "src/activities/settings/DeviceInfoActivity.cpp",
             "src/activities/settings/DeviceInfoActivity.h",
             "src/InterfaceFontSelection.h",
             "src/SdCardFontSystem.cpp",
             "src/network/html/SettingsPage.html",
             "test/font_selection_compatibility/FontSelectionCompatibilityTest.cpp",
+        "test/ble_memory_policy/BleMemoryPolicyTest.cpp",
+        "test/settings_organization/test_after_prototype.py",
             "test/web_stability/test_grouped_settings_contract.py",
+        "docs/settings-organization/generate_after_inventory.py",
         ],
         "homeWorkerAOverlap": (
-            "Folio Nooir Lite keeps the shared, low-cost home renderer without extra metadata, stats, or SD rescans. "
+            "Folio Nooir Lite uses the same featured synopsis, statistics, and layout choices as Folio Nooir. "
             "Theme value 5 and stored fields are preserved. Recent/Finished selectors are available in both Folio "
             "themes and the Web UI matches the device. The legacy Carousel field remains for persistence/migration. "
             "Custom UI font selection is hidden for 1.6.6 and the built-in UI font is used."
@@ -380,6 +451,53 @@ def main() -> None:
                 "stable ID, storage key, storage field, default, enum option ID/index/value, and numeric range"
             ],
             "translationTextExcludedFromValueComparison": True,
+        },
+        "settingsParityAudit": {
+            "original165": {
+                "stableIdCount": len(baseline_165_by_id),
+                "deviceExposedCount": len(baseline_device_rows),
+                "webSettingKeyCount": len(baseline_web_keys),
+                "x4WebSettingKeyCount": baseline_165["summary"]["oldWebX4StableKeys"],
+            },
+            "current166": {
+                "stableIdCount": len(after_by_id),
+                "deviceReachableCount": sum(row["deviceReachableAfterPrototype"] for row in after["records"]),
+                "webSettingKeyCount": len(current_web_keys),
+                "x4WebSettingKeyCount": before["summary"]["oldWebX4StableKeys"],
+            },
+            "baselineComparison": {
+                "missingStableIds": baseline_165_missing,
+                "duplicateStableIds": duplicate_stable_ids,
+                "persistedKeysDefaultsEnumsRangesAndOptionsUnchanged": not baseline_165_descriptor_changes,
+                "changedPersistedDescriptors": baseline_165_descriptor_changes,
+                "originalDeviceSettingsUnreachable": baseline_device_unreachable,
+                "intentionalDeviceGaps": baseline_device_intentional_gaps,
+                "accidentalDeviceGaps": baseline_device_accidental_gaps,
+                "missingWebKeys": sorted(baseline_web_keys - current_web_keys),
+                "additionalCurrentWebKeys": sorted(current_web_keys - baseline_web_keys),
+                "ungroupedCurrentWebKeys": current_web_ungrouped,
+                "duplicateCurrentWebGroupings": duplicate_current_web_groups,
+                "currentDeviceOrphans": current_device_orphans,
+            },
+            "intentionalExclusions": {
+                "flexibleSleep": "Hidden from user UI; stored enum values and implementation are retained.",
+                "customUiFont": "Hidden from user UI; saved value is retained and built-in UI font is used.",
+                "legacyCarouselLayout": (
+                    "Legacy persisted value remains; Recent and Finished layout selectors replace its UI path."
+                ),
+                "webOnlyClippingsAndNotes": (
+                    "Web-only Clippings/Notes routes remain disabled; on-device Notes and My Clippings.txt export stay."
+                ),
+            },
+            "x3X4Guards": {
+                "touchReaderControls": "touch hardware only",
+                "tiltPageTurn": "X3 QMI8658 IMU only; excluded on X4",
+            },
+            "pass": not baseline_165_missing and not duplicate_stable_ids and
+                    not baseline_165_descriptor_changes and not baseline_device_accidental_gaps and
+                    not (baseline_web_keys - current_web_keys) and not current_web_ungrouped and
+                    not duplicate_current_web_groups and
+                    not current_device_orphans,
         },
         "newDeviceActions": [
             {
@@ -415,8 +533,8 @@ def main() -> None:
             "sleepScreen.option.flexible_composite",
         ],
         "layoutPresentation": {
-            "recentBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; option set and persisted field unchanged",
-            "finishedBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; option set and persisted field unchanged",
+            "recentBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; same synopsis/stats panel; option set and persisted field unchanged",
+            "finishedBookLayout": "available in FOLIO_NOOIR and FOLIO_NOOIR_LITE; same synopsis/stats panel; option set and persisted field unchanged",
             "carouselLayout": (
                 "legacy persisted field retained; value migrates to recentBookLayout/finishedBookLayout; "
                 "replaced in UI because theme value 5 is Folio Nooir Lite"
@@ -427,17 +545,20 @@ def main() -> None:
             "historicalStableKeyCount": len(web_keys),
             "historicalX4KeyCount": before["summary"]["oldWebX4StableKeys"],
             "everyHistoricalKeyHasGroup": all(key in group_by_key for key in web_keys),
-            "allHistoricalKeysGroupedExactlyOnce": len(group_by_key.keys() & set(web_keys)) == len(web_keys),
+            "allHistoricalKeysGroupedExactlyOnce": (
+                not current_web_ungrouped and not duplicate_current_web_groups
+            ),
             "groupCounts": WEB_GROUP_COUNTS,
             "routeCommit": WEB_ROUTE_COMMIT,
             "latestIntegrationCommit": WEB_INTEGRATION_COMMIT,
             "routeCommitIntegratedHere": True,
             "routeIntegratedInMain": True,
-            "historicalKeysReachableThroughGroupedApi": 84,
-            "x4ReachableKeyCount": 82,
+            "historicalKeysReachableThroughGroupedApi": len(web_keys) - len(current_web_ungrouped),
+            "x4ReachableKeyCount": before["summary"]["oldWebX4StableKeys"],
             "liteLayoutUiParity": (
-                "Theme value 5 is Folio Nooir Lite on both device and Web; Web exposes the independent "
-                "Recent/Finished selectors and hides the migrated legacy Carousel selector"
+                "Theme value 5 is Folio Nooir Lite; device and Web expose the independent Recent/Finished "
+                "layout selectors and hide the migrated legacy Carousel selector. The device Lite theme keeps "
+                "the same synopsis and statistics presentation as Folio Nooir."
             ),
             "conditionalKeys": {
                 "touchReaderControls": "touch hardware only",
@@ -445,21 +566,18 @@ def main() -> None:
             },
             "implementationTests": {
                 "groupedSettingsContract": "8/8",
-                "settingsOrganizationParity": "22/22",
-                "pythonSuitesTotal": "30/30 across settings_organization and web_stability",
-                "generatedHtmlAndJsSyntax": "passed (Node.js)",
+                "settingsOrganizationParity": "24/24",
+                "pythonSuitesTotal": "32/32 across settings_organization and web_stability",
+                "generatedHtmlAndJsSyntax": "passed (Node.js; 9 inline HTML scripts checked)",
+                "bleMemoryPolicyHostSuite": (
+                    "Blocked locally: CMake/MSVC compiler setup failed its compiler probe; no current C++ test result."
+                ),
                 "fullHostSuite": (
-                    "Not confirmed from current sources: 347 existing CTest binaries passed and 26 were Not Run "
-                    "because executables were missing; MSVC also crashed while compiling CMake's trivial compiler probe."
+                    "Not run to completion: CMake/MSVC reported a Program Database manager mismatch (C1902), "
+                    "then failed to identify supported C++ features; no current full-suite result."
                 ),
             },
-            "build": (
-                "Combined gh_release build succeeded at source commit "
-                "8e20e4fa53f62d8d726a39a416e94d91d5eabf77 using toolchain-riscv32-esp "
-                "14.2.0+20251107; 62,364/327,680 B RAM and 5,939,537/6,553,600 B flash used. "
-                "Candidate binary is 5,953,680 B, SHA-256 "
-                "4FB6048F51B4474503DFF907D6456242B63555A7CFD92898415DF9C3A14ECC81."
-            ),
+            "build": "Pending final consolidated gh_release build for the current 1.6.6 RC changes.",
             "apiContract": {
                 "groups": "GET /api/settings/groups returns only the seven static descriptors",
                 "read": "GET /api/settings requires a valid group; offset 0..32 and limit 1..6; returns only the selected group page and X-Settings-Total",
@@ -484,7 +602,8 @@ def main() -> None:
             "staticTabCount": 4,
             "staticAccordionSectionCount": 7,
             "dynamicSettingVectors": 1,
-            "materializedOnlyWhenSectionExpanded": True,
+            "materializedOnlyWhenSectionExpanded": False,
+            "singleGroupTabsRenderDirectly": True,
             "retainedOnNestedActivityReturn": True,
             "releasedOnSettingsExit": True,
             "capacityRetainedForReuse": True,
@@ -499,15 +618,18 @@ def main() -> None:
         "integrationBlockers": [],
         "releaseValidation": {
             "sourceParity": "passed; accidental missing settings=0; accidental duplicates=0",
-            "firmwareBuild": "blocked by local PlatformIO lock permission and compiler startup failures",
+            "firmwareBuild": "pending final consolidated gh_release build",
             "physicalX4": "pending; not validated on device",
             "releaseReady": False,
         },
-        "physicalX4Validation": "Pending; verify Settings group navigation, custom UI font response, and performance on hardware before RC acceptance.",
+        "physicalX4Validation": (
+            "Pending; verify first Home responsiveness, Settings navigation, Device Info, Web re-entry, sleep/wake, "
+            "Reader Bluetooth, and input mapping on hardware before RC acceptance."
+        ),
     }
     (OUT / "AFTER_inventory.json").write_text(json.dumps(after, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (OUT / "AFTER_parity.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    (OUT / "PARITY_TABLE.md").write_text(render_parity_table(before, after, baseline_165), encoding="utf-8")
+    (OUT / "PARITY_TABLE.md").write_text(render_parity_table(before, after, baseline_165, report), encoding="utf-8")
     print(json.dumps({k: report[k] for k in (
         "stableIdsBefore", "stableIdsAfter", "stableIdSetParity", "persistedDescriptorParity",
         "movedDeviceEntries", "webSettings", "candidateForIntegration", "integrationBlockers",

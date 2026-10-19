@@ -93,6 +93,12 @@ SettingsGroupId groupForTabSection(const int tab, const int section) {
   return sections[section].group;
 }
 
+bool tabUsesAccordion(const int tab) {
+  int count = 0;
+  sectionsForTab(tab, count);
+  return count > 1;
+}
+
 void logSettingsDiagnostic(const char* stage, const int detail = -1) {
   LOG_INF("SETDIAG", "stage=%s detail=%d free=%u min=%u largest=%u serial=%d reset=%d", stage, detail,
           static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMinFreeHeap()),
@@ -118,6 +124,7 @@ const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DIS
                                                               StrId::STR_CAT_CONTROLS, StrId::STR_CAT_SYSTEM};
 
 int SettingsActivity::visibleRowCount() const {
+  if (!tabUsesAccordion(selectedCategoryIndex)) return settingsCount;
   int sectionCount = 0;
   sectionsForTab(selectedCategoryIndex, sectionCount);
   int rows = sectionCount;
@@ -126,6 +133,7 @@ int SettingsActivity::visibleRowCount() const {
 }
 
 int SettingsActivity::selectedVisibleRow() const {
+  if (!tabUsesAccordion(selectedCategoryIndex)) return std::max(0, selectedSettingIndex - 1);
   int sectionCount = 0;
   const auto* sections = sectionsForTab(selectedCategoryIndex, sectionCount);
   int row = 0;
@@ -143,6 +151,12 @@ int SettingsActivity::selectedVisibleRow() const {
 }
 
 void SettingsActivity::selectVisibleRow(const int requestedRow) {
+  if (!tabUsesAccordion(selectedCategoryIndex)) {
+    selectedSectionIndex = 0;
+    sectionExpanded = false;
+    selectedSettingIndex = std::clamp(requestedRow, 0, std::max(0, settingsCount - 1)) + 1;
+    return;
+  }
   int sectionCount = 0;
   const auto* sections = sectionsForTab(selectedCategoryIndex, sectionCount);
   const int lastRow = std::max(0, visibleRowCount() - 1);
@@ -175,6 +189,10 @@ void SettingsActivity::switchCategory(const int categoryIndex) {
   selectedSectionIndex = 0;
   selectedSettingIndex = 0;
   sectionExpanded = false;
+  if (!tabUsesAccordion(selectedCategoryIndex)) {
+    if (loadedTabIndex != selectedCategoryIndex || loadedSectionIndex != selectedSectionIndex) rebuildSettingsLists();
+    selectedSettingIndex = settingsCount > 0 ? 1 : 0;
+  }
   requestUpdate();
 }
 
@@ -378,10 +396,10 @@ void SettingsActivity::rebuildSettingsLists() {
 #endif
       break;
     case SettingsGroupId::Library:
-      actionCount = 1;
+      actionCount = 0;
       break;
     case SettingsGroupId::System:
-      actionCount = 6 + (BoardConfig::hasTouch() ? 0U : 1U);
+      actionCount = 7 + (BoardConfig::hasTouch() ? 0U : 1U);
       break;
     case SettingsGroupId::Unknown:
       break;
@@ -456,9 +474,9 @@ void SettingsActivity::rebuildSettingsLists() {
       currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
       break;
     case SettingsGroupId::Library:
-      currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_TODO_LIST, SettingAction::ToDoList));
       break;
     case SettingsGroupId::System:
+      currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_TODO_LIST, SettingAction::ToDoList));
       currentGroupSettings.push_back(
           SettingInfo::Action(StrId::STR_CLOCK_WEATHER_SYNC, SettingAction::ClockWeatherSync));
       currentGroupSettings.push_back(
@@ -526,11 +544,11 @@ void SettingsActivity::rebuildSettingsLists() {
                                      StrId::STR_KOREADER_SYNC});
       break;
     case SettingsGroupId::Library:
-      reorder(currentGroupSettings, {StrId::STR_TODO_LIST, StrId::STR_SHOW_HIDDEN_FILES,
+      reorder(currentGroupSettings, {StrId::STR_SHOW_HIDDEN_FILES,
                                      StrId::STR_REMOVE_READ_FROM_RECENTS, StrId::STR_MOVE_FINISHED_TO_READ});
       break;
     case SettingsGroupId::System:
-      reorder(currentGroupSettings, {StrId::STR_TIME_TO_SLEEP, StrId::STR_RESUME_READER_ON_WAKE,
+      reorder(currentGroupSettings, {StrId::STR_TODO_LIST, StrId::STR_TIME_TO_SLEEP, StrId::STR_RESUME_READER_ON_WAKE,
                                      StrId::STR_CLOCK_WEATHER_SYNC, StrId::STR_WEATHER_SYNC_ENABLED,
                                      StrId::STR_SETTINGS_PROFILES, StrId::STR_CLEAR_READING_CACHE,
                                      StrId::STR_SHOW_HIDDEN_FILES, StrId::STR_REMOVE_READ_FROM_RECENTS,
@@ -648,7 +666,7 @@ void SettingsActivity::loop() {
     return true;
   };
   const auto activate = [this] {
-    if (selectedSettingIndex == 0) toggleAccordion();
+    if (tabUsesAccordion(selectedCategoryIndex) && selectedSettingIndex == 0) toggleAccordion();
     else {
       toggleCurrentSetting();
       requestUpdate();
@@ -656,7 +674,7 @@ void SettingsActivity::loop() {
   };
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    if (selectedSettingIndex > 0 || sectionExpanded) {
+    if (tabUsesAccordion(selectedCategoryIndex) && (selectedSettingIndex > 0 || sectionExpanded)) {
       sectionExpanded = false;
       selectedSettingIndex = 0;
       requestUpdate();
@@ -1202,10 +1220,16 @@ void SettingsActivity::render(RenderLock&&) {
                                        metrics.buttonHintsHeight + metrics.verticalSpacing * 2);
   int sectionCount = 0;
   const auto* sections = sectionsForTab(selectedCategoryIndex, sectionCount);
-  const auto rowParts = [this, sectionCount](const int row, bool& isHeader, int& sectionIndex, int& settingIndex) {
+  const bool accordion = tabUsesAccordion(selectedCategoryIndex);
+  const auto rowParts = [this, sectionCount, accordion](const int row, bool& isHeader, int& sectionIndex, int& settingIndex) {
     isHeader = true;
     sectionIndex = 0;
     settingIndex = -1;
+    if (!accordion) {
+      isHeader = false;
+      settingIndex = row;
+      return;
+    }
     if (sectionExpanded) {
       if (row <= selectedSectionIndex) {
         sectionIndex = row;
@@ -1223,13 +1247,14 @@ void SettingsActivity::render(RenderLock&&) {
   const auto& settings = *currentSettings;
   GUI.drawList(
       renderer, Rect{0, listTop, pageWidth, listHeight}, visibleRowCount(), selectedVisibleRow(),
-      [this, sections, rowParts](const int row) {
+      [this, sections, rowParts, accordion](const int row) {
         bool isHeader = false;
         int section = 0;
         int setting = -1;
         rowParts(row, isHeader, section, setting);
         if (isHeader) return std::string(I18N.get(sections[section].label));
-        return std::string("  ") + I18N.get(currentSettings->at(static_cast<size_t>(setting)).nameId);
+        const std::string label = I18N.get(currentSettings->at(static_cast<size_t>(setting)).nameId);
+        return accordion ? std::string("  ") + label : label;
       },
       nullptr, nullptr,
       [this, &settings, rowParts](const int row) {
@@ -1301,7 +1326,7 @@ void SettingsActivity::render(RenderLock&&) {
         return optionCount > 2;
       });
 
-  const bool selectedHeader = selectedSettingIndex == 0;
+  const bool selectedHeader = tabUsesAccordion(selectedCategoryIndex) && selectedSettingIndex == 0;
   const bool hasSelectedSetting = !selectedHeader && selectedSettingIndex > 0 && selectedSettingIndex <= settingsCount;
   const StrId selectedSettingId = hasSelectedSetting
                                       ? settings[static_cast<size_t>(selectedSettingIndex - 1)].nameId

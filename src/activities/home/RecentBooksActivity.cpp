@@ -19,6 +19,7 @@
 #include <memory>
 
 #include "MappedInputManager.h"
+#include "CrossPointState.h"
 #include "BleInput.h"
 #include "RecentBooksStore.h"
 #include "BookStateStore.h"
@@ -53,7 +54,9 @@ constexpr char FOLIO_HOME_SNAPSHOT[] = "/.crosspoint/folio_home.bin";
 // back the post-boot hitch this activity was designed to avoid.
 constexpr char RECENT_CACHE_BOOTSTRAP_MARKER[] = "/.crosspoint/recent_cache_bootstrap_v1";
 constexpr uint32_t FOLIO_HOME_MAGIC = 0x464E484D;  // "FNHM"
-constexpr uint16_t FOLIO_HOME_VERSION = 8;
+constexpr uint16_t FOLIO_HOME_VERSION = 9;
+constexpr uint16_t FOLIO_HOME_PREVIOUS_VERSION = 8;
+constexpr unsigned long HOME_ENTRY_INPUT_GATE_MAX_MS = 750;
 // Manual cover refresh is the only path that may decode a source image. Keep
 // it bounded for X3/X4, but allow normal high-quality covers (the old 512 KiB
 // limit rejected many perfectly usable 2 MiB JPEGs before the converter could
@@ -65,24 +68,21 @@ bool isFolioNooirLiteTheme(const uint8_t theme) {
   return theme == CrossPointSettings::UI_THEME::FOLIO_NOOIR_LITE;
 }
 
+bool hasActiveHomeInput(const MappedInputManager& input) {
+  if (input.wasAnyPressed() || input.wasAnyReleased()) return true;
+  for (uint8_t index = 0; index < MappedInputManager::kButtonCount; ++index) {
+    if (input.isPressed(static_cast<MappedInputManager::Button>(index))) return true;
+  }
+  return false;
+}
+
 bool isFolioShelfTheme(const uint8_t theme) {
   return theme == CrossPointSettings::UI_THEME::FOLIO_NOOIR || isFolioNooirLiteTheme(theme);
 }
 
 FolioShelfLayout homeShelfLayout(const FolioNooirTheme& theme, const GfxRenderer& renderer,
-                                const ThemeMetrics& metrics, const bool lite) {
-  FolioShelfLayout layout = theme.shelfLayout(renderer, metrics);
-  if (lite) {
-    // Lite keeps the shared Folio renderers and tabs, then gives the shelf the
-    // space otherwise used by the Featured panel and statistics strip.
-    layout.detailHeight = 0;
-    layout.statsHeight = 0;
-    layout.statsTop = layout.contentTop + layout.contentHeight;
-    layout.gridTop = layout.contentTop;
-    layout.gridHeight = layout.contentHeight;
-    layout.cardHeight = layout.gridHeight / 2;
-  }
-  return layout;
+                                const ThemeMetrics& metrics) {
+  return theme.shelfLayout(renderer, metrics);
 }
 
 #if NOOIR_EPUB_DIAGNOSTICS
@@ -1049,8 +1049,7 @@ bool RecentBooksActivity::currentSnapshotPageInfo(size_t& pageStart, size_t& pag
   if (!usesSpineLayout() && !usesTwoRowSpineLayout()) return false;
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto& folioTheme = static_cast<const FolioNooirTheme&>(GUI);
-  const FolioShelfLayout layout = homeShelfLayout(folioTheme, renderer, metrics,
-                                                  isFolioNooirLiteTheme(SETTINGS.uiTheme));
+  const FolioShelfLayout layout = homeShelfLayout(folioTheme, renderer, metrics);
   if (usesSpineLayout()) {
     const auto& window = spinePageForSelection(spineShelfBounds(renderer.getScreenWidth(), layout));
     pageStart = window.page.firstIndex;
@@ -1070,14 +1069,21 @@ int RecentBooksActivity::activePageItems() const {
   return BOOKS_PER_PAGE;
 }
 
-uint64_t RecentBooksActivity::snapshotKey() const {
+uint64_t RecentBooksActivity::snapshotKey(const bool legacyThemeKey) const {
   uint64_t hash = 1469598103934665603ULL;
-  const bool liteTheme = isFolioNooirLiteTheme(SETTINGS.uiTheme);
   const int width = renderer.getScreenWidth();
   const int height = renderer.getScreenHeight();
   hashBytes(hash, &width, sizeof(width));
   hashBytes(hash, &height, sizeof(height));
-  hashBytes(hash, &SETTINGS.uiTheme, sizeof(SETTINGS.uiTheme));
+  // Folio Nooir and Lite share the same shelf renderer, metrics, and layouts.
+  // Normalize the theme for current snapshots so changing between them can
+  // reuse the frame. Version-8 snapshots keep their original theme key.
+  const uint8_t themeKey = legacyThemeKey
+                               ? SETTINGS.uiTheme
+                               : (isFolioShelfTheme(SETTINGS.uiTheme)
+                                      ? static_cast<uint8_t>(CrossPointSettings::UI_THEME::FOLIO_NOOIR)
+                                      : SETTINGS.uiTheme);
+  hashBytes(hash, &themeKey, sizeof(themeKey));
   hashBytes(hash, &SETTINGS.orientation, sizeof(SETTINGS.orientation));
   hashBytes(hash, &SETTINGS.uiScalePercent, sizeof(SETTINGS.uiScalePercent));
   hashBytes(hash, &activeTab, sizeof(activeTab));
@@ -1108,12 +1114,10 @@ uint64_t RecentBooksActivity::snapshotKey() const {
     hashBytes(hash, &pathHash, sizeof(pathHash));
     hashBytes(hash, &titleHash, sizeof(titleHash));
     hashBytes(hash, &coverHash, sizeof(coverHash));
-    if (!liteTheme) {
-      const uint64_t authorHash = hashText(book.author);
-      const uint64_t synopsisHash = hashText(book.synopsis);
-      hashBytes(hash, &authorHash, sizeof(authorHash));
-      hashBytes(hash, &synopsisHash, sizeof(synopsisHash));
-    }
+    const uint64_t authorHash = hashText(book.author);
+    const uint64_t synopsisHash = hashText(book.synopsis);
+    hashBytes(hash, &authorHash, sizeof(authorHash));
+    hashBytes(hash, &synopsisHash, sizeof(synopsisHash));
     if (spineSnapshot) {
       // The saved shelf pixels contain book faces, title/author labels, and
       // progress bars. The featured panel and stats strip are redrawn after
@@ -1125,18 +1129,16 @@ uint64_t RecentBooksActivity::snapshotKey() const {
       hashBytes(hash, &status, sizeof(status));
       if (state != nullptr) hashBytes(hash, &state->progressPercent, sizeof(state->progressPercent));
     }
-    if (!liteTheme) {
-      const BookMetadataOverride* override = BOOK_METADATA_OVERRIDES.find(book.path);
-      const uint8_t hasOverride = override != nullptr;
-      hashBytes(hash, &hasOverride, sizeof(hasOverride));
-      if (override != nullptr) {
-        const uint64_t overrideTitleHash = hashText(override->title);
-        const uint64_t overrideAuthorHash = hashText(override->author);
-        const uint64_t overrideSynopsisHash = hashText(override->synopsis);
-        hashBytes(hash, &overrideTitleHash, sizeof(overrideTitleHash));
-        hashBytes(hash, &overrideAuthorHash, sizeof(overrideAuthorHash));
-        hashBytes(hash, &overrideSynopsisHash, sizeof(overrideSynopsisHash));
-      }
+    const BookMetadataOverride* override = BOOK_METADATA_OVERRIDES.find(book.path);
+    const uint8_t hasOverride = override != nullptr;
+    hashBytes(hash, &hasOverride, sizeof(hasOverride));
+    if (override != nullptr) {
+      const uint64_t overrideTitleHash = hashText(override->title);
+      const uint64_t overrideAuthorHash = hashText(override->author);
+      const uint64_t overrideSynopsisHash = hashText(override->synopsis);
+      hashBytes(hash, &overrideTitleHash, sizeof(overrideTitleHash));
+      hashBytes(hash, &overrideAuthorHash, sizeof(overrideAuthorHash));
+      hashBytes(hash, &overrideSynopsisHash, sizeof(overrideSynopsisHash));
     }
   }
   return hash;
@@ -1145,7 +1147,10 @@ uint64_t RecentBooksActivity::snapshotKey() const {
 uint64_t RecentBooksActivity::snapshotPresentationKey() const {
   uint64_t hash = 1469598103934665603ULL;
   const uint8_t settings[] = {
-      SETTINGS.uiTheme, SETTINGS.coverProgressStyle, SETTINGS.featuredShowCover, SETTINGS.featuredShowFileType,
+      static_cast<uint8_t>(isFolioShelfTheme(SETTINGS.uiTheme)
+                               ? CrossPointSettings::UI_THEME::FOLIO_NOOIR
+                               : SETTINGS.uiTheme),
+      SETTINGS.coverProgressStyle, SETTINGS.featuredShowCover, SETTINGS.featuredShowFileType,
       SETTINGS.featuredShowAuthor, SETTINGS.featuredShowSynopsis, SETTINGS.featuredShowStatus,
       SETTINGS.featuredShowProgress, SETTINGS.featuredShowStartedDate, SETTINGS.featuredShowFinishedDate,
       SETTINGS.featuredShowReadingTime, SETTINGS.featuredShowSessions, SETTINGS.hideBatteryPercentage,
@@ -1251,30 +1256,6 @@ uint64_t RecentBooksActivity::bookCoverVisualKey(const RecentBook& book) const {
 
 uint64_t RecentBooksActivity::snapshotDynamicKey() {
   uint64_t hash = 1469598103934665603ULL;
-  if (isFolioNooirLiteTheme(SETTINGS.uiTheme)) {
-    hashBytes(hash, &visibleBookCount, sizeof(visibleBookCount));
-    size_t pageStart = SIZE_MAX;
-    size_t pageItems = 0;
-    if (visibleBookCount == 0 || !currentSnapshotPageInfo(pageStart, pageItems)) return hash;
-    const size_t pageEnd = pageStart + pageItems;
-    size_t visibleIndex = 0;
-    for (const auto& book : recentBooks) {
-      if (!isVisibleRecentBook(book)) continue;
-      if (visibleIndex >= pageEnd) break;
-      if (visibleIndex >= pageStart) {
-        const uint64_t coverKey = bookCoverVisualKey(book);
-        hashBytes(hash, &coverKey, sizeof(coverKey));
-        if (usesSpineLayout() || usesTwoRowSpineLayout()) {
-          const BookState* state = BOOK_STATES.find(book.path);
-          const uint8_t status = state ? static_cast<uint8_t>(state->status) : 0;
-          hashBytes(hash, &status, sizeof(status));
-          if (state != nullptr) hashBytes(hash, &state->progressPercent, sizeof(state->progressPercent));
-        }
-      }
-      ++visibleIndex;
-    }
-    return hash;
-  }
   const bool accumulated = !halClock.isAvailable();
   const uint32_t today = halClock.getDateKey();
   hashBytes(hash, &accumulated, sizeof(accumulated));
@@ -1312,7 +1293,6 @@ uint64_t RecentBooksActivity::snapshotDynamicKey() {
 
 uint64_t RecentBooksActivity::featuredVisualKey() const {
   uint64_t hash = 1469598103934665603ULL;
-  if (isFolioNooirLiteTheme(SETTINGS.uiTheme)) return hash;
   const bool visible = SETTINGS.featuredShowCover != 0;
   hashBytes(hash, &visible, sizeof(visible));
   if (visibleBookCount == 0 || recentBooks.empty()) return hash;
@@ -1405,7 +1385,10 @@ bool RecentBooksActivity::restoreSnapshot() {
       file.read(&key, sizeof(key)) != sizeof(key)) {
     return false;
   }
-  if (magic != FOLIO_HOME_MAGIC || version != FOLIO_HOME_VERSION || width != renderer.getScreenWidth() ||
+  const bool legacySnapshotCompatible = version == FOLIO_HOME_PREVIOUS_VERSION &&
+                                        SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR;
+  if (magic != FOLIO_HOME_MAGIC || (version != FOLIO_HOME_VERSION && !legacySnapshotCompatible) ||
+      width != renderer.getScreenWidth() ||
       height != renderer.getScreenHeight() || dataSize != renderer.getBufferSize() ||
       !HomeSnapshotPolicy::isSupportedPageCapacity(pageItems) ||
       file.read(&pageStart, sizeof(pageStart)) != sizeof(pageStart) ||
@@ -1440,7 +1423,7 @@ bool RecentBooksActivity::restoreSnapshot() {
   size_t currentPageStart = SIZE_MAX;
   size_t currentPageItems = 0;
   const bool currentPageKnown = currentSnapshotPageInfo(currentPageStart, currentPageItems);
-  const uint64_t currentStructuralKey = snapshotKey();
+  const uint64_t currentStructuralKey = snapshotKey(version == FOLIO_HOME_PREVIOUS_VERSION);
   if (!sameVisiblePage || key != currentStructuralKey ||
       !HomeSnapshotPolicy::pageRangeMatches(restoredSelectorIndex, pageStart, pageItems, visibleBookCount) ||
       !currentPageKnown || currentPageStart != pageStart || currentPageItems != pageItems) {
@@ -1465,12 +1448,10 @@ bool RecentBooksActivity::restoreSnapshot() {
     snapshotBookVisualKeys = bookVisualKeys;
     const bool featuredChanged = savedFeaturedKey != featuredVisualKey();
     snapshotDynamicNeedsPatch = restoreAction == HomeSnapshotPolicy::RestoreAction::PatchDynamic || featuredChanged;
-    if (!isFolioNooirLiteTheme(SETTINGS.uiTheme)) {
-      const RecentBook& selected = recentBooks[selectedRecentIndex()];
-      lastFeaturedPath = featuredChanged ? std::string() : selected.path;
-      lastFeaturedCoverPath = featuredChanged ? std::string() : selected.coverBmpPath;
-      lastFeaturedCoverVisible = !featuredChanged && SETTINGS.featuredShowCover != 0;
-    }
+    const RecentBook& selected = recentBooks[selectedRecentIndex()];
+    lastFeaturedPath = featuredChanged ? std::string() : selected.path;
+    lastFeaturedCoverPath = featuredChanged ? std::string() : selected.coverBmpPath;
+    lastFeaturedCoverVisible = !featuredChanged && SETTINGS.featuredShowCover != 0;
     LOG_DBG("SHELF", "Restored %u-byte Home snapshot", dataSize);
   } else {
     activeTab = originalTab;
@@ -1563,9 +1544,15 @@ void RecentBooksActivity::writeSnapshotNavigationState() {
       file.read(&width, sizeof(width)) != sizeof(width) || file.read(&height, sizeof(height)) != sizeof(height) ||
       file.read(&dataSize, sizeof(dataSize)) != sizeof(dataSize) || file.read(&pageItems, sizeof(pageItems)) != sizeof(pageItems) ||
       file.read(&key, sizeof(key)) != sizeof(key) ||
-      magic != FOLIO_HOME_MAGIC || version != FOLIO_HOME_VERSION || width != renderer.getScreenWidth() ||
+      magic != FOLIO_HOME_MAGIC || width != renderer.getScreenWidth() ||
       height != renderer.getScreenHeight() || dataSize != renderer.getBufferSize() ||
-      !HomeSnapshotPolicy::isSupportedPageCapacity(pageItems) || key != snapshotKey()) {
+      !HomeSnapshotPolicy::isSupportedPageCapacity(pageItems)) {
+    return;
+  }
+  const bool legacySnapshotCompatible = version == FOLIO_HOME_PREVIOUS_VERSION &&
+                                        SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR;
+  if ((version != FOLIO_HOME_VERSION && !legacySnapshotCompatible) ||
+      key != snapshotKey(version == FOLIO_HOME_PREVIOUS_VERSION)) {
     return;
   }
   uint32_t storedPageStart = 0;
@@ -2048,6 +2035,9 @@ void RecentBooksActivity::showBookActions() {
 
 void RecentBooksActivity::onEnter() {
   Activity::onEnter();
+  ignoreEntryInputUntilNeutral = hasActiveHomeInput(mappedInput);
+  entryInputGateStartedMs = ignoreEntryInputUntilNeutral ? millis() : 0;
+  if (ignoreEntryInputUntilNeutral) LOG_INF("SHELF", "stage=entry_input_gate_armed");
   invalidateSpinePageWindow();
   statsTransientStateReleased = false;
 
@@ -2104,6 +2094,21 @@ void RecentBooksActivity::onEnter() {
   recentCacheWarmupPopupRendered = false;
   coverGenerationRequested = false;
   snapshotRestored = restoreSnapshot();
+  if (APP_STATE.selectFirstHomeBookAfterWake) {
+    selectorIndex = 0;
+    snapshotRestored = false;
+    snapshotFastPathUsed = false;
+    snapshotPageStart = SIZE_MAX;
+    snapshotPageItems = 0;
+    snapshotSelectorIndex = SIZE_MAX;
+    snapshotDynamicNeedsPatch = false;
+    lastFeaturedPath.clear();
+    lastFeaturedCoverPath.clear();
+    APP_STATE.selectFirstHomeBookAfterWake = false;
+    APP_STATE.saveToFile();
+    LOG_INF("SHELF", "stage=wake_selection_reset selected=%u tab=%u",
+            static_cast<unsigned>(selectorIndex), static_cast<unsigned>(activeTab));
+  }
   if (!snapshotRestored) {
     snapshotPageStart = SIZE_MAX;
     snapshotPageItems = 0;
@@ -2264,21 +2269,26 @@ void RecentBooksActivity::restoreTransientStateAfterReadingStats() {
 }
 
 void RecentBooksActivity::loop() {
+  if (ignoreEntryInputUntilNeutral) {
+    if (hasActiveHomeInput(mappedInput) && millis() - entryInputGateStartedMs < HOME_ENTRY_INPUT_GATE_MAX_MS) return;
+    ignoreEntryInputUntilNeutral = false;
+    LOG_INF("SHELF", "stage=entry_input_gate_cleared timeout=%d",
+            millis() - entryInputGateStartedMs >= HOME_ENTRY_INPUT_GATE_MAX_MS ? 1 : 0);
+  }
   const int pageItems = activePageItems();
   const auto& metrics = UITheme::getInstance().getMetrics();
   const bool carouselTheme = usesCarouselLayout();
   const bool spineLayout = usesSpineLayout();
   const bool twoRowSpineLayout = usesTwoRowSpineLayout();
-  const bool liteTheme = isFolioNooirLiteTheme(SETTINGS.uiTheme);
   const bool snapshotLayout = usesPersistentHomeSnapshot();
   const bool threeCoverGrid = usesThreeCoverGrid();
   FolioShelfLayout layout{};
   if (carouselTheme) {
     static const FolioNooirTheme folioPresentation;
-    layout = homeShelfLayout(folioPresentation, renderer, metrics, liteTheme);
+    layout = homeShelfLayout(folioPresentation, renderer, metrics);
   } else {
     const auto& folioTheme = static_cast<const FolioNooirTheme&>(GUI);
-    layout = homeShelfLayout(folioTheme, renderer, metrics, liteTheme);
+    layout = homeShelfLayout(folioTheme, renderer, metrics);
   }
 
   // Snapshot persistence is an optimization, not part of showing the shelf.
@@ -3244,7 +3254,6 @@ void RecentBooksActivity::renderFolioCarouselShelf(const int shelfTop, const int
 }
 
 void RecentBooksActivity::render(RenderLock&&) {
-  const bool liteTheme = isFolioNooirLiteTheme(SETTINGS.uiTheme);
   // Keep the Folio bookshelf's featured book and 4x2 grid typography fixed;
   // UI Scale applies to the surrounding application screens instead.
   renderer.setUiScaleTextEnabled(false);
@@ -3327,8 +3336,7 @@ void RecentBooksActivity::render(RenderLock&&) {
       !snapshotDynamicNeedsPatch && snapshotPageStart == currentPageStart && snapshotPageItems == currentPageItems &&
       visibleBookCount > 0) {
     const auto& folioTheme = static_cast<const FolioNooirTheme&>(GUI);
-    const FolioShelfLayout layout = homeShelfLayout(folioTheme, renderer, metrics,
-                                                    isFolioNooirLiteTheme(SETTINGS.uiTheme));
+    const FolioShelfLayout layout = homeShelfLayout(folioTheme, renderer, metrics);
     drawSnapshotSelectionOutline(layout, selectorIndex, true);
     renderer.displayBuffer();
     markStatsReturnFrameReady();
@@ -3337,11 +3345,9 @@ void RecentBooksActivity::render(RenderLock&&) {
     lastRenderedSelectorIndex = selectorIndex;
     lastRenderedPageStart = currentPageStart;
     lastRenderedTab = activeTab;
-    if (!liteTheme) {
-      const RecentBook& selected = recentBooks[selectedRecentIndex()];
-      lastFeaturedPath = selected.path;
-      lastFeaturedCoverPath = selected.coverBmpPath;
-    }
+    const RecentBook& selected = recentBooks[selectedRecentIndex()];
+    lastFeaturedPath = selected.path;
+    lastFeaturedCoverPath = selected.coverBmpPath;
     snapshotRestored = true;
     snapshotPageStart = currentPageStart;
     snapshotPageItems = currentPageItems;
@@ -3359,8 +3365,7 @@ void RecentBooksActivity::render(RenderLock&&) {
       !recentCacheWarmupActive && !manualSingleRefresh && lastRenderedSelectorIndex == selectorIndex &&
       lastRenderedPageStart == currentPageStart && lastRenderedTab == activeTab && snapshotRestored &&
       snapshotPageItems == currentPageItems) {
-    const bool sameFeatured = liteTheme || visibleBookCount == 0 ||
-                              recentBooks[selectedRecentIndex()].path == lastFeaturedPath;
+    const bool sameFeatured = visibleBookCount == 0 || recentBooks[selectedRecentIndex()].path == lastFeaturedPath;
     if (sameFeatured) return;
   }
 
@@ -3417,7 +3422,7 @@ void RecentBooksActivity::render(RenderLock&&) {
   }
 
   const auto& folioTheme = static_cast<const FolioNooirTheme&>(GUI);
-  const FolioShelfLayout layout = homeShelfLayout(folioTheme, renderer, metrics, liteTheme);
+  const FolioShelfLayout layout = homeShelfLayout(folioTheme, renderer, metrics);
   folioTheme.drawShelfTabs(renderer, layout, activeTab);
   folioTheme.drawShelfBattery(renderer, layout, metrics);
 
@@ -3442,8 +3447,7 @@ void RecentBooksActivity::render(RenderLock&&) {
   };
   if (visibleBookCount == 0) {
     renderer.fillRect(0, contentTop, pageWidth, contentHeight, false);
-    renderer.drawCenteredText(UI_10_FONT_ID, contentTop + (liteTheme ? contentHeight / 2 : detailHeight / 2),
-                              tr(STR_NO_RECENT_BOOKS), true);
+    renderer.drawCenteredText(UI_10_FONT_ID, contentTop + detailHeight / 2, tr(STR_NO_RECENT_BOOKS), true);
   } else {
     auto drawCover = [this](const RecentBook& book, int x, int y, int maxWidth, int maxHeight, bool drawBitmap,
                             bool preferCarouselHq) {
@@ -3531,7 +3535,6 @@ void RecentBooksActivity::render(RenderLock&&) {
       renderer.drawText(UI_10_FONT_ID, coverX + 5, y + maxHeight / 2, title.c_str());
     };
 
-    if (!liteTheme) {
     const RecentBook& selected = recentBooks[selectedRecentIndex()];
     constexpr int detailPadding = 12;
     // Keep the Featured cover close to the Folio 3-Cover card width.  The
@@ -3837,8 +3840,6 @@ void RecentBooksActivity::render(RenderLock&&) {
       textY += smallLineHeight + 1;
     }
     renderer.drawLine(0, contentTop + detailHeight - 1, pageWidth - 1, contentTop + detailHeight - 1);
-    }
-
     if (usesCarouselLayout()) {
       renderFolioCarouselShelf(layout.gridTop, layout.gridHeight,
                                activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_THREE_COVER_CAROUSEL);
@@ -3914,7 +3915,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     }
 
   }
-  if (!liteTheme) drawStats();
+  drawStats();
 
   // The base frame is kept in RAM while navigating within a page. Erase only
   // the previous focus outline instead of restoring the whole SD snapshot.

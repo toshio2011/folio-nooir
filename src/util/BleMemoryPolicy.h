@@ -106,4 +106,17 @@ constexpr bool readerBleDeepCacheReclaimSafe(const bool returnPending, const boo
          renderWorkIdle && stopRequestClear && replayHoldClear && notWaitingForBleStop;
 }
 
+// Explicit heavy-boundary signals remain useful, but an admission miss at an
+// otherwise safe return boundary also makes the final rebuildable-cache tier
+// eligible. The release still requires every safety gate and failed admission.
+constexpr bool readerBleDeepCacheReclaimEligible(const bool explicitRescue,
+                                                 const bool admissionNeeded) {
+  return explicitRescue || admissionNeeded;
+}
+
+constexpr bool readerBleDeepCacheReclaimAllowed(const bool eligible, const bool deepSafe,
+                                                const bool admissionNeeded) {
+  return eligible && deepSafe && admissionNeeded;
+}
+
 }  // namespace bleinput

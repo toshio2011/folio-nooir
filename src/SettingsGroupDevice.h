@@ -36,7 +36,7 @@ inline SettingsGroupId settingsGroupIdFor(const SettingInfo& setting) {
     case SettingAction::OPDSBrowser:
       return SettingsGroupId::Connectivity;
     case SettingAction::ToDoList:
-      return SettingsGroupId::Library;
+      return SettingsGroupId::System;
     case SettingAction::ClockWeatherSync:
     case SettingAction::SettingsProfiles:
     case SettingAction::ClearCache:
@@ -103,8 +103,9 @@ inline SettingsGroupId settingsGroupIdFor(const SettingInfo& setting) {
     case StrId::STR_SHOW_HIDDEN_FILES:
     case StrId::STR_REMOVE_READ_FROM_RECENTS:
     case StrId::STR_MOVE_FINISHED_TO_READ:
-    case StrId::STR_TODO_LIST:
       return SettingsGroupId::Library;
+    case StrId::STR_TODO_LIST:
+      return SettingsGroupId::System;
     default:
       break;
   }

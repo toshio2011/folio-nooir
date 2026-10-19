@@ -203,6 +203,7 @@ void enterDeepSleep(bool fromTimeout = false) {
           static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
+  APP_STATE.selectFirstHomeBookAfterWake = true;
   if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM) {
     RandomSleepPool::SequenceState sequence{APP_STATE.randomSleepShuffleRemainingMask,
                                             APP_STATE.randomSleepShufflePoolMask,

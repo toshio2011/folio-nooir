@@ -28,6 +28,9 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   uint8_t recentSleepFill = 0;                          // valid entries (0..SLEEP_RECENT_COUNT)
   uint8_t readerActivityLoadCount = 0;
   bool lastSleepFromReader = false;
+  // One-shot persisted wake intent. This remains pending while wake resumes
+  // directly into Reader and is consumed when Home is next opened.
+  bool selectFirstHomeBookAfterWake = false;
   bool showBootScreen = true;
   // Compact Random Sleep cycle state. This is written with the existing
   // state snapshot at sleep; preview keeps a separate stack-local copy.

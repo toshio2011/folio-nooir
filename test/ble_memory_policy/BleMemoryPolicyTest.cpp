@@ -79,6 +79,16 @@ TEST(BleMemoryPolicy, DeepReaderCacheReclaimRequiresEverySafetyGate) {
   EXPECT_FALSE(bleinput::readerBleDeepCacheReclaimSafe(true, true, true, true, true, true, true, true, false));
 }
 
+TEST(BleMemoryPolicy, StrictAdmissionMissEnablesOnlySafeDeepReclaim) {
+  EXPECT_FALSE(bleinput::readerBleDeepCacheReclaimEligible(false, false));
+  EXPECT_TRUE(bleinput::readerBleDeepCacheReclaimEligible(false, true));
+  EXPECT_TRUE(bleinput::readerBleDeepCacheReclaimEligible(true, false));
+  EXPECT_FALSE(bleinput::readerBleDeepCacheReclaimAllowed(false, true, true));
+  EXPECT_FALSE(bleinput::readerBleDeepCacheReclaimAllowed(true, false, true));
+  EXPECT_FALSE(bleinput::readerBleDeepCacheReclaimAllowed(true, true, false));
+  EXPECT_TRUE(bleinput::readerBleDeepCacheReclaimAllowed(true, true, true));
+}
+
 TEST(BleMemoryPolicy, BleOffNeverRequestsReaderRenderReclaim) {
   EXPECT_FALSE(bleinput::readerBleCachedRenderNeedsReclaim(false, false, 15 * 1024, 8 * 1024));
   EXPECT_FALSE(bleinput::readerBleCachedRenderNeedsReclaim(false, true, 15 * 1024, 8 * 1024));
