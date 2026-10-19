@@ -5,6 +5,7 @@
 #include <freertos/semphr.h>
 
 #include <memory>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,8 @@ class HalStorage {
   HalStorage();
   bool begin();
   bool ready() const;
+  // Cached card capacity captured during begin(); does not query FAT or scan files.
+  uint64_t cardCapacityBytes() const;
   std::vector<String> listFiles(const char* path = "/", int maxFiles = 200);
   // Read the entire file at `path` into a String. Returns empty string on failure.
   String readFile(const char* path);

@@ -10,6 +10,7 @@
 #include "CrossPointSettings.h"
 #include "activities/Activity.h"
 #include "components/OptionPopup.h"
+#include "components/themes/BaseTheme.h"
 #include "util/ButtonNavigator.h"
 
 enum class SettingType { TOGGLE, ENUM, ACTION, VALUE, STRING };
@@ -39,6 +40,8 @@ enum class SettingAction {
   RandomSleepPool,
   ClearFavoriteSleepImage,
   QuickActions,
+  DictionaryPicker,
+  DeviceInfo,
 };
 
 struct SettingInfo {
@@ -178,16 +181,20 @@ class SettingsActivity final : public Activity {
 
   ButtonNavigator buttonNavigator;
 
-  int selectedCategoryIndex = 0;  // Currently selected category
-  int selectedGroupListIndex = 0;
+  int selectedCategoryIndex = 0;  // Historic top-level tab: Display, Reader, Controls, System
+  int selectedSectionIndex = 0;   // Accordion section within the selected tab
   int selectedSettingIndex = 0;
   int settingsCount = 0;
-  bool groupListActive = true;
+  int loadedSectionIndex = -1;
+  int loadedTabIndex = -1;
+  bool sectionExpanded = false;
+  bool hasFavoriteSleepImage = false;
 
   // Only the selected group's children are materialized; switching groups
   // clears and reuses this single descriptor vector.
   std::vector<SettingInfo> currentGroupSettings;
   const std::vector<SettingInfo>* currentSettings = nullptr;
+  std::vector<TabInfo> tabItems;
 
   bool preserveQuickResumeTimeoutOn = false;
   bool quickResumeTimeoutAutoEnabled = false;
@@ -211,9 +218,15 @@ class SettingsActivity final : public Activity {
   bool bluetoothTransientFontCachesReleased = false;
 #endif
 
-  static constexpr int categoryCount = 7;
+  static constexpr int categoryCount = 4;
+  static const StrId categoryNames[categoryCount];
 
-  void enterCategory(int categoryIndex);
+  int visibleRowCount() const;
+  int selectedVisibleRow() const;
+  void selectVisibleRow(int rowIndex);
+  void switchCategory(int categoryIndex);
+  void toggleAccordion();
+  void openDictionaryPicker();
   void toggleCurrentSetting();
   void openSleepTimeoutPicker();
   void openSleepScreenPreview();

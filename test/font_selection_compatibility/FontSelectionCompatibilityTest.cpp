@@ -78,12 +78,12 @@ TEST(FontSelectionCompatibility, InterfaceFontsStayUnloadedDuringHeavyModes) {
   EXPECT_FALSE(InterfaceFontSelection::mayLoadUiFontsNow(false, false, false, true));
 }
 
-TEST(FontSelectionCompatibility, CurrentReleaseAppliesOnlyASelectedCustomUiChoice) {
+TEST(FontSelectionCompatibility, CurrentReleaseStaysOnBuiltinUiFontsAndKeepsSelectionGateClosed) {
   constexpr bool familySelected = true;
-  EXPECT_TRUE(InterfaceFontSelection::kCustomUiFontsEnabledForCurrentRelease);
+  EXPECT_FALSE(InterfaceFontSelection::kCustomUiFontsEnabledForCurrentRelease);
   EXPECT_FALSE(InterfaceFontSelection::mayApplyCustomUiFont(
       InterfaceFontSelection::kCustomUiFontsEnabledForCurrentRelease, false));
-  EXPECT_TRUE(InterfaceFontSelection::mayApplyCustomUiFont(
+  EXPECT_FALSE(InterfaceFontSelection::mayApplyCustomUiFont(
       InterfaceFontSelection::kCustomUiFontsEnabledForCurrentRelease, familySelected));
 }
 

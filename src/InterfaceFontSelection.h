@@ -7,10 +7,10 @@
 
 namespace InterfaceFontSelection {
 
-// Keep the existing Mini Pack path enabled. Loading remains staged and lazy;
-// ActivityManager keeps it out of Reader, Web, SD-independent, and BLE-heavy
-// activity windows.
-constexpr bool kCustomUiFontsEnabledForCurrentRelease = true;
+// Keep saved selections and the staged loader intact, but use built-in UI
+// fonts for the 1.6.6 validation release. Re-enabling this gate restores the
+// existing Mini Pack path without changing persisted settings.
+constexpr bool kCustomUiFontsEnabledForCurrentRelease = false;
 
 constexpr bool mayApplyCustomUiFont(const bool featureEnabled, const bool familySelected) {
   return featureEnabled && familySelected;

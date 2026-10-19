@@ -10,6 +10,7 @@ ACTIVITY_CPP = ROOT / "src" / "activities" / "settings" / "SettingsActivity.cpp"
 ACTIVITY_H = ROOT / "src" / "activities" / "settings" / "SettingsActivity.h"
 GROUPS_H = ROOT / "src" / "SettingsGroups.h"
 FONT_SELECTION_H = ROOT / "src" / "InterfaceFontSelection.h"
+SETTINGS_LIST_H = ROOT / "src" / "SettingsList.h"
 
 
 class SettingsGroupPrototypeTest(unittest.TestCase):
@@ -22,6 +23,7 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
         cls.header = ACTIVITY_H.read_text(encoding="utf-8")
         cls.group_header = GROUPS_H.read_text(encoding="utf-8")
         cls.font_selection = FONT_SELECTION_H.read_text(encoding="utf-8")
+        cls.settings_list = SETTINGS_LIST_H.read_text(encoding="utf-8")
 
     def test_all_setting_ids_and_persistence_descriptors_are_unchanged(self):
         before = {row["stableId"]: row for row in self.before["records"]}
@@ -39,11 +41,12 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
         self.assertIn("std::vector<SettingInfo> currentGroupSettings;", self.header)
         for old_name in ("displaySettings", "readerSettings", "controlsSettings", "systemSettings"):
             self.assertNotIn(old_name, self.header)
-        self.assertIn("groupListActive = true", self.cpp)
+        self.assertIn("static constexpr int categoryCount = 4;", self.header)
+        self.assertIn("GUI.drawTabBar", self.cpp)
+        self.assertNotIn("groupListActive", self.cpp)
         self.assertIn("currentGroupSettings.clear();", self.cpp)
         self.assertIn("const auto& baseSettings = getBaseSettingsList();", self.cpp)
         self.assertNotIn("getSettingsList(", self.cpp)
-        self.assertNotIn("GUI.drawTabBar", self.cpp)
 
     def test_child_ordering_uses_no_temporary_heap_container(self):
         self.assertIn("std::initializer_list<StrId> preferred", self.cpp)
@@ -66,9 +69,10 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
         self.assertEqual(self.report["deviceExposureCoverage"]["intentionalReplacements"]["carouselLayout"]["replacedBy"],
                          ["recentBookLayout", "finishedBookLayout"])
 
-    def test_group_enter_return_and_quick_actions_move_are_explicit(self):
-        self.assertIn('logSettingsDiagnostic("group_enter", selectedCategoryIndex)', self.cpp)
-        self.assertIn('logSettingsDiagnostic("group_return", selectedCategoryIndex)', self.cpp)
+    def test_accordion_transitions_and_quick_actions_move_are_explicit(self):
+        self.assertIn("void SettingsActivity::toggleAccordion()", self.cpp)
+        self.assertIn("loadedTabIndex != selectedCategoryIndex || loadedSectionIndex != selectedSectionIndex", self.cpp)
+        self.assertIn("sectionExpanded = false;", self.cpp)
         action_section = self.cpp.split("// Device-only actions are added only", 1)[1]
         controls = action_section.split("case SettingsGroupId::Controls:", 1)[1].split(
             "case SettingsGroupId::Connectivity:", 1)[0]
@@ -77,14 +81,12 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
         self.assertEqual(quick["deviceGroupBefore"], "reading")
         self.assertEqual(quick["deviceGroupAfterPrototype"], "controls")
 
-    def test_interface_font_stays_reachable_and_uses_the_lazy_mini_pack_path(self):
+    def test_interface_font_selection_is_preserved_but_hidden_for_this_release(self):
         row = next(item for item in self.after["records"] if item["stableId"] == "manual:uiFontFamilyName")
-        self.assertTrue(row["deviceReachableAfterPrototype"])
-        self.assertEqual(row["deviceGroupAfterPrototype"], "home_appearance")
-        self.assertIn("buildInterfaceFontSetting(&sdFontSystem.registry())", self.cpp)
-        self.assertIn("selectedGroup == SettingsGroupId::HomeAppearance || selectedGroup == SettingsGroupId::Reading",
-                      self.cpp)
-        self.assertIn("kCustomUiFontsEnabledForCurrentRelease = true", self.font_selection)
+        self.assertEqual(row["backingField"], "uiFontFamilyName")
+        self.assertIn("buildInterfaceFontSetting", self.settings_list)
+        self.assertIn('if (setting.nameId == StrId::STR_INTERFACE_FONT) return false;', self.cpp)
+        self.assertIn("kCustomUiFontsEnabledForCurrentRelease = false", self.font_selection)
 
     def test_all_historical_web_keys_have_one_unchanged_group_contract(self):
         arrays = {}

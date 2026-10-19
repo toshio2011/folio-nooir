@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <Memory.h>
 
 #include "ButtonRemapActivity.h"
 #include "BleInput.h"
@@ -21,6 +22,7 @@
 #include "ClockSyncActivity.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "DeviceInfoActivity.h"
 #include "DictionaryIndexActivity.h"
 #include "FontDownloadActivity.h"
 #include "KOReaderSettingsActivity.h"
@@ -47,6 +49,50 @@
 namespace {
 constexpr int kMaxValuePickerOptions = 32;
 
+struct AccordionSection {
+  SettingsGroupId group;
+  StrId label;
+};
+
+constexpr AccordionSection kDisplaySections[] = {
+    {SettingsGroupId::HomeAppearance, StrId::STR_HOME_APPEARANCE},
+    {SettingsGroupId::Sleep, StrId::STR_SLEEP_SCREEN},
+};
+constexpr AccordionSection kReaderSections[] = {{SettingsGroupId::Reading, StrId::STR_READING}};
+constexpr AccordionSection kControlSections[] = {{SettingsGroupId::Controls, StrId::STR_BUTTONS}};
+constexpr AccordionSection kSystemSections[] = {
+    {SettingsGroupId::Connectivity, StrId::STR_CONNECTIVITY},
+    {SettingsGroupId::Library, StrId::STR_LIBRARY},
+    {SettingsGroupId::System, StrId::STR_CAT_SYSTEM},
+};
+
+const AccordionSection* sectionsForTab(const int tab, int& count) {
+  switch (tab) {
+    case 0:
+      count = sizeof(kDisplaySections) / sizeof(kDisplaySections[0]);
+      return kDisplaySections;
+    case 1:
+      count = sizeof(kReaderSections) / sizeof(kReaderSections[0]);
+      return kReaderSections;
+    case 2:
+      count = sizeof(kControlSections) / sizeof(kControlSections[0]);
+      return kControlSections;
+    case 3:
+      count = sizeof(kSystemSections) / sizeof(kSystemSections[0]);
+      return kSystemSections;
+    default:
+      count = 0;
+      return nullptr;
+  }
+}
+
+SettingsGroupId groupForTabSection(const int tab, const int section) {
+  int count = 0;
+  const auto* sections = sectionsForTab(tab, count);
+  if (!sections || section < 0 || section >= count) return SettingsGroupId::Unknown;
+  return sections[section].group;
+}
+
 void logSettingsDiagnostic(const char* stage, const int detail = -1) {
   LOG_INF("SETDIAG", "stage=%s detail=%d free=%u min=%u largest=%u serial=%d reset=%d", stage, detail,
           static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMinFreeHeap()),
@@ -68,8 +114,87 @@ std::string formatValuePickerOption(const StrId nameId, const int value) {
 }
 }  // namespace
 
+const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DISPLAY, StrId::STR_CAT_READER,
+                                                              StrId::STR_CAT_CONTROLS, StrId::STR_CAT_SYSTEM};
+
+int SettingsActivity::visibleRowCount() const {
+  int sectionCount = 0;
+  sectionsForTab(selectedCategoryIndex, sectionCount);
+  int rows = sectionCount;
+  if (sectionExpanded && loadedSectionIndex == selectedSectionIndex) rows += settingsCount;
+  return rows;
+}
+
+int SettingsActivity::selectedVisibleRow() const {
+  int sectionCount = 0;
+  const auto* sections = sectionsForTab(selectedCategoryIndex, sectionCount);
+  int row = 0;
+  for (int section = 0; section < sectionCount; ++section) {
+    if (section == selectedSectionIndex) {
+      return selectedSettingIndex > 0 ? row + selectedSettingIndex : row;
+    }
+    ++row;
+    if (sectionExpanded && loadedSectionIndex == selectedSectionIndex && section == selectedSectionIndex) {
+      row += settingsCount;
+    }
+  }
+  (void)sections;
+  return std::max(0, row);
+}
+
+void SettingsActivity::selectVisibleRow(const int requestedRow) {
+  int sectionCount = 0;
+  const auto* sections = sectionsForTab(selectedCategoryIndex, sectionCount);
+  const int lastRow = std::max(0, visibleRowCount() - 1);
+  const int targetRow = std::clamp(requestedRow, 0, lastRow);
+  int row = 0;
+  for (int section = 0; section < sectionCount; ++section) {
+    if (targetRow == row) {
+      if (section != selectedSectionIndex) sectionExpanded = false;
+      selectedSectionIndex = section;
+      selectedSettingIndex = 0;
+      return;
+    }
+    ++row;
+    if (sectionExpanded && loadedSectionIndex == selectedSectionIndex && section == selectedSectionIndex) {
+      if (targetRow < row + settingsCount) {
+        selectedSettingIndex = targetRow - row + 1;
+        return;
+      }
+      row += settingsCount;
+    }
+  }
+  if (sections && sectionCount > 0) {
+    selectedSectionIndex = std::clamp(selectedSectionIndex, 0, sectionCount - 1);
+    selectedSettingIndex = 0;
+  }
+}
+
+void SettingsActivity::switchCategory(const int categoryIndex) {
+  selectedCategoryIndex = ((categoryIndex % categoryCount) + categoryCount) % categoryCount;
+  selectedSectionIndex = 0;
+  selectedSettingIndex = 0;
+  sectionExpanded = false;
+  requestUpdate();
+}
+
+void SettingsActivity::toggleAccordion() {
+  if (sectionExpanded && loadedSectionIndex == selectedSectionIndex) {
+    sectionExpanded = false;
+    selectedSettingIndex = 0;
+  } else {
+    sectionExpanded = true;
+    selectedSettingIndex = 0;
+    if (loadedTabIndex != selectedCategoryIndex || loadedSectionIndex != selectedSectionIndex) rebuildSettingsLists();
+  }
+  requestUpdate();
+}
+
 SettingsActivity::SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
     : Activity("Settings", renderer, mappedInput) {
+  tabItems.reserve(categoryCount);
+  for (int index = 0; index < categoryCount; ++index)
+    tabItems.push_back({I18N.get(categoryNames[index]), false});
   logSettingsDiagnostic("entry");
 }
 
@@ -161,18 +286,7 @@ void SettingsActivity::rebuildSettingsLists() {
   currentGroupSettings.clear();
   currentSettings = &currentGroupSettings;
 
-  const auto selectedGroup = static_cast<SettingsGroupId>(selectedCategoryIndex);
-  std::vector<DictionaryEntry> dictionaries;
-  if (!groupListActive &&
-      (selectedGroup == SettingsGroupId::HomeAppearance || selectedGroup == SettingsGroupId::Reading)) {
-    // Discover compatible Mini Pack families only when a font-owning group is
-    // entered. This keeps font I/O out of Settings root and navigation redraws.
-    sdFontSystem.refreshIfDirty();
-  }
-  if (selectedGroup == SettingsGroupId::Reading) {
-    // Dictionary discovery remains scoped to Reading group entry.
-    DictionaryRegistry::discover(dictionaries);
-  }
+  const auto selectedGroup = groupForTabSection(selectedCategoryIndex, selectedSectionIndex);
 
   const bool folioLayoutTheme = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR ||
                                 SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR_LITE;
@@ -202,6 +316,9 @@ void SettingsActivity::rebuildSettingsLists() {
   };
   const auto visibleInSelectedGroup = [&](const SettingInfo& setting) {
     if (setting.category == StrId::STR_NONE_OPT || isSleepComposerSetting(setting)) return false;
+    // The user-facing interface font picker stays hidden in 1.6.6. Its
+    // stored value and the font-loading implementation remain available.
+    if (setting.nameId == StrId::STR_INTERFACE_FONT) return false;
     if ((setting.nameId == StrId::STR_SLEEP_RANDOM_ORDER || setting.action == SettingAction::RandomSleepPool) &&
         SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::RANDOM) {
       return false;
@@ -238,12 +355,7 @@ void SettingsActivity::rebuildSettingsLists() {
   for (const auto& setting : baseSettings) {
     if (supportedOnThisBoard(setting) && visibleInSelectedGroup(setting)) ++rowCount;
   }
-  if (selectedGroup == SettingsGroupId::Reading && !dictionaries.empty()) ++rowCount;
-
-  const bool hasFavoriteSleep =
-      selectedGroup == SettingsGroupId::Sleep &&
-      (!APP_STATE.favoriteSleepImagePath.empty() ||
-       (!APP_STATE.legacySleepImageDisabled && (Storage.exists("/sleep.bmp") || Storage.exists("/sleep.png"))));
+  const bool hasFavoriteSleep = selectedGroup == SettingsGroupId::Sleep && hasFavoriteSleepImage;
   size_t actionCount = 0;
   switch (selectedGroup) {
     case SettingsGroupId::HomeAppearance:
@@ -254,7 +366,7 @@ void SettingsActivity::rebuildSettingsLists() {
                     (SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::FLEXIBLE_COMPOSITE ? 1U : 0U);
       break;
     case SettingsGroupId::Reading:
-      actionCount = 5;
+      actionCount = 6;  // Text, dictionary picker/settings/indexes, fonts, status bar
       break;
     case SettingsGroupId::Controls:
       actionCount = 1U + (BoardConfig::hasTouch() ? 0U : 2U);
@@ -269,7 +381,7 @@ void SettingsActivity::rebuildSettingsLists() {
       actionCount = 1;
       break;
     case SettingsGroupId::System:
-      actionCount = 5 + (BoardConfig::hasTouch() ? 0U : 1U);
+      actionCount = 6 + (BoardConfig::hasTouch() ? 0U : 1U);
       break;
     case SettingsGroupId::Unknown:
       break;
@@ -285,18 +397,12 @@ void SettingsActivity::rebuildSettingsLists() {
       currentGroupSettings.push_back(std::move(effective));
     } else if (base.nameId == StrId::STR_FONT_FAMILY) {
       currentGroupSettings.push_back(buildFontFamilySetting(&sdFontSystem.registry()));
-    } else if (base.nameId == StrId::STR_INTERFACE_FONT) {
-      currentGroupSettings.push_back(buildInterfaceFontSetting(&sdFontSystem.registry()));
     } else if (base.nameId == StrId::STR_DICTIONARY_FONT) {
       currentGroupSettings.push_back(buildDictionaryFontSetting());
     } else {
       currentGroupSettings.push_back(base);
     }
   }
-  if (selectedGroup == SettingsGroupId::Reading && !dictionaries.empty()) {
-    currentGroupSettings.push_back(buildDictionarySetting(dictionaries));
-  }
-
   // Device-only actions are added only to the selected group's one child list.
   // They remain absent from the shared Web descriptor catalog.
   switch (selectedGroup) {
@@ -314,6 +420,9 @@ void SettingsActivity::rebuildSettingsLists() {
       }
       break;
     case SettingsGroupId::Reading:
+      // Selecting this row performs discovery once at the user's request.
+      // Expanding/collapsing the section never scans dictionary folders.
+      currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_DICTIONARY, SettingAction::DictionaryPicker));
       currentGroupSettings.insert(
           currentGroupSettings.begin(), SettingInfo::Action(StrId::STR_TEXT_SETTINGS, SettingAction::TextSettings));
       currentGroupSettings.insert(currentGroupSettings.begin() + 1,
@@ -361,6 +470,7 @@ void SettingsActivity::rebuildSettingsLists() {
       currentGroupSettings.push_back(
           SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
       currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
+      currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_DEVICE_INFO, SettingAction::DeviceInfo));
       break;
     case SettingsGroupId::Unknown:
       break;
@@ -384,7 +494,7 @@ void SettingsActivity::rebuildSettingsLists() {
   switch (selectedGroup) {
     case SettingsGroupId::HomeAppearance:
       reorder(currentGroupSettings, {StrId::STR_UI_THEME, StrId::STR_CAROUSEL_LAYOUT, StrId::STR_RECENT_BOOK_LAYOUT,
-                                     StrId::STR_FINISHED_BOOK_LAYOUT, StrId::STR_INTERFACE_FONT,
+                                     StrId::STR_FINISHED_BOOK_LAYOUT,
                                      StrId::STR_VISUAL_PREVIEW, StrId::STR_UI_SCALE,
                                      StrId::STR_HIDE_BATTERY, StrId::STR_REFRESH_FREQ,
                                      StrId::STR_SUNLIGHT_FADING_FIX});
@@ -432,6 +542,8 @@ void SettingsActivity::rebuildSettingsLists() {
   }
 
   settingsCount = static_cast<int>(currentGroupSettings.size());
+  loadedSectionIndex = selectedSectionIndex;
+  loadedTabIndex = selectedCategoryIndex;
 }
 void SettingsActivity::onEnter() {
   // Settings always uses the global front-button assignments. A Reader can
@@ -449,23 +561,29 @@ void SettingsActivity::onEnter() {
   if (SETTINGS.bluetoothEnabled) armBluetoothReturn("activity_enter");
   logSettingsDiagnostic("onEnter_begin");
   Activity::onEnter();
+  for (int index = 0; index < categoryCount; ++index) tabItems[index].label = I18N.get(categoryNames[index]);
 
-  // Start at the small static group list. Child descriptors are not built
-  // until the user opens a group.
+  // Keep the historic tabs. Settings open with every accordion collapsed and
+  // materialize one section's descriptors only when it is expanded.
   selectedCategoryIndex = 0;
-  selectedGroupListIndex = 0;
+  selectedSectionIndex = 0;
   selectedSettingIndex = 0;
-  groupListActive = true;
+  loadedSectionIndex = -1;
+  loadedTabIndex = -1;
+  sectionExpanded = false;
   currentGroupSettings.clear();
   currentSettings = &currentGroupSettings;
   settingsCount = 0;
+  hasFavoriteSleepImage = !APP_STATE.favoriteSleepImagePath.empty() ||
+                          (!APP_STATE.legacySleepImageDisabled &&
+                           (Storage.exists("/sleep.bmp") || Storage.exists("/sleep.png")));
   preserveQuickResumeTimeoutOn =
       SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT;
   quickResumeTimeoutAutoEnabled = false;
   syncQuickResumeTimeoutForSleepScreen(/*sleepScreenChanged=*/true, /*quickResumeTimeoutChanged=*/false);
 
-  logSettingsDiagnostic("group_list_ready", categoryCount);
-  LOG_INF("SETDIAG", "owner=lazy_group_list groups=%u selected_children=0 capacity=%u bytes=%u",
+  logSettingsDiagnostic("tabs_ready", categoryCount);
+  LOG_INF("SETDIAG", "owner=accordion_tabs tabs=%u selected_children=0 capacity=%u bytes=%u",
           static_cast<unsigned>(categoryCount),
           static_cast<unsigned>(currentGroupSettings.capacity()),
           static_cast<unsigned>(currentGroupSettings.capacity() * sizeof(SettingInfo)));
@@ -479,6 +597,16 @@ void SettingsActivity::onExit() {
   mappedInput.setReaderMappingMode(false);
   Activity::onExit();
 
+  // The Settings activity is discarded on exit; the next visit starts clean.
+  currentGroupSettings.clear();
+  currentGroupSettings.shrink_to_fit();
+  currentSettings = &currentGroupSettings;
+  settingsCount = 0;
+  selectedCategoryIndex = selectedSectionIndex = selectedSettingIndex = 0;
+  loadedSectionIndex = -1;
+  loadedTabIndex = -1;
+  sectionExpanded = false;
+
   UITheme::getInstance().reload();  // Re-apply theme in case it was changed
   logSettingsDiagnostic("onExit_end");
 }
@@ -489,211 +617,137 @@ void SettingsActivity::loop() {
     ignoreEntryInputUntilNeutral = false;
     logSettingsDiagnostic("entry_input_gate_cleared");
   }
-
   if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
+
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const int listTop = metrics.topPadding + metrics.headerHeight +
-                      (groupListActive ? 0 : metrics.tabBarHeight) + metrics.verticalSpacing;
+  const int tabTop = metrics.topPadding + metrics.headerHeight;
+  const int listTop = tabTop + metrics.tabBarHeight + metrics.verticalSpacing;
   const int listHeight = renderer.getScreenHeight() -
-                         (metrics.topPadding + metrics.headerHeight + (groupListActive ? 0 : metrics.tabBarHeight) +
+                         (metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight +
                           metrics.buttonHintsHeight + metrics.verticalSpacing * 2);
+  const int pageItems = GUI.getListPageItems(listHeight, false);
+  const int rowStep = GUI.getListRowStep(false);
   int tx = 0;
   int ty = 0;
 
-  const auto enterSelectedGroup = [this] {
-    selectedCategoryIndex = selectedGroupListIndex;
-    groupListActive = false;
-    selectedSettingIndex = 1;
-    rebuildSettingsLists();
-    if (settingsCount == 0) selectedSettingIndex = 0;
-    logSettingsDiagnostic("group_enter", selectedCategoryIndex);
-    LOG_INF("SETDIAG", "stage=group_enter group=%s children=%u capacity=%u bytes=%u",
-            settingsGroupKey(static_cast<SettingsGroupId>(selectedCategoryIndex)),
-            static_cast<unsigned>(currentGroupSettings.size()),
-            static_cast<unsigned>(currentGroupSettings.capacity()),
-            static_cast<unsigned>(currentGroupSettings.capacity() * sizeof(SettingInfo)));
-    requestUpdate();
-  };
-  const auto returnToGroupList = [this] {
-    groupListActive = true;
-    selectedGroupListIndex = selectedCategoryIndex;
-    selectedSettingIndex = 0;
-    currentGroupSettings.clear();
-    currentSettings = &currentGroupSettings;
-    settingsCount = 0;
-    logSettingsDiagnostic("group_return", selectedCategoryIndex);
-    LOG_INF("SETDIAG", "stage=group_return group=%s children=0 retained_capacity=%u bytes=%u",
-            settingsGroupKey(static_cast<SettingsGroupId>(selectedCategoryIndex)),
-            static_cast<unsigned>(currentGroupSettings.capacity()),
-            static_cast<unsigned>(currentGroupSettings.capacity() * sizeof(SettingInfo)));
-    requestUpdate();
-  };
-
-  const int groupPageItems = GUI.getListPageItems(listHeight, false);
-  const auto groupIndexFromPoint = [&](const int y, int& groupIndex) {
-    if (y < listTop || y >= listTop + listHeight) return false;
-    const int rowStep = GUI.getListRowStep(false);
-    if (rowStep <= 0) return false;
-    const int pageStart = selectedGroupListIndex / groupPageItems * groupPageItems;
-    const int row = (y - listTop) / rowStep;
-    const int touched = pageStart + row;
-    if (row < 0 || row >= groupPageItems || touched < 0 || touched >= categoryCount) return false;
-    groupIndex = touched;
-    return true;
-  };
-  auto settingIndexFromPoint = [&](const int x, const int y, int& settingIndex) {
-    (void)x;
-    if (settingsCount <= 0 || y < listTop || y >= listTop + listHeight) return false;
-    const int rowStep = GUI.getListRowStep(false);
-    if (rowStep <= 0) return false;
-    const int pageItems = GUI.getListPageItems(listHeight, false);
-    const int selectedRow = std::max(0, selectedSettingIndex - 1);
-    const int pageStart = selectedRow / pageItems * pageItems;
-    const int row = (y - listTop) / rowStep;
-    const int touched = pageStart + row;
-    if (row < 0 || row >= pageItems || touched < 0 || touched >= settingsCount) return false;
-    settingIndex = touched + 1;
-    return true;
-  };
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    if (groupListActive) {
-      logSettingsDiagnostic("return_home_requested");
-      SETTINGS.saveToFile();
-      onGoHome();
-    } else {
-      returnToGroupList();
+  const auto tabFromPoint = [&](int x, int y, int& tab) {
+    for (int index = 0; index < categoryCount; ++index) {
+      tabItems[index].label = I18N.get(categoryNames[index]);
+      tabItems[index].selected = selectedCategoryIndex == index;
     }
-    return;
-  }
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-    if (groupListActive) {
-      enterSelectedGroup();
-    } else if (selectedSettingIndex > 0) {
+    return GUI.tabIndexFromPoint(renderer, Rect{0, tabTop, renderer.getScreenWidth(), metrics.tabBarHeight}, tabItems,
+                                 x, y, tab);
+  };
+  const auto rowFromPoint = [&](int y, int& rowIndex) {
+    if (y < listTop || y >= listTop + listHeight || rowStep <= 0 || pageItems <= 0) return false;
+    const int pageStart = selectedVisibleRow() / pageItems * pageItems;
+    const int row = (y - listTop) / rowStep;
+    const int touched = pageStart + row;
+    if (row < 0 || row >= pageItems || touched >= visibleRowCount()) return false;
+    rowIndex = touched;
+    return true;
+  };
+  const auto activate = [this] {
+    if (selectedSettingIndex == 0) toggleAccordion();
+    else {
       toggleCurrentSetting();
       requestUpdate();
     }
+  };
+
+  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    if (selectedSettingIndex > 0 || sectionExpanded) {
+      sectionExpanded = false;
+      selectedSettingIndex = 0;
+      requestUpdate();
+    } else {
+      logSettingsDiagnostic("return_home_requested");
+      SETTINGS.saveToFile();
+      onGoHome();
+    }
     return;
   }
-
+  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+    activate();
+    return;
+  }
   if (mappedInput.wasScreenTouchDown(tx, ty)) {
-    if (groupListActive) {
-      int touchedGroup = -1;
-      if (groupIndexFromPoint(ty, touchedGroup)) {
-        if (selectedGroupListIndex != touchedGroup) {
-          selectedGroupListIndex = touchedGroup;
-          requestUpdate();
-        }
-        return;
-      }
-    } else {
-      int touchedSetting = -1;
-      if (settingIndexFromPoint(tx, ty, touchedSetting)) {
-        if (selectedSettingIndex != touchedSetting) {
-          selectedSettingIndex = touchedSetting;
-          requestUpdate();
-        }
-        return;
-      }
+    int index = -1;
+    if (tabFromPoint(tx, ty, index)) {
+      if (selectedCategoryIndex != index) switchCategory(index);
+      return;
     }
-  }
-
-  if (mappedInput.wasScreenTapped(tx, ty)) {
-    if (groupListActive) {
-      int tappedGroup = -1;
-      if (groupIndexFromPoint(ty, tappedGroup)) {
-        selectedGroupListIndex = tappedGroup;
-        enterSelectedGroup();
-        return;
-      }
-    } else {
-      int tappedSetting = -1;
-      if (settingIndexFromPoint(tx, ty, tappedSetting)) {
-        selectedSettingIndex = tappedSetting;
-        toggleCurrentSetting();
+    if (rowFromPoint(ty, index)) {
+      if (index != selectedVisibleRow()) {
+        selectVisibleRow(index);
         requestUpdate();
-        return;
       }
+      return;
+    }
+  }
+  if (mappedInput.wasScreenTapped(tx, ty)) {
+    int index = -1;
+    if (tabFromPoint(tx, ty, index)) {
+      if (selectedCategoryIndex != index) switchCategory(index);
+      return;
+    }
+    if (rowFromPoint(ty, index)) {
+      selectVisibleRow(index);
+      activate();
+      return;
     }
   }
 
-  // Handle navigation
-  const int settingsPageItems = groupPageItems;
+  const int count = visibleRowCount();
+  if (count <= 0) return;
+  const auto previousRow = [this, count] {
+    selectVisibleRow(ButtonNavigator::previousIndex(selectedVisibleRow(), count));
+    requestUpdate();
+  };
+  const auto nextRow = [this, count] {
+    selectVisibleRow(ButtonNavigator::nextIndex(selectedVisibleRow(), count));
+    requestUpdate();
+  };
+  const auto previousTab = [this] { switchCategory(selectedCategoryIndex - 1); };
+  const auto nextTab = [this] { switchCategory(selectedCategoryIndex + 1); };
   const auto swipe = mappedInput.wasSwipe();
   if (swipe == MappedInputManager::SwipeDir::Up) {
-    if (groupListActive) {
-      selectedGroupListIndex = ButtonNavigator::nextIndex(selectedGroupListIndex, categoryCount);
-    } else {
-      selectedSettingIndex = ButtonNavigator::nextPageIndex(selectedSettingIndex, settingsCount + 1,
-                                                            settingsPageItems);
-    }
+    selectVisibleRow(ButtonNavigator::nextPageIndex(selectedVisibleRow(), count, pageItems));
     requestUpdate();
     return;
   }
   if (swipe == MappedInputManager::SwipeDir::Down) {
-    if (groupListActive) {
-      selectedGroupListIndex = ButtonNavigator::previousIndex(selectedGroupListIndex, categoryCount);
-    } else {
-      selectedSettingIndex = ButtonNavigator::previousPageIndex(selectedSettingIndex, settingsCount + 1,
-                                                                settingsPageItems);
-    }
+    selectVisibleRow(ButtonNavigator::previousPageIndex(selectedVisibleRow(), count, pageItems));
     requestUpdate();
     return;
   }
 
-  const auto moveToPreviousRow = [this] {
-    selectedSettingIndex = ButtonNavigator::previousIndex(selectedSettingIndex, settingsCount + 1);
-    requestUpdate();
-  };
-  const auto moveToNextRow = [this] {
-    selectedSettingIndex = ButtonNavigator::nextIndex(selectedSettingIndex, settingsCount + 1);
-    requestUpdate();
-  };
-  const auto moveToPreviousGroup = [this] {
-    selectedGroupListIndex = ButtonNavigator::previousIndex(selectedGroupListIndex, categoryCount);
-    requestUpdate();
-  };
-  const auto moveToNextGroup = [this] {
-    selectedGroupListIndex = ButtonNavigator::nextIndex(selectedGroupListIndex, categoryCount);
-    requestUpdate();
-  };
+  // Historic Settings mapping: front buttons move through rows; the side
+  // rocker switches the original four tabs.
+  buttonNavigator.onRelease({MappedInputManager::Button::Left}, previousRow);
+  buttonNavigator.onRelease({MappedInputManager::Button::Right}, nextRow);
+  buttonNavigator.onRelease({MappedInputManager::Button::Up}, previousTab);
+  buttonNavigator.onRelease({MappedInputManager::Button::Down}, nextTab);
+  buttonNavigator.onContinuous({MappedInputManager::Button::Left}, previousRow);
+  buttonNavigator.onContinuous({MappedInputManager::Button::Right}, nextRow);
+  buttonNavigator.onContinuous({MappedInputManager::Button::Up}, previousTab);
+  buttonNavigator.onContinuous({MappedInputManager::Button::Down}, nextTab);
+}
 
-  if (groupListActive) {
-    buttonNavigator.onRelease({MappedInputManager::Button::Left}, moveToPreviousGroup);
-    buttonNavigator.onRelease({MappedInputManager::Button::Right}, moveToNextGroup);
-    buttonNavigator.onRelease({MappedInputManager::Button::Up}, moveToPreviousGroup);
-    buttonNavigator.onRelease({MappedInputManager::Button::Down}, moveToNextGroup);
-    buttonNavigator.onContinuous({MappedInputManager::Button::Left}, moveToPreviousGroup);
-    buttonNavigator.onContinuous({MappedInputManager::Button::Right}, moveToNextGroup);
-    buttonNavigator.onContinuous({MappedInputManager::Button::Up}, moveToPreviousGroup);
-    buttonNavigator.onContinuous({MappedInputManager::Button::Down}, moveToNextGroup);
-  } else {
-    buttonNavigator.onRelease({MappedInputManager::Button::Left}, moveToPreviousRow);
-    buttonNavigator.onRelease({MappedInputManager::Button::Right}, moveToNextRow);
-    buttonNavigator.onRelease({MappedInputManager::Button::Up}, [this, settingsPageItems] {
-      selectedSettingIndex = ButtonNavigator::previousPageIndex(selectedSettingIndex, settingsCount + 1,
-                                                                 settingsPageItems);
-      requestUpdate();
-    });
-    buttonNavigator.onRelease({MappedInputManager::Button::Down}, [this, settingsPageItems] {
-      selectedSettingIndex = ButtonNavigator::nextPageIndex(selectedSettingIndex, settingsCount + 1,
-                                                            settingsPageItems);
-      requestUpdate();
-    });
-    buttonNavigator.onContinuous({MappedInputManager::Button::Left}, moveToPreviousRow);
-    buttonNavigator.onContinuous({MappedInputManager::Button::Right}, moveToNextRow);
-    buttonNavigator.onContinuous({MappedInputManager::Button::Up}, [this, settingsPageItems] {
-      selectedSettingIndex = ButtonNavigator::previousPageIndex(selectedSettingIndex, settingsCount + 1,
-                                                                 settingsPageItems);
-      requestUpdate();
-    });
-    buttonNavigator.onContinuous({MappedInputManager::Button::Down}, [this, settingsPageItems] {
-      selectedSettingIndex = ButtonNavigator::nextPageIndex(selectedSettingIndex, settingsCount + 1,
-                                                            settingsPageItems);
-      requestUpdate();
-    });
-  }
+void SettingsActivity::openDictionaryPicker() {
+  std::vector<DictionaryEntry> dictionaries;
+  DictionaryRegistry::discover(dictionaries);  // Explicit user action, never an accordion transition.
+  if (dictionaries.empty()) return;
+
+  auto setting = buildDictionarySetting(dictionaries);
+  const uint8_t selected = setting.valueGetter ? setting.valueGetter() : 0;
+  const auto setter = setting.valueSetter;
+  optionPopup.show(setting.nameId, setting.enumStringValues, selected, [this, setter](int index) {
+    if (setter) setter(static_cast<uint8_t>(index));
+    SETTINGS.saveToFile();
+    requestUpdate();
+  });
+  requestUpdate();
 }
 
 void SettingsActivity::toggleCurrentSetting() {
@@ -829,6 +883,19 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::OPDSBrowser:
         startActivityForResult(std::make_unique<OpdsServerListActivity>(renderer, mappedInput), resultHandler);
         break;
+      case SettingAction::DictionaryPicker:
+        openDictionaryPicker();
+        break;
+      case SettingAction::DeviceInfo:
+      {
+        auto activity = makeUniqueNoThrow<DeviceInfoActivity>(renderer, mappedInput);
+        if (!activity) return;
+        startActivityForResult(std::move(activity), [this](const ActivityResult&) {
+          logSettingsDiagnostic("return_from_device_info");
+          requestUpdate();
+        });
+        break;
+      }
       case SettingAction::Network:
         startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, false, true, false),
                                resultHandler);
@@ -873,7 +940,9 @@ void SettingsActivity::toggleCurrentSetting() {
         }
         APP_STATE.legacySleepImageDisabled = true;
         APP_STATE.saveToFile();
+        hasFavoriteSleepImage = false;
         rebuildSettingsLists();
+        selectedSettingIndex = std::min(selectedSettingIndex, settingsCount);
         requestUpdate();
         break;
       case SettingAction::ClearCache:
@@ -1108,52 +1177,73 @@ void SettingsActivity::render(RenderLock&&) {
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_SETTINGS_TITLE),
                  CROSSPOINT_VERSION);
 
-  const int groupListTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-  const int groupListHeight = pageHeight - (metrics.topPadding + metrics.headerHeight +
-                                             metrics.buttonHintsHeight + metrics.verticalSpacing * 2);
-  if (groupListActive) {
-    // This root contains only seven static labels. Children are built on
-    // demand after confirmation, keeping the initial screen allocation-free.
-    GUI.drawList(renderer, Rect{0, groupListTop, pageWidth, groupListHeight}, categoryCount,
-                 selectedGroupListIndex,
-                 [](const int index) {
-                   return std::string(I18N.get(
-                       settingsGroupLabelId(static_cast<SettingsGroupId>(index))));
-                 }, nullptr, nullptr, nullptr, false, nullptr, nullptr,
-                 [](const int) { return true; });
-  } else {
-    GUI.drawSubHeader(renderer,
-                      Rect{0, metrics.topPadding + metrics.headerHeight, pageWidth, metrics.tabBarHeight},
-                      I18N.get(settingsGroupLabelId(static_cast<SettingsGroupId>(selectedCategoryIndex))));
-    const auto& settings = *currentSettings;
-    GUI.drawList(
-        renderer,
-        Rect{0, metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight + metrics.verticalSpacing, pageWidth,
-             pageHeight - (metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight +
-                           metrics.buttonHintsHeight + metrics.verticalSpacing * 2)},
-        settingsCount, selectedSettingIndex - 1,
-        [&settings](int index) { return std::string(I18N.get(settings[index].nameId)); }, nullptr, nullptr,
-        [&settings](int i) {
-        const auto& setting = settings[i];
-        std::string valueText = "";
-        if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
-          const bool value = SETTINGS.*(setting.valuePtr);
-          valueText = value ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+  for (int index = 0; index < categoryCount; ++index) {
+    tabItems[index].label = I18N.get(categoryNames[index]);
+    tabItems[index].selected = selectedCategoryIndex == index;
+  }
+  GUI.drawTabBar(renderer, Rect{0, metrics.topPadding + metrics.headerHeight, pageWidth, metrics.tabBarHeight},
+                 tabItems, false);
+
+  const int listTop = metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight + metrics.verticalSpacing;
+  const int listHeight = pageHeight - (metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight +
+                                       metrics.buttonHintsHeight + metrics.verticalSpacing * 2);
+  int sectionCount = 0;
+  const auto* sections = sectionsForTab(selectedCategoryIndex, sectionCount);
+  const auto rowParts = [this, sectionCount](const int row, bool& isHeader, int& sectionIndex, int& settingIndex) {
+    isHeader = true;
+    sectionIndex = 0;
+    settingIndex = -1;
+    if (sectionExpanded) {
+      if (row <= selectedSectionIndex) {
+        sectionIndex = row;
+      } else if (row <= selectedSectionIndex + settingsCount) {
+        isHeader = false;
+        settingIndex = row - selectedSectionIndex - 1;
+      } else {
+        sectionIndex = row - settingsCount;
+      }
+    } else {
+      sectionIndex = row;
+    }
+    sectionIndex = std::clamp(sectionIndex, 0, std::max(0, sectionCount - 1));
+  };
+  const auto& settings = *currentSettings;
+  GUI.drawList(
+      renderer, Rect{0, listTop, pageWidth, listHeight}, visibleRowCount(), selectedVisibleRow(),
+      [this, sections, rowParts](const int row) {
+        bool isHeader = false;
+        int section = 0;
+        int setting = -1;
+        rowParts(row, isHeader, section, setting);
+        if (isHeader) return std::string(I18N.get(sections[section].label));
+        return std::string("  ") + I18N.get(currentSettings->at(static_cast<size_t>(setting)).nameId);
+      },
+      nullptr, nullptr,
+      [this, &settings, rowParts](const int row) {
+        bool isHeader = false;
+        int section = 0;
+        int settingIndex = -1;
+        rowParts(row, isHeader, section, settingIndex);
+        if (isHeader) return std::string(sectionExpanded && section == selectedSectionIndex ? "-" : "+");
+        const auto& setting = settings[static_cast<size_t>(settingIndex)];
+        std::string valueText;
+        if (setting.action == SettingAction::DictionaryPicker) {
+          valueText = SETTINGS.dictionaryName[0] ? SETTINGS.dictionaryName : tr(STR_NONE_OPT);
+        } else if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
+          valueText = SETTINGS.*(setting.valuePtr) ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
         } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr &&
                    !(setting.valueGetter && setting.valueSetter)) {
           const uint8_t value = SETTINGS.*(setting.valuePtr);
-          if (!setting.enumStringValues.empty() && value < setting.enumStringValues.size()) {
+          if (!setting.enumStringValues.empty() && value < setting.enumStringValues.size())
             valueText = setting.enumStringValues[value];
-          } else if (value < setting.enumValues.size()) {
+          else if (value < setting.enumValues.size())
             valueText = I18N.get(setting.enumValues[value]);
-          }
         } else if (setting.type == SettingType::ENUM && setting.valueGetter) {
           const uint8_t value = setting.valueGetter();
-          if (!setting.enumStringValues.empty() && value < setting.enumStringValues.size()) {
+          if (!setting.enumStringValues.empty() && value < setting.enumStringValues.size())
             valueText = setting.enumStringValues[value];
-          } else if (value < setting.enumValues.size()) {
+          else if (value < setting.enumValues.size())
             valueText = I18N.get(setting.enumValues[value]);
-          }
         } else if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
           if (setting.nameId == StrId::STR_TIME_TO_SLEEP) {
             char valueBuffer[32];
@@ -1169,44 +1259,49 @@ void SettingsActivity::render(RenderLock&&) {
             if (setting.nameId == StrId::STR_UI_SCALE) valueText += "%";
           }
         }
-          return valueText;
-        },
-        true, nullptr,
-        [&settings](const int index) -> int {
-          const auto& setting = settings[index];
-          if (setting.type != SettingType::TOGGLE || setting.valuePtr == nullptr) return -1;
-          return SETTINGS.*(setting.valuePtr) ? 1 : 0;
-        },
-        [&settings](const int index) {
-          const auto& setting = settings[index];
-          if (setting.type == SettingType::ACTION) {
-            return setting.action != SettingAction::ClearFavoriteSleepImage;
-          }
-          if (setting.type == SettingType::VALUE) return setting.nameId == StrId::STR_TIME_TO_SLEEP;
-          if (setting.type != SettingType::ENUM) return false;
-          const size_t optionCount = setting.enumStringValues.empty() ? setting.enumValues.size()
-                                                                        : setting.enumStringValues.size();
-          return optionCount > 2;
-        });
-  }
+        return valueText;
+      },
+      true, nullptr,
+      [&settings, rowParts](const int row) -> int {
+        bool isHeader = false;
+        int section = 0;
+        int settingIndex = -1;
+        rowParts(row, isHeader, section, settingIndex);
+        if (isHeader) return -1;
+        const auto& setting = settings[static_cast<size_t>(settingIndex)];
+        if (setting.type != SettingType::TOGGLE || setting.valuePtr == nullptr) return -1;
+        return SETTINGS.*(setting.valuePtr) ? 1 : 0;
+      },
+      [&settings, rowParts](const int row) {
+        bool isHeader = false;
+        int section = 0;
+        int settingIndex = -1;
+        rowParts(row, isHeader, section, settingIndex);
+        if (isHeader) return false;
+        const auto& setting = settings[static_cast<size_t>(settingIndex)];
+        if (setting.type == SettingType::ACTION)
+          return setting.action != SettingAction::ClearFavoriteSleepImage;
+        if (setting.type == SettingType::VALUE) return setting.nameId == StrId::STR_TIME_TO_SLEEP;
+        if (setting.type != SettingType::ENUM) return false;
+        const size_t optionCount = setting.enumStringValues.empty() ? setting.enumValues.size()
+                                                                     : setting.enumStringValues.size();
+        return optionCount > 2;
+      });
 
-  // Draw help text
-  const StrId selectedSettingId = !groupListActive && selectedSettingIndex > 0 && selectedSettingIndex <= settingsCount
-                                      ? (*currentSettings)[selectedSettingIndex - 1].nameId
+  const bool selectedHeader = selectedSettingIndex == 0;
+  const bool hasSelectedSetting = !selectedHeader && selectedSettingIndex > 0 && selectedSettingIndex <= settingsCount;
+  const StrId selectedSettingId = hasSelectedSetting
+                                      ? settings[static_cast<size_t>(selectedSettingIndex - 1)].nameId
                                       : StrId::STR_NONE_OPT;
-  const bool opensSleepPicker = selectedSettingId == StrId::STR_SLEEP_SCREEN ||
-                                selectedSettingId == StrId::STR_SLEEP_RANDOM_POOL ||
-                                selectedSettingId == StrId::STR_PREVIEW_SLEEP_SCREEN;
-  const auto confirmLabel = groupListActive
+  const bool opensPicker = selectedSettingId == StrId::STR_SLEEP_SCREEN ||
+                           selectedSettingId == StrId::STR_SLEEP_RANDOM_POOL ||
+                           selectedSettingId == StrId::STR_PREVIEW_SLEEP_SCREEN ||
+                           selectedSettingId == StrId::STR_TIME_TO_SLEEP;
+  const auto confirmLabel = selectedHeader || opensPicker || !hasSelectedSetting ||
+                                    settings[static_cast<size_t>(selectedSettingIndex - 1)].type == SettingType::ACTION ||
+                                    settings[static_cast<size_t>(selectedSettingIndex - 1)].type == SettingType::VALUE
                                 ? tr(STR_SELECT)
-                                : (opensSleepPicker || (selectedSettingIndex > 0 &&
-                                                        (*currentSettings)[selectedSettingIndex - 1].nameId ==
-                                                            StrId::STR_TIME_TO_SLEEP)
-                                       ? tr(STR_SELECT)
-                                       : (selectedSettingIndex > 0 &&
-                                                  (*currentSettings)[selectedSettingIndex - 1].type == SettingType::VALUE
-                                              ? tr(STR_SELECT)
-                                              : tr(STR_TOGGLE)));
+                                : tr(STR_TOGGLE);
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
