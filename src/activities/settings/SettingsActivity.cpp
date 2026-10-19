@@ -437,7 +437,7 @@ void SettingsActivity::rebuildSettingsLists() {
           SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
       break;
     case SettingsGroupId::Controls:
-      currentGroupSettings.push_back(SettingInfo::Action(STR_QUICK_ACTIONS, SettingAction::QuickActions));
+      currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_QUICK_ACTIONS, SettingAction::QuickActions));
       if (!BoardConfig::hasTouch()) {
         currentGroupSettings.insert(
             currentGroupSettings.begin(), SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS,
