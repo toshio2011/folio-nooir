@@ -82,6 +82,25 @@ WEB_GROUP_COUNTS = {
 }
 WEB_ROUTE_COMMIT = "908453f39608169b1dad079e31a94db28415001b"
 WEB_INTEGRATION_COMMIT = "7296bbc85467675fdc8e1dffd4c73f4022e96518"
+RELEASE_BUILD = {
+    "status": "passed",
+    "environment": "gh_release",
+    "branch": "codex/folio-nooir-1.6.6",
+    "sourceCommit": "f90b5a2a7feb4e5dff5a11c06acbb3c6fada7e8a",
+    "artifactPath": "artifacts/firmware.bin",
+    "artifactBytes": 5954272,
+    "artifactSha256": "2BB52FCACE5CBCDFDB484DC16F41FDC2C67DC6E2438BF5227D4793433957DF86",
+    "platformioPlatform": "espressif32 55.3.37",
+    "arduinoCore": "3.3.7",
+    "espIdf": "5.5.2",
+    "riscvToolchain": "14.2.0+20251107",
+    "esptool": "5.1.2",
+    "ramUsedBytes": 62364,
+    "ramTotalBytes": 327680,
+    "flashUsedBytes": 5940127,
+    "flashTotalBytes": 6553600,
+    "physicalX4": "pending; not validated on device",
+}
 
 
 def markdown_cell(value: object) -> str:
@@ -577,7 +596,7 @@ def main() -> None:
                     "then failed to identify supported C++ features; no current full-suite result."
                 ),
             },
-            "build": "Pending final consolidated gh_release build for the current 1.6.6 RC changes.",
+            "build": "Passed consolidated gh_release build; exact artifact and toolchain metadata are in releaseBuild.",
             "apiContract": {
                 "groups": "GET /api/settings/groups returns only the seven static descriptors",
                 "read": "GET /api/settings requires a valid group; offset 0..32 and limit 1..6; returns only the selected group page and X-Settings-Total",
@@ -618,10 +637,11 @@ def main() -> None:
         "integrationBlockers": [],
         "releaseValidation": {
             "sourceParity": "passed; accidental missing settings=0; accidental duplicates=0",
-            "firmwareBuild": "pending final consolidated gh_release build",
+            "firmwareBuild": "passed; gh_release built from source commit f90b5a2a7feb4e5dff5a11c06acbb3c6fada7e8a",
             "physicalX4": "pending; not validated on device",
             "releaseReady": False,
         },
+        "releaseBuild": RELEASE_BUILD,
         "physicalX4Validation": (
             "Pending; verify first Home responsiveness, Settings navigation, Device Info, Web re-entry, sleep/wake, "
             "Reader Bluetooth, and input mapping on hardware before RC acceptance."
