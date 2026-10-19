@@ -335,9 +335,14 @@ FolioLibraryActivity::RetrieveCacheStatus FolioLibraryActivity::inspectRetrieveC
     status.thumbnailPath = xtc.getThumbBmpPath();
     status.thumbnailValid =
         isValidBookThumbnail(UITheme::getCoverThumbPath(status.thumbnailPath, FolioNooirTheme::COVER_HEIGHT));
-    // XTC has no separate lightweight metadata file. Its valid shelf
-    // thumbnail remains the existing cache-validity signal.
-    status.metadataValid = status.thumbnailValid;
+    // Reading the XTC header + small Nooir metadata tail does not build
+    // the image cache. Keep the cover generation as a separate phase.
+    if (xtc.load()) {
+      status.metadataValid = true;
+      status.title = xtc.getTitle();
+      status.author = xtc.getAuthor();
+      status.synopsis = xtc.getSynopsis();
+    }
     return status;
   }
   if (FsHelpers::hasCbzExtension(path)) {
@@ -387,6 +392,11 @@ void FolioLibraryActivity::refreshSelectedPreviewFromCache(const std::string& pa
       }
     }
   } else if (FsHelpers::hasXtcExtension(path)) {
+    if (status && status->metadataValid) {
+      if (!status->title.empty()) preview.title = status->title;
+      preview.author = status->author;
+      if (!status->synopsis.empty()) preview.synopsis = status->synopsis;
+    }
     std::string thumb;
     if (status) {
       thumb = status->thumbnailPath;
@@ -658,9 +668,16 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
         processedCacheValid = true;
       }
     } else if (FsHelpers::hasXtcExtension(path)) {
-      // XTC has no separate metadata.bin. Its thumbnail phase opens the XTC
-      // once when a thumbnail is missing, so metadata remains filename-first.
-      metadataReady = true;
+      Xtc xtc(path, "/.crosspoint");
+      metadataReady = xtc.load();
+      if (metadataReady) {
+        processedCache.metadataValid = true;
+        processedCache.title = xtc.getTitle();
+        processedCache.author = xtc.getAuthor();
+        processedCache.synopsis = xtc.getSynopsis();
+        processedCache.thumbnailPath = xtc.getThumbBmpPath();
+        processedCacheValid = true;
+      }
     } else if (FsHelpers::hasCbzExtension(path)) {
       Cbz cbz(path, "/.crosspoint");
       metadataReady = cbz.loadMetadataOnly();
@@ -1275,6 +1292,7 @@ void FolioLibraryActivity::loadSelectedMetadata() {
     if (xtc.load()) {
       preview.title = xtc.getTitle();
       preview.author = xtc.getAuthor();
+      preview.synopsis = xtc.getSynopsis();
       preview.coverBmpPath = xtc.getThumbBmpPath();
     }
   } else if (FsHelpers::hasCbzExtension(path)) {
