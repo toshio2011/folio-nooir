@@ -57,6 +57,7 @@ class Xtc {
   // Metadata
   std::string getTitle() const;
   std::string getAuthor() const;
+  std::string getSynopsis() const;
   bool hasChapters() const;
   const std::vector<xtc::ChapterInfo>& getChapters();
 
