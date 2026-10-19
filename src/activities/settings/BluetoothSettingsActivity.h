@@ -90,6 +90,7 @@ class BluetoothSettingsActivity final : public Activity {
   bool pairedActionTaken = false;
 
   void rebuildMenuRows();
+  void finishCancelled();
   void handleMenuConfirm();
   void beginPreparation(bool controlledRetry);
   void startScanView();

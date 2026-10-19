@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "inventoryName": "STR_QUICK_ACTIONS",
+  "inventoryName": "BEFORE settings organization (device source at ce86; Web exposure reconstructed at d4a97653)",
   "source": {
     "integrationSnapshot": "ce86b9f8c85d774af297ef11e6f98c4bee9e0729",
-    "branchAtInventory": "codex/folio-nooir-1.6.6-settings-org-experiment",
-    "worktreeHead": "0d1c87933bd5fc5421ba33989991e141e0cd4adc",
+    "branchAtInventory": "codex/folio-nooir-1.6.6",
+    "worktreeHead": "6e3d96bcac86de122251a1448322bcf489c4bf29",
     "deviceSettingsSource": "src/SettingsList.h + CrossPointSettings.h + SettingsActivity.cpp at ce86b9f8",
     "priorWebSettingsSourceRevision": "d4a97653",
     "priorWebRouteExposureVerified": true,

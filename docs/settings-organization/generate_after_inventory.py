@@ -12,6 +12,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "docs" / "settings-organization"
 BEFORE_PATH = OUT / "BEFORE_inventory.json"
+BASELINE_165_PATH = OUT / "BASELINE_1.6.5_DEVICE_inventory.json"
+
+DEVICE_PATH_BY_GROUP = {
+    "home_appearance": "Display tab > Home & Appearance section",
+    "sleep": "Display tab > Sleep section",
+    "reading": "Reader tab > Reading section",
+    "controls": "Controls tab > Buttons section",
+    "connectivity": "System tab > Connectivity section",
+    "library": "System tab > Library section",
+    "system": "System tab > System section",
+}
 
 
 def git(*args: str) -> str:
@@ -27,7 +38,9 @@ def classify_after(record: dict) -> tuple[bool, str]:
     sid = record["stableId"]
     before = record.get("deviceExposureBefore") or ""
     if sid == "manual:uiFontFamilyName":
-        return True, "Home & Appearance group > Interface Font; Default plus installed compatible Mini Pack families"
+        return False, (
+            "Intentionally hidden in 1.6.6; saved family remains stored, and the built-in UI font is used"
+        )
     if sid in {"sleepBackgroundElement", "sleepOverlayAElement", "sleepOverlayBElement",
                "sleepScreen.option.flexible_composite", "web:clippings_notes"}:
         return False, record.get("hiddenReason") or "intentionally deferred"
@@ -38,23 +51,23 @@ def classify_after(record: dict) -> tuple[bool, str]:
         )
     if sid in {"recentBookLayout", "finishedBookLayout"}:
         group = record.get("proposedGroupId")
-        return True, f"group root > {group}; available in FOLIO_NOOIR and FOLIO_NOOIR_LITE"
+        return True, f"{DEVICE_PATH_BY_GROUP.get(group, group)}; available in FOLIO_NOOIR and FOLIO_NOOIR_LITE"
     if before.startswith("not exposed") or before.startswith("not selectable"):
         return False, before
     if record.get("sourceScope") == "base_list" and record.get("categoryId") == "STR_CAT_READER" and record.get("inTextSettings"):
-        return True, "Reading group; existing Text Settings child screen"
+        return True, "Reader tab > Reading section; existing Text Settings child screen"
     if "Visual Preview sub-screen" in before:
-        return True, "Home & Appearance group; existing Visual Preview child screen"
+        return True, "Display tab > Home & Appearance section; existing Visual Preview child screen"
     if "Status Bar sub-screen" in before:
-        return True, "Reading group; existing Customize Status Bar child screen"
+        return True, "Reader tab > Reading section; existing Customize Status Bar child screen"
     if "KOReader Sync sub-screen" in before:
-        return True, "Connectivity group; existing KOReader Sync child screen"
+        return True, "System tab > Connectivity section; existing KOReader Sync child screen"
     if "ButtonRemapActivity" in before:
-        return True, "Controls group; existing button remap child screen"
+        return True, "Controls tab > Buttons section; existing button remap child screen"
     if "BluetoothSettingsActivity" in before:
-        return True, "Connectivity group; existing Bluetooth child screen"
+        return True, "System tab > Connectivity section; existing Bluetooth child screen"
     group = record.get("proposedGroupId")
-    return bool(group), f"group root > {group}" if group else "not directly reachable"
+    return bool(group), DEVICE_PATH_BY_GROUP.get(group, "not directly reachable") if group else "not directly reachable"
 
 
 WEB_GROUP_COUNTS = {
@@ -92,6 +105,17 @@ def options_summary(record: dict) -> str:
     return "—"
 
 
+def persisted_descriptor(record: dict) -> dict:
+    """Keep persistence-relevant option IDs and values; ignore translated text."""
+    option_rows = []
+    for option in record.get("options") or []:
+        option_rows.append({key: value for key, value in option.items() if key != "englishLabel"})
+    return {
+        key: record.get(key)
+        for key in ("key", "label", "category", "categoryId", "type", "backingField", "range", "default")
+    } | {"options": option_rows}
+
+
 def web_after_description(record: dict) -> str:
     sid = record["stableId"]
     if sid == "web:clippings_notes":
@@ -121,9 +145,11 @@ def row_status(record: dict) -> str:
             "Replaced by Recent/Finished layout selectors for Folio Nooir Lite; legacy persisted value "
             "remains for migration/compatibility"
         )
+    if sid == "manual:uiFontFamilyName":
+        return "Intentional 1.6.6 UI deferral; saved value retained and built-in UI font used"
     if sid in {"sleepBackgroundElement", "sleepOverlayAElement", "sleepOverlayBElement",
                "sleepScreen.option.flexible_composite", "web:clippings_notes"}:
-        return "Intentional 1.6.6 deferral; implementation/storage preserved where applicable"
+        return "Intentional 1.6.6 deferral; implementation and stored values preserved"
     old_group = record.get("deviceGroupBefore")
     new_group = record.get("proposedGroupId")
     if old_group and new_group and old_group != new_group:
@@ -173,7 +199,7 @@ def old_device_group(record: dict) -> str:
     return "—"
 
 
-def render_parity_table(before: dict, after: dict) -> str:
+def render_parity_table(before: dict, after: dict, baseline_165: dict) -> str:
     records = after["records"]
     headers = [
         "Setting ID", "Old Group", "New Group", "Device Before", "Device After",
@@ -182,7 +208,9 @@ def render_parity_table(before: dict, after: dict) -> str:
     lines = [
         "# 1.6.6 Settings Organization Parity Table",
         "",
-        f"Device rows are compared with frozen source `{before['source']['integrationSnapshot']}`. "
+        f"Stable IDs and descriptor metadata are compared with the 1.6.5 device baseline "
+        f"`{baseline_165['source']['integrationSnapshot']}` and the frozen 1.6.6 inventory "
+        f"`{before['source']['integrationSnapshot']}`. "
         f"Historical Web exposure comes from `{before['source']['priorWebSettingsSourceRevision']}`; "
         f"bounded Web behavior is reported from integrated Web route commit `{WEB_ROUTE_COMMIT}` "
         f"(latest integration `{WEB_INTEGRATION_COMMIT}`) on the current 1.6.6 branch. Web Settings is active; "
@@ -213,14 +241,17 @@ def render_parity_table(before: dict, after: dict) -> str:
 
 def main() -> None:
     before = json.loads(BEFORE_PATH.read_text(encoding="utf-8"))
+    baseline_165 = json.loads(BASELINE_165_PATH.read_text(encoding="utf-8"))
     after = copy.deepcopy(before)
-    after["inventoryName"] = "Settings organization experiment — AFTER prototype"
+    after["inventoryName"] = "1.6.6 Settings parity — original tabs with accordion sections"
     after["source"]["prototypeBaseCommit"] = git("rev-parse", "HEAD")
     after["source"]["prototypeWorkingTreeFiles"] = [
         "src/SettingsGroups.h",
         "src/SettingsGroupDevice.h",
         "src/activities/settings/SettingsActivity.cpp",
         "src/activities/settings/SettingsActivity.h",
+        "src/activities/settings/DeviceInfoActivity.cpp",
+        "src/activities/settings/DeviceInfoActivity.h",
         "src/InterfaceFontSelection.h",
         "src/SdCardFontSystem.cpp",
         "src/network/html/SettingsPage.html",
@@ -231,8 +262,8 @@ def main() -> None:
         "test/web_stability/CMakeLists.txt",
     ]
     after["source"]["prototypeLayout"] = (
-        "static seven-row group root; Confirm opens one child group; Back returns to group root; "
-        "only one currentGroupSettings vector is materialized"
+        "Original Display, Reader, Controls, and System tabs; lightweight accordion sections within each tab; "
+        "one currentGroupSettings vector is materialized only for the expanded section"
     )
     after["source"]["webRouteStatus"] = (
         f"Bounded Web Settings group/page routes are integrated on the current 1.6.6 branch "
@@ -242,7 +273,7 @@ def main() -> None:
         "Home worker A is integrated on this branch; theme value 5 remains the Folio Nooir Lite alias. "
         "Recent/Finished layouts are available under both Folio themes; the legacy Carousel field is retained "
         "for persistence/migration and is replaced in the UI by those two selectors. "
-        "Interface Font remains available and uses the staged Mini Pack path."
+        "The saved Interface Font selection remains stored, while the row is hidden and the built-in UI font is used."
     )
     for record in after["records"]:
         reachable, description = classify_after(record)
@@ -254,7 +285,20 @@ def main() -> None:
 
     before_by_id = {r["stableId"]: r for r in before["records"]}
     after_by_id = {r["stableId"]: r for r in after["records"]}
-    intentional_device_deferrals = {"sleepBackgroundElement", "sleepOverlayAElement", "sleepOverlayBElement"}
+    baseline_165_by_id = {r["stableId"]: r for r in baseline_165["records"]}
+    baseline_165_missing = sorted(set(baseline_165_by_id) - set(after_by_id))
+    baseline_165_added = sorted(set(after_by_id) - set(baseline_165_by_id))
+    baseline_165_descriptor_changes = sorted(
+        sid for sid in set(baseline_165_by_id) & set(after_by_id)
+        if persisted_descriptor(baseline_165_by_id[sid]) != persisted_descriptor(after_by_id[sid])
+    )
+    intentional_device_deferrals = {
+        "sleepBackgroundElement",
+        "sleepOverlayAElement",
+        "sleepOverlayBElement",
+        "sleepScreen.option.flexible_composite",
+        "manual:uiFontFamilyName",
+    }
     intentional_device_replacements = {
         "carouselLayout": {
             "replacedBy": ["recentBookLayout", "finishedBookLayout"],
@@ -303,6 +347,8 @@ def main() -> None:
             "src/SettingsGroupDevice.h",
             "src/activities/settings/SettingsActivity.cpp",
             "src/activities/settings/SettingsActivity.h",
+            "src/activities/settings/DeviceInfoActivity.cpp",
+            "src/activities/settings/DeviceInfoActivity.h",
             "src/InterfaceFontSelection.h",
             "src/SdCardFontSystem.cpp",
             "src/network/html/SettingsPage.html",
@@ -310,10 +356,10 @@ def main() -> None:
             "test/web_stability/test_grouped_settings_contract.py",
         ],
         "homeWorkerAOverlap": (
-            "Home performance work is integrated; theme value 5 remains Folio Nooir Lite and stored fields are "
-            "preserved. Recent/Finished selectors are available in both Folio themes and the Web UI matches the "
-            "device. The legacy Carousel field remains for persistence/migration. Interface Font stays reachable "
-            "and uses staged Mini Pack loading."
+            "Folio Nooir Lite keeps the shared, low-cost home renderer without extra metadata, stats, or SD rescans. "
+            "Theme value 5 and stored fields are preserved. Recent/Finished selectors are available in both Folio "
+            "themes and the Web UI matches the device. The legacy Carousel field remains for persistence/migration. "
+            "Custom UI font selection is hidden for 1.6.6 and the built-in UI font is used."
         ),
         "groupIds": [group["id"] for group in before["proposedGroups"]],
         "stableIdsBefore": len(before_by_id),
@@ -321,6 +367,32 @@ def main() -> None:
         "stableIdSetParity": set(before_by_id) == set(after_by_id),
         "changedPersistedDescriptorFields": changed_descriptors,
         "persistedDescriptorParity": not changed_descriptors,
+        "historicalDeviceBaseline": {
+            "branch": "codex/folio-nooir-1.6.5-rc2",
+            "commit": baseline_165["source"]["integrationSnapshot"],
+            "stableIds": len(baseline_165_by_id),
+            "allBaselineStableIdsPresent": not baseline_165_missing,
+            "missingStableIds": baseline_165_missing,
+            "additionalStableIdsInCurrentInventory": baseline_165_added,
+            "persistedDescriptorParity": not baseline_165_descriptor_changes,
+            "changedPersistedDescriptors": baseline_165_descriptor_changes,
+            "comparisonFields": [
+                "stable ID, storage key, storage field, default, enum option ID/index/value, and numeric range"
+            ],
+            "translationTextExcludedFromValueComparison": True,
+        },
+        "newDeviceActions": [
+            {
+                "stableId": "action:DeviceInfo",
+                "path": "System tab > System section > Device Info",
+                "persistence": "read-only snapshot; no stored setting",
+            }
+        ],
+        "userUiExceptions": {
+            "flexibleSleep": "Hidden from the 1.6.6 UI; enum and implementation remain stored and compiled.",
+            "customUiFont": "Hidden from the 1.6.6 UI; saved selection remains stored and built-in UI font is used.",
+            "webClippingsAndNotes": "Web-only routes stay disabled; on-device Notes and My Clippings.txt export remain.",
+        },
         "oldDeviceGroupsPreservedAsMetadata": True,
         "deviceExposureCoverage": {
             "previouslyExposedStableIds": len(previously_exposed_device),
@@ -337,7 +409,7 @@ def main() -> None:
             "prototypeGroup": quick_actions["proposedGroupId"],
             "actionAndStoredSlotsUnchanged": True,
         },
-        "deferredDeviceUi": [],
+        "deferredDeviceUi": ["manual:uiFontFamilyName", "sleepScreen.option.flexible_composite"],
         "deferredSleepComposer": [
             "sleepBackgroundElement", "sleepOverlayAElement", "sleepOverlayBElement",
             "sleepScreen.option.flexible_composite",
@@ -373,18 +445,15 @@ def main() -> None:
             },
             "implementationTests": {
                 "groupedSettingsContract": "8/8",
-                "classifierParity": "5/5",
-                "workerBranchGroupedSettingsContract": "6/6",
-                "workerBranchInventoryParity": "5/5",
-                "settingsOrganizationParity": "12/12",
-                "fullHostSuite": "402/402",
-                "generatedHtmlAndJsSyntax": "passed (Node.js 24.13.1)",
+                "settingsOrganizationParity": "22/22",
+                "pythonSuitesTotal": "30/30 across settings_organization and web_stability",
+                "generatedHtmlAndJsSyntax": "passed (Node.js)",
+                "fullHostSuite": (
+                    "Not confirmed from current sources: 347 existing CTest binaries passed and 26 were Not Run "
+                    "because executables were missing; MSVC also crashed while compiling CMake's trivial compiler probe."
+                ),
             },
-            "build": (
-                "Blocked before firmware compilation: PlatformIO Core 6.1.19 cannot open "
-                "C:\\Users\\fatiha\\.platformio\\platforms.lock; cached GCC 14.2.0+20251107 and isolated "
-                "GCC 14.2.0+20260121 both fail --version with Windows Illegal System DLL Relocation"
-            ),
+            "build": "One combined gh_release firmware build pending compiler repair.",
             "apiContract": {
                 "groups": "GET /api/settings/groups returns only the seven static descriptors",
                 "read": "GET /api/settings requires a valid group; offset 0..32 and limit 1..6; returns only the selected group page and X-Settings-Total",
@@ -406,19 +475,19 @@ def main() -> None:
             "QuickActions source": unchanged_from("ce86b9f8", "src/util/QuickActions.h", "src/util/QuickActions.cpp"),
         },
         "lazyAllocation": {
-            "rootDescriptorCount": 0,
-            "childVectors": 1,
-            "onlyMaterializedOnGroupEntry": True,
-            "clearedOnReturn": True,
+            "staticTabCount": 4,
+            "staticAccordionSectionCount": 7,
+            "dynamicSettingVectors": 1,
+            "materializedOnlyWhenSectionExpanded": True,
+            "retainedOnNestedActivityReturn": True,
+            "releasedOnSettingsExit": True,
             "capacityRetainedForReuse": True,
-            "capacityLifetime": "retained while Settings is active or stacked under a child; vector storage is released when ActivityManager replaces/destroys Settings",
-            "capacityDiagnostic": "group_enter and group_return log vector capacity * sizeof(SettingInfo); max is the largest group_enter bytes value observed on device",
-            "x4MaxRequestedChildRows": 12,
-            "x4MaxRequestedGroup": "Controls (9 non-touch base rows + 3 actions; X3-only tilt row is absent on X4)",
-            "x4MaxRetainedBufferBytes": "12 * sizeof(SettingInfo), exact allocated capacity byte count is logged at group entry",
-            "x4MaxBytesMeasured": None,
-            "filesystemWork": "UI font registry refresh occurs only on Home & Appearance group entry; reader font refresh and dictionary discovery occur only on Reading group entry",
-            "ordinaryToggleRebuilds": "only sleep mode, theme, and short-power-button changes alter list shape",
+            "capacityLifetime": "retained while Settings is active or stacked under a child; vector storage is released on Settings exit",
+            "capacityDiagnostic": "the current section vector size and capacity are logged; hardware allocation measurement is pending",
+            "x4MaxRequestedChildRows": None,
+            "x4MaxRetainedBufferBytes": None,
+            "filesystemWork": "accordion actions use cached descriptors; dictionary discovery runs only after selecting its picker; favorite-image checks occur once on Settings entry",
+            "ordinaryToggleRebuilds": "only settings that change the selected section's row shape rebuild that one section vector",
         },
         "candidateForIntegration": True,
         "integrationBlockers": [],
@@ -432,7 +501,7 @@ def main() -> None:
     }
     (OUT / "AFTER_inventory.json").write_text(json.dumps(after, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (OUT / "AFTER_parity.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    (OUT / "PARITY_TABLE.md").write_text(render_parity_table(before, after), encoding="utf-8")
+    (OUT / "PARITY_TABLE.md").write_text(render_parity_table(before, after, baseline_165), encoding="utf-8")
     print(json.dumps({k: report[k] for k in (
         "stableIdsBefore", "stableIdsAfter", "stableIdSetParity", "persistedDescriptorParity",
         "movedDeviceEntries", "webSettings", "candidateForIntegration", "integrationBlockers",

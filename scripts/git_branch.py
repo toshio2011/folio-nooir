@@ -77,12 +77,17 @@ def get_base_version(project_dir):
 
 
 def inject_version(env):
-    # Only applies to the dev (default) environment; release envs set the
-    # version via build_flags in platformio.ini and are unaffected.
+    project_dir = env['PROJECT_DIR']
+    build_sha = run_git_value(project_dir, ['rev-parse', 'HEAD'], 'build SHA')
+    env.Append(CPPDEFINES=[('NOOIR_BUILD_SHA', f'\\"{build_sha}\\"')])
+    print(f'Nooir build SHA: {build_sha}')
+
+    # Only the default environment decorates the version string. Release
+    # environments keep their configured version while still embedding the
+    # exact source commit for Device Info and artifact traceability.
     if env['PIOENV'] != 'default':
         return
 
-    project_dir = env['PROJECT_DIR']
     base_version = get_base_version(project_dir)
     branch = get_git_branch(project_dir)
     short_sha = get_git_short_sha(project_dir)

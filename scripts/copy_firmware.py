@@ -1,6 +1,7 @@
 """Copy the finished PlatformIO firmware to the project's artifacts folder."""
 
 from pathlib import Path
+import os
 import shutil
 
 
@@ -15,11 +16,15 @@ def copy_firmware(source, target, env):  # noqa: F811, ARG001
     if not source_path.exists() and source:
         candidate = source[0] if isinstance(source, (list, tuple)) else source
         source_path = Path(str(candidate))
-    project_dir = Path(env.subst("$PROJECT_DIR"))
-    artifacts_dir = project_dir / "artifacts"
-    artifacts_dir.mkdir(parents=True, exist_ok=True)
-
-    destination = artifacts_dir / "firmware.bin"
+    configured_output = os.environ.get("NOOIR_FIRMWARE_OUTPUT")
+    if configured_output:
+        destination = Path(configured_output).expanduser()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        project_dir = Path(env.subst("$PROJECT_DIR"))
+        artifacts_dir = project_dir / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        destination = artifacts_dir / "firmware.bin"
     shutil.copy2(source_path, destination)
     print(f"Firmware copied to: {destination}")
 

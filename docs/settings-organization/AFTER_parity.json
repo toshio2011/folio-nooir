@@ -2,19 +2,21 @@
   "schemaVersion": 1,
   "baselineCommit": "ce86b9f8c85d774af297ef11e6f98c4bee9e0729",
   "historicalWebExposureCommit": "d4a97653",
-  "prototypeBaseCommit": "0f775cb37172dbd725a819d3d8383cf9b8a26f45",
+  "prototypeBaseCommit": "6e3d96bcac86de122251a1448322bcf489c4bf29",
   "prototypeFiles": [
     "src/SettingsGroups.h",
     "src/SettingsGroupDevice.h",
     "src/activities/settings/SettingsActivity.cpp",
     "src/activities/settings/SettingsActivity.h",
+    "src/activities/settings/DeviceInfoActivity.cpp",
+    "src/activities/settings/DeviceInfoActivity.h",
     "src/InterfaceFontSelection.h",
     "src/SdCardFontSystem.cpp",
     "src/network/html/SettingsPage.html",
     "test/font_selection_compatibility/FontSelectionCompatibilityTest.cpp",
     "test/web_stability/test_grouped_settings_contract.py"
   ],
-  "homeWorkerAOverlap": "Home performance work is integrated; theme value 5 remains Folio Nooir Lite and stored fields are preserved. Recent/Finished selectors are available in both Folio themes and the Web UI matches the device. The legacy Carousel field remains for persistence/migration. Interface Font stays reachable and uses staged Mini Pack loading.",
+  "homeWorkerAOverlap": "Folio Nooir Lite keeps the shared, low-cost home renderer without extra metadata, stats, or SD rescans. Theme value 5 and stored fields are preserved. Recent/Finished selectors are available in both Folio themes and the Web UI matches the device. The legacy Carousel field remains for persistence/migration. Custom UI font selection is hidden for 1.6.6 and the built-in UI font is used.",
   "groupIds": [
     "home_appearance",
     "sleep",
@@ -29,14 +31,50 @@
   "stableIdSetParity": true,
   "changedPersistedDescriptorFields": [],
   "persistedDescriptorParity": true,
+  "historicalDeviceBaseline": {
+    "branch": "codex/folio-nooir-1.6.5-rc2",
+    "commit": "3a66ef9b8b88c538e96ac763878fa899e72a53b1",
+    "stableIds": 124,
+    "allBaselineStableIdsPresent": true,
+    "missingStableIds": [],
+    "additionalStableIdsInCurrentInventory": [
+      "action:RandomSleepPool",
+      "action:SleepScreenPreview",
+      "randomSleepOrder",
+      "sleepBackgroundElement",
+      "sleepOverlayAElement",
+      "sleepOverlayBElement",
+      "sleepScreen.option.flexible_composite"
+    ],
+    "persistedDescriptorParity": true,
+    "changedPersistedDescriptors": [],
+    "comparisonFields": [
+      "stable ID, storage key, storage field, default, enum option ID/index/value, and numeric range"
+    ],
+    "translationTextExcludedFromValueComparison": true
+  },
+  "newDeviceActions": [
+    {
+      "stableId": "action:DeviceInfo",
+      "path": "System tab > System section > Device Info",
+      "persistence": "read-only snapshot; no stored setting"
+    }
+  ],
+  "userUiExceptions": {
+    "flexibleSleep": "Hidden from the 1.6.6 UI; enum and implementation remain stored and compiled.",
+    "customUiFont": "Hidden from the 1.6.6 UI; saved selection remains stored and built-in UI font is used.",
+    "webClippingsAndNotes": "Web-only routes stay disabled; on-device Notes and My Clippings.txt export remain."
+  },
   "oldDeviceGroupsPreservedAsMetadata": true,
   "deviceExposureCoverage": {
     "previouslyExposedStableIds": 127,
-    "reachableAfter": 123,
+    "reachableAfter": 122,
     "intentionalDeferrals": [
+      "manual:uiFontFamilyName",
       "sleepBackgroundElement",
       "sleepOverlayAElement",
-      "sleepOverlayBElement"
+      "sleepOverlayBElement",
+      "sleepScreen.option.flexible_composite"
     ],
     "intentionalReplacements": {
       "carouselLayout": {
@@ -148,7 +186,10 @@
     "prototypeGroup": "controls",
     "actionAndStoredSlotsUnchanged": true
   },
-  "deferredDeviceUi": [],
+  "deferredDeviceUi": [
+    "manual:uiFontFamilyName",
+    "sleepScreen.option.flexible_composite"
+  ],
   "deferredSleepComposer": [
     "sleepBackgroundElement",
     "sleepOverlayAElement",
@@ -188,14 +229,12 @@
     },
     "implementationTests": {
       "groupedSettingsContract": "8/8",
-      "classifierParity": "5/5",
-      "workerBranchGroupedSettingsContract": "6/6",
-      "workerBranchInventoryParity": "5/5",
-      "settingsOrganizationParity": "12/12",
-      "fullHostSuite": "402/402",
-      "generatedHtmlAndJsSyntax": "passed (Node.js 24.13.1)"
+      "settingsOrganizationParity": "22/22",
+      "pythonSuitesTotal": "30/30 across settings_organization and web_stability",
+      "generatedHtmlAndJsSyntax": "passed (Node.js)",
+      "fullHostSuite": "Not confirmed from current sources: 347 existing CTest binaries passed and 26 were Not Run because executables were missing; MSVC also crashed while compiling CMake's trivial compiler probe."
     },
-    "build": "Blocked before firmware compilation: PlatformIO Core 6.1.19 cannot open C:\\Users\\fatiha\\.platformio\\platforms.lock; cached GCC 14.2.0+20251107 and isolated GCC 14.2.0+20260121 both fail --version with Windows Illegal System DLL Relocation",
+    "build": "One combined gh_release firmware build pending compiler repair.",
     "apiContract": {
       "groups": "GET /api/settings/groups returns only the seven static descriptors",
       "read": "GET /api/settings requires a valid group; offset 0..32 and limit 1..6; returns only the selected group page and X-Settings-Total",
@@ -211,19 +250,19 @@
     "QuickActions source": true
   },
   "lazyAllocation": {
-    "rootDescriptorCount": 0,
-    "childVectors": 1,
-    "onlyMaterializedOnGroupEntry": true,
-    "clearedOnReturn": true,
+    "staticTabCount": 4,
+    "staticAccordionSectionCount": 7,
+    "dynamicSettingVectors": 1,
+    "materializedOnlyWhenSectionExpanded": true,
+    "retainedOnNestedActivityReturn": true,
+    "releasedOnSettingsExit": true,
     "capacityRetainedForReuse": true,
-    "capacityLifetime": "retained while Settings is active or stacked under a child; vector storage is released when ActivityManager replaces/destroys Settings",
-    "capacityDiagnostic": "group_enter and group_return log vector capacity * sizeof(SettingInfo); max is the largest group_enter bytes value observed on device",
-    "x4MaxRequestedChildRows": 12,
-    "x4MaxRequestedGroup": "Controls (9 non-touch base rows + 3 actions; X3-only tilt row is absent on X4)",
-    "x4MaxRetainedBufferBytes": "12 * sizeof(SettingInfo), exact allocated capacity byte count is logged at group entry",
-    "x4MaxBytesMeasured": null,
-    "filesystemWork": "UI font registry refresh occurs only on Home & Appearance group entry; reader font refresh and dictionary discovery occur only on Reading group entry",
-    "ordinaryToggleRebuilds": "only sleep mode, theme, and short-power-button changes alter list shape"
+    "capacityLifetime": "retained while Settings is active or stacked under a child; vector storage is released on Settings exit",
+    "capacityDiagnostic": "the current section vector size and capacity are logged; hardware allocation measurement is pending",
+    "x4MaxRequestedChildRows": null,
+    "x4MaxRetainedBufferBytes": null,
+    "filesystemWork": "accordion actions use cached descriptors; dictionary discovery runs only after selecting its picker; favorite-image checks occur once on Settings entry",
+    "ordinaryToggleRebuilds": "only settings that change the selected section's row shape rebuild that one section vector"
   },
   "candidateForIntegration": true,
   "integrationBlockers": [],

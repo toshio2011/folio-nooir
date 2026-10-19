@@ -68,6 +68,14 @@ void BluetoothSettingsActivity::onExit() {
   Activity::onExit();
 }
 
+void BluetoothSettingsActivity::finishCancelled() {
+  bleinput::clearReAdmissionPending();
+  ActivityResult cancelled;
+  cancelled.isCancelled = true;
+  setResult(std::move(cancelled));
+  finish();
+}
+
 void BluetoothSettingsActivity::setBanner(const char* text) {
   banner = text ? text : "";
   bannerUntil = millis() + kBannerMs;
@@ -376,20 +384,14 @@ void BluetoothSettingsActivity::loop() {
 
   if (activationState.load(std::memory_order_acquire) == ActivationState::Preparing) {
     if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-      ActivityResult cancelled;
-      cancelled.isCancelled = true;
-      setResult(std::move(cancelled));
-      finish();
+      finishCancelled();
     }
     return;
   }
 
   if (activationState.load(std::memory_order_acquire) == ActivationState::Failed) {
     if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-      ActivityResult cancelled;
-      cancelled.isCancelled = true;
-      setResult(std::move(cancelled));
-      finish();
+      finishCancelled();
       return;
     }
     const bool retryUsed = controlledRetryUsed.load(std::memory_order_acquire);
@@ -406,10 +408,7 @@ void BluetoothSettingsActivity::loop() {
           !controlledRetryUsed.load(std::memory_order_acquire)) {
         beginPreparation(true);
       } else {
-        ActivityResult cancelled;
-        cancelled.isCancelled = true;
-        setResult(std::move(cancelled));
-        finish();
+        finishCancelled();
       }
     };
     switch (handleListTouch(selectedFailureOption, optionCount, contentTop, contentHeight, false)) {

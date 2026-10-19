@@ -1,10 +1,10 @@
-# Settings organization experiment — BEFORE inventory
+# 1.6.6 Settings Organization — Frozen Inventory
 
-- Exact device/settings source snapshot: `0d1c87933bd5fc5421ba33989991e141e0cd4adc` (`ce86b9f8`).
+- Exact device/settings source snapshot: `ce86b9f8c85d774af297ef11e6f98c4bee9e0729` (`ce86b9f8`).
 - Historical Web exposure source: `d4a97653` (`d4a97653`), where `/settings` GET and `/api/settings` GET/POST are registered.
-- At the historical snapshot, Worker C had disabled the Web Settings routes (`4eb9b811`). The current 1.6.6 integration restores Web Settings through the bounded grouped API (`908453f3`/`7296bbc8`); Web Clippings routes remain disabled. This BEFORE inventory does not use the current API as its historical exposure baseline.
-- At the `ce86b9f8` snapshot, Mini Pack application was deferred at runtime but the Interface Font row remained in the device inventory. The integrated 1.6.6 behavior keeps the row reachable and re-enables staged, lazy Mini Pack loading; this is not an intentional setting deferral.
-- Home worker A's separate commit `33ed7e30` renamed persisted theme value 5 to Folio Nooir Lite and preserved stored layout fields. The current integration exposes Recent/Finished layouts in both Folio themes; the old Carousel field remains stored and migrates to those selectors. This inventory remains frozen at `ce86b9f8` as a BEFORE snapshot.
+- Current Web routes remain disabled by Worker C commit `4eb9b811`; Clippings routes remain disabled. No route was re-enabled to make this inventory.
+- Custom Interface Font application is deferred for the 1.6.6 RC; this frozen descriptor inventory retains the row and persisted field for parity comparison.
+- This frozen descriptor inventory is compared with the protected 1.6.5 baseline and current Settings tabs/sections.
 
 ## Counts
 

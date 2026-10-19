@@ -903,8 +903,21 @@ void SettingsActivity::toggleCurrentSetting() {
 #if FREEINK_CAP_BLE_HID_HOST
       case SettingAction::Bluetooth:
         startActivityForResult(
-            std::make_unique<BluetoothSettingsActivity>(renderer, mappedInput), [this](const ActivityResult&) {
+            std::make_unique<BluetoothSettingsActivity>(renderer, mappedInput), [this](const ActivityResult& result) {
               logSettingsDiagnostic("return_from_child");
+              if (result.isCancelled) {
+                // Back from a failed or still-preparing activation screen is
+                // the user's decision to stop. Keep the parent lifecycle
+                // stable so its next render does not silently retry BLE.
+                bluetoothLifecycleState.store(BluetoothLifecycleState::StableIdle, std::memory_order_release);
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+                bluetoothReturnArmed = false;
+                bluetoothTransientFontCachesReleased = false;
+#endif
+                bleinput::clearReAdmissionPending();
+                requestUpdate();
+                return;
+              }
               SETTINGS.saveToFile();
               armBluetoothReturn("BluetoothSettings");
             });

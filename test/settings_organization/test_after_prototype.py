@@ -11,6 +11,7 @@ ACTIVITY_H = ROOT / "src" / "activities" / "settings" / "SettingsActivity.h"
 GROUPS_H = ROOT / "src" / "SettingsGroups.h"
 FONT_SELECTION_H = ROOT / "src" / "InterfaceFontSelection.h"
 SETTINGS_LIST_H = ROOT / "src" / "SettingsList.h"
+BASELINE_165 = DOCS / "BASELINE_1.6.5_DEVICE_inventory.json"
 
 
 class SettingsGroupPrototypeTest(unittest.TestCase):
@@ -24,6 +25,7 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
         cls.group_header = GROUPS_H.read_text(encoding="utf-8")
         cls.font_selection = FONT_SELECTION_H.read_text(encoding="utf-8")
         cls.settings_list = SETTINGS_LIST_H.read_text(encoding="utf-8")
+        cls.baseline_165 = json.loads(BASELINE_165.read_text(encoding="utf-8"))
 
     def test_all_setting_ids_and_persistence_descriptors_are_unchanged(self):
         before = {row["stableId"]: row for row in self.before["records"]}
@@ -84,9 +86,28 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
     def test_interface_font_selection_is_preserved_but_hidden_for_this_release(self):
         row = next(item for item in self.after["records"] if item["stableId"] == "manual:uiFontFamilyName")
         self.assertEqual(row["backingField"], "uiFontFamilyName")
+        self.assertFalse(row["deviceReachableAfterPrototype"])
         self.assertIn("buildInterfaceFontSetting", self.settings_list)
         self.assertIn('if (setting.nameId == StrId::STR_INTERFACE_FONT) return false;', self.cpp)
         self.assertIn("kCustomUiFontsEnabledForCurrentRelease = false", self.font_selection)
+
+    def test_165_device_baseline_ids_values_and_defaults_are_preserved(self):
+        baseline = {row["stableId"]: row for row in self.baseline_165["records"]}
+        current = {row["stableId"]: row for row in self.after["records"]}
+        self.assertEqual(self.baseline_165["source"]["integrationSnapshot"],
+                         "3a66ef9b8b88c538e96ac763878fa899e72a53b1")
+        self.assertEqual(len(baseline), 124)
+        self.assertFalse(set(baseline) - set(current))
+        self.assertTrue(self.report["historicalDeviceBaseline"]["persistedDescriptorParity"])
+        self.assertEqual(self.report["historicalDeviceBaseline"]["changedPersistedDescriptors"], [])
+        self.assertEqual(
+            set(self.report["historicalDeviceBaseline"]["additionalStableIdsInCurrentInventory"]),
+            {
+                "action:RandomSleepPool", "action:SleepScreenPreview", "randomSleepOrder",
+                "sleepBackgroundElement", "sleepOverlayAElement", "sleepOverlayBElement",
+                "sleepScreen.option.flexible_composite",
+            },
+        )
 
     def test_all_historical_web_keys_have_one_unchanged_group_contract(self):
         arrays = {}
@@ -131,7 +152,7 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
     def test_parity_report_and_markdown_table_have_requested_full_schema(self):
         coverage = self.report["deviceExposureCoverage"]
         self.assertEqual(coverage["previouslyExposedStableIds"], 127)
-        self.assertEqual(coverage["reachableAfter"], 123)
+        self.assertEqual(coverage["reachableAfter"], 122)
         self.assertEqual(coverage["accidentalMissing"], 0)
         self.assertEqual(sum(self.report["webSettings"]["groupCounts"].values()), 84)
         self.assertEqual(self.report["webSettings"]["x4ReachableKeyCount"], 82)
@@ -146,7 +167,7 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
                          len(self.after["records"]))
 
     def test_intended_deferrals_are_not_counted_as_accidental_losses(self):
-        self.assertEqual(self.report["deferredDeviceUi"], [])
+        self.assertEqual(self.report["deferredDeviceUi"], ["manual:uiFontFamilyName", "sleepScreen.option.flexible_composite"])
         self.assertEqual(len(self.report["deferredSleepComposer"]), 4)
         for stable_id in ("sleepBackgroundElement", "sleepOverlayAElement", "sleepOverlayBElement",
                           "sleepScreen.option.flexible_composite", "web:clippings_notes"):
@@ -156,7 +177,7 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
     def test_every_other_previously_reachable_device_setting_stays_reachable(self):
         deferred = {
             "sleepBackgroundElement", "sleepOverlayAElement", "sleepOverlayBElement",
-            "sleepScreen.option.flexible_composite", "web:clippings_notes",
+            "sleepScreen.option.flexible_composite", "manual:uiFontFamilyName", "web:clippings_notes",
         }
         after = {row["stableId"]: row for row in self.after["records"]}
         for row in self.before["records"]:

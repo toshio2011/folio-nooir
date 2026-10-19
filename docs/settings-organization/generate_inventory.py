@@ -7,6 +7,7 @@ modify firmware sources.
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import subprocess
@@ -293,7 +294,7 @@ def proposed_group(record: dict) -> str:
 
 
 def enrich_labels_and_groups(records: list[dict]) -> None:
-    english = read("lib/I18n/translations/english.yaml")
+    english = read("lib/I18n/translations/english.yaml", DEVICE_SOURCE_REVISION)
     labels = {key: value.replace('\\"', '"') for key, value in re.findall(r'^([A-Z0-9_]+):\s*"((?:[^"\\]|\\.)*)"', english, re.M)}
     for record in records:
         label_id = record.get("label")
@@ -497,18 +498,23 @@ def annotate(record: dict) -> None:
     }
     record["deviceGroupBefore"] = old_group_by_category.get(cat)
     record["webExposureBeforeDisabledDecision"] = web_before
-    record["currentWebSettingsRoute"] = "disabled/not registered in source snapshot ce86b9f8" if record["type"] != "action" else "n/a"
+    record["currentWebSettingsRoute"] = f"disabled/not registered in source snapshot {DEVICE_SOURCE_REVISION[:8]}" if record["type"] != "action" else "n/a"
     record["intentionallyHidden"] = hidden
     record["hiddenReason"] = reason
 
 
 def make_inventory(web_revision: str | None, label: str) -> dict:
+    inventory_name = label
     # Device descriptors/defaults/action exposure come from the frozen source,
     # not this worktree's in-progress SettingsActivity experiment. Only the
     # Web routing source is read historically for the pre-deferral baseline.
     settings = read("src/SettingsList.h", DEVICE_SOURCE_REVISION)
     cross = read("src/CrossPointSettings.h", DEVICE_SOURCE_REVISION)
-    sleep = read("src/util/SleepComposer.h", DEVICE_SOURCE_REVISION)
+    sleep_path_exists = subprocess.run(
+        ["git", "cat-file", "-e", f"{DEVICE_SOURCE_REVISION}:src/util/SleepComposer.h"],
+        cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+    ).returncode == 0
+    sleep = read("src/util/SleepComposer.h", DEVICE_SOURCE_REVISION) if sleep_path_exists else ""
     activity = read("src/activities/settings/SettingsActivity.cpp", DEVICE_SOURCE_REVISION)
     web = read("src/network/CrossPointWebServer.cpp", web_revision)
     start = settings.index("std::vector<SettingInfo> v = {")
@@ -627,7 +633,7 @@ def make_inventory(web_revision: str | None, label: str) -> dict:
             "action": parent_action, "source": {"file": "src/CrossPointSettings.h / device sub-activity", "line": None, "constructor": "manual user setting"},
             "sourceScope": "manual_device_setting", "deviceExposureBefore": exposure,
             "webExposureBeforeDisabledDecision": "no: not included by old generic /api/settings GET/POST",
-            "currentWebSettingsRoute": "n/a or disabled/not registered in source snapshot ce86b9f8",
+            "currentWebSettingsRoute": f"n/a or disabled/not registered in source snapshot {DEVICE_SOURCE_REVISION[:8]}",
             "intentionallyHidden": False, "hiddenReason": None,
         }
         records.append(rec)
@@ -643,23 +649,24 @@ def make_inventory(web_revision: str | None, label: str) -> dict:
             "action": "action:DictionarySettings", "source": {"file": "src/SettingsList.h", "line": 161, "constructor": "buildDictionarySetting"},
             "sourceScope": "dynamic_device_setting", "deviceExposureBefore": "conditional: Text Settings > Dictionary selector when dictionary folders are discovered",
             "webExposureBeforeDisabledDecision": "no: no API key in SettingInfo",
-            "currentWebSettingsRoute": "disabled/not registered in source snapshot ce86b9f8",
+            "currentWebSettingsRoute": f"disabled/not registered in source snapshot {DEVICE_SOURCE_REVISION[:8]}",
             "intentionallyHidden": False, "hiddenReason": None,
         })
 
     # Add the hidden persisted Flexible enum value as an explicit non-row item.
-    records.append({
-        "stableId": "sleepScreen.option.flexible_composite", "key": None, "label": "STR_FLEXIBLE_SLEEP",
-        "category": "Display", "categoryId": "STR_CAT_DISPLAY", "type": "enum_option",
-        "backingField": "sleepScreen", "options": [], "range": None,
-        "enumValue": 17, "default": {"expression": None, "resolved": None},
-        "source": {"file": "src/util/SleepComposer.h", "line": source_line(sleep, sleep.index("FLEXIBLE_COMPOSITE")), "constructor": "SleepScreenModeValue"},
-        "deviceExposureBefore": "not selectable in normal Settings; composer preview route omitted while Flexible mode active",
-        "webExposureBeforeDisabledDecision": "not selectable by Web Settings API (old API maps indices 0..15 only)",
-        "currentWebSettingsRoute": "disabled/not registered in source snapshot ce86b9f8",
-        "intentionallyHidden": True,
-        "hiddenReason": "deferred 1.6.6 Flexible Sleep implementation preserved; stable persisted enum value retained",
-    })
+    if "FLEXIBLE_COMPOSITE" in sleep:
+        records.append({
+            "stableId": "sleepScreen.option.flexible_composite", "key": None, "label": "STR_FLEXIBLE_SLEEP",
+            "category": "Display", "categoryId": "STR_CAT_DISPLAY", "type": "enum_option",
+            "backingField": "sleepScreen", "options": [], "range": None,
+            "enumValue": 17, "default": {"expression": None, "resolved": None},
+            "source": {"file": "src/util/SleepComposer.h", "line": source_line(sleep, sleep.index("FLEXIBLE_COMPOSITE")), "constructor": "SleepScreenModeValue"},
+            "deviceExposureBefore": "not selectable in normal Settings; composer preview route omitted while Flexible mode active",
+            "webExposureBeforeDisabledDecision": "not selectable by Web Settings API (old API maps indices 0..15 only)",
+            "currentWebSettingsRoute": f"disabled/not registered in source snapshot {DEVICE_SOURCE_REVISION[:8]}",
+            "intentionallyHidden": True,
+            "hiddenReason": "deferred 1.6.6 Flexible Sleep implementation preserved; stable persisted enum value retained",
+        })
     # Include the Web Clippings/Notes route as an explicit deferred non-setting capability.
     records.append({
         "stableId": "web:clippings_notes", "key": None, "label": "Clippings / Highlights / Notes",
@@ -667,7 +674,7 @@ def make_inventory(web_revision: str | None, label: str) -> dict:
         "backingField": "existing per-book ClipFile JSON; no second database", "options": [], "range": None,
         "default": {"expression": None, "resolved": None},
         "webExposureBeforeDisabledDecision": "registered before 4eb9b811; disabled in this RC",
-        "currentWebSettingsRoute": "disabled/unregistered in source snapshot ce86b9f8",
+        "currentWebSettingsRoute": f"disabled/unregistered in source snapshot {DEVICE_SOURCE_REVISION[:8]}",
         "intentionallyHidden": True,
         "hiddenReason": "Clippings/Notes routes remain explicitly deferred for physical X4 safety; /My Clippings.txt remains unchanged",
     })
@@ -700,20 +707,29 @@ def make_inventory(web_revision: str | None, label: str) -> dict:
     old_x4_keys = [key for key in old_keys if key not in {"touchReaderControls", "tiltPageTurn"}]
     return {
         "schemaVersion": 1,
-        "inventoryName": label,
+        "inventoryName": inventory_name,
         "source": {
-            "integrationSnapshot": git("rev-parse", "ce86b9f8"),
+            "integrationSnapshot": git("rev-parse", DEVICE_SOURCE_REVISION),
             "branchAtInventory": git("branch", "--show-current"),
             "worktreeHead": git("rev-parse", "HEAD"),
-            "deviceSettingsSource": "src/SettingsList.h + CrossPointSettings.h + SettingsActivity.cpp at ce86b9f8",
+            "deviceSettingsSource": f"src/SettingsList.h + CrossPointSettings.h + SettingsActivity.cpp at {DEVICE_SOURCE_REVISION}",
             "priorWebSettingsSourceRevision": web_revision,
             "priorWebRouteExposureVerified": old_routes,
             "priorWebRouteExposureNote": "The pre-4eb source registers /settings GET and /api/settings GET+POST; GET can page with offset/limit but no query returns the full catalog.",
             "currentWebRouteExposure": "disabled: /settings and /api/settings are not registered after 4eb9b811; Clippings handler not registered",
             "webSettingsDeferralCommit": "4eb9b811af823344a36950725614f9ab3e341544",
             "clippingsDeferralCommit": "4eb9b811af823344a36950725614f9ab3e341544",
-            "interfaceFontDecision": "Worker E commit ce86b9f8 disables custom UI font application and preserves selection; row is still present in this exact source and row-hide remains pending",
-            "homeWorkerOverlap": "Home worker A is integrated separately at 33ed7e30; it changed presentation/layout visibility, preserving stable theme value 5 and stored layout fields. This inventory remains frozen to ce86b9f8 and does not include or merge A; SettingsActivity overlap must be resolved during integration.",
+            "interfaceFontDecision": (
+                "Custom Interface Font is reachable in the 1.6.5 baseline; the 1.6.6 RC hides its user-facing row, "
+                "keeps the saved value, and uses the built-in UI font."
+                if DEVICE_SOURCE_REVISION.startswith("3a66") else
+                "Worker E commit ce86b9f8 disables custom UI font application and preserves selection; row is still present in this exact source and row-hide remains pending"
+            ),
+            "homeWorkerOverlap": (
+                "This frozen inventory is sourced directly from the 1.6.5 baseline branch."
+                if DEVICE_SOURCE_REVISION.startswith("3a66") else
+                "Home worker A is integrated separately at 33ed7e30; it changed presentation/layout visibility, preserving stable theme value 5 and stored layout fields. This inventory remains frozen to ce86b9f8 and does not include or merge A; SettingsActivity overlap must be resolved during integration."
+            ),
         },
         "summary": {
             "baseRecords": len([r for r in records if r.get("sourceScope") in {"base_list", "text_settings"}]),
@@ -738,18 +754,43 @@ def make_inventory(web_revision: str | None, label: str) -> dict:
 
 
 def main() -> None:
+    global DEVICE_SOURCE_REVISION
+    parser = argparse.ArgumentParser(description="Generate a source-derived device settings inventory.")
+    parser.add_argument("--device-revision", default=DEVICE_SOURCE_REVISION)
+    parser.add_argument("--web-revision", default="d4a97653")
+    parser.add_argument("--output-stem", default="BEFORE")
+    parser.add_argument(
+        "--label",
+        default="BEFORE settings organization (device source at ce86; Web exposure reconstructed at d4a97653)",
+    )
+    args = parser.parse_args()
+    DEVICE_SOURCE_REVISION = args.device_revision
     OUT.mkdir(parents=True, exist_ok=True)
-    before = make_inventory("d4a97653", "BEFORE settings organization (device source at ce86; Web exposure reconstructed at d4a97653)")
-    (OUT / "BEFORE_inventory.json").write_text(json.dumps(before, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    before = make_inventory(args.web_revision, args.label)
+    output_json = OUT / f"{args.output_stem}_inventory.json"
+    output_markdown = OUT / f"{args.output_stem}_inventory.md"
+    output_json.write_text(json.dumps(before, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
+    is_165_baseline = args.device_revision.startswith("3a66")
+    title = "1.6.5 Device Settings Baseline" if is_165_baseline else "1.6.6 Settings Organization — Frozen Inventory"
+    font_note = (
+        "- The Interface Font row was available in this 1.6.5 baseline; the 1.6.6 RC hides the row, retains the saved value, and uses built-in UI fonts."
+        if is_165_baseline else
+        "- Custom Interface Font application is deferred for the 1.6.6 RC; this frozen descriptor inventory retains the row and persisted field for parity comparison."
+    )
+    source_note = (
+        "- This file records the protected 1.6.5 device source; no baseline files were changed."
+        if is_165_baseline else
+        "- This frozen descriptor inventory is compared with the protected 1.6.5 baseline and current Settings tabs/sections."
+    )
     md = [
-        "# Settings organization experiment — BEFORE inventory",
+        f"# {title}",
         "",
-        f"- Exact device/settings source snapshot: `{before['source']['worktreeHead']}` (`ce86b9f8`).",
+        f"- Exact device/settings source snapshot: `{before['source']['integrationSnapshot']}` (`{args.device_revision[:8]}`).",
         f"- Historical Web exposure source: `{before['source']['priorWebSettingsSourceRevision']}` (`d4a97653`), where `/settings` GET and `/api/settings` GET/POST are registered.",
         "- Current Web routes remain disabled by Worker C commit `4eb9b811`; Clippings routes remain disabled. No route was re-enabled to make this inventory.",
-        "- Custom Interface Font application is deferred by Worker E at `ce86b9f8`; its settings row is still visible in this exact source and the approved row hide is pending.",
-        "- Home worker A's separate commit `33ed7e30` changed presentation/layout visibility and preserved stable theme value 5 and stored layout fields. This inventory remains isolated at `ce86b9f8`; it does not merge A, and `SettingsActivity.cpp` overlap must be resolved at integration.",
+        font_note,
+        source_note,
         "",
         "## Counts",
         "",
@@ -770,13 +811,15 @@ def main() -> None:
         "",
         "## Special decisions",
         "",
-        "- Flexible Sleep enum value 17 and its three persisted composer settings are preserved in the inventory as intentionally hidden/deferred.",
+        ("- Flexible Sleep is absent from the 1.6.5 device baseline; its 1.6.6 persisted enum and composer settings are separately inventoried as hidden/deferred."
+         if is_165_baseline else
+         "- Flexible Sleep enum value 17 and its three persisted composer settings are preserved in the inventory as intentionally hidden/deferred."),
         "- Web Clippings/Notes is included as a deferred capability backed by the existing per-book ClipFile JSON. `/My Clippings.txt` remains unchanged.",
         "- The current Web settings route is not a parity baseline: the user-directed comparison baseline is the pre-Worker-C exposed key set above.",
-        "- Full machine-readable option/range/default/source metadata is in `BEFORE_inventory.json`.",
+        f"- Full machine-readable option/range/default/source metadata is in `{output_json.name}`.",
         "",
     ]
-    (OUT / "BEFORE_inventory.md").write_text("\n".join(md), encoding="utf-8")
+    output_markdown.write_text("\n".join(md), encoding="utf-8")
     print(json.dumps(before["summary"], indent=2))
 
 
