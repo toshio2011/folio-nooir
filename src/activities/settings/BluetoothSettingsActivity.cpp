@@ -396,7 +396,7 @@ void BluetoothSettingsActivity::loop() {
     }
     const bool retryUsed = controlledRetryUsed.load(std::memory_order_acquire);
     const int optionCount = retryUsed ? 1 : 2;
-    const int selectedFailureOption = std::clamp(failureIndex.load(std::memory_order_acquire), 0, optionCount - 1);
+    int selectedFailureOption = std::clamp(failureIndex.load(std::memory_order_acquire), 0, optionCount - 1);
     failureIndex.store(selectedFailureOption, std::memory_order_release);
     const auto metrics = UITheme::getInstance().getMetrics();
     const Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
@@ -411,7 +411,9 @@ void BluetoothSettingsActivity::loop() {
         finishCancelled();
       }
     };
-    switch (handleListTouch(selectedFailureOption, optionCount, contentTop, contentHeight, false)) {
+    const auto touchResult = handleListTouch(selectedFailureOption, optionCount, contentTop, contentHeight, false);
+    failureIndex.store(selectedFailureOption, std::memory_order_release);
+    switch (touchResult) {
       case ListTouchResult::Activated:
         activateFailureOption();
         return;
@@ -695,7 +697,9 @@ void BluetoothSettingsActivity::render(RenderLock&&) {
     const int count = retryUsed ? 1 : 2;
     const int selectedFailureOption = std::clamp(failureIndex.load(std::memory_order_acquire), 0, count - 1);
     GUI.drawList(renderer, listRect, count, selectedFailureOption,
-                 [retryUsed](int index) { return std::string(tr(index == 0 && !retryUsed ? STR_RETRY : STR_BACK)); },
+                 [retryUsed](int index) {
+                   return std::string(index == 0 && !retryUsed ? tr(STR_RETRY) : tr(STR_BACK));
+                 },
                  nullptr, nullptr, nullptr, false);
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
