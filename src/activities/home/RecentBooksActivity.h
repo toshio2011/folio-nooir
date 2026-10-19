@@ -254,7 +254,7 @@ class RecentBooksActivity final : public Activity {
   uint64_t snapshotPresentationKey() const;
   uint64_t bookDynamicKey(const RecentBook& book) const;
   uint64_t bookCoverVisualKey(const RecentBook& book) const;
-  uint64_t snapshotDynamicKey() const;
+  uint64_t snapshotDynamicKey();
   uint64_t featuredVisualKey() const;
   void captureSnapshotVisualState(size_t pageStart, size_t pageItems);
   void drawSnapshotSelectionOutline(const FolioShelfLayout& layout, size_t index, bool selected);

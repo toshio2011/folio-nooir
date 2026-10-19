@@ -1249,7 +1249,7 @@ uint64_t RecentBooksActivity::bookCoverVisualKey(const RecentBook& book) const {
   return hash;
 }
 
-uint64_t RecentBooksActivity::snapshotDynamicKey() const {
+uint64_t RecentBooksActivity::snapshotDynamicKey() {
   uint64_t hash = 1469598103934665603ULL;
   if (isFolioNooirLiteTheme(SETTINGS.uiTheme)) {
     hashBytes(hash, &visibleBookCount, sizeof(visibleBookCount));
