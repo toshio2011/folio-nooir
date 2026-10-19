@@ -3627,7 +3627,7 @@ void RecentBooksActivity::render(RenderLock&&) {
       if (!drawBitmap) return;
       int width = std::min(maxWidth, maxHeight * 2 / 3);
       const std::string normalPath = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
-      auto drawBitmapFromPath = [this, &book, &normalPath, x, y, maxWidth,
+      auto drawBitmapFromPath = [this, &book, &normalPath, recentIndex, x, y, maxWidth,
                                  maxHeight](const std::string& path) -> CarouselBitmapDrawResult {
         if (path.empty()) return CarouselBitmapDrawResult::Unavailable;
         auto& probe = carouselHqProbe(book);
