@@ -431,6 +431,7 @@ uint8_t highlightStyleMask(const std::span<const HighlightWord> words, const int
 void EpubReaderActivity::onEnter() {
   EpubDiagnostics::Scope diagnostics("reader_enter_start", "reader_enter_end");
   Activity::onEnter();
+  bleinput::beginReaderBluetoothSession();
   mappedInput.setReaderMappingMode(true);
   firstStableRenderComplete.store(false, std::memory_order_release);
   restartHeapSuspendedEmptyBuild.store(false, std::memory_order_release);
@@ -667,6 +668,7 @@ void EpubReaderActivity::onExit() {
   logExitHeap("before_section_release");
 #endif
   Activity::onExit();
+  bleinput::endReaderBluetoothSession();
   firstStableRenderComplete.store(false, std::memory_order_release);
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
   readerRenderWaitingForBleStop = false;
@@ -932,7 +934,7 @@ void EpubReaderActivity::requestReaderSurvivalStop(const char* reason, const boo
 }
 
 bool EpubReaderActivity::cachedRenderPreflight(const size_t highlightBytes, const bool pageLoaded) {
-  if (!SETTINGS.bluetoothEnabled) return true;
+  if (!bleinput::bluetoothEnabled()) return true;
   const auto required = cachedRenderBudget(highlightBytes, pageLoaded);
   const size_t freeHeap = ESP.getFreeHeap();
   const size_t largest = ESP.getMaxAllocHeap();
@@ -946,7 +948,7 @@ bool EpubReaderActivity::cachedRenderPreflight(const size_t highlightBytes, cons
 }
 
 bool EpubReaderActivity::cachedRenderFinalPassPreflight(const bool hasHighlights) {
-  if (!SETTINGS.bluetoothEnabled) return true;
+  if (!bleinput::bluetoothEnabled()) return true;
   const size_t stripBytes = renderer.supportsStripGrayscale()
       ? static_cast<size_t>(renderer.getDisplayWidthBytes()) * READER_GRAYSCALE_STRIP_ROWS : 0;
   const auto required = reader_memory::finalPassBudget(stripBytes, hasHighlights);
@@ -970,7 +972,7 @@ void EpubReaderActivity::checkReaderSurvival() {
         cachedRenderStartFree > cachedRenderLowestFree ? cachedRenderStartFree - cachedRenderLowestFree : 0);
     cachedRenderTracking = false;
   }
-  if (!SETTINGS.bluetoothEnabled || !BleHid.isRunning()) return;
+  if (!bleinput::bluetoothEnabled() || !BleHid.isRunning()) return;
   const auto required = cachedRenderBudget(cachedRenderHighlightBytes);
   const size_t freeHeap = ESP.getFreeHeap();
   const size_t largest = ESP.getMaxAllocHeap();
@@ -1002,7 +1004,7 @@ void EpubReaderActivity::reportReaderQuiescent(const char* reason) {
   LOG_INF("ERS", "reader_quiescent reason=%.20s spine=%d page=%d free=%u largest=%u", reason ? reason : "stable",
           currentSpineIndex, section ? section->currentPage : nextPageNumber,
           static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
-  if (SETTINGS.bluetoothEnabled) {
+  if (bleinput::bluetoothEnabled()) {
     size_t bookmarkStringCapacity = 0;
     for (const auto& bookmark : cachedBookmarks) {
       bookmarkStringCapacity += bookmark.xpath.capacity() + bookmark.summary.capacity();
@@ -1623,7 +1625,7 @@ void EpubReaderActivity::loop() {
   constexpr unsigned long IDLE_PREWARM_DEBOUNCE_MS = 400;
   if (!exitHomePending && section && !section->isBuilding() && !RenderLock::peek() && renderer.hasFrameBuffer() &&
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
-      !SETTINGS.bluetoothEnabled &&
+      !bleinput::bluetoothEnabled() &&
       !BleHid.isRunning() &&
 #endif
       lastRenderCompleteMs != 0 && millis() - lastRenderCompleteMs > IDLE_PREWARM_DEBOUNCE_MS &&
@@ -1957,7 +1959,7 @@ void EpubReaderActivity::loop() {
         if (mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && !darkShortcutFired) {
           darkShortcutFired = true;
           ignoreNextConfirmRelease = true;
-          bleinput::toggleBluetooth();
+          bleinput::toggleReaderSessionBluetooth();
           return;
         }
         break;
@@ -2084,7 +2086,7 @@ void EpubReaderActivity::loop() {
 
   if (longPress && fromSide &&
       SETTINGS.sideLongPressAction == CrossPointSettings::SIDE_LONG_TOGGLE_BLUETOOTH) {
-    bleinput::toggleBluetooth();
+    bleinput::toggleReaderSessionBluetooth();
     return;
   }
 
@@ -2399,11 +2401,9 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
     }
 #if FREEINK_CAP_BLE_HID_HOST
     case EpubReaderMenuActivity::MenuAction::BLUETOOTH: {
-      startActivityForResult(std::make_unique<BluetoothSettingsActivity>(renderer, mappedInput),
-                             [this](const ActivityResult&) {
-                               SETTINGS.saveToFile();
-                               requestUpdate();
-                             });
+      startActivityForResult(std::make_unique<BluetoothSettingsActivity>(
+                                 renderer, mappedInput, BluetoothSettingsActivity::Mode::ReaderSession),
+                             [this](const ActivityResult&) { requestUpdate(); });
       break;
     }
 #endif
@@ -2475,7 +2475,7 @@ void EpubReaderActivity::executeQuickAction(const int actionValue) {
       activityManager.requestSleep();
       break;
     case QuickActions::ActionId::ToggleBluetooth:
-      bleinput::toggleBluetooth();
+      bleinput::toggleReaderSessionBluetooth();
       break;
     case QuickActions::ActionId::None:
       break;
@@ -2641,7 +2641,7 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn) {
 void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
   // This is a return path, not a general Reader cache policy. In particular,
   // BLE-off users do not enter it; enabled deferred intent is inherited.
-  if (!SETTINGS.bluetoothEnabled || WiFi.getMode() != WIFI_MODE_NULL) return;
+  if (!bleinput::bluetoothEnabled() || WiFi.getMode() != WIFI_MODE_NULL) return;
   if (readerSurvivalStopRequested.load(std::memory_order_acquire)) return;
   const bool returnPending = bleinput::readerBleReturnPending();
   if (!returnPending) {
@@ -2754,7 +2754,7 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
     return;
   }
   if (!bleinput::readerBleReturnCleanupAllowed(
-          SETTINGS.bluetoothEnabled, activityManager.bluetoothShouldBeActive(), returnPending, true,
+          bleinput::bluetoothEnabled(), activityManager.bluetoothShouldBeActive(), returnPending, true,
           readerIdleFontCachesReleased, BleHid.isRunning(), admissionPasses)) {
     return;
   }
@@ -3618,7 +3618,7 @@ bool EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     LOG_ERR("ERS", "render_deferred reason=highlight_workspace requested=%u free=%u largest=%u",
             static_cast<unsigned>(highlightBytes), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
-    if (SETTINGS.bluetoothEnabled && BleHid.isRunning()) requestReaderSurvivalStop("highlight_workspace", true);
+    if (bleinput::bluetoothEnabled() && BleHid.isRunning()) requestReaderSurvivalStop("highlight_workspace", true);
 #endif
     return false;
   }

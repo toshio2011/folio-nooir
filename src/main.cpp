@@ -580,7 +580,7 @@ void updateBluetoothLifecycle() {
     return;
   }
   const bool wanted =
-      !deepSleepInProgress && SETTINGS.bluetoothEnabled && activityManager.bluetoothShouldBeActive() &&
+      !deepSleepInProgress && bleinput::bluetoothEnabled() && activityManager.bluetoothShouldBeActive() &&
       WiFi.getMode() == WIFI_MODE_NULL;
   const bool readerContext = activityManager.isReaderActivity();
   const bool resourceSensitive = activityManager.bluetoothResourceSensitive();
@@ -596,6 +596,17 @@ void updateBluetoothLifecycle() {
   const bool blocked = resourceSensitive;
 
   if (!wanted) {
+    // A Bluetooth control screen can remain open while Wi-Fi is active. Report
+    // the admission outcome so its Preparing state cannot wait forever; the
+    // screen's explicit Retry action will queue the next attempt.
+    if (strcmp(activityManager.currentActivityName(), "BluetoothSettings") == 0 &&
+        bleinput::bluetoothEnabled() && activityManager.bluetoothShouldBeActive() &&
+        WiFi.getMode() != WIFI_MODE_NULL) {
+      activityManager.notifyBluetoothActivationResult(false);
+      bleinput::clearReAdmissionPending();
+      LOG_INF("BLEMEM", "stage=bluetooth_settings_failed reason=wifi_active free=%u largest=%u",
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    }
     resourceDeferReported = false;
     bluetoothSettingsRenderDeferReported = false;
     settingsBleReturnFloorDeferReported = false;
@@ -654,6 +665,7 @@ void updateBluetoothLifecycle() {
   }
   bluetoothSettingsRenderDeferReported = false;
   if (BleHid.isRunning()) {
+    activityManager.notifyBluetoothActivationResult(true);
     bleinput::clearReAdmissionPending();
     return;
   }
@@ -667,6 +679,12 @@ void updateBluetoothLifecycle() {
   const bool admitted = bleinput::connectionAdmissionAllowed();
 
   if (!admitted) {
+    activityManager.notifyBluetoothActivationResult(false);
+    if (strcmp(activityManager.currentActivityName(), "BluetoothSettings") == 0) {
+      // The control screen owns a single explicit retry. Do not let a later
+      // unrelated lifecycle signal silently start another attempt.
+      bleinput::clearReAdmissionPending();
+    }
     if (strcmp(activityManager.currentActivityName(), "Settings") == 0 && !settingsBleReturnFloorDeferReported) {
       settingsBleReturnFloorDeferReported = true;
       LOG_INF("BLEMEM", "stage=settings_ble_return_defer free=%u largest=%u floors=%u/%u", ESP.getFreeHeap(),
@@ -692,9 +710,14 @@ void updateBluetoothLifecycle() {
   if (!started) {
     LOG_ERR("BLELC", "start failed free=%u maxAlloc=%u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     bleinput::recordDiagnosticEvent("ble_resume result=failed");
+    activityManager.notifyBluetoothActivationResult(false);
+    if (strcmp(activityManager.currentActivityName(), "BluetoothSettings") == 0) {
+      bleinput::clearReAdmissionPending();
+    }
     return;
   }
   activityManager.notifyBluetoothAdmission();
+  activityManager.notifyBluetoothActivationResult(true);
   bleinput::clearReAdmissionPending();
   bleinput::recordDiagnosticEvent("ble_resume result=started");
 #else

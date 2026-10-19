@@ -27,6 +27,7 @@
 #include "reader/ReaderActivity.h"
 #include "reader/EpubReaderClippingListActivity.h"
 #include "settings/OpdsServerListActivity.h"
+#include "settings/BluetoothSettingsActivity.h"
 #include "settings/SettingsActivity.h"
 #include "util/EpubDiagnostics.h"
 #include "util/FullScreenMessageActivity.h"
@@ -766,6 +767,12 @@ bool ActivityManager::bluetoothRenderSafe() const {
 void ActivityManager::notifyBluetoothAdmission() {
   if (currentActivity && currentActivity->name == "Settings") {
     static_cast<SettingsActivity*>(currentActivity.get())->markBluetoothAdmitted();
+  }
+}
+
+void ActivityManager::notifyBluetoothActivationResult(const bool started) {
+  if (currentActivity && currentActivity->name == "BluetoothSettings") {
+    static_cast<BluetoothSettingsActivity*>(currentActivity.get())->onBluetoothActivationResult(started);
   }
 }
 

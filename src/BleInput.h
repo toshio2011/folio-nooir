@@ -54,6 +54,16 @@ bool connectionAdmissionAllowed();
 void setBluetoothEnabled(bool enabled);
 void toggleBluetooth();
 
+// Reader-scoped Bluetooth preference. The session starts from the saved
+// Settings value, but Reader controls change only the temporary override.
+// Ending the Reader session restores the saved preference without writing it.
+bool bluetoothEnabled();
+bool readerSessionBluetoothEnabled();
+void beginReaderBluetoothSession();
+void endReaderBluetoothSession();
+void setReaderSessionBluetoothEnabled(bool enabled);
+void toggleReaderSessionBluetooth();
+
 // Drop the active link (e.g. before deep sleep or when the user disables BT).
 void stop();
 

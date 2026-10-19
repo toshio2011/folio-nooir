@@ -47,10 +47,18 @@ std::atomic<bool> g_readerBleReturnPending{false};
 std::atomic<bool> g_readerBleReturnRetryBlocked{false};
 std::atomic<uint32_t> g_readerBleReturnGeneration{0};
 std::atomic<bool> g_webExclusiveActive{false};
+std::atomic<bool> g_readerBluetoothSessionActive{false};
+std::atomic<bool> g_readerSessionBluetoothEnabled{false};
 char g_pendingNotification[64] = {};
 bool g_notificationPending = false;
 bool g_noDeviceWindowActive = false;
 uint32_t g_noDeviceWindowStartMs = 0;
+
+bool effectiveBluetoothEnabled() {
+  if (g_readerBluetoothSessionActive.load(std::memory_order_acquire))
+    return g_readerSessionBluetoothEnabled.load(std::memory_order_acquire);
+  return SETTINGS.bluetoothEnabled;
+}
 
 #if NOOIR_BLE_DIAGNOSTICS
 constexpr uint8_t kSerialDiagnosticCapacity = 96;
@@ -216,7 +224,7 @@ void resetNoDeviceWindow() {
 void updateNoDeviceWindow(const bool running, const bool connected) {
   const uint16_t timeoutSeconds = SETTINGS.bluetoothNoDeviceTimeoutSeconds;
   const bool hasConnectionOpportunity = BleHid.isConnecting() || BleHid.isScanning() || BleHid.pairedCount() > 0;
-  if (!SETTINGS.bluetoothEnabled || timeoutSeconds == 0 || !running || connected ||
+  if (!effectiveBluetoothEnabled() || timeoutSeconds == 0 || !running || connected ||
       !hasConnectionOpportunity || !connectionAdmissionAllowed()) {
     resetNoDeviceWindow();
     return;
@@ -232,10 +240,14 @@ void updateNoDeviceWindow(const bool running, const bool connected) {
 
   // Reclaim NimBLE before persisting or notifying: both settings I/O and a
   // Reader notice must happen after the BLE heap has been returned.
-  SETTINGS.bluetoothEnabled = 0;
+  if (g_readerBluetoothSessionActive.load(std::memory_order_acquire)) {
+    g_readerSessionBluetoothEnabled.store(false, std::memory_order_release);
+  } else {
+    SETTINGS.bluetoothEnabled = 0;
+  }
   resetNoDeviceWindow();
   stop();
-  SETTINGS.saveToFile();
+  if (!g_readerBluetoothSessionActive.load(std::memory_order_acquire)) SETTINGS.saveToFile();
   queueNotification(I18N.get(StrId::STR_BT_TURNED_OFF_NO_DEVICE));
 }
 
@@ -259,7 +271,7 @@ void requestLifecycleReevaluation() {
     g_lifecycleReevaluationPending.store(false, std::memory_order_release);
     return;
   }
-  if (SETTINGS.bluetoothEnabled) {
+  if (effectiveBluetoothEnabled()) {
     g_reAdmissionPending.store(true, std::memory_order_release);
     if (g_readerBleReturnPending.load(std::memory_order_acquire) &&
         g_readerBleReturnRetryBlocked.load(std::memory_order_acquire)) {
@@ -297,7 +309,7 @@ void clearReAdmissionPending() {
 
 bool readerBleReturnPending() {
 #if FREEINK_CAP_BLE_HID_HOST
-  return SETTINGS.bluetoothEnabled && g_readerBleReturnPending.load(std::memory_order_acquire);
+  return effectiveBluetoothEnabled() && g_readerBleReturnPending.load(std::memory_order_acquire);
 #else
   return false;
 #endif
@@ -320,7 +332,7 @@ uint32_t readerBleReturnGeneration() {
 
 void signalReaderBleReturnLifecycleEvent(const char* reason) {
 #if FREEINK_CAP_BLE_HID_HOST
-  if (!SETTINGS.bluetoothEnabled || !g_readerBleReturnPending.load(std::memory_order_acquire)) return;
+  if (!effectiveBluetoothEnabled() || !g_readerBleReturnPending.load(std::memory_order_acquire)) return;
   const uint32_t generation = g_readerBleReturnGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
   g_readerBleReturnRetryBlocked.store(false, std::memory_order_release);
   g_reAdmissionPending.store(true, std::memory_order_release);
@@ -352,7 +364,7 @@ void setWebExclusive(const bool active) {
 #if FREEINK_CAP_BLE_HID_HOST
   // BLE Off is the BLE-less runtime mode. A Web activity with no live host
   // must not create a BLE-only lifecycle gate or pending-return state.
-  if (active && !SETTINGS.bluetoothEnabled && !BleHid.isRunning()) return;
+  if (active && !effectiveBluetoothEnabled() && !BleHid.isRunning()) return;
   const bool readerReturnWasPending = g_readerBleReturnPending.load(std::memory_order_acquire);
   g_webExclusiveActive.store(active, std::memory_order_release);
   if (active) {
@@ -362,7 +374,7 @@ void setWebExclusive(const bool active) {
     // return intent across that boundary so a Web transition cannot erase the
     // only event-driven re-admission request.
     g_readerBleReturnRetryBlocked.store(false, std::memory_order_release);
-  } else if (SETTINGS.bluetoothEnabled) {
+  } else if (effectiveBluetoothEnabled()) {
     g_reAdmissionPending.store(true, std::memory_order_release);
     g_lifecycleReevaluationPending.store(true, std::memory_order_release);
     if (readerReturnWasPending) signalReaderBleReturnLifecycleEvent("web_exit");
@@ -400,7 +412,7 @@ void recordDiagnosticEvent(const char* format, ...) {
 
 bool connectionAdmissionAllowed() {
 #if FREEINK_CAP_BLE_HID_HOST
-  if (g_webExclusiveActive.load(std::memory_order_acquire) || !SETTINGS.bluetoothEnabled ||
+  if (g_webExclusiveActive.load(std::memory_order_acquire) || !effectiveBluetoothEnabled() ||
       !activityManager.bluetoothShouldBeActive() || WiFi.getMode() != WIFI_MODE_NULL)
     return false;
 
@@ -456,6 +468,74 @@ void toggleBluetooth() {
 #endif
 }
 
+bool bluetoothEnabled() {
+#if FREEINK_CAP_BLE_HID_HOST
+  return effectiveBluetoothEnabled();
+#else
+  return false;
+#endif
+}
+
+bool readerSessionBluetoothEnabled() {
+#if FREEINK_CAP_BLE_HID_HOST
+  return g_readerBluetoothSessionActive.load(std::memory_order_acquire) &&
+         g_readerSessionBluetoothEnabled.load(std::memory_order_acquire);
+#else
+  return false;
+#endif
+}
+
+void beginReaderBluetoothSession() {
+#if FREEINK_CAP_BLE_HID_HOST
+  if (g_readerBluetoothSessionActive.load(std::memory_order_acquire)) return;
+  g_readerSessionBluetoothEnabled.store(SETTINGS.bluetoothEnabled != 0, std::memory_order_release);
+  g_readerBluetoothSessionActive.store(true, std::memory_order_release);
+  resetNoDeviceWindow();
+  LOG_INF("BLEMEM", "stage=reader_session_begin saved=%d active=%d free=%u largest=%u",
+          SETTINGS.bluetoothEnabled ? 1 : 0, g_readerSessionBluetoothEnabled.load(std::memory_order_acquire) ? 1 : 0,
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  requestLifecycleReevaluation();
+#endif
+}
+
+void endReaderBluetoothSession() {
+#if FREEINK_CAP_BLE_HID_HOST
+  if (!g_readerBluetoothSessionActive.exchange(false, std::memory_order_acq_rel)) return;
+  g_readerSessionBluetoothEnabled.store(false, std::memory_order_release);
+  clearReaderBleReturnPending();
+  resetNoDeviceWindow();
+  LOG_INF("BLEMEM", "stage=reader_session_end saved=%d free=%u largest=%u", SETTINGS.bluetoothEnabled ? 1 : 0,
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  requestLifecycleReevaluation();
+#endif
+}
+
+void setReaderSessionBluetoothEnabled(const bool enabled) {
+#if FREEINK_CAP_BLE_HID_HOST
+  if (!g_readerBluetoothSessionActive.load(std::memory_order_acquire)) return;
+  const bool previous = g_readerSessionBluetoothEnabled.exchange(enabled, std::memory_order_acq_rel);
+  if (previous == enabled) return;
+  resetNoDeviceWindow();
+  LOG_INF("BLEMEM", "stage=reader_session_toggle enabled=%d free=%u largest=%u", enabled ? 1 : 0,
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  if (!enabled) {
+    clearReaderBleReturnPending();
+    requestLifecycleReevaluation();
+    stop();
+  } else {
+    requestLifecycleReevaluation();
+  }
+#else
+  (void)enabled;
+#endif
+}
+
+void toggleReaderSessionBluetooth() {
+#if FREEINK_CAP_BLE_HID_HOST
+  setReaderSessionBluetoothEnabled(!readerSessionBluetoothEnabled());
+#endif
+}
+
 // NimBLE controller init/deinit hang (interrupt WDT) if run at the 10 MHz low-power
 // frequency, so force normal CPU speed around both. Centralized here so every caller
 // (boot restore, settings toggle, reader toggle, sleep) is covered automatically.
@@ -463,7 +543,7 @@ bool ensureStarted() {
 #if FREEINK_CAP_BLE_HID_HOST
   // Settings OFF is the BLE-less runtime mode. Do not even emit admission
   // diagnostics or reach the NimBLE begin path when the user has disabled it.
-  if (!SETTINGS.bluetoothEnabled) return false;
+  if (!effectiveBluetoothEnabled()) return false;
   BleHid.setConnectionPermissionCallback(&connectionAdmissionAllowed);
   // All start callers, including Bluetooth Settings, pass through this gate.
   // A Reader may remain on the activity stack while a modal settings screen is
@@ -543,7 +623,7 @@ bool ensureStarted() {
 // allocate even after the user turns Bluetooth off.
 void stopForReaderResourcePressure() {
 #if FREEINK_CAP_BLE_HID_HOST
-  const bool eligible = SETTINGS.bluetoothEnabled && activityManager.isReaderActivity();
+  const bool eligible = effectiveBluetoothEnabled() && activityManager.isReaderActivity();
   if (eligible) {
     const bool wasPending = g_readerBleReturnPending.exchange(true, std::memory_order_acq_rel);
     g_readerBleReturnRetryBlocked.store(false, std::memory_order_release);
@@ -616,7 +696,7 @@ void stop() {
 
 void pollLifecycle() {
 #if FREEINK_CAP_BLE_HID_HOST
-  if (!SETTINGS.bluetoothEnabled) {
+  if (!effectiveBluetoothEnabled()) {
     // Keep the disabled state inert: no BLE sampling, retry window, pending
     // admission, stale notification, or lifecycle transition is carried into
     // the next enabled session.

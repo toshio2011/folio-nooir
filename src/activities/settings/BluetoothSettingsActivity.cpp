@@ -2,8 +2,11 @@
 
 #include <BleKeyboardHost.h>
 #include <BoardConfig.h>
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
+#include <Logging.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -14,6 +17,8 @@
 #include "activities/ActivityManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "SdCardFontSystem.h"
+#include "util/BleMemoryPolicy.h"
 
 namespace {
 constexpr unsigned long kBannerMs = 2000;
@@ -45,9 +50,17 @@ bool BluetoothSettingsActivity::bluetoothResourceSensitive() const {
 void BluetoothSettingsActivity::onEnter() {
   Activity::onEnter();
   view = View::Menu;
+  activationState.store(ActivationState::Ready, std::memory_order_release);
+  activationResult.store(-1, std::memory_order_release);
+  controlledRetryUsed.store(false, std::memory_order_release);
+  preparationReclaimDone.store(false, std::memory_order_release);
+  failureIndex.store(0, std::memory_order_release);
   menuIndex = 0;
   rebuildMenuRows();
-  requestUpdate();
+  const bool wanted = mode == Mode::ReaderSession ? bleinput::readerSessionBluetoothEnabled()
+                                                  : SETTINGS.bluetoothEnabled != 0;
+  if (wanted && !BleHid.isRunning()) beginPreparation(false);
+  else requestUpdate();
 }
 
 void BluetoothSettingsActivity::onExit() {
@@ -60,10 +73,34 @@ void BluetoothSettingsActivity::setBanner(const char* text) {
   bannerUntil = millis() + kBannerMs;
 }
 
+void BluetoothSettingsActivity::beginPreparation(const bool controlledRetry) {
+  controlledRetryUsed.store(controlledRetry, std::memory_order_release);
+  activationResult.store(-1, std::memory_order_release);
+  activationState.store(ActivationState::Preparing, std::memory_order_release);
+  preparationReclaimDone.store(false, std::memory_order_release);
+  failureIndex.store(0, std::memory_order_release);
+  if (BleHid.isRunning()) {
+    onBluetoothActivationResult(true);
+    return;
+  }
+  bleinput::requestLifecycleReevaluation();
+  requestUpdate();
+}
+
+void BluetoothSettingsActivity::onBluetoothActivationResult(const bool started) {
+  if (activationState.load(std::memory_order_acquire) != ActivationState::Preparing) return;
+  activationResult.store(started ? 1 : 0, std::memory_order_release);
+  requestUpdate();
+}
+
 void BluetoothSettingsActivity::rebuildMenuRows() {
   menuRows.clear();
-  menuRows.reserve(12);
+  menuRows.reserve(mode == Mode::ReaderSession ? 1 : 12);
   menuRows.push_back({Action::ToggleBt, StrId::STR_BLUETOOTH});
+  if (mode == Mode::ReaderSession) {
+    menuIndex = 0;
+    return;
+  }
   menuRows.push_back({Action::NoDeviceTimeout, StrId::STR_BT_NO_DEVICE_TIMEOUT});
   if (SETTINGS.bluetoothEnabled) {
     menuRows.push_back({Action::Scan, StrId::STR_BT_SCAN_PAIR});
@@ -233,9 +270,24 @@ void BluetoothSettingsActivity::handleMenuConfirm() {
   const Action action = menuRows[menuIndex].action;
   switch (action) {
     case Action::ToggleBt:
-      bleinput::toggleBluetooth();
-      rebuildMenuRows();
-      requestUpdate();
+      if (mode == Mode::ReaderSession) {
+        const bool enabled = !bleinput::readerSessionBluetoothEnabled();
+        bleinput::setReaderSessionBluetoothEnabled(enabled);
+        if (enabled && !BleHid.isRunning()) beginPreparation(false);
+        else {
+          activationState.store(ActivationState::Ready, std::memory_order_release);
+          rebuildMenuRows();
+          requestUpdate();
+        }
+      } else {
+        bleinput::setBluetoothEnabled(!SETTINGS.bluetoothEnabled);
+        if (SETTINGS.bluetoothEnabled && !BleHid.isRunning()) beginPreparation(false);
+        else {
+          activationState.store(ActivationState::Ready, std::memory_order_release);
+          rebuildMenuRows();
+          requestUpdate();
+        }
+      }
       break;
     case Action::NoDeviceTimeout:
       noDeviceTimeoutPopup.show(StrId::STR_BT_NO_DEVICE_TIMEOUT, kNoDeviceTimeoutOptions, 4,
@@ -304,6 +356,84 @@ void BluetoothSettingsActivity::handleMenuConfirm() {
 
 void BluetoothSettingsActivity::loop() {
   if (noDeviceTimeoutPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
+
+  const int8_t activationEvent = activationResult.exchange(-1, std::memory_order_acq_rel);
+  if (activationEvent >= 0 && activationState.load(std::memory_order_acquire) == ActivationState::Preparing) {
+    if (activationEvent == 1 && BleHid.isRunning()) {
+      activationState.store(ActivationState::Ready, std::memory_order_release);
+      rebuildMenuRows();
+      LOG_INF("BLEMEM", "stage=bluetooth_settings_ready mode=%s free=%u largest=%u",
+              mode == Mode::ReaderSession ? "reader" : "settings", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    } else {
+      activationState.store(ActivationState::Failed, std::memory_order_release);
+      failureIndex.store(0, std::memory_order_release);
+      LOG_ERR("BLEMEM", "stage=bluetooth_settings_failed mode=%s retry_used=%d free=%u largest=%u",
+              mode == Mode::ReaderSession ? "reader" : "settings",
+              controlledRetryUsed.load(std::memory_order_acquire) ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    }
+    requestUpdate();
+  }
+
+  if (activationState.load(std::memory_order_acquire) == ActivationState::Preparing) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      ActivityResult cancelled;
+      cancelled.isCancelled = true;
+      setResult(std::move(cancelled));
+      finish();
+    }
+    return;
+  }
+
+  if (activationState.load(std::memory_order_acquire) == ActivationState::Failed) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      ActivityResult cancelled;
+      cancelled.isCancelled = true;
+      setResult(std::move(cancelled));
+      finish();
+      return;
+    }
+    const bool retryUsed = controlledRetryUsed.load(std::memory_order_acquire);
+    const int optionCount = retryUsed ? 1 : 2;
+    const int selectedFailureOption = std::clamp(failureIndex.load(std::memory_order_acquire), 0, optionCount - 1);
+    failureIndex.store(selectedFailureOption, std::memory_order_release);
+    const auto metrics = UITheme::getInstance().getMetrics();
+    const Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+    const int contentTop = screen.y + metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight +
+                           metrics.verticalSpacing;
+    const int contentHeight = screen.height - contentTop - metrics.verticalSpacing;
+    const auto activateFailureOption = [this] {
+      if (failureIndex.load(std::memory_order_acquire) == 0 &&
+          !controlledRetryUsed.load(std::memory_order_acquire)) {
+        beginPreparation(true);
+      } else {
+        ActivityResult cancelled;
+        cancelled.isCancelled = true;
+        setResult(std::move(cancelled));
+        finish();
+      }
+    };
+    switch (handleListTouch(selectedFailureOption, optionCount, contentTop, contentHeight, false)) {
+      case ListTouchResult::Activated:
+        activateFailureOption();
+        return;
+      case ListTouchResult::Consumed:
+        return;
+      case ListTouchResult::None:
+        break;
+    }
+    buttonNavigator.onNext([this, optionCount] {
+      failureIndex.store(ButtonNavigator::nextIndex(failureIndex.load(std::memory_order_acquire), optionCount),
+                         std::memory_order_release);
+      requestUpdate();
+    });
+    buttonNavigator.onPrevious([this, optionCount] {
+      failureIndex.store(ButtonNavigator::previousIndex(failureIndex.load(std::memory_order_acquire), optionCount),
+                         std::memory_order_release);
+      requestUpdate();
+    });
+    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) activateFailureOption();
+    return;
+  }
 
   // Clear an expired status banner.
   if (bannerUntil > 0 && static_cast<int32_t>(millis() - bannerUntil) >= 0) {
@@ -521,30 +651,80 @@ void BluetoothSettingsActivity::render(RenderLock&&) {
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
 
-  const char* title = tr(STR_BLUETOOTH);
+  const char* title = tr(STR_BT_BETA);
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, title);
+
+  const int topOffset = metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight + metrics.verticalSpacing;
+  const int contentHeight = pageHeight - topOffset - metrics.buttonHintsHeight - metrics.verticalSpacing;
+  const Rect listRect{0, topOffset, pageWidth, contentHeight};
+  const ActivationState state = activationState.load(std::memory_order_acquire);
+
+  if (state == ActivationState::Preparing) {
+    GUI.drawSubHeader(renderer, Rect{0, metrics.topPadding + metrics.headerHeight, pageWidth, metrics.tabBarHeight},
+                      tr(STR_BT_PREPARING));
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    renderer.displayBuffer();
+
+    // Settings can start Bluetooth from its child page when its parent was
+    // entered with Bluetooth Off. Yield only the established rebuildable font
+    // owners, after this page has rendered and only when the normal cold-start
+    // floors are short. Reader pages keep their existing reclaim lifecycle.
+    if (!preparationReclaimDone.exchange(true, std::memory_order_acq_rel) && mode == Mode::Settings &&
+        !BleHid.isRunning()) {
+      const size_t freeBefore = ESP.getFreeHeap();
+      const size_t largestBefore = ESP.getMaxAllocHeap();
+      if (freeBefore < bleinput::kReaderBleStartMinFreeHeap ||
+          largestBefore < bleinput::kReaderBleStartMinLargestBlock) {
+        if (auto* fontCache = renderer.getFontCacheManager()) fontCache->releaseTransientFontCaches();
+        sdFontSystem.releaseInterfaceFontCaches();
+        if (!activityManager.isReaderActivity()) sdFontSystem.releaseReaderFontOwner(renderer);
+      }
+      LOG_INF("BLEMEM", "stage=bluetooth_settings_prepare_reclaim free=%u->%u largest=%u->%u floors=%u/%u",
+              static_cast<unsigned>(freeBefore), static_cast<unsigned>(ESP.getFreeHeap()),
+              static_cast<unsigned>(largestBefore), static_cast<unsigned>(ESP.getMaxAllocHeap()),
+              static_cast<unsigned>(bleinput::kReaderBleStartMinFreeHeap),
+              static_cast<unsigned>(bleinput::kReaderBleStartMinLargestBlock));
+    }
+    return;
+  }
+
+  if (state == ActivationState::Failed) {
+    GUI.drawSubHeader(renderer, Rect{0, metrics.topPadding + metrics.headerHeight, pageWidth, metrics.tabBarHeight},
+                      tr(STR_BT_START_FAILED));
+    const bool retryUsed = controlledRetryUsed.load(std::memory_order_acquire);
+    const int count = retryUsed ? 1 : 2;
+    const int selectedFailureOption = std::clamp(failureIndex.load(std::memory_order_acquire), 0, count - 1);
+    GUI.drawList(renderer, listRect, count, selectedFailureOption,
+                 [retryUsed](int index) { return std::string(tr(index == 0 && !retryUsed ? STR_RETRY : STR_BACK)); },
+                 nullptr, nullptr, nullptr, false);
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    renderer.displayBuffer();
+    return;
+  }
 
   // Sub-header: connection status.
   const char* status = BleHid.isConnected() ? BleHid.connectedName() : tr(STR_BT_NOT_CONNECTED);
   GUI.drawSubHeader(renderer, Rect{0, metrics.topPadding + metrics.headerHeight, pageWidth, metrics.tabBarHeight},
                     status);
 
-  const int topOffset = metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight + metrics.verticalSpacing;
-  const int contentHeight = pageHeight - topOffset - metrics.buttonHintsHeight - metrics.verticalSpacing;
-  const Rect listRect{0, topOffset, pageWidth, contentHeight};
-
   if (view == View::Menu) {
     GUI.drawList(
         renderer, listRect, static_cast<int>(menuRows.size()), menuIndex,
         [this](int i) {
 #if FREEINK_CAP_BLE_HID_HOST
-          if (menuRows[i].action == Action::Diagnostics) return std::string("Input Diagnostics");
-          if (menuRows[i].action == Action::ResetDefaults) return std::string("Reset remote mappings to defaults");
+          if (menuRows[i].action == Action::Diagnostics) return std::string(tr(STR_BT_DIAGNOSTICS));
+          if (menuRows[i].action == Action::ResetDefaults) return std::string(tr(STR_BT_RESET_MAP_DEFAULTS));
 #endif
           return std::string(I18N.get(menuRows[i].label));
         }, nullptr, nullptr,
         [this](int i) -> std::string {
-          if (menuRows[i].action == Action::ToggleBt) return SETTINGS.bluetoothEnabled ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+          if (menuRows[i].action == Action::ToggleBt) {
+            const bool enabled = mode == Mode::ReaderSession ? bleinput::readerSessionBluetoothEnabled()
+                                                             : SETTINGS.bluetoothEnabled != 0;
+            return enabled ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+          }
           if (menuRows[i].action == Action::NoDeviceTimeout)
             return noDeviceTimeoutLabel(SETTINGS.bluetoothNoDeviceTimeoutSeconds);
           return "";
@@ -575,7 +755,7 @@ void BluetoothSettingsActivity::render(RenderLock&&) {
     const uint8_t count = bleinput::diagnosticCount();
     if (count == 0) {
       GUI.drawHelpText(renderer, Rect{0, topOffset + metrics.verticalSpacing, pageWidth, 24},
-                       "No BLE diagnostic events");
+                       tr(STR_BT_NO_DIAGNOSTIC_EVENTS));
     } else {
       const int lineHeight = 22;
       const int maxRows = contentHeight / lineHeight > 0 ? contentHeight / lineHeight : 1;
@@ -587,7 +767,7 @@ void BluetoothSettingsActivity::render(RenderLock&&) {
         renderer.drawText(UI_10_FONT_ID, 8, topOffset + row * lineHeight, line);
       }
       GUI.drawHelpText(renderer, Rect{0, pageHeight - metrics.buttonHintsHeight - 22, pageWidth, 20},
-                       "Confirm: clear diagnostics");
+                       tr(STR_BT_CLEAR_DIAGNOSTICS_HINT));
     }
   }
 #endif

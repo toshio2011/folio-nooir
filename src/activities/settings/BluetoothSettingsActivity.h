@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <atomic>
 
 #include "activities/Activity.h"
 #include "components/OptionPopup.h"
@@ -19,8 +20,11 @@
 // gracefully when BLE is compiled out (BleHid.begin() returns false).
 class BluetoothSettingsActivity final : public Activity {
  public:
-  explicit BluetoothSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : Activity("BluetoothSettings", renderer, mappedInput) {}
+  enum class Mode : uint8_t { Settings, ReaderSession };
+
+  explicit BluetoothSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                                     const Mode mode = Mode::Settings)
+      : Activity("BluetoothSettings", renderer, mappedInput), mode(mode) {}
 
   void onEnter() override;
   void onExit() override;
@@ -28,6 +32,7 @@ class BluetoothSettingsActivity final : public Activity {
   void render(RenderLock&&) override;
   bool keepsBluetoothAlive() const override { return true; }
   bool bluetoothResourceSensitive() const override;
+  void onBluetoothActivationResult(bool started);
 
  private:
   enum class View { Menu, Scan, Paired, Diagnostics };
@@ -54,6 +59,13 @@ class BluetoothSettingsActivity final : public Activity {
   };
 
   View view = View::Menu;
+  enum class ActivationState : uint8_t { Ready, Preparing, Failed };
+  const Mode mode;
+  std::atomic<ActivationState> activationState{ActivationState::Ready};
+  std::atomic<int8_t> activationResult{-1};
+  std::atomic<bool> controlledRetryUsed{false};
+  std::atomic<bool> preparationReclaimDone{false};
+  std::atomic<int> failureIndex{0};
   std::vector<MenuRow> menuRows;
   int menuIndex = 0;
   int scanIndex = 0;
@@ -79,6 +91,7 @@ class BluetoothSettingsActivity final : public Activity {
 
   void rebuildMenuRows();
   void handleMenuConfirm();
+  void beginPreparation(bool controlledRetry);
   void startScanView();
   void beginPairedConnect();
   void applyPreset(bool free3);

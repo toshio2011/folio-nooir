@@ -151,6 +151,9 @@ class ActivityManager {
   // Settings uses this to consume its explicit return transition; ordinary
   // redraws remain unrelated to BLE resource sensitivity.
   void notifyBluetoothAdmission();
+  // BluetoothSettings uses the centralized lifecycle's actual start result to
+  // leave its preparing screen only after a real host activation.
+  void notifyBluetoothActivationResult(bool started);
   bool hasPendingUpdate() const { return requestedUpdate.load(std::memory_order_acquire); }
   bool hasPendingRenderWork() const;
   void postBluetoothNotification(const char* message);
