@@ -15,7 +15,7 @@
 #include "SettingsList.h"
 #include "FontSelectionCompatibility.h"
 #include "fontIds.h"
-#include "Serialization/PersistableStorePolicy.h"
+#include <PersistableStorePolicy.h>
 #include "util/FolioLiteLayoutPolicy.h"
 #include "util/HomeThemePolicy.h"
 #include "util/RandomSleepPreferences.h"

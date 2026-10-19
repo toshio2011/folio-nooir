@@ -7,7 +7,7 @@
 #include <array>
 #include <cstring>
 
-#include "Serialization/PersistableStorePolicy.h"
+#include "PersistableStorePolicy.h"
 
 namespace {
 
