@@ -31,5 +31,3 @@ TEST(FolioLiteLayout, EveryLiteChoiceReturnsTheIntendedFolioRendererMode) {
             FolioLiteLayoutPolicy::FOLIO_LAYOUT_GRID);
   EXPECT_EQ(FolioLiteLayoutPolicy::toFolioLayout(255), FolioLiteLayoutPolicy::FOLIO_LAYOUT_GRID);
 }
-
-\n
