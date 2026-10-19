@@ -283,12 +283,15 @@ void RecentBooksActivity::generateNextCover() {
         attempted = true;
         const std::string title = xtc.getTitle().empty() ? book.title : xtc.getTitle();
         const std::string author = xtc.getAuthor();
+        const std::string synopsis = xtc.getSynopsis().substr(0, 384);
         const std::string cover = xtc.getThumbBmpPath();
-        if (book.title != title || book.author != author || book.coverBmpPath != cover) {
+        if (book.title != title || book.author != author || book.coverBmpPath != cover ||
+            book.synopsis != synopsis) {
           book.title = title;
           book.author = author;
           book.coverBmpPath = cover;
-          RECENT_BOOKS.updateBook(book.path, book.title, book.author, book.coverBmpPath);
+          book.synopsis = synopsis;
+          RECENT_BOOKS.updateBook(book.path, book.title, book.author, book.coverBmpPath, book.synopsis);
         }
         const std::string thumb = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
         if (forceRebuild && !isValidBookThumbnail(thumb)) {
