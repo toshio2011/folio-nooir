@@ -213,7 +213,7 @@ void XtcParser::readNooirRichMetadata() {
   if (m_file.read(reinterpret_cast<uint8_t*>(&bytes[0]), len) != len) return;
 
   JsonDocument doc;
-  if (deserializeJson(doc, bytes) != DeserializationError::Ok) return;
+  if (deserializeJson(doc, bytes.data(), bytes.size()) != DeserializationError::Ok) return;
   const char* description = doc["description"] | "";
   if (description && *description) {
     m_synopsis = std::string(description).substr(0, 4096);
