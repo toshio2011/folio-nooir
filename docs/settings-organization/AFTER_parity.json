@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "baselineCommit": "ce86b9f8c85d774af297ef11e6f98c4bee9e0729",
   "historicalWebExposureCommit": "d4a97653",
-  "prototypeBaseCommit": "a734fe8275c03861bac6bc6cdef976620d2456df",
+  "prototypeBaseCommit": "bd506ea7d94de920f706963de05b083c5ca71fc4",
   "prototypeFiles": [
     "src/SettingsGroups.h",
     "src/SettingsGroupDevice.h",
