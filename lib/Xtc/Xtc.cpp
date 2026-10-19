@@ -106,6 +106,10 @@ std::string Xtc::getAuthor() const {
   return parser->getAuthor();
 }
 
+std::string Xtc::getSynopsis() const {
+  return (loaded && parser) ? parser->getSynopsis() : std::string{};
+}
+
 bool Xtc::hasChapters() const {
   if (!loaded || !parser) {
     return false;
