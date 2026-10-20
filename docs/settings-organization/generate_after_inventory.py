@@ -109,11 +109,12 @@ CURRENT_BUILD = {
     "status": "blocked",
     "environment": "PlatformIO gh_release",
     "branch": "codex/folio-nooir-1.6.6",
-    "sourceCommit": git("rev-parse", "HEAD"),
+    "sourceCommit": git("log", "-1", "--format=%H", "HEAD", "--", "src/main.cpp"),
     "blocker": (
-        "Windows refuses to start riscv32-esp-elf-g++.exe with Illegal System DLL Relocation. "
-        "A fresh official 14.2.0+20260121 package reproduces the failure. The optional 15.2.0+20251204 "
-        "diagnostic install did not complete because PlatformIO reported missing files during package mirroring."
+        "Windows refuses to start riscv32-esp-elf-g++.exe with Illegal System DLL Relocation. Fresh official "
+        "14.2.0+20260121 and 15.2.0+20251204 packages both reproduce the failure. Windows process-mitigation "
+        "inspection found no force-relocation policy to correct. The gh_release attempt also could not resolve "
+        "setuptools from PyPI in the restricted network and did not complete."
     ),
     "artifact": None,
     "physicalX4": "pending; not validated on device",
