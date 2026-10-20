@@ -10,6 +10,7 @@
 #include <Bitmap.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
