@@ -86,7 +86,7 @@ WEB_ROUTE_COMMIT = "908453f39608169b1dad079e31a94db28415001b"
 WEB_INTEGRATION_COMMIT = "7296bbc85467675fdc8e1dffd4c73f4022e96518"
 PROTOTYPE_BASE_COMMIT = "a1d78c9d1cb281980beef8cfa708c042f5c19a45"
 RELEASE_BUILD = {
-    "status": "firmware built; physical X4 validation pending",
+    "status": "last successful historical RC; this artifact predates the current source tree",
     "environment": "PlatformIO gh_release",
     "branch": "codex/folio-nooir-1.6.6",
     "sourceCommit": "23ee3fdf3c8004dde5f8352ea9c5f3a13261cf28",
@@ -102,6 +102,20 @@ RELEASE_BUILD = {
     "ramTotalBytes": 327680,
     "flashUsedBytes": 5949781,
     "flashTotalBytes": 6553600,
+    "physicalX4": "pending; not validated on device",
+}
+
+CURRENT_BUILD = {
+    "status": "blocked",
+    "environment": "PlatformIO gh_release",
+    "branch": "codex/folio-nooir-1.6.6",
+    "sourceCommit": git("rev-parse", "HEAD"),
+    "blocker": (
+        "Windows refuses to start riscv32-esp-elf-g++.exe with Illegal System DLL Relocation. "
+        "A fresh official 14.2.0+20260121 package reproduces the failure. The optional 15.2.0+20251204 "
+        "diagnostic install did not complete because PlatformIO reported missing files during package mirroring."
+    ),
+    "artifact": None,
     "physicalX4": "pending; not validated on device",
 }
 
@@ -325,7 +339,8 @@ def main() -> None:
     after["source"]["homeWorkerOverlap"] = (
         "Theme value 5 is Folio Nooir Lite (formerly Carousel). Its original full Carousel page is restored; "
         "only its book display region gains independent Recent/Finished choices for 3 Carousel, 5 Carousel, "
-        "Spine, and Grid. The main Folio Nooir renderer and layout preferences remain unchanged. "
+        "one-row Spine, two-row Spine, and three-row Spine. The removed Lite Grid value is now the two-row Spine. "
+        "The main Folio Nooir renderer and layout preferences remain unchanged. "
         "The legacy Carousel key initializes Lite's settings on migration and remains for downgrade compatibility. "
         "The saved Interface Font selection remains stored, while the row is hidden and the built-in UI font is used."
     )
@@ -333,7 +348,9 @@ def main() -> None:
         {"label": "STR_LAYOUT_3_COVER_CAROUSEL", "optionIndex": 0, "persistedValue": 0},
         {"label": "STR_LAYOUT_5_COVER_CAROUSEL", "optionIndex": 1, "persistedValue": 1},
         {"label": "STR_LAYOUT_SPINE", "optionIndex": 2, "persistedValue": 2},
-        {"label": "STR_LAYOUT_GRID_4X2", "optionIndex": 3, "persistedValue": 3},
+        {"label": "STR_LAYOUT_TWO_ROW_SPINE", "optionIndex": 3, "persistedValue": 3,
+         "replaces": "STR_LAYOUT_GRID_4X2"},
+        {"label": "STR_LAYOUT_THREE_ROW_SPINE", "optionIndex": 4, "persistedValue": 4},
     ]
     for key, label, line in (
         ("liteRecentBookLayout", "STR_RECENT_BOOK_LAYOUT", 286),
@@ -503,7 +520,7 @@ def main() -> None:
         ],
         "homeWorkerAOverlap": (
             "Folio Nooir Lite (former Carousel, theme value 5) restores the complete original Carousel page and "
-            "adds Spine/Grid only in its book-display region. Recent/Finished preferences are Lite-specific; the "
+            "adds one-row, two-row, and three-row Spine only in its book-display region. Recent/Finished preferences are Lite-specific; the "
             "main Folio Nooir renderer and persisted layout fields remain untouched. The old Carousel key "
             "migrates into Lite's selectors. Custom UI font selection is hidden for 1.6.6 and the built-in UI font is used."
         ),
@@ -622,8 +639,8 @@ def main() -> None:
         "layoutPresentation": {
             "recentBookLayout": "Folio Nooir main theme only; option set and persisted field unchanged",
             "finishedBookLayout": "Folio Nooir main theme only; option set and persisted field unchanged",
-            "liteRecentBookLayout": "Folio Nooir Lite only; original Carousel page retained; choices are 3 Carousel, 5 Carousel, Spine, Grid",
-            "liteFinishedBookLayout": "Folio Nooir Lite only; original Carousel page retained; choices are 3 Carousel, 5 Carousel, Spine, Grid",
+            "liteRecentBookLayout": "Folio Nooir Lite only; original Carousel page retained; choices are 3 Carousel, 5 Carousel, one-row Spine, two-row Spine, three-row Spine; old Grid value 3 is now two-row Spine",
+            "liteFinishedBookLayout": "Folio Nooir Lite only; original Carousel page retained; choices are 3 Carousel, 5 Carousel, one-row Spine, two-row Spine, three-row Spine; old Grid value 3 is now two-row Spine",
             "carouselLayout": (
                 "legacy persisted field retained; value initializes liteRecentBookLayout/liteFinishedBookLayout; "
                 "main Folio layout keys remain untouched"
@@ -656,14 +673,14 @@ def main() -> None:
                 "tiltPageTurn": "X3 QMI8658 IMU only",
             },
             "implementationTests": {
-                "groupedSettingsContract": "8/8",
+                "groupedSettingsContract": "9/9",
                 "settingsOrganizationParity": "24/24",
-                "pythonSuitesTotal": "32/32 across settings_organization and web_stability",
+                "pythonSuitesTotal": "33/33 across settings_organization and web_stability",
                 "generatedHtmlAndJsSyntax": "passed (Node.js; 1 inline SettingsPage script parsed)",
-                "bleMemoryPolicyHostSuite": "passed as part of the 432/432 CTest host suite",
-                "fullHostSuite": "passed; 432/432 CTest tests",
+                "bleMemoryPolicyHostSuite": "passed as part of the 449/449 CTest host suite",
+                "fullHostSuite": "passed; 449/449 CTest tests",
             },
-            "build": "Passed; artifact and toolchain metadata are recorded in releaseBuild below.",
+            "build": "Current source build is blocked; releaseBuild below describes only the older historical RC.",
             "apiContract": {
                 "groups": "GET /api/settings/groups returns only the seven static descriptors",
                 "read": "GET /api/settings requires a valid group; offset 0..32 and limit 1..6; returns only the selected group page and X-Settings-Total",
@@ -704,10 +721,11 @@ def main() -> None:
         "integrationBlockers": [],
         "releaseValidation": {
             "sourceParity": "passed; accidental missing settings=0; accidental duplicates=0",
-            "firmwareBuild": "passed; gh_release built from the recorded source commit",
+            "firmwareBuild": "blocked for the current tree; see currentBuild",
             "physicalX4": "pending; not validated on device",
             "releaseReady": False,
         },
+        "currentBuild": CURRENT_BUILD,
         "releaseBuild": RELEASE_BUILD,
         "physicalX4Validation": (
             "Pending; verify first Home responsiveness, Settings navigation, Device Info, Web re-entry, sleep/wake, "

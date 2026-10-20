@@ -13,8 +13,8 @@
     "webSettingsDeferralCommit": "4eb9b811af823344a36950725614f9ab3e341544",
     "clippingsDeferralCommit": "4eb9b811af823344a36950725614f9ab3e341544",
     "interfaceFontDecision": "Worker E commit ce86b9f8 disables custom UI font application and preserves selection; row is still present in this exact source and row-hide remains pending",
-    "homeWorkerOverlap": "Theme value 5 is Folio Nooir Lite (formerly Carousel). Its original full Carousel page is restored; only its book display region gains independent Recent/Finished choices for 3 Carousel, 5 Carousel, Spine, and Grid. The main Folio Nooir renderer and layout preferences remain unchanged. The legacy Carousel key initializes Lite's settings on migration and remains for downgrade compatibility. The saved Interface Font selection remains stored, while the row is hidden and the built-in UI font is used.",
-    "prototypeBaseCommit": "23ee3fdf3c8004dde5f8352ea9c5f3a13261cf28",
+    "homeWorkerOverlap": "Theme value 5 is Folio Nooir Lite (formerly Carousel). Its original full Carousel page is restored; only its book display region gains independent Recent/Finished choices for 3 Carousel, 5 Carousel, one-row Spine, two-row Spine, and three-row Spine. The removed Lite Grid value is now the two-row Spine. The main Folio Nooir renderer and layout preferences remain unchanged. The legacy Carousel key initializes Lite's settings on migration and remains for downgrade compatibility. The saved Interface Font selection remains stored, while the row is hidden and the built-in UI font is used.",
+    "prototypeBaseCommit": "469bef0a6c6228f942cdb83b6dfa86e59dbc720b",
     "prototypeWorkingTreeFiles": [
       "src/SettingsGroups.h",
       "src/SettingsGroupDevice.h",
@@ -7351,9 +7351,15 @@
           "persistedValue": 2
         },
         {
-          "label": "STR_LAYOUT_GRID_4X2",
+          "label": "STR_LAYOUT_TWO_ROW_SPINE",
           "optionIndex": 3,
-          "persistedValue": 3
+          "persistedValue": 3,
+          "replaces": "STR_LAYOUT_GRID_4X2"
+        },
+        {
+          "label": "STR_LAYOUT_THREE_ROW_SPINE",
+          "optionIndex": 4,
+          "persistedValue": 4
         }
       ],
       "range": null,
@@ -7404,9 +7410,15 @@
           "persistedValue": 2
         },
         {
-          "label": "STR_LAYOUT_GRID_4X2",
+          "label": "STR_LAYOUT_TWO_ROW_SPINE",
           "optionIndex": 3,
-          "persistedValue": 3
+          "persistedValue": 3,
+          "replaces": "STR_LAYOUT_GRID_4X2"
+        },
+        {
+          "label": "STR_LAYOUT_THREE_ROW_SPINE",
+          "optionIndex": 4,
+          "persistedValue": 4
         }
       ],
       "range": null,
