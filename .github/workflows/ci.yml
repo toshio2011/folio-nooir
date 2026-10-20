@@ -2,7 +2,7 @@ name: CI (build)
 
 on:
   push:
-    branches: [master]
+    branches: [master, fix/xtch-streamed-thumbnail-nooir]
   pull_request:
 
 permissions:
