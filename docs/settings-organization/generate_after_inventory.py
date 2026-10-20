@@ -113,8 +113,9 @@ CURRENT_BUILD = {
     "blocker": (
         "Windows refuses to start riscv32-esp-elf-g++.exe with Illegal System DLL Relocation. Fresh official "
         "14.2.0+20260121 and 15.2.0+20251204 packages both reproduce the failure. Windows process-mitigation "
-        "inspection found no force-relocation policy to correct. The gh_release attempt also could not resolve "
-        "setuptools from PyPI in the restricted network and did not complete."
+        "inspection found no force-relocation policy to correct. A network-enabled gh_release attempt resolved "
+        "esptool and completed setup but did not complete after dependency scanning; direct compiler startup "
+        "fails with the Windows loader error."
     ),
     "artifact": None,
     "physicalX4": "pending; not validated on device",

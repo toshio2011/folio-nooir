@@ -14,7 +14,7 @@
     "clippingsDeferralCommit": "4eb9b811af823344a36950725614f9ab3e341544",
     "interfaceFontDecision": "Worker E commit ce86b9f8 disables custom UI font application and preserves selection; row is still present in this exact source and row-hide remains pending",
     "homeWorkerOverlap": "Theme value 5 is Folio Nooir Lite (formerly Carousel). Its original full Carousel page is restored; only its book display region gains independent Recent/Finished choices for 3 Carousel, 5 Carousel, one-row Spine, two-row Spine, and three-row Spine. The removed Lite Grid value is now the two-row Spine. The main Folio Nooir renderer and layout preferences remain unchanged. The legacy Carousel key initializes Lite's settings on migration and remains for downgrade compatibility. The saved Interface Font selection remains stored, while the row is hidden and the built-in UI font is used.",
-    "prototypeBaseCommit": "074618b7c9c1bfe633d5f8270b3c24f35f0818e7",
+    "prototypeBaseCommit": "2f057928a3b3a1f403d7d2105a3e91d468c24557",
     "prototypeWorkingTreeFiles": [
       "src/SettingsGroups.h",
       "src/SettingsGroupDevice.h",
