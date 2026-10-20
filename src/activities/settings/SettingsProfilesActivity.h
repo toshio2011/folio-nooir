@@ -25,6 +25,8 @@ class SettingsProfilesActivity final : public Activity {
   void deleteSelectedProfile();
 
   std::vector<std::string> profiles;
+  std::string statusMessage;
+  bool recoveryNotice = false;
   int selectedIndex = 0;
   ButtonNavigator buttonNavigator;
   OptionPopup actionsPopup;

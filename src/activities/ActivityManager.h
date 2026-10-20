@@ -87,6 +87,11 @@ class ActivityManager {
   // interpreted as Home/Back and leave the book.
   bool suppressRestoredReaderInput = false;
   bool sleepRequested = false;
+  char pendingSettingsNotification[64] = {};
+  bool hasSettingsNotification = false;
+  char visibleSettingsNotification[64] = {};
+  bool settingsNotificationVisible = false;
+  unsigned long settingsNotificationShownAt = 0;
 #if FREEINK_CAP_BLE_HID_HOST
   char pendingBluetoothNotification[64] = {};
   bool hasBluetoothNotification = false;
@@ -157,6 +162,7 @@ class ActivityManager {
   bool hasPendingUpdate() const { return requestedUpdate.load(std::memory_order_acquire); }
   bool hasPendingRenderWork() const;
   void postBluetoothNotification(const char* message);
+  void postSettingsRecoveryNotification(const char* message);
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;
 

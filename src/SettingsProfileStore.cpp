@@ -21,6 +21,17 @@ bool hasJsonExtension(const std::string& name) {
          std::tolower(static_cast<unsigned char>(name[dot + 4])) == 'n';
 }
 
+bool isSemanticallyValidProfile(JsonVariantConst profile) {
+  if (!profile.is<JsonObjectConst>()) return false;
+  const JsonObjectConst settings = profile.as<JsonObjectConst>();
+  const bool hasReaderIdentity = settings["fontFamily"].is<uint8_t>() && settings["fontSize"].is<uint8_t>();
+  const bool hasSleepIdentity = settings["sleepScreen"].is<uint8_t>() &&
+                                (settings["sleepTimeout"].is<uint8_t>() ||
+                                 settings["sleepTimeoutMinutes"].is<uint8_t>());
+  const bool hasDisplayIdentity = settings["orientation"].is<uint8_t>() && settings["fadingFix"].is<uint8_t>();
+  return hasReaderIdentity && hasSleepIdentity && hasDisplayIdentity;
+}
+
 bool hasCurrentRc1ProfileShape(JsonVariantConst profile) {
   // These fields are emitted by every current RC1 saveCurrent() call. A
   // schema-1 document missing any of them is an older profile shape and must
@@ -107,8 +118,10 @@ bool SettingsProfileStore::saveCurrent(const std::string& name) {
   const std::string path = pathForName(safe);
   if (safe.empty() || path.empty()) return false;
   if (SETTINGS.isSettingsRecoveryRequired()) {
-    LOG_ERR("PROF", "Cannot save profile while settings recovery is pending: %s", safe.c_str());
-    return false;
+    // This writes a separate profile file and never replaces the questionable
+    // settings.json candidate. Let the user preserve the current in-memory
+    // values, then explicitly apply that profile to resolve recovery.
+    LOG_INF("PROF", "Saving recovery profile without replacing settings: %s", safe.c_str());
   }
 
   Storage.mkdir(PROFILE_DIR);
@@ -136,6 +149,10 @@ bool SettingsProfileStore::apply(const std::string& name) {
   }
   if ((profile["_profileSchema"] | static_cast<uint8_t>(0)) != SCHEMA_VERSION) {
     LOG_ERR("PROF", "Unsupported profile schema: %s", name.c_str());
+    return false;
+  }
+  if (!isSemanticallyValidProfile(profile.as<JsonVariantConst>())) {
+    LOG_ERR("PROF", "Rejected incomplete settings profile: %s", name.c_str());
     return false;
   }
 

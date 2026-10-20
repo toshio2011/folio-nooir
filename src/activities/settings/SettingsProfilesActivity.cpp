@@ -30,6 +30,8 @@ void SettingsProfilesActivity::reload() {
 void SettingsProfilesActivity::onEnter() {
   Activity::onEnter();
   reload();
+  recoveryNotice = SETTINGS.isSettingsRecoveryRequired();
+  statusMessage.clear();
   requestUpdate();
 }
 
@@ -39,11 +41,17 @@ void SettingsProfilesActivity::saveCurrentProfile() {
       [this](const ActivityResult& result) {
         if (!result.isCancelled && std::holds_alternative<KeyboardResult>(result.data)) {
           const std::string name = std::get<KeyboardResult>(result.data).text;
-          if (!name.empty() && SettingsProfileStore::saveCurrent(name)) {
-            reload();
-            const std::string safe = SettingsProfileStore::sanitizeName(name);
-            const auto it = std::find(profiles.begin(), profiles.end(), safe);
-            if (it != profiles.end()) selectedIndex = static_cast<int>(it - profiles.begin());
+          if (!name.empty()) {
+            if (SettingsProfileStore::saveCurrent(name)) {
+              reload();
+              const std::string safe = SettingsProfileStore::sanitizeName(name);
+              const auto it = std::find(profiles.begin(), profiles.end(), safe);
+              if (it != profiles.end()) selectedIndex = static_cast<int>(it - profiles.begin());
+              statusMessage = recoveryNotice ? "Profile saved. Apply it to restore settings saving."
+                                            : "Profile saved.";
+            } else {
+              statusMessage = "Profile save failed. Check the SD card.";
+            }
           }
         }
         requestUpdate(true);
@@ -56,6 +64,7 @@ void SettingsProfilesActivity::applySelectedProfile() {
     UITheme::getInstance().reload();
     finish();
   } else {
+    statusMessage = "Profile could not be applied. Check the SD card.";
     requestUpdate(true);
   }
 }
@@ -156,15 +165,25 @@ void SettingsProfilesActivity::render(RenderLock&&) {
 
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_SETTINGS_PROFILES));
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-  const int contentHeight = pageHeight - contentTop - FOOTER_HEIGHT - metrics.verticalSpacing;
+  const int noticeHeight = (recoveryNotice || !statusMessage.empty()) ? 34 : 0;
+  const int contentHeight = pageHeight - contentTop - FOOTER_HEIGHT - metrics.verticalSpacing - noticeHeight;
 
   if (profiles.empty()) {
-    renderer.drawCenteredText(UI_12_FONT_ID, pageHeight / 2 - 20, "No profiles saved", true, EpdFontFamily::BOLD);
-    renderer.drawCenteredText(SMALL_FONT_ID, pageHeight / 2 + 16, "Press OK to save current settings");
+    renderer.drawCenteredText(UI_12_FONT_ID, contentTop + contentHeight / 2 - 20, "No profiles saved", true,
+                              EpdFontFamily::BOLD);
+    renderer.drawCenteredText(SMALL_FONT_ID, contentTop + contentHeight / 2 + 16, "Press OK to save current settings");
   } else {
     GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(profiles.size()), selectedIndex,
                  [this](const int index) { return profiles[static_cast<size_t>(index)]; }, nullptr, nullptr,
                  [](const int) { return std::string("Settings"); }, true);
+  }
+
+  if (recoveryNotice || !statusMessage.empty()) {
+    const char* message = statusMessage.empty()
+                              ? "Settings recovery is pending. Apply a profile to restore saving."
+                              : statusMessage.c_str();
+    renderer.drawCenteredText(SMALL_FONT_ID, contentTop + contentHeight + metrics.verticalSpacing,
+                              message);
   }
 
   if (actionsPopup.processRender(renderer, mappedInput)) return;

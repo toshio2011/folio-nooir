@@ -59,6 +59,7 @@ static void logActivityHeapShape(const char* stage) {
           static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_8BIT)));
 }
 #endif
+static constexpr unsigned long SETTINGS_NOTIFICATION_DURATION_MS = 3000;
 
 void ActivityManager::begin() {
 #if defined(configNUM_CORES) && configNUM_CORES > 1
@@ -153,6 +154,28 @@ void ActivityManager::renderTaskLoop() {
       taskEXIT_CRITICAL(&activityManagerSpinlock);
       if (showBluetoothNotification) GUI.drawPopup(renderer, bluetoothNotification, true);
 #endif
+      char settingsNotification[sizeof(pendingSettingsNotification)] = {};
+      bool showSettingsNotification = false;
+      taskENTER_CRITICAL(&activityManagerSpinlock);
+      if (hasSettingsNotification) {
+        strncpy(visibleSettingsNotification, pendingSettingsNotification, sizeof(visibleSettingsNotification) - 1);
+        visibleSettingsNotification[sizeof(visibleSettingsNotification) - 1] = '\0';
+        pendingSettingsNotification[0] = '\0';
+        hasSettingsNotification = false;
+        settingsNotificationVisible = visibleSettingsNotification[0] != '\0';
+        settingsNotificationShownAt = millis();
+      }
+      if (settingsNotificationVisible) {
+        if (millis() - settingsNotificationShownAt < SETTINGS_NOTIFICATION_DURATION_MS) {
+          strncpy(settingsNotification, visibleSettingsNotification, sizeof(settingsNotification) - 1);
+          showSettingsNotification = settingsNotification[0] != '\0';
+        } else {
+          settingsNotificationVisible = false;
+          visibleSettingsNotification[0] = '\0';
+        }
+      }
+      taskEXIT_CRITICAL(&activityManagerSpinlock);
+      if (showSettingsNotification) GUI.drawPopup(renderer, settingsNotification, true);
     }
     // Notify any task blocked in requestUpdateAndWait() that the render is done.
     TaskHandle_t waiter = nullptr;
@@ -169,6 +192,23 @@ void ActivityManager::renderTaskLoop() {
 }
 
 void ActivityManager::loop() {
+  bool settingsToastActive = false;
+  unsigned long settingsToastShownAt = 0;
+  taskENTER_CRITICAL(&activityManagerSpinlock);
+  settingsToastActive = settingsNotificationVisible;
+  settingsToastShownAt = settingsNotificationShownAt;
+  taskEXIT_CRITICAL(&activityManagerSpinlock);
+  if (settingsToastActive && millis() - settingsToastShownAt >= SETTINGS_NOTIFICATION_DURATION_MS) {
+    bool dismissed = false;
+    taskENTER_CRITICAL(&activityManagerSpinlock);
+    if (settingsNotificationVisible && settingsNotificationShownAt == settingsToastShownAt) {
+      settingsNotificationVisible = false;
+      visibleSettingsNotification[0] = '\0';
+      dismissed = true;
+    }
+    taskEXIT_CRITICAL(&activityManagerSpinlock);
+    if (dismissed) requestUpdate();
+  }
 #if FREEINK_CAP_BLE_HID_HOST
   bool bluetoothToastActive = false;
   unsigned long bluetoothToastShownAt = 0;
@@ -797,6 +837,16 @@ void ActivityManager::postBluetoothNotification(const char* message) {
 #else
   (void)message;
 #endif
+}
+
+void ActivityManager::postSettingsRecoveryNotification(const char* message) {
+  if (!message || !message[0]) return;
+  taskENTER_CRITICAL(&activityManagerSpinlock);
+  strncpy(pendingSettingsNotification, message, sizeof(pendingSettingsNotification) - 1);
+  pendingSettingsNotification[sizeof(pendingSettingsNotification) - 1] = '\0';
+  hasSettingsNotification = true;
+  taskEXIT_CRITICAL(&activityManagerSpinlock);
+  requestUpdate();
 }
 
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }

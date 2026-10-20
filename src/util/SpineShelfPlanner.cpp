@@ -307,6 +307,89 @@ size_t twoRowPageCountFor(const Book* books, const size_t bookCount, const Rect&
   return pages;
 }
 
+struct ThreeRowGeometry {
+  int top = 0;
+  int height = 0;
+  int shelfY = 0;
+};
+
+ThreeRowGeometry threeRowGeometry(const Rect& bounds, const size_t row) {
+  const int totalHeight = std::max(72, bounds.height);
+  const int rowHeight = std::max(22, (totalHeight - THREE_ROW_ROW_GAP * 2) / 3);
+  const int top = bounds.y + static_cast<int>(row) * (rowHeight + THREE_ROW_ROW_GAP);
+  return ThreeRowGeometry{top, rowHeight, top + rowHeight - THREE_ROW_SHELF_HEIGHT};
+}
+
+int threeRowBookHeight(const Book& book, const Rect& bounds) {
+  const int available = std::max(20, threeRowGeometry(bounds, 0).height - THREE_ROW_SHELF_HEIGHT - 5);
+  const int lower = std::min(available, std::max(42, available * 76 / 100));
+  const int upper = std::max(lower, available - 1);
+  const int target = available * 87 / 100;
+  const int variation = std::max(2, available * 4 / 100);
+  const int offset = static_cast<int>((stableHash(book, 31) >> 8) % (variation * 2 + 1)) - variation;
+  return std::clamp(target + offset, lower, upper);
+}
+
+int threeRowBookWidth(const Book& book, const Rect& bounds) {
+  const int available = std::max(1, bounds.width - kShelfInset * 2);
+  if (isCoverFace(book)) {
+    return std::min(available, std::max(THREE_ROW_BOOK_MIN_WIDTH, threeRowBookHeight(book, bounds) * 2 / 3));
+  }
+  if (available <= THREE_ROW_BOOK_MIN_WIDTH) return available;
+  return std::min(available, THREE_ROW_BOOK_MIN_WIDTH + static_cast<int>(
+      stableHash(book, 37) % static_cast<uint32_t>(THREE_ROW_BOOK_MAX_WIDTH - THREE_ROW_BOOK_MIN_WIDTH + 1)));
+}
+
+ThreeRowPage threeRowPageAtStart(const Book* books, const size_t bookCount, const size_t start, const Rect& bounds) {
+  ThreeRowPage result{};
+  result.firstIndex = start;
+  if (books == nullptr || start >= bookCount) return result;
+
+  const int left = bounds.x + kShelfInset;
+  const int right = std::max(left + 1, bounds.x + bounds.width - kShelfInset);
+  size_t index = start;
+  for (size_t row = 0; row < 3 && index < bookCount; ++row) {
+    const auto geometry = threeRowGeometry(bounds, row);
+    int cursor = left;
+    const size_t rowSlotStart = result.itemCount;
+    size_t rowCount = 0;
+    while (index < bookCount && result.itemCount < THREE_ROW_SLOT_CAPACITY) {
+      const int remaining = right - cursor;
+      int width = threeRowBookWidth(books[index], bounds);
+      if (rowCount > 0 && width > remaining) break;
+      if (rowCount == 0) width = std::max(1, std::min(width, remaining));
+      if (width <= 0) break;
+      const int height = threeRowBookHeight(books[index], bounds);
+      result.slots[result.itemCount] =
+          Slot{index, Rect{cursor, geometry.shelfY - height, width, height}, isCoverFace(books[index])};
+      ++result.itemCount;
+      ++rowCount;
+      ++index;
+      cursor += width + THREE_ROW_BOOK_GAP;
+    }
+    if (rowCount == 0) continue;
+
+    const int groupLeft = result.slots[rowSlotStart].rect.x;
+    const int groupRight = result.slots[result.itemCount - 1].rect.x + result.slots[result.itemCount - 1].rect.width;
+    const int offset = (left + right) / 2 - (groupLeft + groupRight) / 2;
+    for (size_t slot = rowSlotStart; slot < result.itemCount; ++slot) result.slots[slot].rect.x += offset;
+  }
+  return result;
+}
+
+size_t threeRowPageCountFor(const Book* books, const size_t bookCount, const Rect& bounds) {
+  if (books == nullptr) return 0;
+  size_t start = 0;
+  size_t pages = 0;
+  while (start < bookCount && pages < 255) {
+    const ThreeRowPage page = threeRowPageAtStart(books, bookCount, start, bounds);
+    if (page.itemCount == 0) break;
+    start += page.itemCount;
+    ++pages;
+  }
+  return pages;
+}
+
 }  // namespace
 
 uint32_t stableHash(const Book& book, const size_t itemIndex) {
@@ -536,6 +619,72 @@ size_t twoRowPreviousPageStart(const Book* books, const size_t bookCount, const 
     start += page.itemCount;
   }
   return previous;
+}
+
+ThreeRowPage threeRowPageForSelection(const Book* books, const size_t bookCount, size_t selectedIndex,
+                                      const Rect& bounds) {
+  ThreeRowPage result{};
+  if (books == nullptr || bookCount == 0) return result;
+  selectedIndex = std::min(selectedIndex, bookCount - 1);
+  size_t start = 0;
+  size_t pageNumber = 1;
+  while (start < bookCount && pageNumber <= 255) {
+    const ThreeRowPage candidate = threeRowPageAtStart(books, bookCount, start, bounds);
+    if (candidate.itemCount == 0) break;
+    if (selectedIndex >= candidate.firstIndex && selectedIndex < candidate.firstIndex + candidate.itemCount) {
+      result = candidate;
+      result.pageNumber = static_cast<uint8_t>(std::min<size_t>(pageNumber, 255));
+      break;
+    }
+    start += candidate.itemCount;
+    ++pageNumber;
+  }
+  result.pageCount = static_cast<uint8_t>(std::min<size_t>(255, threeRowPageCountFor(books, bookCount, bounds)));
+  return result;
+}
+
+size_t threeRowNextPageStart(const Book* books, const size_t bookCount, const size_t selectedIndex,
+                             const Rect& bounds) {
+  const ThreeRowPage current = threeRowPageForSelection(books, bookCount, selectedIndex, bounds);
+  if (current.itemCount == 0 || current.pageCount <= 1 || current.pageNumber >= current.pageCount) return 0;
+  return current.firstIndex + current.itemCount;
+}
+
+size_t threeRowPreviousPageStart(const Book* books, const size_t bookCount, const size_t selectedIndex,
+                                 const Rect& bounds) {
+  const ThreeRowPage current = threeRowPageForSelection(books, bookCount, selectedIndex, bounds);
+  if (current.itemCount == 0 || current.pageCount <= 1) return 0;
+  if (current.firstIndex == 0) {
+    size_t start = 0;
+    size_t last = 0;
+    while (start < bookCount) {
+      const ThreeRowPage page = threeRowPageAtStart(books, bookCount, start, bounds);
+      if (page.itemCount == 0) break;
+      last = start;
+      start += page.itemCount;
+    }
+    return last;
+  }
+  size_t start = 0;
+  size_t previous = 0;
+  while (start < current.firstIndex) {
+    const ThreeRowPage page = threeRowPageAtStart(books, bookCount, start, bounds);
+    if (page.itemCount == 0) break;
+    previous = start;
+    start += page.itemCount;
+  }
+  return previous;
+}
+
+Rect threeRowShelfRect(const ThreeRowPage& page, const Rect& bounds, const size_t row) {
+  const auto geometry = threeRowGeometry(bounds, std::min<size_t>(row, 2));
+  for (size_t index = 0; index < page.itemCount; ++index) {
+    const auto& slot = page.slots[index];
+    if (slot.rect.y >= geometry.top && slot.rect.y < geometry.shelfY) {
+      return Rect{bounds.x, geometry.shelfY, std::max(1, bounds.width), THREE_ROW_SHELF_HEIGHT};
+    }
+  }
+  return Rect{bounds.x, geometry.shelfY, 0, 0};
 }
 
 bool makeSpineText(char* output, const size_t outputCapacity, const char* text, const Rect& spine,

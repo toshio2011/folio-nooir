@@ -32,6 +32,9 @@ static_assert(CrossPointSettings::CAROUSEL_LAYOUT_THREE_COVER == 0);
 static_assert(CrossPointSettings::CAROUSEL_LAYOUT_FIVE_COVER == 1);
 static_assert(CrossPointSettings::FOLIO_LITE_LAYOUT_THREE_COVER_CAROUSEL == 0);
 static_assert(CrossPointSettings::FOLIO_LITE_LAYOUT_FIVE_COVER_CAROUSEL == 1);
+static_assert(CrossPointSettings::FOLIO_LITE_LAYOUT_SPINE == 2);
+static_assert(CrossPointSettings::FOLIO_LITE_LAYOUT_TWO_ROW_SPINE == 3);
+static_assert(CrossPointSettings::FOLIO_LITE_LAYOUT_THREE_ROW_SPINE == 4);
 
 namespace {
 
@@ -111,22 +114,68 @@ uint8_t CrossPointSettings::sleepTimeoutEnumToMinutes(const uint8_t legacyValue)
 }
 
 bool CrossPointSettings::loadFromFile() {
-  const bool ok = PersistableStore<CrossPointSettings>::loadFromFile();
+  persistable::SettingsLoadReport report;
+  const bool ok = PersistableStore<CrossPointSettings>::loadFromFile(&report);
   if (ok) {
-    settingsRecoveryRequired = false;
+    const bool uncertainCandidate = report.hasReadError() || report.hasIncompatibleCandidate();
+    settingsRecoveryRequired = uncertainCandidate;
+    if (report.selected > 0 || uncertainCandidate) {
+      settingsRecoveryNoticePending = true;
+      settingsRecoveryNoticeFailed = uncertainCandidate;
+    }
+    String recoveryMarker;
+    if (Storage.readFileChecked("/.crosspoint/settings.recovery-in-progress", recoveryMarker, 128) ==
+        HalStorageReadStatus::Success) {
+      Storage.remove("/.crosspoint/settings.recovery-in-progress");
+    }
+    if (uncertainCandidate) {
+      LOG_ERR("CPS", "settings_recovery=guarded source=%u uncertain_candidates=1",
+              static_cast<unsigned>(report.selected));
+    }
     return true;
   }
 
-  // A missing file is the normal first-boot path and must leave defaults
-  // writable.  Existing but unusable candidates require an explicit recovery
-  // action before an ordinary save is allowed to replace them.
-  const bool candidateExists = Storage.exists(getFilePath()) || Storage.exists("/.crosspoint/settings.json.bak") ||
-                               Storage.exists("/.crosspoint/settings.json.tmp");
-  settingsRecoveryRequired = persistable::settingsRecoveryRequired(ok, candidateExists);
-  if (candidateExists) {
-    LOG_ERR("CPS", "settings_source=defaults save_guard=1");
+  // A missing set of candidates is normal on first boot. I/O failures,
+  // unknown valid formats, and an interrupted earlier recovery stay guarded.
+  String recoveryMarker;
+  const auto markerStatus = Storage.readFileChecked("/.crosspoint/settings.recovery-in-progress", recoveryMarker, 128);
+  const bool recoveryMarkerPresent = markerStatus == HalStorageReadStatus::Success;
+  const bool recoveryMarkerUncertain = markerStatus == HalStorageReadStatus::Unavailable ||
+                                       markerStatus == HalStorageReadStatus::IoError ||
+                                       markerStatus == HalStorageReadStatus::TooLarge;
+  settingsRecoveryRequired = report.anyExisting || report.hasReadError() || report.hasIncompatibleCandidate() ||
+                             recoveryMarkerPresent || recoveryMarkerUncertain;
+
+  if (report.confirmedCorruptionOnly() && (markerStatus == HalStorageReadStatus::NotFound ||
+                                           markerStatus == HalStorageReadStatus::ParentMissing)) {
+    JsonDocument defaults;
+    toJson(defaults);
+    if (PersistableStoreBase::recoverMalformedSettings(getFilePath(), defaults, report)) {
+      persistable::SettingsLoadReport recoveredReport;
+      if (PersistableStore<CrossPointSettings>::loadFromFile(&recoveredReport)) {
+        settingsRecoveryRequired = false;
+        settingsRecoveryNoticePending = true;
+        LOG_INF("CPS", "settings_recovery=complete source=defaults");
+        return true;
+      }
+      LOG_ERR("CPS", "settings_recovery=failed stage=loadback");
+    }
+  }
+
+  if (settingsRecoveryRequired) {
+    LOG_ERR("CPS", "settings_source=defaults save_guard=1 recovery_marker=%d storage_error=%d unknown=%d",
+            recoveryMarkerPresent || recoveryMarkerUncertain, report.hasReadError(), report.hasIncompatibleCandidate());
+    settingsRecoveryNoticePending = true;
+    settingsRecoveryNoticeFailed = true;
   }
   return false;
+}
+
+const char* CrossPointSettings::consumeSettingsRecoveryNotice() {
+  if (!settingsRecoveryNoticePending) return nullptr;
+  settingsRecoveryNoticePending = false;
+  if (settingsRecoveryNoticeFailed) return "Settings not repaired; saved data protected";
+  return "Settings recovered; review saved options";
 }
 
 bool CrossPointSettings::saveToFile() const {

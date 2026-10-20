@@ -30,6 +30,13 @@ constexpr int TWO_ROW_BOTTOM_GAP = 32;
 // stops only when the final deterministic geometry no longer fits; this is a
 // page-local safety ceiling, not a visible-book/page-size rule.
 constexpr size_t TWO_ROW_SLOT_CAPACITY = 28;
+constexpr int THREE_ROW_BOOK_GAP = 2;
+constexpr int THREE_ROW_BOOK_MIN_WIDTH = 28;
+constexpr int THREE_ROW_BOOK_MAX_WIDTH = 42;
+constexpr int THREE_ROW_ROW_GAP = 5;
+constexpr int THREE_ROW_SHELF_HEIGHT = 10;
+constexpr int THREE_ROW_BOTTOM_GAP = 16;
+constexpr size_t THREE_ROW_SLOT_CAPACITY = 42;
 
 enum class Appearance : uint8_t { AllSpines = 0, SpinesAndCovers = 1, CoversOnly = 2 };
 
@@ -178,6 +185,15 @@ struct TwoRowPage {
   Plant plants[2]{};
 };
 
+struct ThreeRowPage {
+  size_t firstIndex = 0;
+  uint8_t itemCount = 0;
+  uint8_t pageNumber = 0;
+  uint8_t pageCount = 0;
+  Slot slots[THREE_ROW_SLOT_CAPACITY]{};
+  Plant plants[3]{};
+};
+
 uint32_t stableHash(const Book& book, size_t itemIndex = 0);
 SpineStyle styleFor(const Book& book);
 SpineTone toneFor(const Book& book);
@@ -190,6 +206,12 @@ TwoRowPage twoRowPageForSelection(const Book* books, size_t bookCount, size_t se
 size_t twoRowNextPageStart(const Book* books, size_t bookCount, size_t selectedIndex, const Rect& bounds);
 size_t twoRowPreviousPageStart(const Book* books, size_t bookCount, size_t selectedIndex, const Rect& bounds);
 Rect twoRowShelfRect(const TwoRowPage& page, const Rect& bounds, size_t row);
+
+ThreeRowPage threeRowPageForSelection(const Book* books, size_t bookCount, size_t selectedIndex,
+                                      const Rect& bounds);
+size_t threeRowNextPageStart(const Book* books, size_t bookCount, size_t selectedIndex, const Rect& bounds);
+size_t threeRowPreviousPageStart(const Book* books, size_t bookCount, size_t selectedIndex, const Rect& bounds);
+Rect threeRowShelfRect(const ThreeRowPage& page, const Rect& bounds, size_t row);
 
 // Return the packed page containing selectedIndex.  Selection indexes are
 // indexes in the visible (filtered) shelf list, not indexes in RecentBook

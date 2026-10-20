@@ -19,6 +19,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // deliberately not serialized: a failed load must not turn built-in
   // defaults into a new settings file by accident.
   bool settingsRecoveryRequired = false;
+  bool settingsRecoveryNoticePending = false;
+  bool settingsRecoveryNoticeFailed = false;
 
   friend class PersistableStore<CrossPointSettings>;
 
@@ -292,7 +294,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     FOLIO_LITE_LAYOUT_THREE_COVER_CAROUSEL = 0,
     FOLIO_LITE_LAYOUT_FIVE_COVER_CAROUSEL = 1,
     FOLIO_LITE_LAYOUT_SPINE = 2,
-    FOLIO_LITE_LAYOUT_GRID = 3,
+    // Value 3 replaces the removed Lite Grid choice with Two-row Spine.
+    FOLIO_LITE_LAYOUT_TWO_ROW_SPINE = 3,
+    FOLIO_LITE_LAYOUT_THREE_ROW_SPINE = 4,
     FOLIO_LITE_BOOK_LAYOUT_COUNT
   };
 
@@ -625,6 +629,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   void markSettingsRecoveryRequired();
   void acknowledgeSettingsRecovery();
   bool isSettingsRecoveryRequired() const { return settingsRecoveryRequired; }
+  const char* consumeSettingsRecoveryNotice();
 
   static void validateFrontButtonMapping(CrossPointSettings& settings);
   static uint8_t sleepTimeoutEnumToMinutes(uint8_t legacyValue);

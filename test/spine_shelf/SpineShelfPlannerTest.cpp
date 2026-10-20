@@ -452,6 +452,44 @@ TEST(SpineShelfPlanner, TwoRowShelfPaginatesAndPreservesHitSelection) {
   }
 }
 
+TEST(SpineShelfPlanner, ThreeRowShelfUsesThreeBoundedRowsAndPaginates) {
+  std::array<SpineShelfPlanner::Book, 60> input{};
+  for (auto& book : input) book = {"three-row-book", "Title", 25, "Author"};
+  const Rect bounds{4, 0, 480, 300};
+  const auto first = SpineShelfPlanner::threeRowPageForSelection(input.data(), input.size(), 0, bounds);
+  const auto repeated = SpineShelfPlanner::threeRowPageForSelection(input.data(), input.size(), 0, bounds);
+  ASSERT_GT(first.itemCount, 0);
+  EXPECT_EQ(first.itemCount, repeated.itemCount);
+  EXPECT_LE(first.itemCount, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY);
+
+  int priorShelfY = -1;
+  for (size_t row = 0; row < 3; ++row) {
+    const auto shelf = SpineShelfPlanner::threeRowShelfRect(first, bounds, row);
+    ASSERT_GT(shelf.height, 0);
+    EXPECT_EQ(shelf.height, SpineShelfPlanner::THREE_ROW_SHELF_HEIGHT);
+    EXPECT_GT(shelf.y, priorShelfY);
+    priorShelfY = shelf.y;
+    EXPECT_LE(shelf.y + shelf.height, bounds.y + bounds.height);
+    bool found = false;
+    for (size_t slot = 0; slot < first.itemCount; ++slot) {
+      const auto& rect = first.slots[slot].rect;
+      EXPECT_EQ(rect.x, repeated.slots[slot].rect.x);
+      EXPECT_EQ(rect.y, repeated.slots[slot].rect.y);
+      if (rect.y + rect.height <= shelf.y && rect.y >= bounds.y + static_cast<int>(row) * 70) found = true;
+    }
+    EXPECT_TRUE(found);
+  }
+
+  ASSERT_GT(first.pageCount, 1);
+  const size_t next = SpineShelfPlanner::threeRowNextPageStart(input.data(), input.size(), 0, bounds);
+  EXPECT_EQ(next, first.itemCount);
+  const auto nextPage = SpineShelfPlanner::threeRowPageForSelection(input.data(), input.size(), next, bounds);
+  EXPECT_EQ(nextPage.firstIndex, next);
+  EXPECT_EQ(SpineShelfPlanner::threeRowPreviousPageStart(input.data(), input.size(), next, bounds), 0u);
+  EXPECT_EQ(SpineShelfPlanner::threeRowNextPageStart(input.data(), input.size(), nextPage.firstIndex, bounds),
+            nextPage.pageNumber < nextPage.pageCount ? nextPage.firstIndex + nextPage.itemCount : 0u);
+}
+
 TEST(SpineShelfPlanner, OneRowAppearanceModesKeepSpineAndCoverGeometrySeparate) {
   auto input = books();
   const Rect bounds{0, 0, 480, 300};

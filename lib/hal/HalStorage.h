@@ -11,6 +11,8 @@
 
 class HalFile;
 
+enum class HalStorageReadStatus : uint8_t { Success, NotFound, ParentMissing, Unavailable, IoError, TooLarge };
+
 class HalStorage {
  public:
   HalStorage();
@@ -21,6 +23,8 @@ class HalStorage {
   std::vector<String> listFiles(const char* path = "/", int maxFiles = 200);
   // Read the entire file at `path` into a String. Returns empty string on failure.
   String readFile(const char* path);
+  // Bounded read with explicit missing/I/O status for recovery-sensitive files.
+  HalStorageReadStatus readFileChecked(const char* path, String& content, size_t maxBytes = 65536);
   // Low-memory helpers:
   // Stream the file contents to a `Print` (e.g. `Serial`, or any `Print`-derived object).
   // Returns true on success, false on failure.

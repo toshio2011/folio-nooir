@@ -392,10 +392,7 @@ void setup() {
 
   const bool settingsLoaded = SETTINGS.loadFromFile();
   if (!settingsLoaded) {
-    const bool settingsFilePresent = Storage.exists(CrossPointSettings::getFilePath()) ||
-                                     Storage.exists("/.crosspoint/settings.json.bak") ||
-                                     Storage.exists("/.crosspoint/settings.json.tmp");
-    if (settingsFilePresent) {
+    if (SETTINGS.isSettingsRecoveryRequired()) {
       LOG_ERR("MAIN", "Settings could not be loaded; using built-in defaults (recovery failed)");
     } else {
       LOG_INF("MAIN", "No settings file found; using first-boot defaults");
@@ -539,6 +536,10 @@ void setup() {
   if (resume != BootResume::Splash) {
     APP_STATE.lastSleepFromReader = false;
     APP_STATE.saveToFile();
+  }
+
+  if (const char* settingsNotice = SETTINGS.consumeSettingsRecoveryNotice()) {
+    activityManager.postSettingsRecoveryNotification(settingsNotice);
   }
 
   if (resume == BootResume::Silent) {

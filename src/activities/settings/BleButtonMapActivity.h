@@ -38,6 +38,7 @@ class BleButtonMapActivity final : public Activity {
   Step step = Step::WaitForKey;
   unsigned long waitStartedAt = 0;
   bool unsupportedNoticeShown = false;
+  bool lastSaveFailed = false;
 
   uint8_t capturedCount = 0;
   uint8_t capturedKinds[MappedInputManager::kBleSignatureMaxEvents] = {};

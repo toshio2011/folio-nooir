@@ -160,6 +160,31 @@ SpineShelfPlanner::Rect twoRowSpineBounds(const int pageWidth, const FolioShelfL
   return SpineShelfPlanner::Rect{layout.gridGap, top, std::max(1, pageWidth - layout.gridGap * 2), height};
 }
 
+SpineShelfPlanner::Rect threeRowSpineBounds(const int pageWidth, const FolioShelfLayout& layout) {
+  const int top = layout.gridTop + 3;
+  const int height = std::max(1, layout.gridHeight - SpineShelfPlanner::THREE_ROW_BOTTOM_GAP);
+  return SpineShelfPlanner::Rect{layout.gridGap, top, std::max(1, pageWidth - layout.gridGap * 2), height};
+}
+
+void displayHomeFrame(GfxRenderer& renderer, const char* reason, const uint32_t renderStartedUs) {
+  const uint32_t renderDurationUs = micros() - renderStartedUs;
+  const uint32_t nowMs = millis();
+  static uint32_t lastSlowDiagnosticMs = 0;
+  const bool initialFrame = reason != nullptr &&
+                            (strcmp(reason, "initial") == 0 || strcmp(reason, "resume") == 0);
+  const bool slowFrame = renderDurationUs >= 100000 &&
+                         (lastSlowDiagnosticMs == 0 || nowMs - lastSlowDiagnosticMs >= 5000);
+  if (initialFrame || slowFrame) {
+    LOG_INF("SHELF", "render_ready reason=%s cpu_us=%lu free=%u largest=%u",
+            reason ? reason : "unknown", static_cast<unsigned long>(renderDurationUs),
+            static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    if (slowFrame) lastSlowDiagnosticMs = nowMs;
+  }
+  // Keep CPU rendering separate from the panel's blocking refresh time. The
+  // display driver reports the latter after this call.
+  renderer.displayBuffer(HalDisplay::FAST_REFRESH, reason);
+}
+
 void drawSpinePlant(const GfxRenderer& renderer, const SpineShelfPlanner::Rect& rect, const uint32_t seed) {
   const int centerX = rect.x + rect.width / 2;
   const int potWidth = std::max(8, rect.width - 4 - static_cast<int>(seed % 5u));
@@ -302,7 +327,7 @@ void drawSpineBookDetails(const GfxRenderer& renderer, const SpineShelfPlanner::
 
 void drawSpineBook(const GfxRenderer& renderer, const SpineShelfPlanner::Book& book,
                    const SpineShelfPlanner::Rect& rect, const bool selected, const bool coverFace,
-                   bool& thumbnailUnavailable) {
+                   bool& thumbnailUnavailable, const bool fillCoverFaces = false) {
   if (coverFace) {
     renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
     bool drewCover = false;
@@ -315,14 +340,23 @@ void drawSpineBook(const GfxRenderer& renderer, const SpineShelfPlanner::Book& b
       if (Storage.openFileForRead("SHELF", thumbPath, file)) {
         Bitmap bitmap(file);
         if (bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() > 0 && bitmap.getHeight() > 0) {
-          const int innerWidth = std::max(1, rect.width - 6);
-          const int innerHeight = std::max(1, rect.height - 6);
-          const float scale = std::min(static_cast<float>(innerWidth) / bitmap.getWidth(),
-                                       static_cast<float>(innerHeight) / bitmap.getHeight());
-          const int drawWidth = std::max(1, static_cast<int>(bitmap.getWidth() * scale));
-          const int drawHeight = std::max(1, static_cast<int>(bitmap.getHeight() * scale));
-          renderer.drawBitmap(bitmap, rect.x + (rect.width - drawWidth) / 2,
-                              rect.y + (rect.height - drawHeight) / 2, drawWidth, drawHeight);
+          const int inset = fillCoverFaces ? 2 : 3;
+          const int innerWidth = std::max(1, rect.width - inset * 2);
+          const int innerHeight = std::max(1, rect.height - inset * 2);
+          if (fillCoverFaces) {
+            const float sourceAspect = static_cast<float>(bitmap.getWidth()) / bitmap.getHeight();
+            const float targetAspect = static_cast<float>(innerWidth) / innerHeight;
+            const float cropX = sourceAspect > targetAspect ? 1.0f - targetAspect / sourceAspect : 0.0f;
+            const float cropY = sourceAspect < targetAspect ? 1.0f - sourceAspect / targetAspect : 0.0f;
+            renderer.drawBitmap(bitmap, rect.x + inset, rect.y + inset, innerWidth, innerHeight, cropX, cropY);
+          } else {
+            const float scale = std::min(static_cast<float>(innerWidth) / bitmap.getWidth(),
+                                         static_cast<float>(innerHeight) / bitmap.getHeight());
+            const int drawWidth = std::max(1, static_cast<int>(bitmap.getWidth() * scale));
+            const int drawHeight = std::max(1, static_cast<int>(bitmap.getHeight() * scale));
+            renderer.drawBitmap(bitmap, rect.x + (rect.width - drawWidth) / 2,
+                                rect.y + (rect.height - drawHeight) / 2, drawWidth, drawHeight);
+          }
           drewCover = true;
         } else {
           thumbnailUnavailable = true;
@@ -539,9 +573,33 @@ void drawTwoRowSpinePageSelectionMarker(const GfxRenderer& renderer, const Spine
   }
 }
 
+void drawThreeRowSpinePageSelectionMarker(const GfxRenderer& renderer, const SpineShelfPlanner::ThreeRowPage& page,
+                                         const size_t index, const bool selected,
+                                         SpineShelfPlanner::RenderedFocusGeometry& renderedFocus) {
+  for (size_t slotIndex = 0; slotIndex < page.itemCount; ++slotIndex) {
+    const auto& slot = page.slots[slotIndex];
+    if (slot.itemIndex != index || slot.itemIndex < page.firstIndex ||
+        slot.itemIndex - page.firstIndex >= SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY) continue;
+    SpineShelfPlanner::Rect renderedSlot{};
+    const auto deselection = selected
+                                 ? SpineShelfPlanner::FocusDeselectionGeometry{}
+                                 : SpineShelfPlanner::focusGeometryForDeselection(renderedFocus, index, slot.rect);
+    SpineShelfPlanner::FocusFrame frame = selected ? SpineShelfPlanner::focusFrameFor(slot.rect) : deselection.frame;
+    if (selected) renderedFocus.remember(index, slot.rect);
+    drawSpineSlotFocusOutline(renderer, frame, selected);
+    if (!selected && deselection.restoredPreviousGeometry) {
+      const int right = SpineShelfPlanner::slotRightEdgeX(deselection.finalSlot);
+      renderer.drawLine(right, deselection.finalSlot.y, right,
+                        deselection.finalSlot.y + deselection.finalSlot.height - 1, true);
+    }
+    return;
+  }
+}
+
 void drawSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::Page& page,
                     const SpineShelfPlanner::Book* books, const size_t selectedIndex,
-                    const SpineShelfPlanner::Rect& bounds, bool* thumbnailUnavailable) {
+                    const SpineShelfPlanner::Rect& bounds, bool* thumbnailUnavailable,
+                    const bool fillCoverFaces = false) {
   if (books == nullptr) return;
   (void)selectedIndex;
   const auto shelf = SpineShelfPlanner::shelfRect(page, bounds);
@@ -553,13 +611,14 @@ void drawSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::Page& 
     if (slot.itemIndex < page.firstIndex || slot.itemIndex - page.firstIndex >= SpineShelfPlanner::MAX_BOOKS) continue;
     const size_t localIndex = slot.itemIndex - page.firstIndex;
     drawSpineBook(renderer, books[localIndex], slot.rect, false, slot.cover,
-                  thumbnailUnavailable[localIndex]);
+                  thumbnailUnavailable[localIndex], fillCoverFaces);
   }
 }
 
 void drawTwoRowSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::TwoRowPage& page,
                           const SpineShelfPlanner::Book* books, const size_t selectedIndex,
-                          const SpineShelfPlanner::Rect& bounds, bool* thumbnailUnavailable) {
+                          const SpineShelfPlanner::Rect& bounds, bool* thumbnailUnavailable,
+                          const bool fillCoverFaces = false) {
   if (books == nullptr) return;
   (void)selectedIndex;
   for (size_t row = 0; row < 2; ++row) {
@@ -577,7 +636,27 @@ void drawTwoRowSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::
     if (slot.itemIndex < page.firstIndex || slot.itemIndex - page.firstIndex >= SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY) continue;
     const size_t localIndex = slot.itemIndex - page.firstIndex;
     drawSpineBook(renderer, books[localIndex], slot.rect, false, slot.cover,
-                  thumbnailUnavailable[localIndex]);
+                  thumbnailUnavailable[localIndex], fillCoverFaces);
+  }
+}
+
+void drawThreeRowSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::ThreeRowPage& page,
+                            const SpineShelfPlanner::Book* books, const SpineShelfPlanner::Rect& bounds,
+                            bool* thumbnailUnavailable, const bool fillCoverFaces) {
+  if (books == nullptr) return;
+  for (size_t row = 0; row < 3; ++row) {
+    const auto shelf = SpineShelfPlanner::threeRowShelfRect(page, bounds, row);
+    if (shelf.width <= 0 || shelf.height <= 0) continue;
+    drawSpineShelfFurniture(renderer, shelf, bounds, false);
+    if (page.plants[row].visible) drawSpinePlant(renderer, page.plants[row].rect, page.plants[row].visualSeed);
+  }
+  for (size_t slotIndex = 0; slotIndex < page.itemCount; ++slotIndex) {
+    const auto& slot = page.slots[slotIndex];
+    if (slot.itemIndex < page.firstIndex ||
+        slot.itemIndex - page.firstIndex >= SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY) continue;
+    const size_t localIndex = slot.itemIndex - page.firstIndex;
+    drawSpineBook(renderer, books[localIndex], slot.rect, false, slot.cover,
+                  thumbnailUnavailable[localIndex], fillCoverFaces);
   }
 }
 }  // namespace
@@ -1007,6 +1086,75 @@ const RecentBooksActivity::TwoRowSpinePageWindow& RecentBooksActivity::twoRowSpi
   return twoRowSpinePageWindow;
 }
 
+const RecentBooksActivity::ThreeRowSpinePageWindow& RecentBooksActivity::threeRowSpinePageForSelection(
+    const SpineShelfPlanner::Rect& bounds) {
+  const auto& cached = threeRowSpinePageWindow;
+  if (cached.valid && cached.bounds.x == bounds.x && cached.bounds.y == bounds.y &&
+      cached.bounds.width == bounds.width && cached.bounds.height == bounds.height &&
+      cached.visualSeed == spineSessionSeed && cached.decorationStyle == SETTINGS.spineDecorationStyle &&
+      cached.appearanceMode == SETTINGS.spineAppearanceMode && cached.page.itemCount > 0 &&
+      selectorIndex >= cached.page.firstIndex &&
+      selectorIndex < cached.page.firstIndex + cached.page.itemCount) {
+    return cached;
+  }
+
+  threeRowSpinePageWindow = {};
+  threeRowSpinePageWindow.thumbnailUnavailable.fill(false);
+  threeRowSpinePageWindow.bounds = bounds;
+  threeRowSpinePageWindow.visualSeed = spineSessionSeed;
+  threeRowSpinePageWindow.decorationStyle = SETTINGS.spineDecorationStyle;
+  threeRowSpinePageWindow.appearanceMode = SETTINGS.spineAppearanceMode;
+  size_t rawStart = 0;
+  size_t visibleStart = 0;
+  size_t previousPageStart = 0;
+  size_t pageNumber = 0;
+  bool found = false;
+
+  while (visibleStart < visibleBookCount && rawStart < recentBooks.size()) {
+    std::array<SpineShelfPlanner::Book, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> candidateBooks{};
+    std::array<size_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> candidateIndexes{};
+    size_t candidateCount = 0;
+    for (size_t raw = rawStart; raw < recentBooks.size() && candidateCount < candidateBooks.size(); ++raw) {
+      if (!isVisibleRecentBook(recentBooks[raw])) continue;
+      const auto& book = recentBooks[raw];
+      candidateIndexes[candidateCount] = raw;
+      candidateBooks[candidateCount++] = SpineShelfPlanner::Book{
+          book.path.c_str(), book.title.c_str(), book.progressPercent, book.author.c_str(), spineSessionSeed,
+          SETTINGS.spineDecorationStyle, true,
+          static_cast<SpineShelfPlanner::Appearance>(SETTINGS.spineAppearanceMode), book.coverBmpPath.c_str()};
+    }
+    if (candidateCount == 0) break;
+
+    const SpineShelfPlanner::ThreeRowPage candidate =
+        SpineShelfPlanner::threeRowPageForSelection(candidateBooks.data(), candidateCount, 0, bounds);
+    if (candidate.itemCount == 0) break;
+    ++pageNumber;
+    const size_t pageEnd = visibleStart + candidate.itemCount;
+    if (!found && selectorIndex >= visibleStart && selectorIndex < pageEnd) {
+      threeRowSpinePageWindow.page = candidate;
+      threeRowSpinePageWindow.page.firstIndex = visibleStart;
+      threeRowSpinePageWindow.pageNumber = pageNumber;
+      threeRowSpinePageWindow.previousPageStart = pageNumber > 1 ? previousPageStart : 0;
+      for (size_t i = 0; i < candidateCount; ++i) {
+        threeRowSpinePageWindow.books[i] = candidateBooks[i];
+        threeRowSpinePageWindow.recentIndexes[i] = candidateIndexes[i];
+      }
+      for (size_t i = 0; i < threeRowSpinePageWindow.page.itemCount; ++i) {
+        threeRowSpinePageWindow.page.slots[i].itemIndex += visibleStart;
+      }
+      threeRowSpinePageWindow.nextPageStart = pageEnd < visibleBookCount ? pageEnd : 0;
+      found = true;
+    }
+    rawStart = candidateIndexes[candidate.itemCount - 1] + 1;
+    previousPageStart = visibleStart;
+    visibleStart = pageEnd;
+  }
+
+  threeRowSpinePageWindow.pageCount = pageNumber;
+  threeRowSpinePageWindow.valid = true;
+  return threeRowSpinePageWindow;
+}
+
 size_t RecentBooksActivity::moveSpinePage(const FolioShelfLayout& layout, const bool next) {
   const auto bounds = spineShelfBounds(renderer.getScreenWidth(), layout);
   const auto& page = spinePageForSelection(bounds);
@@ -1020,6 +1168,16 @@ size_t RecentBooksActivity::moveSpinePage(const FolioShelfLayout& layout, const 
 size_t RecentBooksActivity::moveTwoRowSpinePage(const FolioShelfLayout& layout, const bool next) {
   const auto bounds = twoRowSpineBounds(renderer.getScreenWidth(), layout);
   const auto& page = twoRowSpinePageForSelection(bounds);
+  if (page.pageCount <= 1) {
+    return next ? static_cast<size_t>(ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), visibleBookCount))
+                : static_cast<size_t>(ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), visibleBookCount));
+  }
+  return next ? page.nextPageStart : page.previousPageStart;
+}
+
+size_t RecentBooksActivity::moveThreeRowSpinePage(const FolioShelfLayout& layout, const bool next) {
+  const auto bounds = threeRowSpineBounds(renderer.getScreenWidth(), layout);
+  const auto& page = threeRowSpinePageForSelection(bounds);
   if (page.pageCount <= 1) {
     return next ? static_cast<size_t>(ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), visibleBookCount))
                 : static_cast<size_t>(ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), visibleBookCount));
@@ -1060,6 +1218,11 @@ bool RecentBooksActivity::usesTwoRowSpineLayout() const {
          activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_TWO_ROW_SPINE;
 }
 
+bool RecentBooksActivity::usesThreeRowSpineLayout() const {
+  return isFolioNooirLiteTheme(SETTINGS.uiTheme) &&
+         activeBookLayout() == FolioLiteLayoutPolicy::FOLIO_LAYOUT_THREE_ROW_SPINE;
+}
+
 bool RecentBooksActivity::usesThreeCoverGrid() const {
   return isFolioShelfTheme(SETTINGS.uiTheme) &&
          activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_THREE_COVERS;
@@ -1084,7 +1247,7 @@ bool RecentBooksActivity::currentSnapshotPageInfo(size_t& pageStart, size_t& pag
     return pageStart != SIZE_MAX;
   }
 
-  if (!usesSpineLayout() && !usesTwoRowSpineLayout()) return false;
+  if (!usesSpineLayout() && !usesTwoRowSpineLayout() && !usesThreeRowSpineLayout()) return false;
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto& folioTheme = static_cast<const FolioNooirTheme&>(GUI);
   const FolioShelfLayout layout = homeShelfLayout(folioTheme, renderer, metrics);
@@ -1092,18 +1255,25 @@ bool RecentBooksActivity::currentSnapshotPageInfo(size_t& pageStart, size_t& pag
     const auto& window = spinePageForSelection(spineShelfBounds(renderer.getScreenWidth(), layout));
     pageStart = window.page.firstIndex;
     pageItems = window.page.itemCount;
-  } else {
+  } else if (usesTwoRowSpineLayout()) {
     const auto& window = twoRowSpinePageForSelection(twoRowSpineBounds(renderer.getScreenWidth(), layout));
     pageStart = window.page.firstIndex;
     pageItems = window.page.itemCount;
+  } else {
+    const auto& window = threeRowSpinePageForSelection(threeRowSpineBounds(renderer.getScreenWidth(), layout));
+    pageStart = window.page.firstIndex;
+    pageItems = window.page.itemCount;
   }
-  return pageItems > 0 && pageItems <= SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY;
+  const size_t pageCapacity = usesThreeRowSpineLayout() ? SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY
+                                                        : SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY;
+  return pageItems > 0 && pageItems <= pageCapacity;
 }
 
 int RecentBooksActivity::activePageItems() const {
   if (usesThreeCoverGrid()) return 3;
   if (usesCarouselLayout()) return 1;
   if (usesTwoRowSpineLayout()) return static_cast<int>(SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY);
+  if (usesThreeRowSpineLayout()) return static_cast<int>(SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY);
   return BOOKS_PER_PAGE;
 }
 
@@ -2072,6 +2242,7 @@ void RecentBooksActivity::showBookActions() {
 }
 
 void RecentBooksActivity::onEnter() {
+  const uint32_t enterStartedUs = micros();
   Activity::onEnter();
   ignoreEntryInputUntilNeutral = hasActiveHomeInput(mappedInput);
   if (ignoreEntryInputUntilNeutral) LOG_INF("SHELF", "stage=entry_input_gate_armed");
@@ -2081,6 +2252,10 @@ void RecentBooksActivity::onEnter() {
   // Load data
   loadRecentBooks();
   rebuildVisibleBooks();
+  LOG_INF("SHELF", "stage=onEnter_ready duration_us=%lu books=%u visible=%u free=%u largest=%u",
+          static_cast<unsigned long>(micros() - enterStartedUs), static_cast<unsigned>(recentBooks.size()),
+          static_cast<unsigned>(visibleBookCount), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
 #if FREEINK_CAP_BLE_HID_HOST
   if (SETTINGS.bluetoothEnabled) {
     size_t stringCapacityChars = 0;
@@ -2321,6 +2496,7 @@ void RecentBooksActivity::loop() {
   const bool liteTheme = isFolioNooirLiteTheme(SETTINGS.uiTheme);
   const bool spineLayout = usesSpineLayout();
   const bool twoRowSpineLayout = usesTwoRowSpineLayout();
+  const bool threeRowSpineLayout = usesThreeRowSpineLayout();
   const bool snapshotLayout = usesPersistentHomeSnapshot();
   const bool threeCoverGrid = usesThreeCoverGrid();
   FolioShelfLayout layout{};
@@ -2665,6 +2841,53 @@ void RecentBooksActivity::loop() {
         return;
       }
     }
+  } else if (threeRowSpineLayout) {
+    const SpineShelfPlanner::Rect bounds = threeRowSpineBounds(renderer.getScreenWidth(), layout);
+    const auto& spineWindow = threeRowSpinePageForSelection(bounds);
+    const auto& page = spineWindow.page;
+    if (mappedInput.wasScreenTouchDown(touchX, touchY)) {
+      if (touchY >= metrics.topPadding && touchY < layout.contentTop) {
+        const uint8_t touchedTab =
+            static_cast<uint8_t>(std::min(2, std::max(0, touchX * 3 / renderer.getScreenWidth())));
+        if (touchedTab == 0) {
+          activityManager.goToFileBrowser("/");
+          return;
+        }
+        activeTab = touchedTab;
+        selectorIndex = 0;
+        rebuildVisibleBooks();
+        snapshotRestored = false;
+        snapshotPageStart = SIZE_MAX;
+        snapshotSelectorIndex = SIZE_MAX;
+        lastRenderedSelectorIndex = SIZE_MAX;
+        lastRenderedPageStart = SIZE_MAX;
+        overlayFrameShown = false;
+        initialRenderPending = true;
+        requestUpdate();
+        return;
+      }
+      for (size_t slotIndex = 0; slotIndex < page.itemCount; ++slotIndex) {
+        if (page.slots[slotIndex].rect.contains(touchX, touchY)) {
+          const size_t index = page.slots[slotIndex].itemIndex;
+          if (selectorIndex != index) {
+            selectorIndex = index;
+            requestUpdate();
+          }
+          return;
+        }
+      }
+    }
+    for (size_t slotIndex = 0; slotIndex < page.itemCount; ++slotIndex) {
+      const auto& rect = page.slots[slotIndex].rect;
+      if (mappedInput.wasTapInRect(rect.x, rect.y, rect.width, rect.height)) {
+        selectorIndex = page.slots[slotIndex].itemIndex;
+        const size_t recentIndex = recentIndexForVisibleIndex(selectorIndex);
+        if (recentIndex == SIZE_MAX) return;
+        logCbzPath("recent-book-selection", recentBooks[recentIndex].path);
+        onSelectBook(recentBooks[recentIndex].path);
+        return;
+      }
+    }
   } else {
     const int columns = threeCoverGrid ? 3 : layout.columns;
     const int gap = threeCoverGrid ? 10 : layout.gridGap;
@@ -2736,22 +2959,26 @@ void RecentBooksActivity::loop() {
   if (swipe == MappedInputManager::SwipeDir::Up) {
     selectorIndex = carouselTheme
                         ? ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize)
-                        : (spineLayout
+                        : (threeRowSpineLayout
+                                ? moveThreeRowSpinePage(layout, true)
+                           : (spineLayout
                                 ? moveSpinePage(layout, true)
                                : (twoRowSpineLayout
                                       ? moveTwoRowSpinePage(layout, true)
-                               : ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems)));
+                               : ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems))));
     requestUpdate();
     return;
   }
   if (swipe == MappedInputManager::SwipeDir::Down) {
     selectorIndex = carouselTheme
                         ? ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize)
-                        : (spineLayout
+                        : (threeRowSpineLayout
+                                ? moveThreeRowSpinePage(layout, false)
+                           : (spineLayout
                                 ? moveSpinePage(layout, false)
                                : (twoRowSpineLayout
                                       ? moveTwoRowSpinePage(layout, false)
-                               : ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems)));
+                               : ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems))));
     requestUpdate();
     return;
   }
@@ -2766,18 +2993,20 @@ void RecentBooksActivity::loop() {
     requestUpdate();
   });
 
-  buttonNavigator.onNextContinuous([this, listSize, pageItems, carouselTheme, spineLayout, twoRowSpineLayout] {
+  buttonNavigator.onNextContinuous([this, listSize, pageItems, carouselTheme, spineLayout, twoRowSpineLayout,
+                                    threeRowSpineLayout] {
     // A held Spine control repeats the same logical selection step as a tap.
     // The normal page-window render moves to the next shelf when that step
     // crosses a page boundary; skipping directly to page starts loses books.
-    selectorIndex = (carouselTheme || spineLayout || twoRowSpineLayout)
+    selectorIndex = (carouselTheme || spineLayout || twoRowSpineLayout || threeRowSpineLayout)
                         ? ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize)
                         : ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
     requestUpdate();
   });
 
-  buttonNavigator.onPreviousContinuous([this, listSize, pageItems, carouselTheme, spineLayout, twoRowSpineLayout] {
-    selectorIndex = (carouselTheme || spineLayout || twoRowSpineLayout)
+  buttonNavigator.onPreviousContinuous([this, listSize, pageItems, carouselTheme, spineLayout, twoRowSpineLayout,
+                                        threeRowSpineLayout] {
+    selectorIndex = (carouselTheme || spineLayout || twoRowSpineLayout || threeRowSpineLayout)
                         ? ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize)
                         : ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
     requestUpdate();
@@ -2922,6 +3151,7 @@ void RecentBooksActivity::render(RenderLock&&) {
 #endif
 
 bool RecentBooksActivity::renderCarousel(const bool threeCover) {
+  const uint32_t renderStartedUs = micros();
   const int pageWidth = renderer.getScreenWidth();
   const auto& metrics = UITheme::getInstance().getMetrics();
   static const CarouselTheme carouselPresentation;
@@ -2969,33 +3199,58 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
                       carouselLayout.titleRegion.x + (carouselLayout.titleRegion.width - authorWidth) / 2,
                       carouselLayout.titleRegion.y + 24, author.c_str());
 
+    const auto markUnavailableThumbnails = [this](auto& window) {
+      for (size_t slotIndex = 0; slotIndex < window.page.itemCount; ++slotIndex) {
+        const auto& slot = window.page.slots[slotIndex];
+        if (slot.itemIndex < window.page.firstIndex) continue;
+        const size_t localIndex = slot.itemIndex - window.page.firstIndex;
+        if (localIndex >= window.thumbnailUnavailable.size()) continue;
+        if (normalThumbnailMisses.contains(window.recentIndexes[localIndex])) {
+          window.thumbnailUnavailable[localIndex] = true;
+        }
+      }
+    };
+    const auto rememberUnavailableThumbnails = [this](auto& window) {
+      for (size_t slotIndex = 0; slotIndex < window.page.itemCount; ++slotIndex) {
+        const auto& slot = window.page.slots[slotIndex];
+        if (slot.itemIndex < window.page.firstIndex) continue;
+        const size_t localIndex = slot.itemIndex - window.page.firstIndex;
+        if (localIndex < window.thumbnailUnavailable.size() && window.thumbnailUnavailable[localIndex]) {
+          normalThumbnailMisses.markMissing(window.recentIndexes[localIndex]);
+        }
+      }
+    };
+
     if (usesSpineLayout()) {
       renderer.fillRect(0, displayLayout.gridTop, pageWidth, displayLayout.gridHeight, false);
       const auto bounds = spineShelfBounds(pageWidth, displayLayout);
       const auto& spineWindow = spinePageForSelection(bounds);
-      for (size_t slotIndex = 0; slotIndex < spineWindow.page.itemCount; ++slotIndex) {
-        const auto& slot = spineWindow.page.slots[slotIndex];
-        if (slot.itemIndex < spineWindow.page.firstIndex) continue;
-        const size_t localIndex = slot.itemIndex - spineWindow.page.firstIndex;
-        if (localIndex >= spineWindow.thumbnailUnavailable.size()) continue;
-        const size_t recentIndex = spineWindow.recentIndexes[localIndex];
-        if (normalThumbnailMisses.contains(recentIndex)) {
-          spineWindow.thumbnailUnavailable[localIndex] = true;
-        }
-      }
+      markUnavailableThumbnails(spineWindow);
       drawSpineShelf(renderer, spineWindow.page, spineWindow.books.data(), selectorIndex, bounds,
-                     spineWindow.thumbnailUnavailable.data());
-      for (size_t slotIndex = 0; slotIndex < spineWindow.page.itemCount; ++slotIndex) {
-        const auto& slot = spineWindow.page.slots[slotIndex];
-        if (slot.itemIndex < spineWindow.page.firstIndex) continue;
-        const size_t localIndex = slot.itemIndex - spineWindow.page.firstIndex;
-        if (localIndex >= spineWindow.thumbnailUnavailable.size() ||
-            !spineWindow.thumbnailUnavailable[localIndex]) {
-          continue;
-        }
-        normalThumbnailMisses.markMissing(spineWindow.recentIndexes[localIndex]);
-      }
-      drawSnapshotSelectionOutline(displayLayout, selectorIndex, true);
+                     spineWindow.thumbnailUnavailable.data(), true);
+      rememberUnavailableThumbnails(spineWindow);
+      drawSpinePageSelectionMarker(renderer, spineWindow.page, selectorIndex, true, renderedSpineFocus);
+      folioPresentation.drawPageIndicator(renderer, displayLayout, spineWindow.pageNumber, spineWindow.pageCount);
+    } else if (usesTwoRowSpineLayout()) {
+      renderer.fillRect(0, displayLayout.gridTop, pageWidth, displayLayout.gridHeight, false);
+      const auto bounds = twoRowSpineBounds(pageWidth, displayLayout);
+      const auto& spineWindow = twoRowSpinePageForSelection(bounds);
+      markUnavailableThumbnails(spineWindow);
+      drawTwoRowSpineShelf(renderer, spineWindow.page, spineWindow.books.data(), selectorIndex, bounds,
+                           spineWindow.thumbnailUnavailable.data(), true);
+      rememberUnavailableThumbnails(spineWindow);
+      drawTwoRowSpinePageSelectionMarker(renderer, spineWindow.page, selectorIndex, true, renderedSpineFocus);
+      folioPresentation.drawPageIndicator(renderer, displayLayout, spineWindow.pageNumber, spineWindow.pageCount);
+    } else if (usesThreeRowSpineLayout()) {
+      renderer.fillRect(0, displayLayout.gridTop, pageWidth, displayLayout.gridHeight, false);
+      const auto bounds = threeRowSpineBounds(pageWidth, displayLayout);
+      const auto& spineWindow = threeRowSpinePageForSelection(bounds);
+      markUnavailableThumbnails(spineWindow);
+      drawThreeRowSpineShelf(renderer, spineWindow.page, spineWindow.books.data(), bounds,
+                             spineWindow.thumbnailUnavailable.data(), true);
+      rememberUnavailableThumbnails(spineWindow);
+      drawThreeRowSpinePageSelectionMarker(renderer, spineWindow.page, selectorIndex, true, renderedSpineFocus);
+      folioPresentation.drawPageIndicator(renderer, displayLayout, spineWindow.pageNumber, spineWindow.pageCount);
     } else if (usesFourByTwoGrid()) {
       renderer.fillRect(0, displayLayout.gridTop, pageWidth, displayLayout.gridHeight, false);
       constexpr size_t pageItems = HomeSnapshotPolicy::FOUR_BY_TWO_PAGE_ITEMS;
@@ -3232,14 +3487,14 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
     GUI.fillPopupProgress(renderer, popup, progress);
     const auto cancelLabels = mappedInput.mapLabels(tr(STR_CANCEL), "", "", "");
     GUI.drawButtonHints(renderer, cancelLabels.btn1, cancelLabels.btn2, cancelLabels.btn3, cancelLabels.btn4);
-    renderer.displayBuffer(HalDisplay::FAST_REFRESH, renderDiagnosticReason);
+    displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs);
     carouselHqPopupRendered = true;
     overlayFrameShown = true;
     return false;
   }
   if (carouselHqCompletionPopupPending) {
     GUI.drawPopup(renderer, "All carousel covers are ready");
-    renderer.displayBuffer(HalDisplay::FAST_REFRESH, renderDiagnosticReason);
+    displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs);
     carouselHqCompletionPopupPending = false;
     overlayFrameShown = true;
     return false;
@@ -3259,7 +3514,7 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
     GUI.fillPopupProgress(renderer, popup, retrievingBookCacheProgress);
     const auto cancelLabels = mappedInput.mapLabels(tr(STR_CANCEL), "", "", "");
     GUI.drawButtonHints(renderer, cancelLabels.btn1, cancelLabels.btn2, cancelLabels.btn3, cancelLabels.btn4);
-    renderer.displayBuffer(HalDisplay::FAST_REFRESH, renderDiagnosticReason);
+    displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs);
     retrievingBookCachePopupRendered = true;
     overlayFrameShown = true;
     return false;
@@ -3274,7 +3529,7 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
   const auto labels = mappedInput.mapLabels(tr(STR_MENU), tr(STR_OPEN), tr(STR_LIBRARY),
                                             activeTab == 1 ? tr(STR_FINISHED) : tr(STR_RECENT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-  renderer.displayBuffer(HalDisplay::FAST_REFRESH, renderDiagnosticReason);
+  displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs);
   if (manualSingleRefresh && !retrievingBookCache) manualSingleRefresh = false;
   initialRenderPending = false;
   lastRenderedSelectorIndex = selectorIndex;
@@ -3400,6 +3655,7 @@ void RecentBooksActivity::renderFolioCarouselShelf(const int shelfTop, const int
 }
 
 void RecentBooksActivity::render(RenderLock&&) {
+  const uint32_t renderStartedUs = micros();
   renderer.beginDiagnosticFrame();
   // Keep the Folio bookshelf's featured book and 4x2 grid typography fixed;
   // UI Scale applies to the surrounding application screens instead.
@@ -3511,7 +3767,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     const auto& folioTheme = static_cast<const FolioNooirTheme&>(GUI);
     const FolioShelfLayout layout = homeShelfLayout(folioTheme, renderer, metrics);
     drawSnapshotSelectionOutline(layout, selectorIndex, true);
-  renderer.displayBuffer(HalDisplay::FAST_REFRESH, renderDiagnosticReason);
+    displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs);
     markStatsReturnFrameReady();
     snapshotFastPathUsed = true;
     initialRenderPending = false;
@@ -3589,7 +3845,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     }
     const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_OPEN), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-  renderer.displayBuffer(HalDisplay::FAST_REFRESH, renderDiagnosticReason);
+    displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs);
     markStatsReturnFrameReady();
     return;
   }
@@ -4168,7 +4424,7 @@ void RecentBooksActivity::render(RenderLock&&) {
   }
   if (carouselHqCompletionPopupPending) {
     GUI.drawPopup(renderer, "All carousel covers are ready");
-    renderer.displayBuffer(HalDisplay::FAST_REFRESH, renderDiagnosticReason);
+    displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs);
     carouselHqCompletionPopupPending = false;
     overlayFrameShown = true;
     return;
@@ -4188,7 +4444,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     GUI.fillPopupProgress(renderer, popup, retrievingBookCacheProgress);
     const auto cancelLabels = mappedInput.mapLabels(tr(STR_CANCEL), "", "", "");
     GUI.drawButtonHints(renderer, cancelLabels.btn1, cancelLabels.btn2, cancelLabels.btn3, cancelLabels.btn4);
-    renderer.displayBuffer(HalDisplay::FAST_REFRESH, renderDiagnosticReason);
+    displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs);
     retrievingBookCachePopupRendered = true;
     overlayFrameShown = true;
     return;
@@ -4208,7 +4464,7 @@ void RecentBooksActivity::render(RenderLock&&) {
   if ((spineLayout || twoRowSpineLayout) && visibleBookCount > 0) {
     drawSnapshotSelectionOutline(layout, selectorIndex, true);
   }
-  renderer.displayBuffer(HalDisplay::FAST_REFRESH, renderDiagnosticReason);
+  displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs);
   markStatsReturnFrameReady();
   if (manualSingleRefresh && !retrievingBookCache) manualSingleRefresh = false;
   if (initialRenderPending) {

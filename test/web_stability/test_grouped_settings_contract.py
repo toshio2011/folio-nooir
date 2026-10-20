@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SERVER = (ROOT / "src/network/CrossPointWebServer.cpp").read_text(encoding="utf-8")
 PAGE = (ROOT / "src/network/html/SettingsPage.html").read_text(encoding="utf-8")
 POLICY = (ROOT / "src/network/WebSettingsApiPolicy.h").read_text(encoding="utf-8")
+SETTINGS_LIST = (ROOT / "src/SettingsList.h").read_text(encoding="utf-8")
 
 
 class GroupedSettingsContractTest(unittest.TestCase):
@@ -59,6 +60,15 @@ class GroupedSettingsContractTest(unittest.TestCase):
         self.assertIn("setVisible('liteFinishedBookLayout', isLite);", PAGE)
         self.assertIn("setVisible('carouselLayout', false);", PAGE)
         self.assertIn("layout choices independent from the main Folio Nooir preferences", PAGE)
+
+    def test_lite_layout_choices_keep_original_carousels_and_replace_grid_with_spine_rows(self):
+        lite_recent = SETTINGS_LIST.split('"liteRecentBookLayout"', 1)[0].rsplit("SettingInfo::Enum", 1)[-1]
+        self.assertIn("STR_LAYOUT_3_COVER_CAROUSEL", lite_recent)
+        self.assertIn("STR_LAYOUT_5_COVER_CAROUSEL", lite_recent)
+        self.assertIn("STR_LAYOUT_SPINE", lite_recent)
+        self.assertIn("STR_LAYOUT_TWO_ROW_SPINE", lite_recent)
+        self.assertIn("STR_LAYOUT_THREE_ROW_SPINE", lite_recent)
+        self.assertNotIn("STR_LAYOUT_GRID_4X2", lite_recent)
 
     def test_late_group_extras_do_not_retain_state_after_leaving_their_group(self):
         self.assertIn("if (currentGroupId !== 'system') clockWeatherState = null;", PAGE)

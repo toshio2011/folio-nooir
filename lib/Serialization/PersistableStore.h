@@ -7,6 +7,8 @@
 #include <mutex>
 #include <string>
 
+#include "PersistableStorePolicy.h"
+
 /**
  * @brief Non-template core of PersistableStore.
  *
@@ -51,7 +53,14 @@ class PersistableStoreBase {
 
   // Reads path and parses it into doc. Returns false silently when the file
   // does not exist (expected on first boot); logs on read/parse failure.
-  static bool readDocFromFile(const char* path, JsonDocument& doc);
+  static bool readDocFromFile(const char* path, JsonDocument& doc,
+                              persistable::SettingsLoadReport* settingsReport = nullptr);
+
+  // Recover only after every existing settings candidate was completely read
+  // and found malformed. Originals are renamed to unique non-overwriting
+  // quarantine names before the defaults are written.
+  static bool recoverMalformedSettings(const char* path, const JsonDocument& defaults,
+                                       const persistable::SettingsLoadReport& report);
 
   // Settings files have no global schema number.  Validation therefore uses
   // two long-lived, independent serializer identities rather than requiring
@@ -111,14 +120,16 @@ class PersistableStore : public PersistableStoreBase {
     return writeDocToFile(T::getFilePath(), doc);
   }
 
-  bool loadFromFile() {
+  bool loadFromFile(persistable::SettingsLoadReport* settingsReport = nullptr) {
     bool ok;
     bool doResave;
+    persistable::SettingsLoadReport localSettingsReport;
+    persistable::SettingsLoadReport* report = settingsReport ? settingsReport : &localSettingsReport;
     {
       std::lock_guard<std::mutex> lock(storeMutex);
       resaveRequested = false;
       JsonDocument doc;
-      if (!readDocFromFile(T::getFilePath(), doc)) {
+      if (!readDocFromFile(T::getFilePath(), doc, report)) {
         return false;
       }
       ok = static_cast<T*>(this)->fromJson(doc.as<JsonVariantConst>());
@@ -127,8 +138,13 @@ class PersistableStore : public PersistableStoreBase {
       resaveRequested = false;
     }
     // Deliberately outside the lock: saveToFile() takes storeMutex itself.
-    if (ok && doResave && !saveToFile()) {
-      LOG_ERR("PERSIST", "Failed to resave %s after format update", T::getFilePath());
+    if (ok && doResave) {
+      if (report->hasIncompatibleCandidate() || report->hasReadError()) {
+        LOG_ERR("PERSIST", "Skipped migration save for %s to preserve uncertain settings candidates",
+                T::getFilePath());
+      } else if (!saveToFile()) {
+        LOG_ERR("PERSIST", "Failed to resave %s after format update", T::getFilePath());
+      }
     }
     return ok;
   }

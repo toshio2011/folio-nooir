@@ -1,6 +1,7 @@
 #include "BleButtonMapActivity.h"
 
 #include <GfxRenderer.h>
+#include <Logging.h>
 
 #include <cstdio>
 #include <cstring>
@@ -40,6 +41,7 @@ void BleButtonMapActivity::onEnter() {
   functionIndex = 0;
   waitStartedAt = millis();
   unsupportedNoticeShown = false;
+  lastSaveFailed = false;
   noticeUntil = 0;
   mappedInput.setBleCaptureMode(true);
   requestUpdate();
@@ -51,18 +53,25 @@ void BleButtonMapActivity::onExit() {
 }
 
 bleinput::mapping::AssignResult BleButtonMapActivity::applyCapturedChoice(const Fn& choice) {
+  lastSaveFailed = false;
   bleinput::mapping::CapturedIdentity captured[MappedInputManager::kBleSignatureMaxEvents] = {};
   if (capturedCount == 0 || capturedCount > MappedInputManager::kBleSignatureMaxEvents)
     return bleinput::mapping::AssignResult::Invalid;
   for (uint8_t i = 0; i < capturedCount; ++i) captured[i] = {capturedKinds[i], capturedValues[i]};
 
+  CrossPointSettings::BleKeyMapEntry previousMap[CrossPointSettings::BLE_MAP_CAPACITY] = {};
+  memcpy(previousMap, SETTINGS.bleKeyMap, sizeof(previousMap));
   const auto result = choice.remove
                           ? bleinput::mapping::remove(SETTINGS.bleKeyMap, captured, capturedCount)
                           : bleinput::mapping::assign(SETTINGS.bleKeyMap, captured, capturedCount,
                                                       choice.actionType, choice.target);
   if (result == bleinput::mapping::AssignResult::Added || result == bleinput::mapping::AssignResult::Replaced ||
       result == bleinput::mapping::AssignResult::Removed) {
-    SETTINGS.saveToFile();
+    if (!SETTINGS.saveToFile()) {
+      memcpy(SETTINGS.bleKeyMap, previousMap, sizeof(previousMap));
+      lastSaveFailed = true;
+      LOG_ERR("BLEMAP", "mapping persistence failed; restored previous in-memory map");
+    }
   }
   return result;
 }
@@ -89,6 +98,7 @@ void BleButtonMapActivity::loop() {
     if (mappedInput.takeCapturedBleSignature(capturedKinds, capturedValues,
                                              MappedInputManager::kBleSignatureMaxEvents, count)) {
       capturedCount = count;
+      LOG_INF("BLEMAP", "captured normalized input signature count=%u", static_cast<unsigned>(count));
       functionIndex = 0;
       step = Step::SelectFunction;
       waitStartedAt = millis();
@@ -110,21 +120,25 @@ void BleButtonMapActivity::loop() {
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
     const auto result = applyCapturedChoice(kFunctions[functionIndex]);
-    switch (result) {
-      case bleinput::mapping::AssignResult::Added:
-      case bleinput::mapping::AssignResult::Replaced:
-        noticeString = StrId::STR_BT_MAP_SAVED;
-        break;
-      case bleinput::mapping::AssignResult::Removed:
-        noticeString = StrId::STR_BT_MAP_REMOVED;
-        break;
-      case bleinput::mapping::AssignResult::NotFound:
-        noticeString = StrId::STR_BT_MAP_NOT_FOUND;
-        break;
-      case bleinput::mapping::AssignResult::Full:
-      case bleinput::mapping::AssignResult::Invalid:
-        noticeString = StrId::STR_BT_MAP_FULL;
-        break;
+    if (lastSaveFailed) {
+      noticeString = StrId::STR_BT_MAP_SAVE_FAILED;
+    } else {
+      switch (result) {
+        case bleinput::mapping::AssignResult::Added:
+        case bleinput::mapping::AssignResult::Replaced:
+          noticeString = StrId::STR_BT_MAP_SAVED;
+          break;
+        case bleinput::mapping::AssignResult::Removed:
+          noticeString = StrId::STR_BT_MAP_REMOVED;
+          break;
+        case bleinput::mapping::AssignResult::NotFound:
+          noticeString = StrId::STR_BT_MAP_NOT_FOUND;
+          break;
+        case bleinput::mapping::AssignResult::Full:
+        case bleinput::mapping::AssignResult::Invalid:
+          noticeString = StrId::STR_BT_MAP_FULL;
+          break;
+      }
     }
     noticeUntil = millis() + 2500;
     // Back to capturing so the user can map the next remote button.

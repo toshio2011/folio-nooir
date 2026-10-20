@@ -47,6 +47,26 @@ std::vector<String> HalStorage::listFiles(const char* path, int maxFiles) {
 
 String HalStorage::readFile(const char* path) { HAL_STORAGE_WRAPPED_CALL(readFile, path); }
 
+HalStorageReadStatus HalStorage::readFileChecked(const char* path, String& content, const size_t maxBytes) {
+  StorageLock lock;
+  const auto status = SDCard.readFileChecked(path, content, maxBytes);
+  switch (status) {
+    case SDCardManager::ReadStatus::Success:
+      return HalStorageReadStatus::Success;
+    case SDCardManager::ReadStatus::NotFound:
+      return HalStorageReadStatus::NotFound;
+    case SDCardManager::ReadStatus::ParentMissing:
+      return HalStorageReadStatus::ParentMissing;
+    case SDCardManager::ReadStatus::Unavailable:
+      return HalStorageReadStatus::Unavailable;
+    case SDCardManager::ReadStatus::TooLarge:
+      return HalStorageReadStatus::TooLarge;
+    case SDCardManager::ReadStatus::IoError:
+    default:
+      return HalStorageReadStatus::IoError;
+  }
+}
+
 bool HalStorage::readFileToStream(const char* path, Print& out, size_t chunkSize) {
   HAL_STORAGE_WRAPPED_CALL(readFileToStream, path, out, chunkSize);
 }

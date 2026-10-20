@@ -174,6 +174,22 @@ class RecentBooksActivity final : public Activity {
     bool valid = false;
   };
   TwoRowSpinePageWindow twoRowSpinePageWindow{};
+  struct ThreeRowSpinePageWindow {
+    std::array<SpineShelfPlanner::Book, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> books{};
+    std::array<size_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> recentIndexes{};
+    SpineShelfPlanner::ThreeRowPage page{};
+    mutable std::array<bool, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> thumbnailUnavailable{};
+    size_t pageNumber = 0;
+    size_t pageCount = 0;
+    size_t previousPageStart = 0;
+    size_t nextPageStart = 0;
+    SpineShelfPlanner::Rect bounds{};
+    uint32_t visualSeed = 0;
+    uint8_t decorationStyle = 0;
+    uint8_t appearanceMode = CrossPointSettings::SPINE_APPEARANCE_ALL_SPINES;
+    bool valid = false;
+  };
+  ThreeRowSpinePageWindow threeRowSpinePageWindow{};
   // Stable across Home reconstruction so the same book keeps its geometry,
   // tone, decoration, and mixed-mode face-out choice when a framebuffer
   // snapshot is restored.
@@ -251,9 +267,12 @@ class RecentBooksActivity final : public Activity {
   void invalidateSpinePageWindow() {
     spinePageWindow.valid = false;
     twoRowSpinePageWindow.valid = false;
+    threeRowSpinePageWindow.valid = false;
   }
   const TwoRowSpinePageWindow& twoRowSpinePageForSelection(const SpineShelfPlanner::Rect& bounds);
   void invalidateTwoRowSpinePageWindow() { twoRowSpinePageWindow.valid = false; }
+  const ThreeRowSpinePageWindow& threeRowSpinePageForSelection(const SpineShelfPlanner::Rect& bounds);
+  void invalidateThreeRowSpinePageWindow() { threeRowSpinePageWindow.valid = false; }
   size_t selectedRecentIndex() const;
   bool hasMissingRecentCache() const;
   void generateNextCover();
@@ -281,9 +300,11 @@ class RecentBooksActivity final : public Activity {
   bool usesThreeCoverGrid() const;
   bool usesFourByTwoGrid() const;
   bool usesTwoRowSpineLayout() const;
+  bool usesThreeRowSpineLayout() const;
   int activePageItems() const;
   size_t moveSpinePage(const FolioShelfLayout& layout, bool next);
   size_t moveTwoRowSpinePage(const FolioShelfLayout& layout, bool next);
+  size_t moveThreeRowSpinePage(const FolioShelfLayout& layout, bool next);
   bool renderCarousel(bool threeCover);
   void renderFolioCarouselShelf(int shelfTop, int shelfHeight, bool threeCover);
 
