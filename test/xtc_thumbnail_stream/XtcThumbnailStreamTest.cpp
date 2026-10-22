@@ -5,7 +5,9 @@
 
 #include <gtest/gtest.h>
 
+#include "Xtc/XtcCoverStream.h"
 #include "Xtc/XtcThumbnailStream.h"
+#include "Xtc/Xtc/XtcTypes.h"
 
 namespace {
 struct Workspace {
@@ -90,6 +92,14 @@ void compareForPattern(const std::function<uint8_t(uint16_t, uint16_t)>& pixelAt
 }
 }  // namespace
 
+TEST(XtcStreamingPolicy, RejectsUnboundedChunksAndAllowsTheEightKiBLimit) {
+  EXPECT_FALSE(xtc::isPageStreamingChunkSizeSupported(0));
+  EXPECT_TRUE(xtc::isPageStreamingChunkSizeSupported(1));
+  EXPECT_TRUE(xtc::isPageStreamingChunkSizeSupported(1024));
+  EXPECT_TRUE(xtc::isPageStreamingChunkSizeSupported(8u * 1024u));
+  EXPECT_FALSE(xtc::isPageStreamingChunkSizeSupported(8u * 1024u + 1u));
+}
+
 TEST(XtcThumbnailStream, MatchesAreaAverageAndDitherForAllGrayLevels) {
   compareForPattern([](uint16_t x, uint16_t y) { return static_cast<uint8_t>((x + 2u * y) % 4u); }, 1);
 }
@@ -124,4 +134,145 @@ TEST(XtcThumbnailStream, PreservesFreeHeapReserveAndRejectsInvalidDimensions) {
   ASSERT_TRUE(xtc_thumb::makeWorkspaceLayout(480, 800, 132, 220, 238312u, layout));
   EXPECT_FALSE(xtc_thumb::canAllocateWorkspace(layout, 65'000, 65'000));
   EXPECT_FALSE(xtc_thumb::makeWorkspaceLayout(0, 800, 132, 220, 238312u, layout));
+}
+
+TEST(XtcThumbnailStream, StreamsOneBitSourceAcrossArbitraryChunkBoundaries) {
+  constexpr uint16_t sourceWidth = 16;
+  constexpr uint16_t sourceHeight = 16;
+  constexpr uint16_t targetWidth = 8;
+  constexpr uint16_t targetHeight = 8;
+  constexpr uint32_t inverseScaleFp = 2u << 16;
+  xtc_thumb::OnePlaneWorkspaceLayout layout;
+  ASSERT_TRUE(xtc_thumb::makeOnePlaneWorkspaceLayout(sourceWidth, sourceHeight, targetWidth, targetHeight,
+                                                      inverseScaleFp, layout));
+  EXPECT_TRUE(xtc_thumb::canAllocateOnePlaneWorkspace(layout, 90'000, 65'524));
+  EXPECT_FALSE(xtc_thumb::canAllocateOnePlaneWorkspace(layout, 40'000, 65'524));
+
+  std::vector<uint16_t> xMap(sourceWidth), yMap(sourceHeight), xCounts(targetWidth), yCounts(targetHeight);
+  std::vector<uint32_t> whiteSums(targetWidth);
+  std::vector<uint8_t> outputRow(layout.outputRowBytes);
+  std::vector<uint8_t> source(layout.pageBytes, 0);
+  const auto isWhite = [](uint16_t x, uint16_t y) { return ((x / 3u + y / 2u) % 3u) != 0; };
+  for (uint16_t y = 0; y < sourceHeight; ++y) {
+    for (uint16_t x = 0; x < sourceWidth; ++x) {
+      if (!isWhite(x, y)) continue;
+      source[static_cast<size_t>(y) * layout.sourceRowBytes + x / 8u] |=
+          static_cast<uint8_t>(1u << (7u - (x % 8u)));
+    }
+  }
+
+  std::vector<uint8_t> output(layout.bmpRowBytes * targetHeight, 0);
+  xtc_thumb::OnePlaneReducer reducer(sourceWidth, sourceHeight, targetWidth, targetHeight, inverseScaleFp,
+                                     layout, xMap.data(), yMap.data(), xCounts.data(), yCounts.data(),
+                                     whiteSums.data(), outputRow.data());
+  ASSERT_TRUE(reducer.initialize());
+  const auto emitRow = [&output, &layout](const uint8_t* row, const size_t bytes, const uint16_t y) {
+    if (bytes != layout.bmpRowBytes || y >= 8) return false;
+    std::copy_n(row, bytes, output.data() + static_cast<size_t>(y) * bytes);
+    return true;
+  };
+  for (size_t offset = 0; offset < source.size(); offset += 7) {
+    const size_t count = std::min<size_t>(7, source.size() - offset);
+    ASSERT_TRUE(reducer.addChunk(source.data() + offset, count, offset, emitRow));
+  }
+  ASSERT_TRUE(reducer.finish(emitRow));
+
+  std::vector<uint8_t> expected(layout.bmpRowBytes * targetHeight, 0xFF);
+  for (uint16_t y = 0; y < targetHeight; ++y) {
+    for (uint16_t x = 0; x < targetWidth; ++x) {
+      const auto xr = xtc_thumb::sourceRange(x, sourceWidth, inverseScaleFp);
+      const auto yr = xtc_thumb::sourceRange(y, sourceHeight, inverseScaleFp);
+      uint32_t sum = 0, count = 0;
+      for (uint32_t sy = yr.begin; sy < yr.end; ++sy) {
+        for (uint32_t sx = xr.begin; sx < xr.end; ++sx) {
+          sum += isWhite(static_cast<uint16_t>(sx), static_cast<uint16_t>(sy)) ? 255u : 0u;
+          ++count;
+        }
+      }
+      const uint8_t gray = count ? static_cast<uint8_t>(sum / count) : 255;
+      const size_t byteIndex = static_cast<size_t>(y) * layout.bmpRowBytes + x / 8u;
+      const uint8_t mask = static_cast<uint8_t>(1u << (7u - (x % 8u)));
+      if (gray >= xtc_thumb::onePlaneDitherThreshold(x, y)) expected[byteIndex] |= mask;
+      else expected[byteIndex] &= static_cast<uint8_t>(~mask);
+    }
+  }
+  EXPECT_EQ(output, expected);
+}
+
+TEST(XtcThumbnailStream, RejectsOutOfOrderOnePlaneChunksAndTruncatedPages) {
+  xtc_thumb::OnePlaneWorkspaceLayout layout;
+  ASSERT_TRUE(xtc_thumb::makeOnePlaneWorkspaceLayout(8, 8, 4, 4, 2u << 16, layout));
+  std::vector<uint16_t> xMap(8), yMap(8), xCounts(4), yCounts(4);
+  std::vector<uint32_t> sums(4);
+  std::vector<uint8_t> row(layout.outputRowBytes), chunk(layout.pageBytes, 0xFF);
+  xtc_thumb::OnePlaneReducer reducer(8, 8, 4, 4, 2u << 16, layout, xMap.data(), yMap.data(),
+                                     xCounts.data(), yCounts.data(), sums.data(), row.data());
+  ASSERT_TRUE(reducer.initialize());
+  const auto ignoreRow = [](const uint8_t*, size_t, uint16_t) { return true; };
+  EXPECT_FALSE(reducer.addChunk(chunk.data(), 1, 1, ignoreRow));
+
+  xtc_thumb::OnePlaneReducer truncated(8, 8, 4, 4, 2u << 16, layout, xMap.data(), yMap.data(),
+                                       xCounts.data(), yCounts.data(), sums.data(), row.data());
+  ASSERT_TRUE(truncated.initialize());
+  ASSERT_TRUE(truncated.addChunk(chunk.data(), 2, 0, ignoreRow));
+  EXPECT_FALSE(truncated.finish(ignoreRow));
+}
+
+TEST(XtcCoverStream, PreservesAllFourGrayLevelsWithArbitraryChunkBoundaries) {
+  constexpr uint16_t width = 5;
+  constexpr uint16_t height = 80;
+  constexpr size_t planeBytes = (width * height + 7u) / 8u;
+  constexpr size_t columnBytes = height / 8u;
+  constexpr size_t bmpRowBytes = 4;
+  constexpr size_t stripBytes = bmpRowBytes * 8u * xtc_cover::kMaxBandGroups;
+  constexpr size_t bandPlaneBytes = width * xtc_cover::kMaxBandGroups;
+  std::vector<uint8_t> source(planeBytes * 2u, 0);
+  const auto pixelAt = [](uint16_t x, uint16_t y) { return static_cast<uint8_t>((x + 2u * y) % 4u); };
+  for (uint16_t y = 0; y < height; ++y) {
+    for (uint16_t x = 0; x < width; ++x) {
+      const uint8_t pixel = pixelAt(x, y);
+      const size_t offset = (width - 1u - x) * columnBytes + y / 8u;
+      const uint8_t mask = static_cast<uint8_t>(1u << (7u - (y % 8u)));
+      if (pixel & 2u) source[offset] |= mask;
+      if (pixel & 1u) source[planeBytes + offset] |= mask;
+    }
+  }
+
+  for (uint16_t firstGroup = 0; firstGroup < height / 8u; firstGroup += xtc_cover::kMaxBandGroups) {
+    std::vector<uint8_t> firstColumns(bandPlaneBytes);
+    std::vector<uint8_t> rows(stripBytes);
+    xtc_cover::TwoBitCoverStripAssembler assembler(width, height, planeBytes, columnBytes,
+                                                   bmpRowBytes, stripBytes, firstColumns.data(), rows.data());
+    ASSERT_TRUE(assembler.begin(firstGroup));
+    for (size_t offset = 0; offset < source.size(); offset += 3) {
+      const size_t count = std::min<size_t>(3, source.size() - offset);
+      ASSERT_TRUE(assembler.addChunk(source.data() + offset, count, offset));
+    }
+    ASSERT_TRUE(assembler.finish());
+    for (uint16_t row = 0; row < assembler.rowCount(); ++row) {
+      for (uint16_t x = 0; x < width; ++x) {
+        const size_t byteIndex = static_cast<size_t>(row) * bmpRowBytes + x / 4u;
+        const uint8_t shift = static_cast<uint8_t>(6u - (x % 4u) * 2u);
+        const uint8_t pixel = static_cast<uint8_t>((rows[byteIndex] >> shift) & 0x03u);
+        const uint16_t sourceY = static_cast<uint16_t>(assembler.firstRow() + row);
+        const uint8_t sourcePixel = pixelAt(x, sourceY);
+        const uint8_t expectedPaletteIndex = sourcePixel == 0 ? 3 : (sourcePixel == 3 ? 0 : sourcePixel);
+        EXPECT_EQ(pixel, expectedPaletteIndex);
+      }
+      EXPECT_EQ(rows[static_cast<size_t>(row) * bmpRowBytes + 2u], 0u);
+      EXPECT_EQ(rows[static_cast<size_t>(row) * bmpRowBytes + 3u], 0u);
+    }
+  }
+}
+
+TEST(XtcCoverStream, RejectsUnsupportedOddHeightWithoutOverflowingPlaneLayout) {
+  size_t plane = 0, column = 0, bandPlane = 0, row = 0, strip = 0, total = 0;
+  EXPECT_FALSE(xtc_cover::makeTwoBitCoverWorkspace(480, 801, plane, column, bandPlane, row, strip, total));
+  EXPECT_TRUE(xtc_cover::makeTwoBitCoverWorkspace(480, 800, plane, column, bandPlane, row, strip, total));
+  EXPECT_EQ(plane, 480u * 800u / 8u);
+  EXPECT_EQ(column, 100u);
+  EXPECT_EQ(bandPlane, 480u * xtc_cover::kMaxBandGroups);
+  EXPECT_EQ(row, 120u);
+  EXPECT_EQ(strip, 120u * 8u * xtc_cover::kMaxBandGroups);
+  EXPECT_EQ(total, bandPlane + strip);
 }

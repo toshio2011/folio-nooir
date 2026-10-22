@@ -12,10 +12,18 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
 namespace xtc {
+
+// Streaming callbacks may request up to 8 KiB, with allocation failure
+// reported to the caller. Larger chunks add unnecessary contiguous-heap risk.
+constexpr size_t kMaxPageStreamingChunkBytes = 8u * 1024u;
+inline bool isPageStreamingChunkSizeSupported(const size_t bytes) {
+  return bytes > 0 && bytes <= kMaxPageStreamingChunkBytes;
+}
 
 // XTC file magic numbers (little-endian)
 // "XTC\0" = 0x58, 0x54, 0x43, 0x00

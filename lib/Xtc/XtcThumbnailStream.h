@@ -91,6 +91,187 @@ inline bool canAllocateWorkspace(const WorkspaceLayout& layout, size_t freeBytes
          largestFreeBlock >= layout.largestAllocationBytes + kLargestBlockMargin + kStreamingChunkBytes;
 }
 
+struct OnePlaneWorkspaceLayout {
+  size_t xMapBytes = 0, yMapBytes = 0, xCountBytes = 0, yCountBytes = 0;
+  size_t sumsBytes = 0, outputRowBytes = 0, totalBytes = 0, largestAllocationBytes = 0;
+  size_t sourceRowBytes = 0, pageBytes = 0, bmpRowBytes = 0;
+  uint32_t maxCellSamples = 0;
+  bool valid = false;
+};
+
+inline bool makeOnePlaneWorkspaceLayout(const uint16_t sourceWidth, const uint16_t sourceHeight,
+                                       const uint16_t targetWidth, const uint16_t targetHeight,
+                                       const uint32_t inverseScaleFp, OnePlaneWorkspaceLayout& layout) {
+  layout = {};
+  if (!sourceWidth || !sourceHeight || !targetWidth || !targetHeight || inverseScaleFp < 65536u) return false;
+  uint32_t maxXCount = 0, maxYCount = 0;
+  for (uint16_t x = 0; x < targetWidth; ++x) {
+    const auto range = sourceRange(x, sourceWidth, inverseScaleFp);
+    maxXCount = std::max(maxXCount, range.end - range.begin);
+  }
+  for (uint16_t y = 0; y < targetHeight; ++y) {
+    const auto range = sourceRange(y, sourceHeight, inverseScaleFp);
+    maxYCount = std::max(maxYCount, range.end - range.begin);
+  }
+  const uint64_t maxSamples = static_cast<uint64_t>(maxXCount) * maxYCount;
+  if (!maxXCount || !maxYCount || maxSamples > std::numeric_limits<uint32_t>::max()) return false;
+
+  const uint64_t xMap = static_cast<uint64_t>(sourceWidth) * sizeof(uint16_t);
+  const uint64_t yMap = static_cast<uint64_t>(sourceHeight) * sizeof(uint16_t);
+  const uint64_t xCounts = static_cast<uint64_t>(targetWidth) * sizeof(uint16_t);
+  const uint64_t yCounts = static_cast<uint64_t>(targetHeight) * sizeof(uint16_t);
+  const uint64_t sums = static_cast<uint64_t>(targetWidth) * sizeof(uint32_t);
+  const uint64_t outputRow = ((static_cast<uint32_t>(targetWidth) + 31u) / 32u) * 4u;
+  const uint64_t total = xMap + yMap + xCounts + yCounts + sums + outputRow;
+  const uint64_t largest = std::max({xMap, yMap, xCounts, yCounts, sums, outputRow});
+  const uint64_t sourceRow = (static_cast<uint32_t>(sourceWidth) + 7u) / 8u;
+  const uint64_t page = sourceRow * sourceHeight;
+  if (total > kMaxWorkspaceBytes || total > std::numeric_limits<size_t>::max() ||
+      largest > std::numeric_limits<size_t>::max() || page > std::numeric_limits<size_t>::max()) return false;
+  layout.xMapBytes = static_cast<size_t>(xMap);
+  layout.yMapBytes = static_cast<size_t>(yMap);
+  layout.xCountBytes = static_cast<size_t>(xCounts);
+  layout.yCountBytes = static_cast<size_t>(yCounts);
+  layout.sumsBytes = static_cast<size_t>(sums);
+  layout.outputRowBytes = static_cast<size_t>(outputRow);
+  layout.totalBytes = static_cast<size_t>(total);
+  layout.largestAllocationBytes = static_cast<size_t>(largest);
+  layout.sourceRowBytes = static_cast<size_t>(sourceRow);
+  layout.pageBytes = static_cast<size_t>(page);
+  layout.bmpRowBytes = static_cast<size_t>(outputRow);
+  layout.maxCellSamples = static_cast<uint32_t>(maxSamples);
+  layout.valid = true;
+  return true;
+}
+
+inline bool canAllocateOnePlaneWorkspace(const OnePlaneWorkspaceLayout& layout, const size_t freeBytes,
+                                         const size_t largestFreeBlock) {
+  return layout.valid &&
+         freeBytes >= layout.totalBytes + kPostWorkspaceHeapReserve + kStreamingChunkBytes &&
+         largestFreeBlock >= layout.largestAllocationBytes + kLargestBlockMargin + kStreamingChunkBytes;
+}
+
+inline uint8_t onePlaneDitherThreshold(const uint16_t x, const uint16_t y) {
+  uint32_t hash = static_cast<uint32_t>(x) * 374761393u + static_cast<uint32_t>(y) * 668265263u;
+  hash = (hash ^ (hash >> 13)) * 1274126177u;
+  const int threshold = static_cast<int>(hash >> 24);
+  return static_cast<uint8_t>(128 + ((threshold - 128) / 2));
+}
+
+class OnePlaneReducer {
+ public:
+  OnePlaneReducer(const uint16_t sourceWidth, const uint16_t sourceHeight,
+                  const uint16_t targetWidth, const uint16_t targetHeight,
+                  const uint32_t inverseScaleFp, const OnePlaneWorkspaceLayout& layout,
+                  uint16_t* xMap, uint16_t* yMap, uint16_t* xCounts, uint16_t* yCounts,
+                  uint32_t* whiteSums, uint8_t* outputRow)
+      : sw_(sourceWidth), sh_(sourceHeight), tw_(targetWidth), th_(targetHeight),
+        inverseScaleFp_(inverseScaleFp), layout_(layout), xMap_(xMap), yMap_(yMap),
+        xCounts_(xCounts), yCounts_(yCounts), whiteSums_(whiteSums), outputRow_(outputRow) {}
+
+  bool initialize() {
+    if (!layout_.valid || !xMap_ || !yMap_ || !xCounts_ || !yCounts_ || !whiteSums_ || !outputRow_) return false;
+    if (layout_.sourceRowBytes == 0 || layout_.pageBytes != layout_.sourceRowBytes * sh_ ||
+        layout_.outputRowBytes < (static_cast<size_t>(tw_) + 7u) / 8u) return false;
+    std::fill_n(xMap_, sw_, kUnmapped);
+    std::fill_n(yMap_, sh_, kUnmapped);
+    std::fill_n(xCounts_, tw_, 0);
+    std::fill_n(yCounts_, th_, 0);
+    std::fill_n(whiteSums_, tw_, 0u);
+    std::memset(outputRow_, 0xFF, layout_.outputRowBytes);
+    for (uint16_t x = 0; x < tw_; ++x) {
+      const auto range = sourceRange(x, sw_, inverseScaleFp_);
+      xCounts_[x] = static_cast<uint16_t>(range.end - range.begin);
+      for (uint32_t sx = range.begin; sx < range.end; ++sx) xMap_[sx] = x;
+    }
+    for (uint16_t y = 0; y < th_; ++y) {
+      const auto range = sourceRange(y, sh_, inverseScaleFp_);
+      yCounts_[y] = static_cast<uint16_t>(range.end - range.begin);
+      for (uint32_t sy = range.begin; sy < range.end; ++sy) yMap_[sy] = y;
+    }
+    nextOffset_ = 0;
+    currentSourceY_ = kUnmapped;
+    activeTargetY_ = kUnmapped;
+    healthy_ = true;
+    return true;
+  }
+
+  template <typename EmitRow>
+  bool addChunk(const uint8_t* data, const size_t size, const size_t offset, EmitRow&& emitRow) {
+    if (!healthy_ || (!data && size != 0) || offset != nextOffset_ || offset > layout_.pageBytes ||
+        size > layout_.pageBytes - offset || layout_.sourceRowBytes == 0) {
+      return healthy_ = false;
+    }
+    for (size_t index = 0; index < size; ++index) {
+      const size_t absolute = offset + index;
+      const uint16_t sourceY = static_cast<uint16_t>(absolute / layout_.sourceRowBytes);
+      if (sourceY != currentSourceY_) {
+        const uint16_t destinationY = yMap_[sourceY];
+        if (destinationY != activeTargetY_) {
+          if (activeTargetY_ != kUnmapped && !finishTargetRow(emitRow)) return healthy_ = false;
+          if (destinationY != kUnmapped) std::fill_n(whiteSums_, tw_, 0u);
+          activeTargetY_ = destinationY;
+        }
+        currentSourceY_ = sourceY;
+      }
+      if (activeTargetY_ == kUnmapped) continue;
+
+      const size_t sourceByte = absolute % layout_.sourceRowBytes;
+      for (uint8_t bit = 0; bit < 8; ++bit) {
+        const uint16_t sourceX = static_cast<uint16_t>(sourceByte * 8u + bit);
+        if (sourceX >= sw_) break;
+        const uint16_t destinationX = xMap_[sourceX];
+        if (destinationX == kUnmapped) continue;
+        const bool white = ((data[index] >> (7u - bit)) & 1u) != 0;
+        if (white && ++whiteSums_[destinationX] > layout_.maxCellSamples) return healthy_ = false;
+      }
+    }
+    nextOffset_ += size;
+    return healthy_;
+  }
+
+  template <typename EmitRow>
+  bool finish(EmitRow&& emitRow) {
+    if (!healthy_ || nextOffset_ != layout_.pageBytes) return healthy_ = false;
+    if (activeTargetY_ != kUnmapped && !finishTargetRow(emitRow)) return healthy_ = false;
+    activeTargetY_ = kUnmapped;
+    return true;
+  }
+
+ private:
+  template <typename EmitRow>
+  bool finishTargetRow(EmitRow&& emitRow) {
+    std::memset(outputRow_, 0xFF, layout_.outputRowBytes);
+    for (uint16_t x = 0; x < tw_; ++x) {
+      const uint64_t total = static_cast<uint64_t>(xCounts_[x]) * yCounts_[activeTargetY_];
+      const uint8_t gray = total == 0 ? 255 : static_cast<uint8_t>(
+          static_cast<uint64_t>(whiteSums_[x]) * 255u / total);
+      const bool white = gray >= onePlaneDitherThreshold(x, activeTargetY_);
+      const size_t byteIndex = x / 8u;
+      const uint8_t mask = static_cast<uint8_t>(1u << (7u - (x % 8u)));
+      if (white) outputRow_[byteIndex] |= mask;
+      else outputRow_[byteIndex] &= static_cast<uint8_t>(~mask);
+    }
+    const bool emitted = emitRow(outputRow_, layout_.outputRowBytes, activeTargetY_);
+    std::fill_n(whiteSums_, tw_, 0u);
+    return emitted;
+  }
+
+  uint16_t sw_, sh_, tw_, th_;
+  uint32_t inverseScaleFp_;
+  const OnePlaneWorkspaceLayout& layout_;
+  uint16_t* xMap_;
+  uint16_t* yMap_;
+  uint16_t* xCounts_;
+  uint16_t* yCounts_;
+  uint32_t* whiteSums_;
+  uint8_t* outputRow_;
+  size_t nextOffset_ = 0;
+  uint16_t currentSourceY_ = kUnmapped;
+  uint16_t activeTargetY_ = kUnmapped;
+  bool healthy_ = false;
+};
+
 class TwoPlaneReducer {
  public:
   TwoPlaneReducer(uint16_t sw, uint16_t sh, uint16_t tw, uint16_t th, uint32_t inverseScaleFp,

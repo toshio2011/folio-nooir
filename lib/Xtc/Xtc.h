@@ -28,6 +28,8 @@ class Xtc {
   bool loaded;
   bool generateXthThumbBmpStreaming(uint16_t sourceWidth, uint16_t sourceHeight, uint16_t thumbWidth,
                                    uint16_t thumbHeight, uint32_t inverseScaleFp) const;
+  bool generateXtgThumbBmpStreaming(uint16_t sourceWidth, uint16_t sourceHeight, uint16_t thumbWidth,
+                                   uint16_t thumbHeight, uint32_t inverseScaleFp, int requestedHeight) const;
 
  public:
   explicit Xtc(std::string filepath, const std::string& cacheDir) : filepath(std::move(filepath)), loaded(false) {
@@ -47,6 +49,10 @@ class Xtc {
    * @return true on success
    */
   bool clearCache() const;
+
+  // Remove generated covers and thumbnails while preserving reader progress,
+  // bookmarks, and every other per-book cache file.
+  bool clearCoverCache() const;
 
   /**
    * Setup cache directory

@@ -11,7 +11,9 @@
 #include <HalStorage.h>
 #include <Logging.h>
 
+#include <cstdlib>
 #include <cstring>
+#include <memory>
 
 namespace xtc {
 
@@ -478,6 +480,13 @@ XtcError XtcParser::loadPageStreaming(uint32_t pageIndex,
     return XtcError::PAGE_OUT_OF_RANGE;
   }
 
+  // Keep streaming reads bounded on memory-constrained targets. A caller may
+  // request up to 8 KiB, but allocation failure is reported instead of
+  // throwing/terminating on X3 when contiguous heap is fragmented.
+  if (!xtc::isPageStreamingChunkSizeSupported(chunkSize) || !callback) {
+    return chunkSize == 0 || !callback ? XtcError::READ_ERROR : XtcError::MEMORY_ERROR;
+  }
+
   PageInfo page;
   if (!readPageTableEntry(pageIndex, page)) {
     return XtcError::READ_ERROR;
@@ -503,29 +512,41 @@ XtcError XtcParser::loadPageStreaming(uint32_t pageIndex,
   // Calculate bitmap size based on bit depth
   // XTG (1-bit): Row-major, ((width+7)/8) * height bytes
   // XTH (2-bit): Two bit planes, ((width * height + 7) / 8) * 2 bytes
+  if (pageHeader.width == 0 || pageHeader.height == 0) {
+    return XtcError::READ_ERROR;
+  }
   size_t bitmapSize;
   if (m_bitDepth == 2) {
-    bitmapSize = ((static_cast<size_t>(pageHeader.width) * pageHeader.height + 7) / 8) * 2;
+    const size_t planeBytes = (static_cast<size_t>(pageHeader.width) * pageHeader.height + 7u) / 8u;
+    if (planeBytes > SIZE_MAX / 2u) return XtcError::READ_ERROR;
+    bitmapSize = planeBytes * 2u;
   } else {
-    bitmapSize = ((pageHeader.width + 7) / 8) * pageHeader.height;
+    const size_t rowBytes = (static_cast<size_t>(pageHeader.width) + 7u) / 8u;
+    if (rowBytes > SIZE_MAX / pageHeader.height) return XtcError::READ_ERROR;
+    bitmapSize = rowBytes * pageHeader.height;
   }
 
   // Read in chunks
-  std::vector<uint8_t> chunk(chunkSize);
+  std::unique_ptr<uint8_t, decltype(&free)> chunk(static_cast<uint8_t*>(malloc(chunkSize)), &free);
+  if (!chunk) {
+    m_lastError = XtcError::MEMORY_ERROR;
+    return XtcError::MEMORY_ERROR;
+  }
   size_t totalRead = 0;
 
   while (totalRead < bitmapSize) {
     size_t toRead = std::min(chunkSize, bitmapSize - totalRead);
-    size_t bytesRead = m_file.read(chunk.data(), toRead);
+    size_t bytesRead = m_file.read(chunk.get(), toRead);
 
     if (bytesRead == 0) {
       return XtcError::READ_ERROR;
     }
 
-    callback(chunk.data(), bytesRead, totalRead);
+    callback(chunk.get(), bytesRead, totalRead);
     totalRead += bytesRead;
   }
 
+  m_lastError = XtcError::OK;
   return XtcError::OK;
 }
 
