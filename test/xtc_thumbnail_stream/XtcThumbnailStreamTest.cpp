@@ -265,6 +265,34 @@ TEST(XtcCoverStream, PreservesAllFourGrayLevelsWithArbitraryChunkBoundaries) {
   }
 }
 
+TEST(XtcCoverStream, TwoBitBmpHeaderDefinesTheNativeGrayPaletteAndTopDownRows) {
+  xtc_cover::TwoBitBmpHeader header{};
+  ASSERT_TRUE(xtc_cover::makeTwoBitBmpHeader(5, 80, 4, header));
+
+  EXPECT_EQ(header.bfType, 0x4D42u);
+  EXPECT_EQ(header.bfSize, 70u + 4u * 80u);
+  EXPECT_EQ(header.bfOffBits, 70u);
+  EXPECT_EQ(header.biWidth, 5);
+  EXPECT_EQ(header.biHeight, -80);
+  EXPECT_EQ(header.biPlanes, 1u);
+  EXPECT_EQ(header.biBitCount, 2u);
+  EXPECT_EQ(header.biCompression, 0u);
+  EXPECT_EQ(header.biSizeImage, 4u * 80u);
+  EXPECT_EQ(header.biClrUsed, 4u);
+  EXPECT_EQ(header.biClrImportant, 4u);
+
+  // BMP entries are black-to-white, while XTH values are 0=white, 1=dark,
+  // 2=light, 3=black. These entries preserve all four native display levels.
+  constexpr uint8_t expectedGray[4] = {0, 85, 170, 255};
+  for (size_t index = 0; index < 4; ++index) {
+    EXPECT_EQ(header.palette[index * 4u + 0u], expectedGray[index]);
+    EXPECT_EQ(header.palette[index * 4u + 1u], expectedGray[index]);
+    EXPECT_EQ(header.palette[index * 4u + 2u], expectedGray[index]);
+    EXPECT_EQ(header.palette[index * 4u + 3u], 0u);
+  }
+  EXPECT_FALSE(xtc_cover::makeTwoBitBmpHeader(0, 80, 4, header));
+}
+
 TEST(XtcCoverStream, RejectsUnsupportedOddHeightWithoutOverflowingPlaneLayout) {
   size_t plane = 0, column = 0, bandPlane = 0, row = 0, strip = 0, total = 0;
   EXPECT_FALSE(xtc_cover::makeTwoBitCoverWorkspace(480, 801, plane, column, bandPlane, row, strip, total));

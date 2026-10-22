@@ -71,57 +71,6 @@ bool commitBitmapCache(const std::string& temporaryPath, const std::string& outp
   return isCompleteThumbnail(outputPath, width, height, bpp);
 }
 
-#pragma pack(push, 1)
-struct TwoBitBmpHeader {
-  uint16_t bfType;
-  uint32_t bfSize;
-  uint16_t bfReserved1;
-  uint16_t bfReserved2;
-  uint32_t bfOffBits;
-  uint32_t biSize;
-  int32_t biWidth;
-  int32_t biHeight;
-  uint16_t biPlanes;
-  uint16_t biBitCount;
-  uint32_t biCompression;
-  uint32_t biSizeImage;
-  int32_t biXPelsPerMeter;
-  int32_t biYPelsPerMeter;
-  uint32_t biClrUsed;
-  uint32_t biClrImportant;
-  uint8_t palette[16];
-};
-#pragma pack(pop)
-static_assert(sizeof(TwoBitBmpHeader) == 70, "2-bit BMP headers contain four palette entries");
-
-bool makeTwoBitBmpHeader(const uint16_t width, const uint16_t height, const size_t rowBytes, TwoBitBmpHeader& header) {
-  const uint64_t imageBytes = static_cast<uint64_t>(rowBytes) * height;
-  const uint64_t fileBytes = sizeof(header) + imageBytes;
-  if (!width || !height || imageBytes > UINT32_MAX || fileBytes > UINT32_MAX) return false;
-  std::memset(&header, 0, sizeof(header));
-  header.bfType = 0x4D42;
-  header.bfSize = static_cast<uint32_t>(fileBytes);
-  header.bfOffBits = sizeof(header);
-  header.biSize = 40;
-  header.biWidth = width;
-  header.biHeight = -static_cast<int32_t>(height);  // top-down scanlines
-  header.biPlanes = 1;
-  header.biBitCount = 2;
-  header.biCompression = 0;
-  header.biSizeImage = static_cast<uint32_t>(imageBytes);
-  header.biXPelsPerMeter = 2835;
-  header.biYPelsPerMeter = 2835;
-  header.biClrUsed = 4;
-  header.biClrImportant = 4;
-  for (uint8_t index = 0; index < 4; ++index) {
-    const uint8_t gray = static_cast<uint8_t>(index * 85u);
-    header.palette[index * 4u + 0u] = gray;
-    header.palette[index * 4u + 1u] = gray;
-    header.palette[index * 4u + 2u] = gray;
-  }
-  return true;
-}
-
 struct XtcOnePlaneThumbnailBuffers {
   uint16_t* xMap = nullptr;
   uint16_t* yMap = nullptr;
@@ -410,10 +359,10 @@ bool Xtc::generateCoverBmp() const {
   bool written = true;
   uint8_t chunksSinceYield = 0;
   if (bitDepth == 2) {
-    TwoBitBmpHeader header;
+    xtc_cover::TwoBitBmpHeader header;
     written = xtc_cover::makeTwoBitCoverWorkspace(pageInfo.width, pageInfo.height, planeBytes, columnBytes,
                                                    bandPlaneBytes, bmpRowBytes, stripBytes, coverWorkspaceBytes) &&
-              makeTwoBitBmpHeader(pageInfo.width, pageInfo.height, bmpRowBytes, header) &&
+              xtc_cover::makeTwoBitBmpHeader(pageInfo.width, pageInfo.height, bmpRowBytes, header) &&
               coverBmp.write(reinterpret_cast<const uint8_t*>(&header), sizeof(header)) == sizeof(header);
     uint8_t* firstPlaneColumns = static_cast<uint8_t*>(malloc(bandPlaneBytes));
     uint8_t* outputRows = static_cast<uint8_t*>(malloc(stripBytes));
