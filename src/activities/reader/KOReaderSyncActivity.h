@@ -1,9 +1,12 @@
 #pragma once
 #include <Epub.h>
 
+#include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
+#include <string>
 
 #include "KOReaderSyncClient.h"
 #include "ProgressMapper.h"
@@ -25,12 +28,13 @@
  */
 class KOReaderSyncActivity final : public Activity {
  public:
-  explicit KOReaderSyncActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& epubPath,
+  explicit KOReaderSyncActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                                const std::string& documentPath,
                                 int currentSpineIndex, int currentPage, int totalPagesInSpine,
                                 SavedProgressPosition localKoPos, std::string localChapterName,
                                 std::optional<uint16_t> currentParagraphIndex = std::nullopt)
       : Activity("KOReaderSync", renderer, mappedInput),
-        epubPath(epubPath),
+        documentPath(documentPath),
         currentSpineIndex(currentSpineIndex),
         currentPage(currentPage),
         totalPagesInSpine(totalPagesInSpine),
@@ -39,6 +43,50 @@ class KOReaderSyncActivity final : public Activity {
         remoteProgress{},
         remotePosition{},
         localProgress(std::move(localKoPos)) {}
+
+  // Page-based pre-rendered documents (XTC/XTCH) use KOReader's standard
+  // paged-document progress representation. The sync activity owns no Xtc
+  // object; it only needs the source/cache paths and bounded page counts.
+  KOReaderSyncActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& documentPath,
+                       const std::string& progressCachePath, const uint32_t currentPage0,
+                       const uint32_t totalPageCount)
+      : Activity("KOReaderSync", renderer, mappedInput),
+        documentPath(documentPath),
+        currentSpineIndex(0),
+        currentPage(totalPageCount == 0 || totalPageCount > static_cast<uint32_t>(std::numeric_limits<int>::max())
+                         ? 0
+                         : static_cast<int>(currentPage0 < totalPageCount ? currentPage0 : totalPageCount - 1)),
+        totalPagesInSpine(totalPageCount <= static_cast<uint32_t>(std::numeric_limits<int>::max())
+                              ? static_cast<int>(totalPageCount)
+                              : 0),
+        remoteProgress{},
+        remotePosition{},
+        localProgress(pageProgress(currentPage0, totalPageCount)),
+        pageBasedDocument(true),
+        progressCachePath(progressCachePath) {}
+
+  // KOReader's paged-document contract is a 1-based numeric page string and
+  // a page/total-page fraction. XTC stores and exposes zero-based page indices.
+  static SavedProgressPosition pageProgress(const uint32_t currentPage0, const uint32_t totalPageCount) {
+    if (totalPageCount == 0) return {"", 0.0f};
+    const uint32_t page1 = (currentPage0 < totalPageCount ? currentPage0 : totalPageCount - 1) + 1;
+    return {std::to_string(page1), static_cast<float>(page1) / static_cast<float>(totalPageCount)};
+  }
+
+  // Reject XPath values, zero, overflow, and out-of-book page numbers. A
+  // same-content binary ID makes total page count portable for XTC/XTCH.
+  static std::optional<uint32_t> pageFromProgress(const std::string& progress, const uint32_t totalPageCount) {
+    if (progress.empty() || totalPageCount == 0) return std::nullopt;
+    uint32_t page1 = 0;
+    for (const char character : progress) {
+      if (character < '0' || character > '9') return std::nullopt;
+      const uint32_t digit = static_cast<uint32_t>(character - '0');
+      if (page1 > (std::numeric_limits<uint32_t>::max() - digit) / 10) return std::nullopt;
+      page1 = page1 * 10 + digit;
+    }
+    if (page1 == 0 || page1 > totalPageCount) return std::nullopt;
+    return page1 - 1;
+  }
 
   void onEnter() override;
   void onExit() override;
@@ -61,7 +109,7 @@ class KOReaderSyncActivity final : public Activity {
   };
 
   std::shared_ptr<Epub> epub;  // null until lazy-loaded after TLS in performSync()
-  std::string epubPath;
+  std::string documentPath;
   std::string localChapterName;
   int currentSpineIndex;
   int currentPage;
@@ -82,6 +130,8 @@ class KOReaderSyncActivity final : public Activity {
 
   // Local progress as KOReader format (pre-computed before Epub was released)
   SavedProgressPosition localProgress;
+  bool pageBasedDocument = false;
+  std::string progressCachePath;
 
   // Selection in result screen (0=Apply, 1=Upload)
   int selectedOption = 0;
@@ -103,6 +153,7 @@ class KOReaderSyncActivity final : public Activity {
   void markAutoReturn();
   void completeAlreadySynced();
   void ensureEpubLoaded();
+  std::string calculateDocumentId() const;
   void saveProgressAndReturn(int spineIndex, int page);
   void returnToReader();
 };
