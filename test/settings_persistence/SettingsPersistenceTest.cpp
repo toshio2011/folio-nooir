@@ -1,5 +1,6 @@
 #include <ArduinoJson.h>
 #include <HalStorage.h>
+#include <CrossPointSettings.h>
 
 #include <Serialization/PersistableStore.h>
 #include <Serialization/PersistableStorePolicy.h>
@@ -59,7 +60,10 @@ class SettingsSaveProbe : public PersistableStore<SettingsSaveProbe> {
 
 class SettingsPersistenceTest : public ::testing::Test {
  protected:
-  void SetUp() override { Storage.reset(); }
+  void SetUp() override {
+    Storage.reset();
+    PersistableStoreBase::invalidateSettingsValidationCache();
+  }
 };
 
 TEST_F(SettingsPersistenceTest, LoadsAnExistingValidMainSettingsFile) {
@@ -374,6 +378,82 @@ TEST_F(SettingsPersistenceTest, ChangedSettingsUseAtomicWriteThenSkipSubsequentN
   EXPECT_TRUE(settings.saveToFile());
   EXPECT_EQ(Storage.writeCount, 1u);
   EXPECT_EQ(Storage.readAttempts[kSettingsPath], readsAfterWrite);
+}
+
+TEST_F(SettingsPersistenceTest, ChangedSaveAfterValidatedLoadDoesNotProbeSettingsCandidates) {
+  Storage.files[kSettingsPath] = serializedSettings(3).c_str();
+  SettingsSaveProbe settings;
+  ASSERT_TRUE(settings.loadFromFile());
+  const size_t mainReadsBefore = Storage.readAttempts[kSettingsPath];
+  const size_t backupReadsBefore = Storage.readAttempts[kBackupPath];
+  const size_t tempReadsBefore = Storage.readAttempts[kTempPath];
+  const size_t existsBefore = Storage.existsCount;
+
+  settings.uiTheme = 4;
+  ASSERT_TRUE(settings.saveToFile());
+
+  EXPECT_EQ(Storage.readAttempts[kSettingsPath], mainReadsBefore);
+  EXPECT_EQ(Storage.readAttempts[kBackupPath], backupReadsBefore);
+  // The fast path still reads back and validates the newly written temporary
+  // document before its atomic rename into the primary path.
+  EXPECT_EQ(Storage.readAttempts[kTempPath], tempReadsBefore + 1);
+  EXPECT_EQ(Storage.existsCount, existsBefore);
+  EXPECT_EQ(Storage.files[kBackupPath], serializedSettings(3).c_str());
+  EXPECT_EQ(loadedTheme(), 4);
+}
+
+TEST_F(SettingsPersistenceTest, FirstSettingsSaveAfterMissingLoadDoesNotProbeCandidatesAgain) {
+  SettingsSaveProbe settings;
+  persistable::SettingsLoadReport report;
+  EXPECT_FALSE(settings.loadFromFile(&report));
+  EXPECT_FALSE(report.anyExisting);
+  const size_t mainReadsBefore = Storage.readAttempts[kSettingsPath];
+  const size_t backupReadsBefore = Storage.readAttempts[kBackupPath];
+  const size_t tempReadsBefore = Storage.readAttempts[kTempPath];
+  const size_t existsBefore = Storage.existsCount;
+
+  settings.uiTheme = 4;
+  ASSERT_TRUE(settings.saveToFile());
+
+  EXPECT_EQ(Storage.readAttempts[kSettingsPath], mainReadsBefore);
+  EXPECT_EQ(Storage.readAttempts[kBackupPath], backupReadsBefore);
+  EXPECT_EQ(Storage.readAttempts[kTempPath], tempReadsBefore + 1);
+  EXPECT_EQ(Storage.existsCount, existsBefore);
+  EXPECT_EQ(loadedTheme(), 4);
+}
+
+TEST_F(SettingsPersistenceTest, ExternalSettingsMutationInvalidatesTheCandidateCache) {
+  Storage.files[kSettingsPath] = serializedSettings(3).c_str();
+  SettingsSaveProbe settings;
+  ASSERT_TRUE(settings.loadFromFile());
+  const size_t mainReadsBefore = Storage.readAttempts[kSettingsPath];
+  const size_t backupReadsBefore = Storage.readAttempts[kBackupPath];
+  const size_t tempReadsBefore = Storage.readAttempts[kTempPath];
+
+  settings.invalidatePersistenceCache();
+  settings.uiTheme = 5;
+  ASSERT_TRUE(settings.saveToFile());
+
+  EXPECT_GT(Storage.readAttempts[kSettingsPath], mainReadsBefore);
+  EXPECT_GT(Storage.readAttempts[kBackupPath], backupReadsBefore);
+  EXPECT_GT(Storage.readAttempts[kTempPath], tempReadsBefore);
+}
+
+TEST_F(SettingsPersistenceTest, XtcReaderSettingsKeepLegacyDefaultsAndNormalizeRange) {
+  EXPECT_EQ(CrossPointSettings::missingXtcReadingDirection(false, CrossPointSettings::XTC_RIGHT_TO_LEFT),
+            CrossPointSettings::XTC_LEFT_TO_RIGHT);
+  EXPECT_EQ(CrossPointSettings::missingXtcPageFitMode(false, CrossPointSettings::XTC_CROP_FILL),
+            CrossPointSettings::XTC_FIT_CONTAIN);
+  EXPECT_EQ(CrossPointSettings::missingXtcReadingDirection(true, CrossPointSettings::XTC_RIGHT_TO_LEFT),
+            CrossPointSettings::XTC_RIGHT_TO_LEFT);
+  EXPECT_EQ(CrossPointSettings::missingXtcPageFitMode(true, CrossPointSettings::XTC_CROP_FILL),
+            CrossPointSettings::XTC_CROP_FILL);
+  EXPECT_EQ(CrossPointSettings::normalizeXtcReadingDirection(-1), CrossPointSettings::XTC_LEFT_TO_RIGHT);
+  EXPECT_EQ(CrossPointSettings::normalizeXtcReadingDirection(2), CrossPointSettings::XTC_LEFT_TO_RIGHT);
+  EXPECT_EQ(CrossPointSettings::normalizeXtcPageFitMode(-1), CrossPointSettings::XTC_FIT_CONTAIN);
+  EXPECT_EQ(CrossPointSettings::normalizeXtcPageFitMode(2), CrossPointSettings::XTC_FIT_CONTAIN);
+  EXPECT_EQ(CrossPointSettings::normalizeXtcReadingDirection(1), CrossPointSettings::XTC_RIGHT_TO_LEFT);
+  EXPECT_EQ(CrossPointSettings::normalizeXtcPageFitMode(1), CrossPointSettings::XTC_CROP_FILL);
 }
 
 TEST_F(SettingsPersistenceTest, SettingsLoadedFromBackupDoNotSeedNoOpFingerprint) {

@@ -61,6 +61,9 @@ bool moveToUniqueSibling(const char* source, const char* suffix, std::string& de
 }
 
 enum class SettingsFileState : uint8_t { Missing, Uncertain, Malformed, Incompatible, Valid };
+enum class SettingsValidationCacheState : uint8_t { Unknown, Missing, Valid };
+
+SettingsValidationCacheState settingsValidationCacheState = SettingsValidationCacheState::Unknown;
 
 SettingsFileState inspectSettingsFile(const char* path) {
   String json;
@@ -145,7 +148,8 @@ bool PersistableStoreBase::isSemanticallyValidSettingsDocument(JsonVariantConst 
   return hasReaderIdentity && hasSleepIdentity && hasDisplayIdentity;
 }
 
-bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& doc) {
+static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
+                                   const bool useCachedSettingsValidation) {
   Storage.mkdir("/.crosspoint");
   String json;
   serializeJson(doc, json);
@@ -157,11 +161,14 @@ bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& 
   // extra two renames do not affect reader or bookshelf speed.
   const String tmpPath = String(path) + ".tmp";
   const String backupPath = String(path) + ".bak";
+  const bool settingsPath = isSettingsPath(path);
+  const bool fastSettingsWrite = settingsPath && useCachedSettingsValidation &&
+                                 settingsValidationCacheState != SettingsValidationCacheState::Unknown;
 
   SettingsFileState mainState = SettingsFileState::Missing;
   SettingsFileState backupState = SettingsFileState::Missing;
   SettingsFileState tempState = SettingsFileState::Missing;
-  if (isSettingsPath(path)) {
+  if (settingsPath && !fastSettingsWrite) {
     // Inspect all candidates before a save can rotate or replace them. A read
     // error is not proof of corruption, so preserve every file and retry only
     // after storage is healthy.
@@ -231,9 +238,18 @@ bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& 
       }
       tempState = SettingsFileState::Missing;
     }
+  } else if (fastSettingsWrite) {
+    // This state came from an actual successful settings load, or a
+    // successful write in this process. In particular, a Valid primary was
+    // semantically checked when loaded. The backup and temporary candidates
+    // are not reread on ordinary saves; a recovery load or external writer
+    // invalidates this cache and returns the next save to the checked path.
+    mainState = settingsValidationCacheState == SettingsValidationCacheState::Valid
+                    ? SettingsFileState::Valid
+                    : SettingsFileState::Missing;
   }
 
-  if (Storage.exists(tmpPath.c_str()) && !Storage.remove(tmpPath.c_str())) {
+  if (!fastSettingsWrite && Storage.exists(tmpPath.c_str()) && !Storage.remove(tmpPath.c_str())) {
     LOG_ERR("PERSIST", "Failed to clear temporary document %s", tmpPath.c_str());
     return false;
   }
@@ -255,7 +271,7 @@ bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& 
       JsonDocument verified;
       const auto error = deserializeJson(verified, writtenTemp);
       parsed = !error;
-      valid = parsed && isSemanticallyValidSettingsDocument(verified.as<JsonVariantConst>());
+      valid = parsed && PersistableStoreBase::isSemanticallyValidSettingsDocument(verified.as<JsonVariantConst>());
     }
     LOG_INF("PERSIST", "settings_save_phase=temp_validation read=%d parse=%d validation=%d",
             tempReadStatus == HalStorageReadStatus::Success, parsed, valid);
@@ -274,10 +290,18 @@ bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& 
     }
   }
 
-  const bool settingsPath = isSettingsPath(path);
   const bool hadOriginal = settingsPath ? mainState == SettingsFileState::Valid : Storage.exists(path);
   std::string displacedBackup;
   if (hadOriginal) {
+    if (fastSettingsWrite) {
+      // The validated primary is the strongest known-good copy. Removing an
+      // older backup before moving it into place is safe: if this removal or
+      // the following rename fails, the still-live primary remains untouched.
+      // Do not probe for the backup first; remove() returning false for an
+      // absent backup is expected and the rename below is the authoritative
+      // operation result.
+      Storage.remove(backupPath.c_str());
+    }
     // Do not delete an existing backup before the primary has been moved
     // safely. If that rename fails, both original files remain recoverable.
     if ((settingsPath ? backupState != SettingsFileState::Missing : Storage.exists(backupPath.c_str())) &&
@@ -309,7 +333,7 @@ bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& 
     return false;
   }
 
-  if (settingsPath) {
+  if (settingsPath && !fastSettingsWrite) {
     const SettingsFileState committedState = inspectSettingsFile(path);
     if (committedState == SettingsFileState::Uncertain) {
       // A read error cannot prove the new primary is damaged. Leave it and
@@ -335,15 +359,62 @@ bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& 
       return false;
     }
     LOG_INF("PERSIST", "settings_save_phase=primary_validation_passed");
+  } else if (fastSettingsWrite) {
+    // The temporary file was fully read and semantically validated before the
+    // atomic rename. A successful rename moves those same validated bytes to
+    // the primary path, so a second full read is redundant.
+    LOG_INF("PERSIST", "settings_save_phase=primary_promoted_from_validated_temp");
   }
 
   // The new document is complete; the backup is no longer needed for this
   // write. It is recreated on the next save.
   // If the original primary was missing, .bak may be the only recoverable
   // user settings. Keep it until a later save starts from a validated main.
-  if (Storage.exists(backupPath.c_str()) && (!settingsPath || hadOriginal)) Storage.remove(backupPath.c_str());
-  if (!displacedBackup.empty()) Storage.remove(displacedBackup.c_str());
+  if (fastSettingsWrite) {
+    // Keep the prior validated primary as the backup until the next changed
+    // save. This both avoids a post-commit existence probe and leaves a useful
+    // recovery copy if the new file is later damaged.
+  } else {
+    if (Storage.exists(backupPath.c_str()) && (!settingsPath || hadOriginal)) Storage.remove(backupPath.c_str());
+    if (!displacedBackup.empty()) Storage.remove(displacedBackup.c_str());
+  }
   return true;
+}
+
+bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& doc) {
+  const bool saved = writeDocToFileInternal(path, doc, false);
+  if (isSettingsPath(path) && saved) settingsValidationCacheState = SettingsValidationCacheState::Valid;
+  return saved;
+}
+
+bool PersistableStoreBase::writeSettingsDocToFile(const char* path, const JsonDocument& doc) {
+  const bool saved = writeDocToFileInternal(path, doc, true);
+  if (isSettingsPath(path)) {
+    settingsValidationCacheState = saved ? SettingsValidationCacheState::Valid : SettingsValidationCacheState::Unknown;
+  }
+  return saved;
+}
+
+void PersistableStoreBase::observeSettingsLoad(const persistable::SettingsLoadReport& report,
+                                               const bool loadSucceeded) {
+  if (loadSucceeded && report.selected == 0 &&
+      report.candidates[0] == persistable::SettingsCandidateResult::Valid && !report.hasReadError() &&
+      !report.hasIncompatibleCandidate()) {
+    settingsValidationCacheState = SettingsValidationCacheState::Valid;
+    return;
+  }
+
+  const bool allMissing = report.selected == persistable::SettingsLoadReport::NO_SELECTION && !report.anyExisting &&
+                          !report.hasReadError() && !report.hasIncompatibleCandidate() &&
+                          report.candidates[0] == persistable::SettingsCandidateResult::Missing &&
+                          report.candidates[1] == persistable::SettingsCandidateResult::Missing &&
+                          report.candidates[2] == persistable::SettingsCandidateResult::Missing;
+  settingsValidationCacheState = !loadSucceeded && allMissing ? SettingsValidationCacheState::Missing
+                                                               : SettingsValidationCacheState::Unknown;
+}
+
+void PersistableStoreBase::invalidateSettingsValidationCache() {
+  settingsValidationCacheState = SettingsValidationCacheState::Unknown;
 }
 
 bool PersistableStoreBase::readDocFromFile(const char* path, JsonDocument& doc,

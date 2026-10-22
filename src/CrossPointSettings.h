@@ -67,6 +67,30 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     SLEEP_SCREEN_COVER_FILTER_COUNT
   };
 
+  enum XTC_READING_DIRECTION : uint8_t {
+    XTC_LEFT_TO_RIGHT = 0,
+    XTC_RIGHT_TO_LEFT = 1,
+    XTC_READING_DIRECTION_COUNT = 2
+  };
+  enum XTC_PAGE_FIT_MODE : uint8_t {
+    XTC_FIT_CONTAIN = 0,
+    XTC_CROP_FILL = 1,
+    XTC_PAGE_FIT_MODE_COUNT = 2
+  };
+
+  static constexpr uint8_t normalizeXtcReadingDirection(const int value) {
+    return value >= 0 && value < XTC_READING_DIRECTION_COUNT ? static_cast<uint8_t>(value) : XTC_LEFT_TO_RIGHT;
+  }
+  static constexpr uint8_t normalizeXtcPageFitMode(const int value) {
+    return value >= 0 && value < XTC_PAGE_FIT_MODE_COUNT ? static_cast<uint8_t>(value) : XTC_FIT_CONTAIN;
+  }
+  static constexpr uint8_t missingXtcReadingDirection(const bool preserveCurrent, const uint8_t current) {
+    return preserveCurrent ? normalizeXtcReadingDirection(current) : XTC_LEFT_TO_RIGHT;
+  }
+  static constexpr uint8_t missingXtcPageFitMode(const bool preserveCurrent, const uint8_t current) {
+    return preserveCurrent ? normalizeXtcPageFitMode(current) : XTC_FIT_CONTAIN;
+  }
+
   enum STATUS_BAR_PROGRESS_BAR {
     BOOK_PROGRESS = 0,
     CHAPTER_PROGRESS = 1,
@@ -370,6 +394,10 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t statusBarTitle = CHAPTER_TITLE;
   uint8_t statusBarBattery = 1;
   uint8_t xtcStatusBarMode = XTC_STATUS_BAR_HIDE;
+  // Manga reader preferences are stored separately from generic UI options
+  // so old settings files keep the left-to-right, fit-to-screen defaults.
+  uint8_t xtcReadingDirection = XTC_LEFT_TO_RIGHT;
+  uint8_t xtcPageFitMode = XTC_FIT_CONTAIN;
   // Clock display in status bar (X3 only, requires DS3231 RTC)
   uint8_t statusBarClock = STATUS_BAR_CLOCK_HIDE;
   // Clock UTC offset in quarter-hour steps, biased by 48 so it fits in uint8_t.

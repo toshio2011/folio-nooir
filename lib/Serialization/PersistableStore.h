@@ -54,6 +54,14 @@ class PersistableStoreBase {
   // Serializes doc and writes it to path (ensures /.crosspoint exists). Logs on failure.
   static bool writeDocToFile(const char* path, const JsonDocument& doc);
 
+  // Settings saves reached through the live settings singleton can use the
+  // result of its last real load to avoid rereading primary/backup/temp on
+  // every changed save. Unknown or recovery states retain the full checked
+  // path. Direct writes intentionally keep the full checked behavior.
+  static bool writeSettingsDocToFile(const char* path, const JsonDocument& doc);
+  static void observeSettingsLoad(const persistable::SettingsLoadReport& report, bool loadSucceeded);
+  static void invalidateSettingsValidationCache();
+
   // Reads path and parses it into doc. Returns false silently when the file
   // does not exist (expected on first boot); logs on read/parse failure.
   static bool readDocFromFile(const char* path, JsonDocument& doc,
@@ -131,7 +139,8 @@ class PersistableStore : public PersistableStoreBase {
       return true;
     }
 
-    const bool saved = writeDocToFile(T::getFilePath(), doc);
+    const bool saved = settingsStore ? writeSettingsDocToFile(T::getFilePath(), doc)
+                                     : writeDocToFile(T::getFilePath(), doc);
     if (settingsStore) {
       if (saved) {
         lastSettingsFingerprint = fingerprint;
@@ -158,6 +167,9 @@ class PersistableStore : public PersistableStoreBase {
       hasLastSettingsFingerprint = false;
       JsonDocument doc;
       if (!readDocFromFile(T::getFilePath(), doc, report)) {
+        if (std::strcmp(T::getFilePath(), "/.crosspoint/settings.json") == 0) {
+          observeSettingsLoad(*report, false);
+        }
         return false;
       }
       ok = static_cast<T*>(this)->fromJson(doc.as<JsonVariantConst>());
@@ -168,6 +180,7 @@ class PersistableStore : public PersistableStoreBase {
       const bool trustedSettingsSource = !settingsStore ||
           (report->selected == 0 && report->candidates[0] == persistable::SettingsCandidateResult::Valid &&
            !report->hasReadError() && !report->hasIncompatibleCandidate());
+      if (settingsStore) observeSettingsLoad(*report, ok);
       if (ok && !doResave && trustedSettingsSource) {
         JsonDocument canonical;
         static_cast<T*>(this)->toJson(canonical);
@@ -185,5 +198,16 @@ class PersistableStore : public PersistableStoreBase {
       }
     }
     return ok;
+  }
+
+  // Call after settings are changed by a writer outside this store (for
+  // example, the Web Settings endpoint). The next save then validates the
+  // on-disk candidates once before restoring the no-read fast path.
+  void invalidatePersistenceCache() const {
+    std::lock_guard<std::mutex> lock(storeMutex);
+    hasLastSettingsFingerprint = false;
+    if (std::strcmp(T::getFilePath(), "/.crosspoint/settings.json") == 0) {
+      invalidateSettingsValidationCache();
+    }
   }
 };

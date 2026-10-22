@@ -13,6 +13,8 @@ add_executable(SettingsPersistenceTest
 target_include_directories(SettingsPersistenceTest BEFORE PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/stubs
   ${ARDUINOJSON_INCLUDE_DIR}
+  ${REPO_ROOT}/lib/Epub
+  ${REPO_ROOT}/lib/Serialization
 )
 target_compile_definitions(SettingsPersistenceTest PRIVATE
   ARDUINOJSON_ENABLE_ARDUINO_STRING=1

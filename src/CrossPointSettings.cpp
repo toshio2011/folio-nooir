@@ -277,6 +277,8 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["quickActionSlot2"] = quickActionSlot2;
   doc["quickActionSlot3"] = quickActionSlot3;
   doc["quickActionSlot4"] = quickActionSlot4;
+  doc["xtcReadingDirection"] = xtcReadingDirection;
+  doc["xtcPageFitMode"] = xtcPageFitMode;
 
   // Language -- managed by LanguageSelectActivity, not in SettingsList.
   // Stored as ISO code string ("EN", "DE", ...) for stability across enum reorders.
@@ -739,6 +741,36 @@ bool CrossPointSettings::fromJsonForProfile(JsonVariantConst doc, const bool pre
   if (doc["language"].is<const char*>()) {
     language = static_cast<uint8_t>(I18n::languageFromCode(doc["language"].as<const char*>()));
   }
+
+  // Optional MangaNooir reader preferences use stable integer values. Older
+  // settings and profiles omit them, so settings loads retain their designed
+  // left-to-right/fit defaults while applying an older profile keeps the
+  // current reader preference. Invalid values are normalized and migrated.
+  const auto loadXtcPreference = [&doc, &needsResave, preserveMissingManualFields](
+                                    const char* key, const uint8_t current, const uint8_t defaultValue,
+                                    const uint8_t optionCount,
+                                    const auto normalizer, const auto missingValue) -> uint8_t {
+    const JsonVariantConst stored = doc[key];
+    if (stored.isNull()) {
+      if (!preserveMissingManualFields) needsResave = true;
+      return missingValue(preserveMissingManualFields, current);
+    }
+    if (!stored.is<int>()) {
+      needsResave = true;
+      return defaultValue;
+    }
+    const int value = stored.as<int>();
+    if (value < 0 || value >= optionCount) {
+      needsResave = true;
+      return defaultValue;
+    }
+    return normalizer(value);
+  };
+  xtcReadingDirection = loadXtcPreference("xtcReadingDirection", xtcReadingDirection, XTC_LEFT_TO_RIGHT,
+                                          XTC_READING_DIRECTION_COUNT, normalizeXtcReadingDirection,
+                                          missingXtcReadingDirection);
+  xtcPageFitMode = loadXtcPreference("xtcPageFitMode", xtcPageFitMode, XTC_FIT_CONTAIN, XTC_PAGE_FIT_MODE_COUNT,
+                                     normalizeXtcPageFitMode, missingXtcPageFitMode);
 
   if (needsResave) {
     LOG_DBG("CPS", "Resaving settings to update format");

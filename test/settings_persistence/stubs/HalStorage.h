@@ -19,7 +19,10 @@ class TestStorage {
   enum class CrashPoint { None, DuringTempWrite, AfterFirstRename, AfterSecondRename };
 
   bool mkdir(const char*) { return true; }
-  bool exists(const char* path) const { return files.find(path ? path : "") != files.end(); }
+  bool exists(const char* path) const {
+    ++existsCount;
+    return files.find(path ? path : "") != files.end();
+  }
   bool remove(const char* path) { return files.erase(path ? path : "") != 0; }
 
   bool writeFile(const char* path, const String& value) {
@@ -84,6 +87,7 @@ class TestStorage {
     failRename = false;
     failRenameFrom.clear();
     writeCount = 0;
+    existsCount = 0;
   }
 
   void armCrash(const CrashPoint point) {
@@ -102,6 +106,7 @@ class TestStorage {
   bool failRename = false;
   std::unordered_map<std::string, bool> failRenameFrom;
   size_t writeCount = 0;
+  mutable size_t existsCount = 0;
 
  private:
   CrashPoint crashPoint = CrashPoint::None;
