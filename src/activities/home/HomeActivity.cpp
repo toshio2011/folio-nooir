@@ -179,8 +179,12 @@ void HomeActivity::showBookActions() {
                                       tr(STR_RESET_PROGRESS), tr(STR_REFRESH_BOOK_CACHE),
                                       tr(STR_DELETE_CACHE), tr(STR_REMOVE_FROM_LIST), tr(STR_READ_FULL_SYNOPSIS),
                                       tr(STR_BOOK_STATISTICS)};
-  if (FsHelpers::hasEpubExtension(selectedBook.path)) {
+  const bool hasEpubBookmarks = FsHelpers::hasEpubExtension(selectedBook.path);
+  const bool hasXtcBookmarks = FsHelpers::hasXtcExtension(selectedBook.path);
+  if (hasEpubBookmarks || hasXtcBookmarks) {
     actions.emplace_back(tr(STR_BOOKMARKS));
+  }
+  if (hasEpubBookmarks) {
     actions.emplace_back(tr(STR_CLIPPINGS));
   }
 
@@ -243,7 +247,8 @@ void HomeActivity::showBookActions() {
     } else if (action == 9) {
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, selected.path), nullptr);
       return;
-    } else if (action == 10 && FsHelpers::hasEpubExtension(selected.path)) {
+    } else if (action == 10 &&
+               (FsHelpers::hasEpubExtension(selected.path) || FsHelpers::hasXtcExtension(selected.path))) {
       startActivityForResult(
           std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, selected.path),
           [this](const ActivityResult& result) {

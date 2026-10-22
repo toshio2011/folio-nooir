@@ -1037,8 +1037,12 @@ void FolioLibraryActivity::showBookActions() {
                                       tr(STR_RESET_PROGRESS), tr(STR_REFRESH_BOOK_CACHE),
                                       tr(STR_DELETE_CACHE), tr(STR_READ_FULL_SYNOPSIS),
                                       tr(STR_BOOK_STATISTICS)};
-  if (FsHelpers::hasEpubExtension(selectedPath)) {
+  const bool hasEpubBookmarks = FsHelpers::hasEpubExtension(selectedPath);
+  const bool hasXtcBookmarks = FsHelpers::hasXtcExtension(selectedPath);
+  if (hasEpubBookmarks || hasXtcBookmarks) {
     actions.emplace_back(tr(STR_BOOKMARKS));
+  }
+  if (hasEpubBookmarks) {
     actions.emplace_back(tr(STR_CLIPPINGS));
   }
   bookActionsPopup.show(StrId::STR_BOOK_ACTIONS, actions, 0, [this](const int action) {
@@ -1101,7 +1105,8 @@ void FolioLibraryActivity::showBookActions() {
     } else if (action == 8) {
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, path), nullptr);
       return;
-    } else if (action == 9 && FsHelpers::hasEpubExtension(path)) {
+    } else if (action == 9 &&
+               (FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path))) {
       startActivityForResult(
           std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, path),
           [this](const ActivityResult& result) {

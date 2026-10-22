@@ -1,14 +1,16 @@
 #include "EpubReaderBookmarksActivity.h"
 
 #include <GfxRenderer.h>
+#include <FsHelpers.h>
 #include <I18n.h>
 
 #include <algorithm>
+#include <climits>
+#include <cstdlib>
 
 #include "../../util/BookmarkFile.h"
 #include "BookStateStore.h"
 #include "MappedInputManager.h"
-#include <FsHelpers.h>
 #include "ProgressMapper.h"
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
@@ -16,9 +18,39 @@
 
 namespace {
 constexpr int ENTER_DELETE_MODE_MS = 700;
+constexpr const char* XTC_PAGE_PREFIX = "xtc-page:";
 
 // Layout constants used in renderScreen
 constexpr int LINE_HEIGHT = 60;
+
+bool readXtcBookmarkPage(const BookmarkEntry& bookmark, uint32_t& page) {
+  if (bookmark.xpath.compare(0, 9, XTC_PAGE_PREFIX) != 0) return false;
+  const char* value = bookmark.xpath.c_str() + 9;
+  char* end = nullptr;
+  const unsigned long parsed = std::strtoul(value, &end, 10);
+  if (end == value || *end != '\0' || parsed > static_cast<unsigned long>(INT_MAX)) return false;
+  page = static_cast<uint32_t>(parsed);
+  return true;
+}
+
+std::string titleFromPath(const std::string& path) {
+  const size_t slash = path.find_last_of("/\\");
+  const std::string title = path.substr(slash == std::string::npos ? 0 : slash + 1);
+  return title.empty() ? path : title;
+}
+
+std::string bookmarkPosition(const BookmarkEntry& bookmark, const bool xtcBook) {
+  if (xtcBook) {
+    uint32_t page = 0;
+    if (readXtcBookmarkPage(bookmark, page)) return std::string(tr(STR_PAGE)) + " " + std::to_string(page + 1);
+    return std::string(tr(STR_PAGE));
+  }
+  if (bookmark.computedChapterPageCount > 0) {
+    return std::to_string(bookmark.computedChapterProgress + 1) + "/" +
+           std::to_string(bookmark.computedChapterPageCount);
+  }
+  return std::string(tr(STR_BOOKMARKS));
+}
 }  // namespace
 
 void EpubReaderBookmarksActivity::onEnter() {
@@ -27,38 +59,53 @@ void EpubReaderBookmarksActivity::onEnter() {
 
   bookmarks.clear();
   if (allBooks) {
-    for (const auto& recent : RECENT_BOOKS.getBooks()) {
-      if (!FsHelpers::hasEpubExtension(recent.path)) continue;
+    const auto addBookmarks = [this](const std::string& path, const std::string& title) {
+      if (!FsHelpers::hasEpubExtension(path) && !FsHelpers::hasXtcExtension(path)) return;
       std::vector<BookmarkEntry> bookBookmarks;
-      if (!BookmarkFile::load(recent.path, bookBookmarks)) continue;
+      if (!BookmarkFile::load(path, bookBookmarks)) return;
+      const bool xtcBook = FsHelpers::hasXtcExtension(path);
       for (auto& bookmark : bookBookmarks) {
-        bookmarks.push_back(BookmarkItem{recent.path, recent.title, std::move(bookmark)});
+        uint32_t page = 0;
+        if (xtcBook && !readXtcBookmarkPage(bookmark, page)) continue;
+        bookmarks.push_back(BookmarkItem{path, title.empty() ? titleFromPath(path) : title, std::move(bookmark)});
       }
+    };
+    for (const auto& recent : RECENT_BOOKS.getBooks()) {
+      addBookmarks(recent.path, recent.title);
     }
     for (const auto& state : BOOK_STATES.getBooks()) {
-      if (!FsHelpers::hasEpubExtension(state.path) ||
-          std::find_if(bookmarks.begin(), bookmarks.end(), [&](const BookmarkItem& item) {
-            return item.bookPath == state.path;
-          }) != bookmarks.end())
+      const auto& recentBooks = RECENT_BOOKS.getBooks();
+      if (std::any_of(recentBooks.begin(), recentBooks.end(), [&state](const RecentBook& recent) {
+            return recent.path == state.path;
+          })) {
         continue;
-      std::vector<BookmarkEntry> bookBookmarks;
-      if (!BookmarkFile::load(state.path, bookBookmarks)) continue;
-      for (auto& bookmark : bookBookmarks) {
-        bookmarks.push_back(BookmarkItem{state.path, {}, std::move(bookmark)});
       }
+      addBookmarks(state.path, {});
     }
   } else {
-    if (!epub) {
-      epub = std::make_shared<Epub>(epubPath, "/.crosspoint");
-      if (!epub->load(false, true)) {
-        epub.reset();
-        return;
+    if (FsHelpers::hasXtcExtension(epubPath)) {
+      std::vector<BookmarkEntry> bookBookmarks;
+      if (BookmarkFile::load(epubPath, bookBookmarks)) {
+        for (auto& bookmark : bookBookmarks) {
+          uint32_t page = 0;
+          if (readXtcBookmarkPage(bookmark, page)) {
+            bookmarks.push_back(BookmarkItem{epubPath, titleFromPath(epubPath), std::move(bookmark)});
+          }
+        }
       }
-    }
-    std::vector<BookmarkEntry> bookBookmarks;
-    if (BookmarkFile::load(epubPath, bookBookmarks)) {
-      for (auto& bookmark : bookBookmarks) {
-        bookmarks.push_back(BookmarkItem{epubPath, {}, std::move(bookmark)});
+    } else {
+      if (!epub) {
+        epub = std::make_shared<Epub>(epubPath, "/.crosspoint");
+        if (!epub->load(false, true)) {
+          epub.reset();
+          return;
+        }
+      }
+      std::vector<BookmarkEntry> bookBookmarks;
+      if (BookmarkFile::load(epubPath, bookBookmarks)) {
+        for (auto& bookmark : bookBookmarks) {
+          bookmarks.push_back(BookmarkItem{epubPath, titleFromPath(epubPath), std::move(bookmark)});
+        }
       }
     }
   }
@@ -88,23 +135,33 @@ void EpubReaderBookmarksActivity::loop() {
       return;
     }
     const auto& item = bookmarks.at(selectorIndex);
-    if (allBooks && (epubPath != item.bookPath || !epub)) {
+    const bool xtcBook = FsHelpers::hasXtcExtension(item.bookPath);
+    if (xtcBook) {
+      epub.reset();
       epubPath = item.bookPath;
-      epub = std::make_shared<Epub>(epubPath, "/.crosspoint");
-      if (!epub->load(false, true)) {
-        epub.reset();
-        return;
+    } else {
+      if ((allBooks && (epubPath != item.bookPath || !epub)) || !epub) {
+        epubPath = item.bookPath;
+        epub = std::make_shared<Epub>(epubPath, "/.crosspoint");
+        if (!epub->load(false, true)) {
+          epub.reset();
+          return;
+        }
       }
     }
-    if (!epub) return;
     const auto& bookmark = item.bookmark;
     ProgressChangeResult result{};
     result.xpath = bookmark.xpath;
     result.percentage = bookmark.percentage;
     result.hasSavedProgress = true;
     result.bookPath = item.bookPath;
-    if (bookmark.computedChapterPageCount > 0 && bookmark.computedChapterProgress < bookmark.computedChapterPageCount &&
-        bookmark.computedSpineIndex < epub->getSpineItemsCount()) {
+    if (xtcBook) {
+      uint32_t page = 0;
+      if (!readXtcBookmarkPage(bookmark, page)) return;
+      result.page = static_cast<int>(page);
+    } else if (bookmark.computedChapterPageCount > 0 &&
+               bookmark.computedChapterProgress < bookmark.computedChapterPageCount &&
+               bookmark.computedSpineIndex < epub->getSpineItemsCount()) {
       result.spineIndex = bookmark.computedSpineIndex;
       result.page = bookmark.computedChapterProgress;
       result.totalPages = bookmark.computedChapterPageCount;
@@ -304,11 +361,10 @@ void EpubReaderBookmarksActivity::render(RenderLock&&) {
     const auto& item = bookmarks.at(confirmingDelete ? selectorIndex : index);
     const auto& bookmark = item.bookmark;
     std::string subtitle = std::to_string((int)(std::clamp(bookmark.percentage, 0.0f, 1.0f) * 100.0f + 0.5f)) + "% - ";
-    if (bookmark.computedChapterPageCount > 0) {
-      subtitle += std::to_string(bookmark.computedChapterProgress + 1) + "/" +
-                  std::to_string(bookmark.computedChapterPageCount) + " - ";
-    }
+    const bool xtcBook = FsHelpers::hasXtcExtension(item.bookPath);
+    subtitle += bookmarkPosition(bookmark, xtcBook) + " - ";
     if (allBooks) return item.bookTitle + " - " + subtitle + tr(STR_BOOKMARKS);
+    if (xtcBook) return subtitle + tr(STR_BOOKMARKS);
     auto tocIndex = epub->getTocIndexForSpineIndex(bookmark.computedSpineIndex);
     auto tocTitle = (tocIndex >= 0) ? (epub->getTocItem(tocIndex)).title : tr(STR_UNNAMED);
     return subtitle + tocTitle;

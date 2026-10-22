@@ -5,7 +5,10 @@
 #include "../BookmarkEntry.h"
 
 // Per-book bookmark persistence. Takes the book's path; bookmark-file path
-// derivation (BookmarkUtil) and directory creation are hidden inside.
+// derivation (BookmarkUtil) and directory creation are hidden inside. The
+// legacy path omits the source extension, so records for same-named formats
+// can share a file; load filters typed EPUB/CBZ/XTC entries and save preserves
+// other formats' rows when updating one book.
 namespace BookmarkFile {
 
 // Loads the bookmarks for bookPath. The vector is cleared first; a missing or
