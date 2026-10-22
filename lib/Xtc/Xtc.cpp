@@ -264,6 +264,22 @@ std::string Xtc::getAuthor() const {
   return parser->getAuthor();
 }
 
+const std::string& Xtc::getDescription() const {
+  static const std::string kEmpty;
+  if (!loaded || !parser) {
+    return kEmpty;
+  }
+  return parser->getDescription();
+}
+
+const std::string& Xtc::getSeries() const {
+  static const std::string kEmpty;
+  if (!loaded || !parser) {
+    return kEmpty;
+  }
+  return parser->getSeries();
+}
+
 bool Xtc::hasChapters() const {
   if (!loaded || !parser) {
     return false;

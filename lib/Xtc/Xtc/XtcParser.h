@@ -74,6 +74,10 @@ class XtcParser {
   std::string getTitle() const { return m_title; }
   std::string getAuthor() const { return m_author; }
 
+  // Optional MangaNooir trailer fields are read lazily, once per open file.
+  const std::string& getDescription();
+  const std::string& getSeries();
+
   bool hasChapters() const { return m_hasChapters; }
   const std::vector<ChapterInfo>& getChapters();
 
@@ -91,11 +95,14 @@ class XtcParser {
   std::vector<ChapterInfo> m_chapters;
   std::string m_title;
   std::string m_author;
+  std::string m_description;
+  std::string m_series;
   uint16_t m_defaultWidth;
   uint16_t m_defaultHeight;
   uint8_t m_bitDepth;  // 1 = XTC/XTG (1-bit), 2 = XTCH/XTH (2-bit)
   bool m_hasChapters;
   bool m_chaptersLoaded;
+  bool m_extendedMetadataLoaded;
   XtcError m_lastError;
 
   // Internal helper functions
@@ -104,6 +111,7 @@ class XtcParser {
   XtcError readTitle();
   XtcError readAuthor();
   XtcError readChapters();
+  void loadExtendedMetadata();
   bool readPageTableEntry(uint32_t pageIndex, PageInfo& info);
 
   // File handle management — reopen on demand, close after use

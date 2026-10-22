@@ -14,8 +14,303 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <utility>
 
 namespace xtc {
+namespace {
+constexpr uint8_t kNooirMetadataMagic[8] = {'N', 'O', 'O', 'I', 'R', 'M', '0', '1'};
+constexpr uint32_t kMaxNooirMetadataBytes = 4096;
+constexpr uint8_t kMaxMetadataJsonDepth = 16;
+
+class BoundedMetadataJsonParser {
+ public:
+  BoundedMetadataJsonParser(const char* data, const size_t length) : data_(data), length_(length) {}
+
+  bool parse(std::string& description, std::string& series) {
+    skipWhitespace();
+    if (!parseObject(1, true)) return false;
+    skipWhitespace();
+    if (position_ != length_) return false;
+    description = std::move(description_);
+    series = std::move(series_);
+    return true;
+  }
+
+ private:
+  struct FixedString {
+    char* data;
+    size_t capacity;
+    size_t length = 0;
+    bool overflow = false;
+  };
+
+  bool atEnd() const { return position_ >= length_; }
+  char peek() const { return atEnd() ? '\0' : data_[position_]; }
+
+  void skipWhitespace() {
+    while (!atEnd() && (data_[position_] == ' ' || data_[position_] == '\t' || data_[position_] == '\r' ||
+                        data_[position_] == '\n')) {
+      ++position_;
+    }
+  }
+
+  bool consume(const char expected) {
+    if (atEnd() || data_[position_] != expected) return false;
+    ++position_;
+    return true;
+  }
+
+  static void appendByte(const uint8_t byte, std::string* output, FixedString* fixed) {
+    if (output) output->push_back(static_cast<char>(byte));
+    if (!fixed) return;
+    if (fixed->length < fixed->capacity - 1u) {
+      fixed->data[fixed->length] = static_cast<char>(byte);
+    } else {
+      fixed->overflow = true;
+    }
+    ++fixed->length;
+  }
+
+  static void appendCodePoint(const uint32_t codePoint, std::string* output, FixedString* fixed) {
+    if (codePoint <= 0x7Fu) {
+      appendByte(static_cast<uint8_t>(codePoint), output, fixed);
+    } else if (codePoint <= 0x7FFu) {
+      appendByte(static_cast<uint8_t>(0xC0u | (codePoint >> 6u)), output, fixed);
+      appendByte(static_cast<uint8_t>(0x80u | (codePoint & 0x3Fu)), output, fixed);
+    } else if (codePoint <= 0xFFFFu) {
+      appendByte(static_cast<uint8_t>(0xE0u | (codePoint >> 12u)), output, fixed);
+      appendByte(static_cast<uint8_t>(0x80u | ((codePoint >> 6u) & 0x3Fu)), output, fixed);
+      appendByte(static_cast<uint8_t>(0x80u | (codePoint & 0x3Fu)), output, fixed);
+    } else {
+      appendByte(static_cast<uint8_t>(0xF0u | (codePoint >> 18u)), output, fixed);
+      appendByte(static_cast<uint8_t>(0x80u | ((codePoint >> 12u) & 0x3Fu)), output, fixed);
+      appendByte(static_cast<uint8_t>(0x80u | ((codePoint >> 6u) & 0x3Fu)), output, fixed);
+      appendByte(static_cast<uint8_t>(0x80u | (codePoint & 0x3Fu)), output, fixed);
+    }
+  }
+
+  bool readHexQuad(uint32_t& value) {
+    if (length_ - position_ < 4u) return false;
+    value = 0;
+    for (uint8_t i = 0; i < 4; ++i) {
+      const char c = data_[position_++];
+      uint8_t digit;
+      if (c >= '0' && c <= '9') {
+        digit = static_cast<uint8_t>(c - '0');
+      } else if (c >= 'a' && c <= 'f') {
+        digit = static_cast<uint8_t>(c - 'a' + 10);
+      } else if (c >= 'A' && c <= 'F') {
+        digit = static_cast<uint8_t>(c - 'A' + 10);
+      } else {
+        return false;
+      }
+      value = (value << 4u) | digit;
+    }
+    return true;
+  }
+
+  bool parseUnicodeEscape(uint32_t& codePoint) {
+    uint32_t first;
+    if (!readHexQuad(first)) return false;
+    if (first >= 0xD800u && first <= 0xDBFFu) {
+      if (length_ - position_ < 6u || data_[position_] != '\\' || data_[position_ + 1u] != 'u') return false;
+      position_ += 2u;
+      uint32_t second;
+      if (!readHexQuad(second) || second < 0xDC00u || second > 0xDFFFu) return false;
+      codePoint = 0x10000u + ((first - 0xD800u) << 10u) + (second - 0xDC00u);
+      return true;
+    }
+    if (first >= 0xDC00u && first <= 0xDFFFu) return false;
+    codePoint = first;
+    return true;
+  }
+
+  bool parseRawUtf8(std::string* output, FixedString* fixed) {
+    const size_t start = position_;
+    const uint8_t first = static_cast<uint8_t>(data_[position_++]);
+    uint32_t codePoint;
+    uint8_t continuationCount;
+    if (first >= 0xC2u && first <= 0xDFu) {
+      codePoint = first & 0x1Fu;
+      continuationCount = 1;
+    } else if (first >= 0xE0u && first <= 0xEFu) {
+      codePoint = first & 0x0Fu;
+      continuationCount = 2;
+    } else if (first >= 0xF0u && first <= 0xF4u) {
+      codePoint = first & 0x07u;
+      continuationCount = 3;
+    } else {
+      return false;
+    }
+    if (length_ - position_ < continuationCount) return false;
+    for (uint8_t i = 0; i < continuationCount; ++i) {
+      const uint8_t next = static_cast<uint8_t>(data_[position_++]);
+      if ((next & 0xC0u) != 0x80u) return false;
+      codePoint = (codePoint << 6u) | (next & 0x3Fu);
+    }
+    if ((continuationCount == 1 && codePoint < 0x80u) || (continuationCount == 2 && codePoint < 0x800u) ||
+        (continuationCount == 3 && codePoint < 0x10000u) || codePoint > 0x10FFFFu ||
+        (codePoint >= 0xD800u && codePoint <= 0xDFFFu)) {
+      return false;
+    }
+    for (size_t i = start; i < position_; ++i) {
+      appendByte(static_cast<uint8_t>(data_[i]), output, fixed);
+    }
+    return true;
+  }
+
+  bool parseString(std::string* output, FixedString* fixed = nullptr) {
+    if (!consume('"')) return false;
+    while (!atEnd()) {
+      const uint8_t c = static_cast<uint8_t>(data_[position_++]);
+      if (c == '"') {
+        if (fixed && fixed->capacity > 0 && !fixed->overflow) fixed->data[fixed->length] = '\0';
+        return true;
+      }
+      if (c < 0x20u) return false;
+      if (c == '\\') {
+        if (atEnd()) return false;
+        const char escape = data_[position_++];
+        switch (escape) {
+          case '"':
+          case '\\':
+          case '/':
+            appendByte(static_cast<uint8_t>(escape), output, fixed);
+            break;
+          case 'b':
+            appendByte('\b', output, fixed);
+            break;
+          case 'f':
+            appendByte('\f', output, fixed);
+            break;
+          case 'n':
+            appendByte('\n', output, fixed);
+            break;
+          case 'r':
+            appendByte('\r', output, fixed);
+            break;
+          case 't':
+            appendByte('\t', output, fixed);
+            break;
+          case 'u': {
+            uint32_t codePoint;
+            if (!parseUnicodeEscape(codePoint)) return false;
+            appendCodePoint(codePoint, output, fixed);
+            break;
+          }
+          default:
+            return false;
+        }
+      } else if (c < 0x80u) {
+        appendByte(c, output, fixed);
+      } else {
+        --position_;
+        if (!parseRawUtf8(output, fixed)) return false;
+      }
+    }
+    return false;
+  }
+
+  static bool keyEquals(const FixedString& key, const char* expected, const size_t expectedLength) {
+    return !key.overflow && key.length == expectedLength && std::memcmp(key.data, expected, expectedLength) == 0;
+  }
+
+  bool parseObject(const uint8_t depth, const bool root) {
+    if (depth > kMaxMetadataJsonDepth || !consume('{')) return false;
+    skipWhitespace();
+    if (consume('}')) return true;
+    for (;;) {
+      char keyBuffer[16] = {};
+      FixedString key{keyBuffer, sizeof(keyBuffer)};
+      if (!parseString(nullptr, &key)) return false;
+      skipWhitespace();
+      if (!consume(':')) return false;
+      skipWhitespace();
+
+      const bool isDescription = root && keyEquals(key, "description", sizeof("description") - 1u);
+      const bool isSeries = root && keyEquals(key, "series", sizeof("series") - 1u);
+      if (isDescription || isSeries) {
+        bool& seen = isDescription ? sawDescription_ : sawSeries_;
+        if (seen || peek() != '"') return false;
+        seen = true;
+        if (isDescription) {
+          if (!parseString(&description_)) return false;
+        } else if (!parseString(&series_)) {
+          return false;
+        }
+      } else if (!parseValue(static_cast<uint8_t>(depth + 1u))) {
+        return false;
+      }
+
+      skipWhitespace();
+      if (consume('}')) return true;
+      if (!consume(',')) return false;
+      skipWhitespace();
+    }
+  }
+
+  bool parseArray(const uint8_t depth) {
+    if (depth > kMaxMetadataJsonDepth || !consume('[')) return false;
+    skipWhitespace();
+    if (consume(']')) return true;
+    for (;;) {
+      if (!parseValue(static_cast<uint8_t>(depth + 1u))) return false;
+      skipWhitespace();
+      if (consume(']')) return true;
+      if (!consume(',')) return false;
+      skipWhitespace();
+    }
+  }
+
+  bool parseNumber() {
+    if (consume('-') && atEnd()) return false;
+    if (consume('0')) {
+      if (!atEnd() && data_[position_] >= '0' && data_[position_] <= '9') return false;
+    } else {
+      if (atEnd() || data_[position_] < '1' || data_[position_] > '9') return false;
+      while (!atEnd() && data_[position_] >= '0' && data_[position_] <= '9') ++position_;
+    }
+    if (consume('.')) {
+      if (atEnd() || data_[position_] < '0' || data_[position_] > '9') return false;
+      while (!atEnd() && data_[position_] >= '0' && data_[position_] <= '9') ++position_;
+    }
+    if (consume('e') || consume('E')) {
+      if (!consume('+')) consume('-');
+      if (atEnd() || data_[position_] < '0' || data_[position_] > '9') return false;
+      while (!atEnd() && data_[position_] >= '0' && data_[position_] <= '9') ++position_;
+    }
+    return true;
+  }
+
+  bool parseValue(const uint8_t depth) {
+    if (depth > kMaxMetadataJsonDepth || atEnd()) return false;
+    switch (peek()) {
+      case '"':
+        return parseString(nullptr);
+      case '{':
+        return parseObject(depth, false);
+      case '[':
+        return parseArray(depth);
+      case 't':
+        return consume('t') && consume('r') && consume('u') && consume('e');
+      case 'f':
+        return consume('f') && consume('a') && consume('l') && consume('s') && consume('e');
+      case 'n':
+        return consume('n') && consume('u') && consume('l') && consume('l');
+      default:
+        return parseNumber();
+    }
+  }
+
+  const char* data_;
+  size_t length_;
+  size_t position_ = 0;
+  bool sawDescription_ = false;
+  bool sawSeries_ = false;
+  std::string description_;
+  std::string series_;
+};
+}  // namespace
 
 XtcParser::XtcParser()
     : m_isOpen(false),
@@ -24,6 +319,7 @@ XtcParser::XtcParser()
       m_bitDepth(1),
       m_hasChapters(false),
       m_chaptersLoaded(false),
+      m_extendedMetadataLoaded(false),
       m_lastError(XtcError::OK) {
   memset(&m_header, 0, sizeof(m_header));
 }
@@ -107,8 +403,13 @@ void XtcParser::close() {
   m_chapters.clear();
   m_title.clear();
   m_author.clear();
+  m_description.clear();
+  m_series.clear();
+  std::string().swap(m_description);
+  std::string().swap(m_series);
   m_hasChapters = false;
   memset(&m_header, 0, sizeof(m_header));
+  m_extendedMetadataLoaded = false;
 }
 
 bool XtcParser::ensureFileOpen() {
@@ -189,6 +490,77 @@ XtcError XtcParser::readAuthor() {
 
   LOG_DBG("XTC", "Author: %s", m_author.c_str());
   return XtcError::OK;
+}
+
+const std::string& XtcParser::getDescription() {
+  if (m_isOpen && !m_extendedMetadataLoaded) loadExtendedMetadata();
+  return m_description;
+}
+
+const std::string& XtcParser::getSeries() {
+  if (m_isOpen && !m_extendedMetadataLoaded) loadExtendedMetadata();
+  return m_series;
+}
+
+void XtcParser::loadExtendedMetadata() {
+  if (m_extendedMetadataLoaded || !m_isOpen) return;
+  m_extendedMetadataLoaded = true;
+  if (!ensureFileOpen()) return;
+
+  struct CloseFileOnExit {
+    HalFile& file;
+    ~CloseFileOnExit() { file.close(); }
+  } closeFileOnExit{m_file};
+
+  constexpr size_t footerSize = sizeof(kNooirMetadataMagic) + sizeof(uint32_t);
+  const uint64_t fileSize = m_file.fileSize64();
+  if (fileSize < footerSize || !m_file.seek64(fileSize - footerSize)) return;
+
+  uint8_t footer[footerSize];
+  if (m_file.read(footer, sizeof(footer)) != sizeof(footer) ||
+      std::memcmp(footer, kNooirMetadataMagic, sizeof(kNooirMetadataMagic)) != 0) {
+    return;
+  }
+  const size_t lengthOffset = sizeof(kNooirMetadataMagic);
+  const uint32_t payloadLength = static_cast<uint32_t>(footer[lengthOffset]) |
+                                (static_cast<uint32_t>(footer[lengthOffset + 1u]) << 8u) |
+                                (static_cast<uint32_t>(footer[lengthOffset + 2u]) << 16u) |
+                                (static_cast<uint32_t>(footer[lengthOffset + 3u]) << 24u);
+  if (payloadLength == 0 || payloadLength > kMaxNooirMetadataBytes || payloadLength > fileSize - footerSize) return;
+  const uint64_t payloadOffset = fileSize - footerSize - payloadLength;
+
+  if (m_header.pageCount == 0 || m_header.pageTableOffset > fileSize) return;
+  const uint64_t lastEntryIndex = static_cast<uint64_t>(m_header.pageCount - 1u) * sizeof(PageTableEntry);
+  if (lastEntryIndex > fileSize - m_header.pageTableOffset ||
+      sizeof(PageTableEntry) > fileSize - m_header.pageTableOffset - lastEntryIndex) {
+    return;
+  }
+  const uint64_t pageTableEnd = m_header.pageTableOffset +
+                                static_cast<uint64_t>(m_header.pageCount) * sizeof(PageTableEntry);
+  PageTableEntry lastPage;
+  const uint64_t lastEntryOffset = m_header.pageTableOffset + lastEntryIndex;
+  if (!m_file.seek64(lastEntryOffset) ||
+      m_file.read(reinterpret_cast<uint8_t*>(&lastPage), sizeof(lastPage)) != sizeof(lastPage) ||
+      lastPage.dataOffset < pageTableEnd || lastPage.dataOffset > fileSize ||
+      lastPage.dataSize > fileSize - lastPage.dataOffset) {
+    return;
+  }
+  const uint64_t pageDataEnd = lastPage.dataOffset + lastPage.dataSize;
+  if (payloadOffset != pageDataEnd || !m_file.seek64(payloadOffset)) return;
+
+  char* payload = static_cast<char*>(malloc(payloadLength));
+  if (!payload) return;
+  const bool readComplete = m_file.read(reinterpret_cast<uint8_t*>(payload), payloadLength) == payloadLength;
+  if (readComplete) {
+    BoundedMetadataJsonParser parser(payload, payloadLength);
+    std::string description;
+    std::string series;
+    if (parser.parse(description, series)) {
+      m_description = std::move(description);
+      m_series = std::move(series);
+    }
+  }
+  free(payload);
 }
 
 XtcError XtcParser::readFirstPageInfo() {
