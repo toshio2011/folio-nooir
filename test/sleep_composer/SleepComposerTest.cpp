@@ -149,6 +149,34 @@ TEST(SleepComposer, FixedSlotsResolveOverlayCollisionsDeterministically) {
   EXPECT_FALSE(sleepComposerRectFitsSlot(occupied.data(), occupied.size(), third));
 }
 
+TEST(SleepComposer, FitRectPreservesAspectRatioAndCentersWithinBounds) {
+  const SleepComposerRect bounds{20, 30, 200, 300};
+  const auto fit = sleepComposerFitRect(100, 200, bounds);
+
+  EXPECT_EQ(fit.width, 150);
+  EXPECT_EQ(fit.height, 300);
+  EXPECT_EQ(fit.x, 45);
+  EXPECT_EQ(fit.y, 30);
+}
+
+TEST(SleepComposer, FitRectKeepsExtremeAspectRatiosVisible) {
+  const SleepComposerRect bounds{0, 0, 480, 800};
+  const auto veryWide = sleepComposerFitRect(65535, 1, bounds);
+  const auto veryTall = sleepComposerFitRect(1, 65535, bounds);
+
+  EXPECT_EQ(veryWide.height, 1);
+  EXPECT_GT(veryWide.width, 0);
+  EXPECT_LE(veryWide.width, bounds.width);
+  EXPECT_EQ(veryTall.width, 1);
+  EXPECT_GT(veryTall.height, 0);
+  EXPECT_LE(veryTall.height, bounds.height);
+}
+
+TEST(SleepComposer, FitRectRejectsInvalidGeometry) {
+  EXPECT_EQ(sleepComposerFitRect(0, 100, {0, 0, 100, 100}).width, 0);
+  EXPECT_EQ(sleepComposerFitRect(100, 100, {0, 0, 0, 100}).height, 0);
+}
+
 TEST(SleepComposer, ThreeRandomLayersRemainBoundedWithEmptyAvailability) {
   SleepComposerAvailability unavailable;
   unavailable.readingSummary = false;

@@ -208,6 +208,30 @@ struct SleepComposerRect {
   int height = 0;
 };
 
+// Aspect-fit an image into a sleep-screen region. 64-bit products keep corrupt
+// or unusually large BMP dimensions from overflowing, and rounding the scaled
+// dimension prevents very thin images from truncating to a zero-sized draw.
+inline SleepComposerRect sleepComposerFitRect(const int sourceWidth, const int sourceHeight,
+                                               const SleepComposerRect& bounds) {
+  if (sourceWidth <= 0 || sourceHeight <= 0 || bounds.width <= 0 || bounds.height <= 0) return {};
+
+  const int64_t widthAtBoundHeight = static_cast<int64_t>(sourceWidth) * bounds.height;
+  const int64_t heightAtBoundWidth = static_cast<int64_t>(sourceHeight) * bounds.width;
+  int drawWidth = bounds.width;
+  int drawHeight = bounds.height;
+  if (widthAtBoundHeight > heightAtBoundWidth) {
+    drawHeight = static_cast<int>((static_cast<int64_t>(sourceHeight) * bounds.width + sourceWidth / 2) /
+                                  sourceWidth);
+    drawHeight = std::max(1, std::min(bounds.height, drawHeight));
+  } else {
+    drawWidth = static_cast<int>((static_cast<int64_t>(sourceWidth) * bounds.height + sourceHeight / 2) /
+                                 sourceHeight);
+    drawWidth = std::max(1, std::min(bounds.width, drawWidth));
+  }
+  return {bounds.x + (bounds.width - drawWidth) / 2, bounds.y + (bounds.height - drawHeight) / 2,
+          drawWidth, drawHeight};
+}
+
 enum class SleepComposerSlot : uint8_t {
   None,
   Top,

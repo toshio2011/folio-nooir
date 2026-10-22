@@ -1143,6 +1143,8 @@ bool SleepActivity::renderCustomImage(const std::string& path) const {
   Bitmap bitmap(cachedBmp, true);
   if (bitmap.parseHeaders() != BmpReaderError::Ok) {
     LOG_ERR("SLP", "Invalid converted sleep image: %s", path.c_str());
+    cachedBmp.close();
+    Storage.remove(PNG_CACHE_PATH);
     return false;
   }
   LOG_DBG("SLP", "Loading PNG: %s", path.c_str());
@@ -1163,11 +1165,9 @@ bool SleepActivity::drawCustomImageInBounds(const std::string& path, const Sleep
                           placement.cropY);
       return true;
     }
-    const int drawWidth = std::min(bounds.width, bounds.height * bitmap.getWidth() / bitmap.getHeight());
-    const int drawHeight = std::min(bounds.height, bounds.width * bitmap.getHeight() / bitmap.getWidth());
-    const int x = bounds.x + (bounds.width - drawWidth) / 2;
-    const int y = bounds.y + (bounds.height - drawHeight) / 2;
-    renderer.drawBitmap(bitmap, x, y, drawWidth, drawHeight);
+    const SleepComposerRect fit = sleepComposerFitRect(bitmap.getWidth(), bitmap.getHeight(), bounds);
+    if (fit.width <= 0 || fit.height <= 0) return false;
+    renderer.drawBitmap(bitmap, fit.x, fit.y, fit.width, fit.height);
     return true;
   };
 
@@ -1199,7 +1199,11 @@ bool SleepActivity::drawCustomImageInBounds(const std::string& path, const Sleep
   HalFile cachedBmp;
   if (!Storage.openFileForRead("SLP", PNG_CACHE_PATH, cachedBmp)) return false;
   Bitmap bitmap(cachedBmp, true);
-  if (!drawBitmap(bitmap)) return false;
+  if (!drawBitmap(bitmap)) {
+    cachedBmp.close();
+    Storage.remove(PNG_CACHE_PATH);
+    return false;
+  }
   if (reusablePath) *reusablePath = PNG_CACHE_PATH;
   return true;
 }
@@ -1216,11 +1220,9 @@ bool SleepActivity::drawSleepBookCoverInBounds(const std::string& coverPath, con
     renderer.drawBitmap(bitmap, placement.x, placement.y, bounds.width, bounds.height, placement.cropX,
                         placement.cropY);
   } else {
-    const int drawWidth = std::min(bounds.width, bounds.height * bitmap.getWidth() / bitmap.getHeight());
-    const int drawHeight = std::min(bounds.height, bounds.width * bitmap.getHeight() / bitmap.getWidth());
-    const int x = bounds.x + (bounds.width - drawWidth) / 2;
-    const int y = bounds.y + (bounds.height - drawHeight) / 2;
-    renderer.drawBitmap(bitmap, x, y, drawWidth, drawHeight);
+    const SleepComposerRect fit = sleepComposerFitRect(bitmap.getWidth(), bitmap.getHeight(), bounds);
+    if (fit.width <= 0 || fit.height <= 0) return false;
+    renderer.drawBitmap(bitmap, fit.x, fit.y, fit.width, fit.height);
   }
   return true;
 }

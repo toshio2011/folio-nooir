@@ -37,8 +37,9 @@ class CbzPageCache final {
   std::string cachePath;
   std::string sourcePath;
   uint64_t sourceSize = 0;
+  bool pageCountSupported = true;
   std::vector<PageInfo> pages;
-  std::vector<uint8_t> valid;
+  mutable std::vector<uint8_t> valid;
 
   bool saveManifest() const;
   void removePageFiles(size_t count) const;

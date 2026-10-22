@@ -15,6 +15,10 @@ constexpr uint32_t MAX_MANIFEST_PAGES = 4096;
 constexpr const char* MANIFEST_FILE = "/page_cache.bin";
 constexpr const char* MANIFEST_TEMP_FILE = "/page_cache.bin.tmp";
 
+size_t boundedPageCount(const size_t pageCount) {
+  return pageCount <= MAX_MANIFEST_PAGES ? pageCount : 0;
+}
+
 bool writeBytes(HalFile& file, const void* data, const size_t length) {
   return file.write(reinterpret_cast<const uint8_t*>(data), length) == static_cast<int>(length);
 }
@@ -23,19 +27,20 @@ bool readBytes(HalFile& file, void* data, const size_t length) {
   return file.read(reinterpret_cast<uint8_t*>(data), length) == static_cast<int>(length);
 }
 
-uint64_t getSourceSize(const std::string& path) {
+bool getSourceSize(const std::string& path, uint64_t& size) {
   HalFile file;
-  if (!Storage.openFileForRead("CBZCACHE", path, file)) return 0;
-  const uint64_t size = file.size();
+  if (!Storage.openFileForRead("CBZCACHE", path, file)) return false;
+  size = file.size();
   file.close();
-  return size;
+  return true;
 }
 
 }  // namespace
 
 CbzPageCache::CbzPageCache(std::string cachePathValue, std::string sourcePathValue, const size_t pageCountValue)
-    : cachePath(std::move(cachePathValue)), sourcePath(std::move(sourcePathValue)), pages(pageCountValue),
-      valid(pageCountValue, 0) {}
+    : cachePath(std::move(cachePathValue)), sourcePath(std::move(sourcePathValue)),
+      pageCountSupported(pageCountValue <= MAX_MANIFEST_PAGES), pages(boundedPageCount(pageCountValue)),
+      valid(boundedPageCount(pageCountValue), 0) {}
 
 std::string CbzPageCache::pagePath(const size_t page) const {
   char name[48] = {};
@@ -56,7 +61,20 @@ void CbzPageCache::removePageFiles(const size_t count) const {
 }
 
 bool CbzPageCache::open() {
-  sourceSize = getSourceSize(sourcePath);
+  if (!pageCountSupported) {
+    // Do not allocate page metadata for archives that cannot be represented
+    // in the bounded manifest. The reader remains usable without this cache.
+    LOG_ERR("CBZCACHE", "persistent=disabled reason=page_count_limit limit=%lu",
+            static_cast<unsigned long>(MAX_MANIFEST_PAGES));
+    return false;
+  }
+  if (!getSourceSize(sourcePath, sourceSize)) {
+    // A transient source read failure is not proof that cached pages belong to
+    // a different or empty book. Leave the current manifest and page files
+    // untouched so a later open can retry safely.
+    LOG_ERR("CBZCACHE", "persistent=deferred reason=source_unreadable path=%s", sourcePath.c_str());
+    return false;
+  }
   pages.assign(pages.size(), {});
   valid.assign(pages.size(), 0);
 
@@ -92,7 +110,10 @@ bool CbzPageCache::open() {
             break;
           }
           pages[page] = info;
-          valid[page] = pageValid != 0 && Storage.exists(pagePath(page).c_str()) ? 1 : 0;
+          // Trust the manifest here and validate the page file lazily in
+          // isReady(). Checking every page at reader entry made opening a
+          // large CBZ perform thousands of extra SD directory lookups.
+          valid[page] = pageValid != 0 ? 1 : 0;
         }
       }
     }
@@ -100,14 +121,15 @@ bool CbzPageCache::open() {
   }
 
   if (!manifestValid) {
-    const size_t oldCount = std::min(static_cast<size_t>(storedPageCount), static_cast<size_t>(MAX_MANIFEST_PAGES));
-    removePageFiles(std::max(oldCount, pages.size()));
+    // Do not sweep every possible page filename while opening a book. An
+    // absent or damaged manifest makes old page payloads unreachable; each
+    // payload is safely replaced the next time that page is published.
     if (!saveManifest()) {
       LOG_ERR("CBZCACHE", "Could not initialize persistent page cache: %s", cachePath.c_str());
       return false;
     }
-    LOG_DBG("CBZCACHE", "persistent=reset pages=%lu sourceBytes=%llu", static_cast<unsigned long>(pages.size()),
-            static_cast<unsigned long long>(sourceSize));
+    LOG_DBG("CBZCACHE", "persistent=reset pages=%lu sourceBytes=%llu oldPageFiles=lazy",
+            static_cast<unsigned long>(pages.size()), static_cast<unsigned long long>(sourceSize));
   } else {
     LOG_DBG("CBZCACHE", "persistent=loaded pages=%lu ready=%lu sourceBytes=%llu",
             static_cast<unsigned long>(pages.size()), static_cast<unsigned long>(completedCount()),
@@ -160,7 +182,13 @@ bool CbzPageCache::isReady(const size_t page, const uint8_t viewModeValue, const
                            PageInfo& out) const {
   if (page >= pages.size() || valid[page] == 0 || pages[page].viewMode != viewModeValue ||
       pages[page].zoomLevel != zoomLevelValue || pages[page].sourceWidth == 0 || pages[page].sourceHeight == 0 ||
-      pages[page].targetWidth == 0 || pages[page].targetHeight == 0 || !Storage.exists(pagePath(page).c_str())) {
+      pages[page].targetWidth == 0 || pages[page].targetHeight == 0) {
+    return false;
+  }
+  // A missing payload is discovered on demand. Remember it in memory so cache
+  // progress does not continue counting this page as completed this session.
+  if (!Storage.exists(pagePath(page).c_str())) {
+    valid[page] = 0;
     return false;
   }
   out = pages[page];
