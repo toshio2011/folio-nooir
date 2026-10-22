@@ -13,17 +13,23 @@ namespace XtcMetadataTestStorage {
 inline std::unordered_map<std::string, std::vector<uint8_t>> files;
 inline size_t openCalls = 0;
 inline size_t openHandles = 0;
+inline bool failNextRead = false;
 
 inline void reset() {
   files.clear();
   openCalls = 0;
   openHandles = 0;
+  failNextRead = false;
 }
 }  // namespace XtcMetadataTestStorage
 
 class HalFile {
  public:
   size_t read(void* destination, const size_t requested) {
+    if (XtcMetadataTestStorage::failNextRead) {
+      XtcMetadataTestStorage::failNextRead = false;
+      return 0;
+    }
     if (!open_ || !bytes_ || position_ >= bytes_->size()) return 0;
     const size_t count = std::min(requested, bytes_->size() - position_);
     if (count != 0) std::memcpy(destination, bytes_->data() + position_, count);

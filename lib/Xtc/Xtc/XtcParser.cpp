@@ -504,7 +504,6 @@ const std::string& XtcParser::getSeries() {
 
 void XtcParser::loadExtendedMetadata() {
   if (m_extendedMetadataLoaded || !m_isOpen) return;
-  m_extendedMetadataLoaded = true;
   if (!ensureFileOpen()) return;
 
   struct CloseFileOnExit {
@@ -514,13 +513,16 @@ void XtcParser::loadExtendedMetadata() {
 
   constexpr size_t footerSize = sizeof(kNooirMetadataMagic) + sizeof(uint32_t);
   const uint64_t fileSize = m_file.fileSize64();
-  if (fileSize < footerSize || !m_file.seek64(fileSize - footerSize)) return;
-
-  uint8_t footer[footerSize];
-  if (m_file.read(footer, sizeof(footer)) != sizeof(footer) ||
-      std::memcmp(footer, kNooirMetadataMagic, sizeof(kNooirMetadataMagic)) != 0) {
+  if (fileSize < footerSize) {
+    m_extendedMetadataLoaded = true;
     return;
   }
+  if (!m_file.seek64(fileSize - footerSize)) return;
+
+  uint8_t footer[footerSize];
+  if (m_file.read(footer, sizeof(footer)) != sizeof(footer)) return;
+  m_extendedMetadataLoaded = true;
+  if (std::memcmp(footer, kNooirMetadataMagic, sizeof(kNooirMetadataMagic)) != 0) return;
   const size_t lengthOffset = sizeof(kNooirMetadataMagic);
   const uint32_t payloadLength = static_cast<uint32_t>(footer[lengthOffset]) |
                                 (static_cast<uint32_t>(footer[lengthOffset + 1u]) << 8u) |
@@ -539,17 +541,28 @@ void XtcParser::loadExtendedMetadata() {
                                 static_cast<uint64_t>(m_header.pageCount) * sizeof(PageTableEntry);
   PageTableEntry lastPage;
   const uint64_t lastEntryOffset = m_header.pageTableOffset + lastEntryIndex;
-  if (!m_file.seek64(lastEntryOffset) ||
-      m_file.read(reinterpret_cast<uint8_t*>(&lastPage), sizeof(lastPage)) != sizeof(lastPage) ||
-      lastPage.dataOffset < pageTableEnd || lastPage.dataOffset > fileSize ||
-      lastPage.dataSize > fileSize - lastPage.dataOffset) {
+  if (!m_file.seek64(lastEntryOffset)) {
+    m_extendedMetadataLoaded = false;
     return;
   }
+  if (m_file.read(reinterpret_cast<uint8_t*>(&lastPage), sizeof(lastPage)) != sizeof(lastPage)) {
+    m_extendedMetadataLoaded = false;
+    return;
+  }
+  if (lastPage.dataOffset < pageTableEnd || lastPage.dataOffset > fileSize ||
+      lastPage.dataSize > fileSize - lastPage.dataOffset) return;
   const uint64_t pageDataEnd = lastPage.dataOffset + lastPage.dataSize;
-  if (payloadOffset != pageDataEnd || !m_file.seek64(payloadOffset)) return;
+  if (payloadOffset != pageDataEnd) return;
+  if (!m_file.seek64(payloadOffset)) {
+    m_extendedMetadataLoaded = false;
+    return;
+  }
 
   char* payload = static_cast<char*>(malloc(payloadLength));
-  if (!payload) return;
+  if (!payload) {
+    m_extendedMetadataLoaded = false;
+    return;
+  }
   const bool readComplete = m_file.read(reinterpret_cast<uint8_t*>(payload), payloadLength) == payloadLength;
   if (readComplete) {
     BoundedMetadataJsonParser parser(payload, payloadLength);
@@ -559,6 +572,8 @@ void XtcParser::loadExtendedMetadata() {
       m_description = std::move(description);
       m_series = std::move(series);
     }
+  } else {
+    m_extendedMetadataLoaded = false;
   }
   free(payload);
 }

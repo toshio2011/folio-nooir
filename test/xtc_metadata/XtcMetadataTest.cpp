@@ -107,6 +107,21 @@ TEST(XtcMetadata, LazilyParsesNooirDescriptionAndSeriesEscapes) {
   EXPECT_EQ(XtcMetadataTestStorage::openHandles, 0u);
 }
 
+TEST(XtcMetadata, RetriesAfterTransientTrailerReadFailure) {
+  const std::string json = R"json({"description":"retry synopsis","series":"Retry Series"})json";
+  auto parser = openFixture(makeFixture(&json));
+  XtcMetadataTestStorage::failNextRead = true;
+
+  EXPECT_TRUE(parser.getDescription().empty());
+  EXPECT_EQ(XtcMetadataTestStorage::openCalls, 2u);
+  EXPECT_EQ(XtcMetadataTestStorage::openHandles, 0u);
+
+  EXPECT_EQ(parser.getDescription(), "retry synopsis");
+  EXPECT_EQ(parser.getSeries(), "Retry Series");
+  EXPECT_EQ(XtcMetadataTestStorage::openCalls, 3u);
+  EXPECT_EQ(XtcMetadataTestStorage::openHandles, 0u);
+}
+
 TEST(XtcMetadata, MissingOrWrongMarkerIsIgnoredOnce) {
   const std::string json = R"json({"description":"ignored","series":"ignored"})json";
   auto parser = openFixture(makeFixture(&json, "NOOIRX01"));
