@@ -8,7 +8,7 @@
 #include <utility>
 
 #include "activities/Activity.h"
-#include "util/ButtonNavigator.h"
+#include "KeyboardNavigation.h"
 
 enum class InputType { Text, Password, Url };
 
@@ -39,7 +39,8 @@ class KeyboardEntryActivity : public Activity {
   InputType inputType;
   bool passwordVisible = false;
 
-  ButtonNavigator buttonNavigator;
+  keyboard_navigation::KeyRepeatGate leftRepeat;
+  keyboard_navigation::KeyRepeatGate rightRepeat;
 
   // Keyboard layers. The letter/symbol layers come from the SDK's builtin
   // layouts (with the always-visible number row); the URL layers are
@@ -61,16 +62,19 @@ class KeyboardEntryActivity : public Activity {
 
   bool confirmHeld = false;
   bool confirmLongHandled = false;
+  uint32_t confirmPressedAt = 0;
 
   bool cursorMode = false;
   bool togglePos = false;
   size_t cursorPos = 0;  // byte offset into text (always on a code point boundary)
   bool upHeld = false;
   bool upLongHandled = false;
+  uint32_t upPressedAt = 0;
   bool downHeld = false;
   bool downLongHandled = false;
   bool rightHeld = false;
   bool rightLongHandled = false;
+  uint32_t rightPressedAt = 0;
   size_t savedCursorPos = 0;
   size_t rightStartCursorPos = 0;
 
@@ -106,7 +110,7 @@ class KeyboardEntryActivity : public Activity {
   int selectedLogicalIndex() const;
   void clampSelection();
   void moveSelectionRow(int delta);
-  void moveSelectionCol(int delta);
+  bool moveSelectionCol(int delta);
   bool syncSelectionToValue(int16_t value);
   // Handles one key activation (by stable key id). Returns true when the
   // screen needs a repaint; OK/cancel finish the activity instead.

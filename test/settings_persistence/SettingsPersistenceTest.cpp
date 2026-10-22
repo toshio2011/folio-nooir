@@ -38,6 +38,25 @@ uint8_t loadedTheme() {
 
 }  // namespace
 
+class SettingsSaveProbe : public PersistableStore<SettingsSaveProbe> {
+ public:
+  static constexpr const char* getFilePath() { return kSettingsPath; }
+  uint8_t uiTheme = 1;
+  void toJson(JsonDocument& doc) const {
+    doc["fontFamily"] = 1;
+    doc["fontSize"] = 2;
+    doc["sleepScreen"] = 3;
+    doc["sleepTimeout"] = 2;
+    doc["orientation"] = 0;
+    doc["fadingFix"] = 1;
+    doc["uiTheme"] = uiTheme;
+  }
+  bool fromJson(JsonVariantConst doc) {
+    uiTheme = doc["uiTheme"] | uint8_t{1};
+    return true;
+  }
+};
+
 class SettingsPersistenceTest : public ::testing::Test {
  protected:
   void SetUp() override { Storage.reset(); }
@@ -329,5 +348,57 @@ TEST_F(SettingsPersistenceTest, SuccessfulSaveReplacesMainOnlyAfterTemporaryVali
   EXPECT_TRUE(PersistableStoreBase::writeDocToFile(kSettingsPath, replacement));
   EXPECT_FALSE(Storage.exists(kBackupPath));
   EXPECT_FALSE(Storage.exists(kTempPath));
+  EXPECT_EQ(loadedTheme(), 6);
+}
+
+TEST_F(SettingsPersistenceTest, UnchangedSettingsSkipAtomicWritesAfterValidatedLoad) {
+  Storage.files[kSettingsPath] = serializedSettings(3).c_str();
+  SettingsSaveProbe settings;
+  ASSERT_TRUE(settings.loadFromFile());
+  ASSERT_EQ(settings.uiTheme, 3);
+  const size_t writesBefore = Storage.writeCount;
+  EXPECT_TRUE(settings.saveToFile());
+  EXPECT_EQ(Storage.writeCount, writesBefore);
+  EXPECT_EQ(Storage.readAttempts[kSettingsPath], 1u);
+}
+
+TEST_F(SettingsPersistenceTest, ChangedSettingsUseAtomicWriteThenSkipSubsequentNoOpSaves) {
+  Storage.files[kSettingsPath] = serializedSettings(3).c_str();
+  SettingsSaveProbe settings;
+  ASSERT_TRUE(settings.loadFromFile());
+  settings.uiTheme = 4;
+  ASSERT_TRUE(settings.saveToFile());
+  EXPECT_EQ(Storage.writeCount, 1u);
+  EXPECT_EQ(loadedTheme(), 4);
+  const size_t readsAfterWrite = Storage.readAttempts[kSettingsPath];
+  EXPECT_TRUE(settings.saveToFile());
+  EXPECT_EQ(Storage.writeCount, 1u);
+  EXPECT_EQ(Storage.readAttempts[kSettingsPath], readsAfterWrite);
+}
+
+TEST_F(SettingsPersistenceTest, SettingsLoadedFromBackupDoNotSeedNoOpFingerprint) {
+  Storage.files[kSettingsPath] = "{broken";
+  Storage.files[kBackupPath] = serializedSettings(5).c_str();
+  SettingsSaveProbe settings;
+  persistable::SettingsLoadReport report;
+  ASSERT_TRUE(settings.loadFromFile(&report));
+  ASSERT_EQ(report.selected, 1u);
+  EXPECT_TRUE(settings.saveToFile());
+  EXPECT_GT(Storage.writeCount, 0u);
+}
+
+TEST_F(SettingsPersistenceTest, FailedChangedSettingsSaveRetriesThroughAtomicValidation) {
+  Storage.files[kSettingsPath] = serializedSettings(2).c_str();
+  SettingsSaveProbe settings;
+  ASSERT_TRUE(settings.loadFromFile());
+  settings.uiTheme = 6;
+  Storage.failWritePaths[kTempPath] = true;
+
+  EXPECT_FALSE(settings.saveToFile());
+  EXPECT_EQ(Storage.writeCount, 1u);
+  Storage.failWritePaths.clear();
+
+  EXPECT_TRUE(settings.saveToFile());
+  EXPECT_EQ(Storage.writeCount, 2u);
   EXPECT_EQ(loadedTheme(), 6);
 }

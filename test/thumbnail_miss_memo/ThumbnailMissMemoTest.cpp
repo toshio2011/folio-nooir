@@ -40,3 +40,22 @@ TEST(ThumbnailMissMemo, SupportsAnEmptyShelf) {
 
   EXPECT_FALSE(memo.contains(0));
 }
+
+TEST(ThumbnailPathMissMemo, PersistsPathMissesAcrossActivityInstances) {
+  ThumbnailPathMissMemo processMemo;
+  processMemo.markMissing("/.crosspoint/epub_1515163688/thumb_220.bmp");
+
+  // RecentBooksActivity can be destroyed and recreated while this small memo
+  // remains alive for the process.
+  EXPECT_TRUE(processMemo.contains("/.crosspoint/epub_1515163688/thumb_220.bmp"));
+  EXPECT_FALSE(processMemo.contains("/.crosspoint/epub_1515163689/thumb_220.bmp"));
+}
+
+TEST(ThumbnailPathMissMemo, ExplicitInvalidationAllowsARefreshedThumbnailToBeProbed) {
+  ThumbnailPathMissMemo processMemo;
+  processMemo.markMissing("/.crosspoint/book/thumb_220.bmp");
+  EXPECT_TRUE(processMemo.contains("/.crosspoint/book/thumb_220.bmp"));
+
+  processMemo.clear();
+  EXPECT_FALSE(processMemo.contains("/.crosspoint/book/thumb_220.bmp"));
+}

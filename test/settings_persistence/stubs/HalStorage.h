@@ -23,6 +23,7 @@ class TestStorage {
   bool remove(const char* path) { return files.erase(path ? path : "") != 0; }
 
   bool writeFile(const char* path, const String& value) {
+    ++writeCount;
     const std::string name = path ? path : "";
     if (failWrite || failWritePaths.find(name) != failWritePaths.end()) return false;
     if (crashPoint == CrashPoint::DuringTempWrite && name.ends_with(".tmp")) {
@@ -82,6 +83,7 @@ class TestStorage {
     failWritePaths.clear();
     failRename = false;
     failRenameFrom.clear();
+    writeCount = 0;
   }
 
   void armCrash(const CrashPoint point) {
@@ -99,6 +101,7 @@ class TestStorage {
   std::unordered_map<std::string, bool> failWritePaths;
   bool failRename = false;
   std::unordered_map<std::string, bool> failRenameFrom;
+  size_t writeCount = 0;
 
  private:
   CrashPoint crashPoint = CrashPoint::None;

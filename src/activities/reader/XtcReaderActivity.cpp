@@ -7,6 +7,7 @@
 
 #include "XtcReaderActivity.h"
 
+#include <Arduino.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalClock.h>
@@ -31,6 +32,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/ScreenshotUtil.h"
+#include "activities/reader/XtcRenderMemoryPolicy.h"
 
 namespace {
 enum class XtchRenderPass { Base, Lsb, Msb };
@@ -522,7 +524,10 @@ void XtcReaderActivity::renderPage() {
 
     // Preserve the already-rendered B/W base in small non-contiguous chunks.
     // This removes the fourth full SD read used by the old streaming path.
-    const bool storedBw = renderer.storeBwBuffer();
+    const bool hasBwSnapshotHeadroom = xtc_memory::canPreserveBwFrame(
+        static_cast<size_t>(ESP.getFreeHeap()), static_cast<size_t>(ESP.getMaxAllocHeap()),
+        renderer.getBufferSize());
+    const bool storedBw = hasBwSnapshotHeadroom && renderer.storeBwBuffer();
 
     renderer.clearScreen(0x00);
     if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Lsb)) {

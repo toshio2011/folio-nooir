@@ -1276,9 +1276,22 @@ void FolioLibraryActivity::loadSelectedMetadata() {
   } else if (FsHelpers::hasXtcExtension(path)) {
     Xtc xtc(path, "/.crosspoint");
     if (xtc.load()) {
-      preview.title = xtc.getTitle();
+      const std::string xtcTitle = xtc.getTitle();
+      preview.title = xtcTitle.empty() ? files[selectorIndex] : xtcTitle;
       preview.author = xtc.getAuthor();
       preview.coverBmpPath = xtc.getThumbBmpPath();
+      // XTC used to stop after refreshing metadata in the Library action,
+      // leaving a missing XTCH cover unrepaired even though EPUB and CBZ
+      // regenerate their shelf thumbnails here. Reuse the normal generator:
+      // XTG keeps its existing path and XTCH uses the bounded streaming path.
+      const std::string thumb = UITheme::getCoverThumbPath(preview.coverBmpPath, FolioNooirTheme::COVER_HEIGHT);
+      if (!isValidBookThumbnail(thumb) &&
+          (!xtc.generateThumbBmp(FolioNooirTheme::COVER_HEIGHT) || !isValidBookThumbnail(thumb))) {
+        LOG_DBG("LIBRARY", "Could not regenerate XTC thumbnail: %s", path.c_str());
+      }
+      // XTC has no synopsis metadata; preserve any existing shelf synopsis
+      // and reading state while updating the presentation metadata.
+      RECENT_BOOKS.refreshBookMetadata(path, preview.title, preview.author, preview.coverBmpPath, preview.synopsis);
     }
   } else if (FsHelpers::hasCbzExtension(path)) {
     Cbz cbz(path, "/.crosspoint");

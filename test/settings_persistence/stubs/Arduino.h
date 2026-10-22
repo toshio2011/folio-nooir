@@ -1,7 +1,13 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
+
+inline uint32_t micros() {
+  static uint32_t value = 0;
+  return value += 17;
+}
 
 class String {
  public:

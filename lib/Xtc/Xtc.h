@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -25,6 +26,8 @@ class Xtc {
   std::string cachePath;
   std::unique_ptr<xtc::XtcParser> parser;
   bool loaded;
+  bool generateXthThumbBmpStreaming(uint16_t sourceWidth, uint16_t sourceHeight, uint16_t thumbWidth,
+                                   uint16_t thumbHeight, uint32_t inverseScaleFp) const;
 
  public:
   explicit Xtc(std::string filepath, const std::string& cacheDir) : filepath(std::move(filepath)), loaded(false) {

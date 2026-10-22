@@ -40,7 +40,11 @@ bool isValidBookThumbnail(const std::string& path) {
   HalFile file;
   if (!Storage.openFileForRead("BookCache", path, file)) return false;
   Bitmap bitmap(file);
-  const bool valid = bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() > 0 && bitmap.getHeight() > 0;
+  const bool parsed = bitmap.parseHeaders() == BmpReaderError::Ok;
+  const uint64_t dataEnd = static_cast<uint64_t>(file.position()) +
+                           static_cast<uint64_t>(bitmap.getRowBytes()) * bitmap.getHeight();
+  const bool valid = parsed && bitmap.getWidth() > 0 && bitmap.getHeight() > 0 &&
+                     file.fileSize64() >= dataEnd;
   file.close();
   return valid;
 }

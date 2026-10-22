@@ -12,6 +12,12 @@
 #include <Logging.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <esp_heap_caps.h>
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
+
+#include "XtcThumbnailStream.h"
 
 namespace {
 void yieldDuringThumbnail(uint8_t& rowsSinceYield) {
@@ -19,6 +25,46 @@ void yieldDuringThumbnail(uint8_t& rowsSinceYield) {
   rowsSinceYield = 0;
   vTaskDelay(1);
 }
+
+bool isCompleteThumbnail(const std::string& path, const int expectedWidth = 0, const int expectedHeight = 0) {
+  HalFile file;
+  if (!Storage.openFileForRead("XTC", path, file)) return false;
+  Bitmap bitmap(file);
+  const bool parsed = bitmap.parseHeaders() == BmpReaderError::Ok;
+  const uint64_t dataEnd = static_cast<uint64_t>(file.position()) +
+                           static_cast<uint64_t>(bitmap.getRowBytes()) * bitmap.getHeight();
+  const bool complete = parsed && bitmap.getWidth() > 0 && bitmap.getHeight() > 0 &&
+                        (expectedWidth == 0 || bitmap.getWidth() == expectedWidth) &&
+                        (expectedHeight == 0 || bitmap.getHeight() == expectedHeight) &&
+                        file.fileSize64() >= dataEnd;
+  file.close();
+  return complete;
+}
+
+struct XtcThumbnailBuffers {
+  uint8_t* xAxis = nullptr;
+  uint8_t* yAxis = nullptr;
+  uint8_t* firstPlaneSums = nullptr;
+  uint8_t* output = nullptr;
+  uint32_t* secondPlaneColumnSums = nullptr;
+
+  ~XtcThumbnailBuffers() {
+    free(xAxis);
+    free(yAxis);
+    free(firstPlaneSums);
+    free(output);
+    free(secondPlaneColumnSums);
+  }
+
+  bool allocate(const xtc_thumb::WorkspaceLayout& layout) {
+    xAxis = static_cast<uint8_t*>(malloc(layout.xAxisBytes));
+    yAxis = static_cast<uint8_t*>(malloc(layout.yAxisBytes));
+    firstPlaneSums = static_cast<uint8_t*>(malloc(layout.firstPlaneBytes));
+    output = static_cast<uint8_t*>(malloc(layout.outputBytes));
+    secondPlaneColumnSums = static_cast<uint32_t*>(malloc(layout.secondPlaneColumnBytes));
+    return xAxis && yAxis && firstPlaneSums && output && secondPlaneColumnSums;
+  }
+};
 }  // namespace
 
 bool Xtc::load() {
@@ -273,11 +319,116 @@ bool Xtc::generateCoverBmp() const {
 std::string Xtc::getThumbBmpPath() const { return cachePath + "/thumb_[HEIGHT].bmp"; }
 std::string Xtc::getThumbBmpPath(int height) const { return cachePath + "/thumb_" + std::to_string(height) + ".bmp"; }
 
-bool Xtc::generateThumbBmp(int height) const {
-  // Already generated
-  if (Storage.exists(getThumbBmpPath(height).c_str())) {
-    return true;
+bool Xtc::generateXthThumbBmpStreaming(const uint16_t sourceWidth, const uint16_t sourceHeight,
+                                       const uint16_t thumbWidth, const uint16_t thumbHeight,
+                                       const uint32_t inverseScaleFp) const {
+  xtc_thumb::WorkspaceLayout layout;
+  if (!xtc_thumb::makeWorkspaceLayout(sourceWidth, sourceHeight, thumbWidth, thumbHeight, inverseScaleFp, layout)) {
+    LOG_DBG("XTC", "Skipping XTCH thumbnail outside bounded workspace (%ux%u -> %ux%u)", sourceWidth,
+            sourceHeight, thumbWidth, thumbHeight);
+    return false;
   }
+
+  const size_t freeBytes = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+  const size_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+  if (!xtc_thumb::canAllocateWorkspace(layout, freeBytes, largestBlock)) {
+    LOG_DBG("XTC", "Deferring XTCH thumbnail: workspace=%lu free=%lu largest=%lu",
+            static_cast<unsigned long>(layout.totalBytes), static_cast<unsigned long>(freeBytes),
+            static_cast<unsigned long>(largestBlock));
+    return false;
+  }
+
+  XtcThumbnailBuffers buffers;
+  if (!buffers.allocate(layout)) {
+    LOG_DBG("XTC", "Could not allocate bounded XTCH thumbnail workspace (%lu bytes)",
+            static_cast<unsigned long>(layout.totalBytes));
+    return false;
+  }
+  xtc_thumb::TwoPlaneReducer reducer(sourceWidth, sourceHeight, thumbWidth, thumbHeight, inverseScaleFp, layout,
+                                     buffers.xAxis, buffers.yAxis, buffers.firstPlaneSums, buffers.output,
+                                     buffers.secondPlaneColumnSums);
+  if (!reducer.initialize()) return false;
+
+  const size_t planeBytes = layout.planeBytes;
+  uint8_t chunksSinceYield = 0;
+  const auto firstPlaneResult = loadPageStreaming(
+      0,
+      [&reducer, planeBytes, &chunksSinceYield](const uint8_t* data, const size_t size, const size_t offset) {
+        if (offset >= planeBytes || !reducer.healthy()) return;
+        const size_t count = std::min(size, planeBytes - offset);
+        if (!reducer.addFirstPlane(data, count, offset)) return;
+        yieldDuringThumbnail(chunksSinceYield);
+      },
+      xtc_thumb::kStreamingChunkBytes);
+  if (firstPlaneResult != xtc::XtcError::OK || !reducer.healthy()) {
+    LOG_ERR("XTC", "Could not stream first XTCH thumbnail plane");
+    return false;
+  }
+
+  chunksSinceYield = 0;
+  const auto secondPlaneResult = loadPageStreaming(
+      0,
+      [&reducer, planeBytes, &chunksSinceYield](const uint8_t* data, const size_t size, const size_t offset) {
+        const size_t end = offset + size;
+        if (end <= planeBytes || offset >= planeBytes * 2u || !reducer.healthy()) return;
+        const size_t begin = std::max(offset, planeBytes);
+        const size_t clippedEnd = std::min(end, planeBytes * 2u);
+        if (!reducer.addSecondPlane(data + (begin - offset), clippedEnd - begin, begin - planeBytes)) return;
+        yieldDuringThumbnail(chunksSinceYield);
+      },
+      xtc_thumb::kStreamingChunkBytes);
+  if (secondPlaneResult != xtc::XtcError::OK || !reducer.finishSecondPlane()) {
+    LOG_ERR("XTC", "Could not stream second XTCH thumbnail plane");
+    return false;
+  }
+
+  const std::string outputPath = getThumbBmpPath(thumbHeight);
+  const std::string temporaryPath = outputPath + ".tmp";
+  if (Storage.exists(temporaryPath.c_str())) Storage.remove(temporaryPath.c_str());
+  HalFile thumbnail;
+  if (!Storage.openFileForWrite("XTC", temporaryPath, thumbnail)) {
+    LOG_ERR("XTC", "Could not create temporary XTCH thumbnail");
+    return false;
+  }
+
+  BmpHeader header;
+  createBmpHeader(&header, thumbWidth, thumbHeight, BmpRowOrder::TopDown);
+  bool written = thumbnail.write(reinterpret_cast<const uint8_t*>(&header), sizeof(header)) == sizeof(header);
+  for (uint16_t row = 0; written && row < thumbHeight; ++row) {
+    const uint8_t* rowData = reducer.output() + static_cast<size_t>(row) * reducer.rowBytes();
+    written = thumbnail.write(rowData, reducer.rowBytes()) == reducer.rowBytes();
+    yieldDuringThumbnail(chunksSinceYield);
+  }
+  thumbnail.flush();
+  written = thumbnail.close() && written;
+  if (!written || !isCompleteThumbnail(temporaryPath, thumbWidth, thumbHeight)) {
+    Storage.remove(temporaryPath.c_str());
+    LOG_ERR("XTC", "Incomplete XTCH thumbnail; previous cache retained");
+    return false;
+  }
+
+  if (Storage.exists(outputPath.c_str())) {
+    if (isCompleteThumbnail(outputPath, thumbWidth, thumbHeight)) {
+      Storage.remove(temporaryPath.c_str());
+      return true;
+    }
+    if (!Storage.remove(outputPath.c_str())) {
+      Storage.remove(temporaryPath.c_str());
+      LOG_ERR("XTC", "Could not replace invalid XTCH thumbnail; previous cache retained");
+      return false;
+    }
+  }
+  if (!Storage.rename(temporaryPath.c_str(), outputPath.c_str())) {
+    Storage.remove(temporaryPath.c_str());
+    LOG_ERR("XTC", "Could not commit XTCH thumbnail; previous cache retained");
+    return false;
+  }
+  return isCompleteThumbnail(outputPath, thumbWidth, thumbHeight);
+}
+bool Xtc::generateThumbBmp(int height) const {
+  // A complete cached image remains reusable; a short/incomplete file is not a cache hit.
+  const std::string cachedThumbPath = getThumbBmpPath(height);
+  if (isCompleteThumbnail(cachedThumbPath)) return true;
 
   if (!loaded || !parser) {
     LOG_ERR("XTC", "Cannot generate thumb BMP, file not loaded");
@@ -339,9 +490,19 @@ bool Xtc::generateThumbBmp(int height) const {
 
   uint16_t thumbWidth = static_cast<uint16_t>(pageInfo.width * scale);
   uint16_t thumbHeight = static_cast<uint16_t>(pageInfo.height * scale);
+  if (thumbWidth == 0 || thumbHeight == 0) return false;
 
   LOG_DBG("XTC", "Generating thumb BMP: %dx%d -> %dx%d (scale: %.3f)", pageInfo.width, pageInfo.height, thumbWidth,
           thumbHeight, scale);
+
+  // XTCH uses two column-major bit planes. Stream each plane separately and
+  // retain only downsampled plane-1 sums plus the output bitmap. This restores
+  // missing covers without a contiguous 96 KB page allocation. The 1-bit path
+  // below remains unchanged.
+  if (bitDepth == 2) {
+    const uint32_t inverseScaleFp = static_cast<uint32_t>(65536.0f / scale);
+    return generateXthThumbBmpStreaming(pageInfo.width, pageInfo.height, thumbWidth, thumbHeight, inverseScaleFp);
+  }
 
   // Allocate buffer for page data. Keep the multiplication bounded before it
   // happens: XTC dimensions are 16-bit and a malformed file could otherwise

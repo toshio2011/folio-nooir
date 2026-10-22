@@ -444,7 +444,15 @@ void MappedInputManager::pollBle() {
     uint8_t legacyKind = 0xFF;
     uint8_t legacyValue = 0;
     if (!bleinput::encodeKey(event, legacyKind, legacyValue)) {
-      if (bleCaptureMode) bleCaptureSawUnsupportedInput = true;
+      if (bleCaptureMode) {
+        if (!bleCaptureSawUnsupportedInput) {
+          LOG_INF("BLEMAP", "unsupported learn event page=%02X usage=%02X special=%u normalized=%u phase=%u",
+                  static_cast<unsigned>(event.usagePage), static_cast<unsigned>(event.keycode),
+                  static_cast<unsigned>(event.special), event.specialNormalized ? 1U : 0U,
+                  static_cast<unsigned>(event.phase));
+        }
+        bleCaptureSawUnsupportedInput = true;
+      }
 #if FREEINK_CAP_BLE_HID_HOST
       bleinput::recordDecodedKey(event, legacyKind, legacyValue, 0xFF, bleinput::InputDisposition::Unusable, false);
 #endif
@@ -465,6 +473,12 @@ void MappedInputManager::pollBle() {
       // physical click into a multi-event mapping and make the next release
       // look like a second action.
       if (!hasSafeLearnIdentity) {
+        if (!bleCaptureSawUnsupportedInput) {
+          LOG_INF("BLEMAP", "unsupported learn identity page=%02X usage=%02X special=%u normalized=%u phase=%u",
+                  static_cast<unsigned>(event.usagePage), static_cast<unsigned>(event.keycode),
+                  static_cast<unsigned>(event.special), event.specialNormalized ? 1U : 0U,
+                  static_cast<unsigned>(event.phase));
+        }
         bleCaptureSawUnsupportedInput = true;
 #if FREEINK_CAP_BLE_HID_HOST
         bleinput::recordDecodedKey(event, legacyKind, legacyValue, 0xFC,

@@ -6,6 +6,7 @@
 
 #include <mutex>
 #include <string>
+#include <cstring>
 
 #include "PersistableStorePolicy.h"
 
@@ -42,6 +43,8 @@ class PersistableStoreBase {
   void requestResave() { resaveRequested = true; }
 
   bool resaveRequested = false;
+  mutable uint64_t lastSettingsFingerprint = 0;
+  mutable bool hasLastSettingsFingerprint = false;
 
  public:
   // Public so non-store JSON files (e.g. per-book bookmarks) can reuse them
@@ -67,6 +70,7 @@ class PersistableStoreBase {
   // a version-specific complete field set.  Empty/profile/wrong-root JSON and
   // trivial recognized-key fragments must not replace a useful candidate.
   static bool isSemanticallyValidSettingsDocument(JsonVariantConst doc);
+  static uint64_t fingerprintDoc(const JsonDocument& doc, size_t* serializedBytes = nullptr);
 
  protected:
   /**
@@ -115,9 +119,32 @@ class PersistableStore : public PersistableStoreBase {
 
   bool saveToFile() const {
     std::lock_guard<std::mutex> lock(storeMutex);
+    const uint32_t startedUs = micros();
     JsonDocument doc;
     static_cast<const T*>(this)->toJson(doc);
-    return writeDocToFile(T::getFilePath(), doc);
+    const bool settingsStore = std::strcmp(T::getFilePath(), "/.crosspoint/settings.json") == 0;
+    size_t serializedBytes = 0;
+    const uint64_t fingerprint = fingerprintDoc(doc, &serializedBytes);
+    if (settingsStore && hasLastSettingsFingerprint && fingerprint == lastSettingsFingerprint) {
+      LOG_INF("PERSIST", "save_result=unchanged elapsed_us=%lu bytes=%lu",
+              static_cast<unsigned long>(micros() - startedUs), static_cast<unsigned long>(serializedBytes));
+      return true;
+    }
+
+    const bool saved = writeDocToFile(T::getFilePath(), doc);
+    if (settingsStore) {
+      if (saved) {
+        lastSettingsFingerprint = fingerprint;
+        hasLastSettingsFingerprint = true;
+      } else {
+        // An uncertain commit must be revalidated by the full atomic path.
+        hasLastSettingsFingerprint = false;
+      }
+      LOG_INF("PERSIST", "save_result=%s elapsed_us=%lu bytes=%lu",
+              saved ? "written" : "failed", static_cast<unsigned long>(micros() - startedUs),
+              static_cast<unsigned long>(serializedBytes));
+    }
+    return saved;
   }
 
   bool loadFromFile(persistable::SettingsLoadReport* settingsReport = nullptr) {
@@ -128,6 +155,7 @@ class PersistableStore : public PersistableStoreBase {
     {
       std::lock_guard<std::mutex> lock(storeMutex);
       resaveRequested = false;
+      hasLastSettingsFingerprint = false;
       JsonDocument doc;
       if (!readDocFromFile(T::getFilePath(), doc, report)) {
         return false;
@@ -136,6 +164,16 @@ class PersistableStore : public PersistableStoreBase {
       // Read the flag under the lock that guards the fromJson() that set it.
       doResave = resaveRequested;
       resaveRequested = false;
+      const bool settingsStore = std::strcmp(T::getFilePath(), "/.crosspoint/settings.json") == 0;
+      const bool trustedSettingsSource = !settingsStore ||
+          (report->selected == 0 && report->candidates[0] == persistable::SettingsCandidateResult::Valid &&
+           !report->hasReadError() && !report->hasIncompatibleCandidate());
+      if (ok && !doResave && trustedSettingsSource) {
+        JsonDocument canonical;
+        static_cast<T*>(this)->toJson(canonical);
+        lastSettingsFingerprint = fingerprintDoc(canonical);
+        hasLastSettingsFingerprint = true;
+      }
     }
     // Deliberately outside the lock: saveToFile() takes storeMutex itself.
     if (ok && doResave) {

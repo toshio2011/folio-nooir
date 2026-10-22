@@ -59,6 +59,10 @@ class RecentBooksActivity final : public Activity {
   ThumbnailMissMemo normalThumbnailMisses;
   CarouselLayout liteCarouselLayoutCache{};
   bool liteCarouselLayoutCacheValid = false;
+  int liteCarouselLayoutCacheWidth = -1;
+  int liteCarouselLayoutCacheHeight = -1;
+  int liteCarouselLayoutCacheStatsTop = -1;
+  int liteCarouselLayoutCacheLineHeight = -1;
   static constexpr size_t CAROUSEL_SOURCE_CACHE_SIZE = 6;
   struct CarouselSourceCacheEntry {
     bool valid = false;
@@ -201,6 +205,11 @@ class RecentBooksActivity final : public Activity {
   size_t lastRenderedSelectorIndex = SIZE_MAX;
   size_t lastRenderedPageStart = SIZE_MAX;
   uint8_t lastRenderedTab = 0;
+  uint8_t lastRenderedLiteLayout = 0xFF;
+  uint8_t lastRenderedLiteSpineLayout = 0xFF;
+  size_t lastRenderedLiteSpinePageStart = SIZE_MAX;
+  bool spineShelfVisualsDirty = true;
+  bool liteSelectedDetailsDirty = true;
   SpineShelfPlanner::RenderedFocusGeometry renderedSpineFocus{};
   // The selector can point to a different book after Recent reorders entries
   // when a reader closes. Track the actual featured book instead of relying on
@@ -250,6 +259,8 @@ class RecentBooksActivity final : public Activity {
   void markStatsReturnFrameReady();
   void invalidateCarouselHqProbes();
   void invalidateCarouselHqProbesLocked();
+  Bitmap* getSpineThumbnail(const char* sourcePath);
+  static Bitmap* spineThumbnailResolver(void* context, const char* sourcePath);
   void invalidateCarouselSourceCache();
   void invalidateCarouselSourceCacheLocked();
   void invalidateCarouselSource(const std::string& path);

@@ -1,7 +1,10 @@
 #include "KeyboardEntryActivity.h"
 
+#include "KeyboardNavigation.h"
+
 #include <HalGPIO.h>
 #include <I18n.h>
+#include <Logging.h>
 
 #include <algorithm>
 #include <cstring>
@@ -139,6 +142,17 @@ void KeyboardEntryActivity::onEnter() {
   passwordVisible = false;
   selRow = 0;
   selCol = 0;
+  leftRepeat.reset(mappedInput.isPressed(MappedInputManager::Button::Left));
+  rightRepeat.reset(mappedInput.isPressed(MappedInputManager::Button::Right));
+  confirmHeld = false;
+  confirmLongHandled = false;
+  confirmPressedAt = 0;
+  upHeld = false;
+  upLongHandled = false;
+  upPressedAt = 0;
+  downHeld = false;
+  downLongHandled = false;
+  rightPressedAt = 0;
   delPressCount = 0;
   hintVisible = false;
   hintShowTime = 0;
@@ -198,23 +212,42 @@ void KeyboardEntryActivity::clampSelection() {
 void KeyboardEntryActivity::moveSelectionRow(const int delta) {
   const fui::KeyboardLayout& layout = currentLayout();
   if (layout.rowCount == 0) return;
-  const int oldCols = selRow < layout.rowCount ? layout.rows[selRow].count : 1;
-  selRow = (selRow + delta + layout.rowCount) % layout.rowCount;
-  const int newCols = layout.rows[selRow].count;
-  // Proportional column mapping keeps vertical travel intuitive between rows
-  // of different key counts (e.g. a 10-key letter row over a 6-key bottom row).
-  if (oldCols > 0 && newCols > 0 && oldCols != newCols) {
-    selCol = selCol * newCols / oldCols;
-  }
   clampSelection();
+  const int previousRow = selRow;
+  const int previousColumn = selCol;
+  const fui::KeyboardKey* previousKey = selectedKey();
+  const int previousValue = previousKey ? previousKey->value : -1;
+  const int nextRow = keyboard_navigation::moveRow(selRow, layout.rowCount, delta);
+  if (nextRow == selRow) return;
+  const int gap = UITheme::getInstance().getMetrics().keyboardKeySpacing;
+  const int width = keyboardRect().width;
+  selCol = keyboard_navigation::nearestColumnByVisualCenter(
+      layout.rows[selRow], selCol, layout.rows[nextRow], width, gap);
+  selRow = nextRow;
+  clampSelection();
+  const fui::KeyboardKey* selected = selectedKey();
+  LOG_INF("KEYNAV", "move axis=vertical phase=release direction=%d from=%d,%d key=%d to=%d,%d key=%d",
+          delta, previousRow, previousColumn, previousValue, selRow, selCol, selected ? selected->value : -1);
 }
 
-void KeyboardEntryActivity::moveSelectionCol(const int delta) {
+bool KeyboardEntryActivity::moveSelectionCol(const int delta) {
   const fui::KeyboardLayout& layout = currentLayout();
-  if (selRow < 0 || selRow >= layout.rowCount) return;
+  if (selRow < 0 || selRow >= layout.rowCount) return false;
   const int cols = layout.rows[selRow].count;
-  if (cols <= 0) return;
-  selCol = (selCol + delta + cols) % cols;
+  if (cols <= 0) return false;
+  const int nextColumn = keyboard_navigation::moveColumn(selCol, cols, delta);
+  if (nextColumn == selCol) return false;
+  const int previousColumn = selCol;
+  const fui::KeyboardKey* previousKey = selectedKey();
+  const int previousValue = previousKey ? previousKey->value : -1;
+  selCol = nextColumn;
+  const fui::KeyboardKey* selected = selectedKey();
+  const MappedInputManager::Button button =
+      delta < 0 ? MappedInputManager::Button::Left : MappedInputManager::Button::Right;
+  LOG_INF("KEYNAV", "move axis=horizontal phase=%s direction=%d row=%d from=%d key=%d to=%d key=%d",
+          mappedInput.wasPressed(button) ? "press" : "repeat", delta, selRow, previousColumn, previousValue,
+          selCol, selected ? selected->value : -1);
+  return true;
 }
 
 bool KeyboardEntryActivity::syncSelectionToValue(const int16_t value) {
@@ -547,10 +580,13 @@ void KeyboardEntryActivity::loop() {
   if (!cursorMode && mappedInput.wasPressed(MappedInputManager::Button::Up)) {
     upHeld = true;
     upLongHandled = false;
+    upPressedAt = millis();
   }
 
   if (upHeld && !upLongHandled && mappedInput.isPressed(MappedInputManager::Button::Up) &&
-      mappedInput.getHeldTime() > LONG_PRESS_MS) {
+      millis() - upPressedAt > LONG_PRESS_MS) {
+    LOG_INF("KEYNAV", "long_press button=Up held_ms=%lu row=%d col=%d",
+            static_cast<unsigned long>(millis() - upPressedAt), selRow, selCol);
     cursorMode = true;
     upLongHandled = true;
     hintVisible = true;
@@ -565,6 +601,7 @@ void KeyboardEntryActivity::loop() {
     }
     upHeld = false;
     upLongHandled = false;
+    upPressedAt = 0;
   }
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Down)) {
@@ -590,11 +627,11 @@ void KeyboardEntryActivity::loop() {
     downLongHandled = false;
   }
 
-  buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Left}, [this] {
-    if (cursorMode) return;
-    moveSelectionCol(-1);
-    requestUpdate();
-  });
+  const uint32_t now = millis();
+  const bool leftStep = leftRepeat.update(mappedInput.wasPressed(MappedInputManager::Button::Left),
+                                          mappedInput.isPressed(MappedInputManager::Button::Left),
+                                          mappedInput.wasReleased(MappedInputManager::Button::Left), now);
+  if (leftStep && !cursorMode && moveSelectionCol(-1)) requestUpdate();
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
     if (cursorMode) {
@@ -610,6 +647,7 @@ void KeyboardEntryActivity::loop() {
   }
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Right)) {
+    rightPressedAt = millis();
     if (cursorMode && inputType == InputType::Password && !togglePos) {
       rightHeld = true;
       rightLongHandled = false;
@@ -617,15 +655,16 @@ void KeyboardEntryActivity::loop() {
     }
   }
 
-  buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Right}, [this] {
-    if (cursorMode) return;
-    moveSelectionCol(1);
-    requestUpdate();
-  });
+  const bool rightStep = rightRepeat.update(mappedInput.wasPressed(MappedInputManager::Button::Right),
+                                            mappedInput.isPressed(MappedInputManager::Button::Right),
+                                            mappedInput.wasReleased(MappedInputManager::Button::Right), now);
+  if (rightStep && !cursorMode && moveSelectionCol(1)) requestUpdate();
 
   if (rightHeld && !rightLongHandled && mappedInput.isPressed(MappedInputManager::Button::Right) &&
-      mappedInput.getHeldTime() > LONG_PRESS_MS) {
+      millis() - rightPressedAt > LONG_PRESS_MS) {
     if (cursorMode && inputType == InputType::Password && !togglePos) {
+      LOG_INF("KEYNAV", "long_press button=Right held_ms=%lu mode=password_cursor",
+              static_cast<unsigned long>(millis() - rightPressedAt));
       savedCursorPos = rightStartCursorPos;
       togglePos = true;
       rightLongHandled = true;
@@ -642,35 +681,45 @@ void KeyboardEntryActivity::loop() {
       cursorPos = utf8Next(text, cursorPos);
       requestUpdate();
     }
-    if (cursorMode) return;
     rightHeld = false;
     rightLongHandled = false;
+    rightPressedAt = 0;
+    if (cursorMode) return;
   }
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
     confirmHeld = true;
     confirmLongHandled = false;
+    confirmPressedAt = millis();
   }
 
   const fui::KeyboardKey* selKey = selectedKey();
   const bool selectedDel = selKey && selKey->value == fui::QWERTY_KEY_BACKSPACE;
 
   if (confirmHeld && !confirmLongHandled && mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
-      mappedInput.getHeldTime() > DEL_LONG_PRESS_MS && selectedDel) {
+      millis() - confirmPressedAt > DEL_LONG_PRESS_MS && selectedDel) {
+    LOG_INF("KEYNAV", "long_press button=Confirm held_ms=%lu row=%d col=%d key=%d",
+            static_cast<unsigned long>(millis() - confirmPressedAt), selRow, selCol, selKey->value);
     clearAllOrAltOnSelected();
     confirmLongHandled = true;
     requestUpdate();
   }
 
   if (confirmHeld && !confirmLongHandled && mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
-      mappedInput.getHeldTime() > LONG_PRESS_MS) {
+      millis() - confirmPressedAt > LONG_PRESS_MS) {
     if (!selectedDel && clearAllOrAltOnSelected()) {
+      LOG_INF("KEYNAV", "long_press button=Confirm held_ms=%lu row=%d col=%d key=%d",
+              static_cast<unsigned long>(millis() - confirmPressedAt), selRow, selCol, selKey ? selKey->value : -1);
       requestUpdate();
       confirmLongHandled = true;
     }
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    LOG_INF("KEYNAV", "confirm_release row=%d col=%d key=%d held_ms=%lu long_handled=%u cursor=%u",
+            selRow, selCol, selKey ? selKey->value : -1,
+            confirmHeld ? static_cast<unsigned long>(millis() - confirmPressedAt) : 0UL,
+            confirmLongHandled ? 1U : 0U, cursorMode ? 1U : 0U);
     if (confirmHeld && !confirmLongHandled && !cursorMode) {
       if (selKey && activateValue(selKey->value, false)) {
         requestUpdate();
@@ -681,6 +730,7 @@ void KeyboardEntryActivity::loop() {
     }
     confirmHeld = false;
     confirmLongHandled = false;
+    confirmPressedAt = 0;
   }
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {

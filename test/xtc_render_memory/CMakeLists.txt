@@ -1,0 +1,3 @@
+add_executable(XtcRenderMemoryTest XtcRenderMemoryTest.cpp)
+target_link_libraries(XtcRenderMemoryTest PRIVATE crosspoint_test_common GTest::gtest_main)
+gtest_discover_tests(XtcRenderMemoryTest)

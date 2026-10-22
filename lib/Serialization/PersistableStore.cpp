@@ -95,6 +95,29 @@ const char* settingsFileStateName(const SettingsFileState state) {
 
 }  // namespace
 
+uint64_t PersistableStoreBase::fingerprintDoc(const JsonDocument& doc, size_t* serializedBytes) {
+  class JsonFingerprintWriter {
+   public:
+    size_t write(const uint8_t byte) {
+      hash ^= byte;
+      hash *= 1099511628211ULL;
+      ++length;
+      return 1;
+    }
+    size_t write(const uint8_t* data, const size_t size) {
+      for (size_t index = 0; index < size; ++index) write(data[index]);
+      return size;
+    }
+    uint64_t hash = 1469598103934665603ULL;
+    size_t length = 0;
+  } writer;
+  serializeJson(doc, writer);
+  if (serializedBytes != nullptr) *serializedBytes = writer.length;
+  writer.hash ^= writer.length;
+  writer.hash *= 1099511628211ULL;
+  return writer.hash;
+}
+
 bool PersistableStoreBase::isSemanticallyValidSettingsDocument(JsonVariantConst doc) {
   if (!doc.is<JsonObjectConst>()) return false;
 
@@ -311,6 +334,7 @@ bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& 
       }
       return false;
     }
+    LOG_INF("PERSIST", "settings_save_phase=primary_validation_passed");
   }
 
   // The new document is complete; the backup is no longer needed for this

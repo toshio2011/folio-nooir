@@ -4,9 +4,11 @@
 
 struct CarouselLayout {
   Rect titleRegion;
+  Rect authorRegion;
   Rect carouselRegion;
   Rect synopsisRegion;
   Rect statusRegion;
+  Rect paginationRegion;
   int centerHeight = 432;
 };
 
