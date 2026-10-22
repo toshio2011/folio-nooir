@@ -54,6 +54,11 @@ class PersistableStoreBase {
   // Serializes doc and writes it to path (ensures /.crosspoint exists). Logs on failure.
   static bool writeDocToFile(const char* path, const JsonDocument& doc);
 
+  // Recent history recovered from its backup must keep that validated backup
+  // while replacing a damaged primary. The temporary candidate is preserved
+  // beside it until a later successful history save.
+  static bool writeRecoveredRecentBooksDocToFile(const char* path, const JsonDocument& doc);
+
   // Settings saves reached through the live settings singleton can use the
   // result of its last real load to avoid rereading primary/backup/temp on
   // every changed save. Unknown or recovery states retain the full checked

@@ -69,12 +69,13 @@ std::string escapeHtmlText(const std::string& text) {
 
 template <typename Visitor>
 bool visitKnownBooks(Visitor&& visitor) {
-  for (const auto& recent : RECENT_BOOKS.getBooks()) {
+  const auto recentBooks = RECENT_BOOKS.getBooks();
+  for (const auto& recent : recentBooks) {
     if (FsHelpers::hasEpubExtension(recent.path) && !visitor(recent.path, recent.title)) return false;
   }
   for (const auto& state : BOOK_STATES.getBooks()) {
     if (!FsHelpers::hasEpubExtension(state.path)) continue;
-    const bool alreadyRecent = std::any_of(RECENT_BOOKS.getBooks().begin(), RECENT_BOOKS.getBooks().end(),
+    const bool alreadyRecent = std::any_of(recentBooks.begin(), recentBooks.end(),
                                            [&](const RecentBook& recent) { return recent.path == state.path; });
     if (!alreadyRecent && !visitor(state.path, std::string{})) return false;
   }

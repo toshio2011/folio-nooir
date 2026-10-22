@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <iterator>
+#include <mutex>
+#include <utility>
 
 #include "HalClock.h"
 #include "BookMetadataOverridesStore.h"
@@ -22,6 +24,17 @@ void applyMetadataOverride(RecentBook& book) {
   book.synopsis = overrideData->synopsis;
 }
 }  // namespace
+
+const char* recentBooksLoadResultName(const RecentBooksLoadResult result) {
+  switch (result) {
+    case RecentBooksLoadResult::NotLoaded: return "not_loaded";
+    case RecentBooksLoadResult::Valid: return "valid";
+    case RecentBooksLoadResult::Recovered: return "recovered";
+    case RecentBooksLoadResult::MissingFirstBoot: return "missing_first_boot";
+    case RecentBooksLoadResult::Uncertain: return "uncertain";
+  }
+  return "unknown";
+}
 
 void RecentBooksStore::toJson(JsonDocument& doc) const {
   JsonArray arr = doc["books"].to<JsonArray>();
@@ -44,46 +57,195 @@ void RecentBooksStore::toJson(JsonDocument& doc) const {
   }
 }
 
-bool RecentBooksStore::fromJson(JsonVariantConst doc) {
-  // Tolerate a missing/invalid 'books' key (treat as empty list); only a
-  // JSON parse error is fatal. A null JsonArray iterates zero times.
-  recentBooks.clear();
+bool RecentBooksStore::parseJsonBooks(JsonVariantConst doc, std::vector<RecentBook>& parsedBooks) {
+  // A syntactically valid JSON object without the Recent schema is not an
+  // intentional empty history. Validate into a replacement vector so a bad
+  // entry or allocation/parser failure cannot partially clear live records.
+  if (!doc.is<JsonObjectConst>() || !doc["books"].is<JsonArrayConst>()) return false;
   JsonArrayConst arr = doc["books"].as<JsonArrayConst>();
-  recentBooks.reserve(arr.size());
-  for (JsonObjectConst obj : arr) {
+  parsedBooks.reserve(arr.size());
+  for (JsonVariantConst item : arr) {
+    if (!item.is<JsonObjectConst>()) return false;
+    JsonObjectConst obj = item.as<JsonObjectConst>();
+    const char* path = obj["path"].as<const char*>();
+    if (path == nullptr || path[0] == '\0') return false;
     RecentBook book;
-    book.path = obj["path"] | "";
+    book.path = path;
     book.title = obj["title"] | "";
     book.author = obj["author"] | "";
     book.coverBmpPath = obj["coverBmpPath"] | "";
     book.synopsis = obj["synopsis"] | "";
     book.series = obj["series"] | "";
     book.xtcMetadataChecked = obj["xtcMetadataChecked"] | false;
-    book.progressPercent = obj["progressPercent"] | 0;
-    book.readingSeconds = obj["readingSeconds"] | 0;
-    book.lastSessionSeconds = obj["lastSessionSeconds"] | 0;
-    book.dailyReadingSeconds = obj["dailyReadingSeconds"] | 0;
-    book.dailyReadingDateKey = obj["dailyReadingDateKey"] | 0;
-    book.readingSessions = obj["readingSessions"] | 0;
-    book.pagesTurned = obj["pagesTurned"] | 0;
+    book.progressPercent = obj["progressPercent"] | uint8_t{0};
+    book.readingSeconds = obj["readingSeconds"] | uint32_t{0};
+    book.lastSessionSeconds = obj["lastSessionSeconds"] | uint32_t{0};
+    book.dailyReadingSeconds = obj["dailyReadingSeconds"] | uint32_t{0};
+    book.dailyReadingDateKey = obj["dailyReadingDateKey"] | uint32_t{0};
+    book.readingSessions = obj["readingSessions"] | uint16_t{0};
+    book.pagesTurned = obj["pagesTurned"] | uint32_t{0};
     applyMetadataOverride(book);
-    recentBooks.push_back(book);
+    parsedBooks.push_back(std::move(book));
   }
 
-  LOG_DBG("RBS", "Recent books loaded from file (%d entries)", getCount());
+  return true;
+}
+
+bool RecentBooksStore::fromJson(JsonVariantConst doc) {
+  std::vector<RecentBook> parsedBooks;
+  if (!parseJsonBooks(doc, parsedBooks)) return false;
+  recentBooks.swap(parsedBooks);
+  LOG_DBG("RBS", "Recent books parsed (%u entries)", static_cast<unsigned>(recentBooks.size()));
+  return true;
+}
+
+bool RecentBooksStore::loadFromFile() {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  static constexpr size_t kMaxRecentJsonBytes = 65536;
+  const std::string primaryPath = getFilePath();
+  const std::string candidates[] = {primaryPath, primaryPath + ".bak", primaryPath + ".tmp"};
+  static constexpr const char* kCandidateNames[] = {"primary", "backup", "temporary"};
+  bool sawMalformedCandidate = false;
+  bool sawUncertainCandidate = false;
+  bool sawPresentCandidate = false;
+
+  constexpr size_t kCandidateCount = sizeof(candidates) / sizeof(candidates[0]);
+  for (size_t i = 0; i < kCandidateCount; ++i) {
+    JsonDocument document;
+    HalStorageReadStatus readStatus;
+    DeserializationError parseError;
+    {
+      // Scope the temporary file string so it is released before copying the
+      // parsed records into the bounded in-memory vector.
+      String json;
+      readStatus = Storage.readFileChecked(candidates[i].c_str(), json, kMaxRecentJsonBytes);
+      if (readStatus == HalStorageReadStatus::NotFound || readStatus == HalStorageReadStatus::ParentMissing) {
+        LOG_INF("RBS", "load_candidate=%s result=missing", kCandidateNames[i]);
+        continue;
+      }
+      if (readStatus != HalStorageReadStatus::Success) {
+        sawUncertainCandidate = true;
+        LOG_ERR("RBS", "load_candidate=%s result=read_error status=%u", kCandidateNames[i],
+                static_cast<unsigned>(readStatus));
+        continue;
+      }
+
+      sawPresentCandidate = true;
+      parseError = deserializeJson(document, json);
+    }
+
+    if (parseError) {
+      sawMalformedCandidate = true;
+      LOG_ERR("RBS", "load_candidate=%s result=parse_error reason=%s", kCandidateNames[i], parseError.c_str());
+      continue;
+    }
+    std::vector<RecentBook> parsedBooks;
+    if (!parseJsonBooks(document.as<JsonVariantConst>(), parsedBooks)) {
+      sawMalformedCandidate = true;
+      LOG_ERR("RBS", "load_candidate=%s result=schema_error", kCandidateNames[i]);
+      continue;
+    }
+    // Release the parsed JSON DOM before swapping in the copied entries. This
+    // keeps the short-lived load peak lower on the smaller X3 heap.
+    document.clear();
+
+    hasLoadedValidHistory = true;
+    if (sawUncertainCandidate || i == 2) {
+      // A valid fallback is still useful to render, but a failed read of an
+      // earlier candidate means it could contain newer data. Keep every file
+      // in place and refuse automatic writes until a complete read succeeds.
+      // A temporary-only source is also write-blocked: the shared atomic
+      // writer owns `.tmp` and can replace it before a new primary commits.
+      loadResult.store(RecentBooksLoadResult::Uncertain);
+      if (recentBooks.empty()) {
+        recentBooks.swap(parsedBooks);
+      } else {
+        LOG_ERR("RBS", "load_fallback_kept_memory count=%u source=%s",
+                static_cast<unsigned>(recentBooks.size()), kCandidateNames[i]);
+      }
+      LOG_ERR("RBS", "load_result=uncertain_fallback count=%u source=%s writes=blocked reason=%s",
+              static_cast<unsigned>(recentBooks.size()), kCandidateNames[i],
+              i == 2 ? "temporary_only_source" : "earlier_candidate_read_error");
+    } else {
+      recentBooks.swap(parsedBooks);
+      loadResult.store(i == 0 ? RecentBooksLoadResult::Valid : RecentBooksLoadResult::Recovered);
+      LOG_INF("RBS", "load_result=%s count=%u source=%s prior_candidate_error=%u",
+              recentBooksLoadResultName(loadResult.load()), static_cast<unsigned>(recentBooks.size()),
+              kCandidateNames[i], sawMalformedCandidate ? 1U : 0U);
+    }
+    return true;
+  }
+
+  // A confirmed first-boot absence is writable. Missing files after a valid
+  // history was loaded are not: this can happen after a card replacement or
+  // unexpected filesystem state, and must not turn the next book open into a
+  // destructive empty-history save.
+  if (!sawPresentCandidate && !sawMalformedCandidate && !sawUncertainCandidate && Storage.ready() &&
+      !hasLoadedValidHistory && recentBooks.empty()) {
+    loadResult.store(RecentBooksLoadResult::MissingFirstBoot);
+    LOG_INF("RBS", "load_result=missing_first_boot count=0 writes=allowed");
+    return false;
+  }
+
+  loadResult.store(RecentBooksLoadResult::Uncertain);
+  LOG_ERR("RBS", "load_result=uncertain count=%u writes=blocked malformed=%u io_uncertain=%u storage_ready=%u",
+          static_cast<unsigned>(recentBooks.size()), sawMalformedCandidate ? 1U : 0U,
+          sawUncertainCandidate ? 1U : 0U, Storage.ready() ? 1U : 0U);
+  return false;
+}
+
+bool RecentBooksStore::saveToFile() const {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  return saveToFileLocked();
+}
+
+bool RecentBooksStore::saveToFileLocked() const {
+  if (!automaticWritesAllowed()) {
+    LOG_ERR("RBS", "save_blocked load_result=%s", recentBooksLoadResultName(loadResult.load()));
+    return false;
+  }
+  JsonDocument doc;
+  toJson(doc);
+  const bool saved = loadResult.load() == RecentBooksLoadResult::Recovered
+                         ? PersistableStoreBase::writeRecoveredRecentBooksDocToFile(getFilePath(), doc)
+                         : PersistableStoreBase::writeDocToFile(getFilePath(), doc);
+  if (saved) {
+    loadResult.store(RecentBooksLoadResult::Valid);
+    return true;
+  }
+  loadResult.store(RecentBooksLoadResult::Uncertain);
+  LOG_ERR("RBS", "save_result=failed load_result=uncertain writes=blocked");
+  return false;
+}
+
+int RecentBooksStore::getCount() const {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  return static_cast<int>(recentBooks.size());
+}
+
+bool RecentBooksStore::rejectUnsafeMutation(const char* operation) const {
+  if (automaticWritesAllowed()) return false;
+  LOG_ERR("RBS", "mutation_blocked operation=%s load_result=%s", operation,
+          recentBooksLoadResultName(loadResult.load()));
   return true;
 }
 
 void RecentBooksStore::addBook(const std::string& path, const std::string& title, const std::string& author,
                                const std::string& coverBmpPath, const std::string& synopsis,
                                const std::string& series, const bool xtcMetadataChecked) {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  if (rejectUnsafeMutation("add_book")) return;
   // Remove existing entry if present
   auto it =
       std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
   RecentBook entry{path, title, author, coverBmpPath, synopsis.substr(0, 384), series.substr(0, 128)};
   entry.xtcMetadataChecked = FsHelpers::hasXtcExtension(path) && xtcMetadataChecked;
   applyMetadataOverride(entry);
-  if (it != recentBooks.end()) {
+  size_t oldIndex = 0;
+  RecentBook oldEntry;
+  const bool hadOldEntry = it != recentBooks.end();
+  if (hadOldEntry) {
+    oldIndex = static_cast<size_t>(std::distance(recentBooks.begin(), it));
     if (entry.title.empty()) entry.title = it->title;
     if (entry.author.empty()) entry.author = it->author;
     if (entry.coverBmpPath.empty()) entry.coverBmpPath = it->coverBmpPath;
@@ -113,17 +275,26 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
                            it->pagesTurned == entry.pagesTurned &&
                            it->xtcMetadataChecked == entry.xtcMetadataChecked && it->series == entry.series;
     if (unchanged) return;
+    oldEntry = std::move(*it);
     recentBooks.erase(it);
   }
 
   // Add to front
   recentBooks.insert(recentBooks.begin(), std::move(entry));
 
-  saveToFile();
+  if (!saveToFileLocked()) {
+    recentBooks.erase(recentBooks.begin());
+    if (hadOldEntry) {
+      recentBooks.insert(recentBooks.begin() + static_cast<std::ptrdiff_t>(oldIndex), std::move(oldEntry));
+    }
+    LOG_ERR("RBS", "add_book rolled back after persistence failure: %s", path.c_str());
+  }
 }
 
 void RecentBooksStore::recordReading(const std::string& path, uint8_t progress, uint32_t elapsedSeconds,
                                      const uint32_t pagesTurned) {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  if (rejectUnsafeMutation("record_reading")) return;
   auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
                          [&](const RecentBook& book) { return book.path == path; });
   if (it == recentBooks.end()) return;
@@ -131,6 +302,13 @@ void RecentBooksStore::recordReading(const std::string& path, uint8_t progress, 
   // A reader opened and closed without advancing or spending time does not
   // change Recent data, so skip the filesystem write entirely.
   if (elapsedSeconds == 0 && pagesTurned == 0 && it->progressPercent == nextProgress) return;
+  const uint8_t oldProgress = it->progressPercent;
+  const uint32_t oldReadingSeconds = it->readingSeconds;
+  const uint32_t oldLastSessionSeconds = it->lastSessionSeconds;
+  const uint32_t oldDailyReadingSeconds = it->dailyReadingSeconds;
+  const uint32_t oldDailyReadingDateKey = it->dailyReadingDateKey;
+  const uint16_t oldReadingSessions = it->readingSessions;
+  const uint32_t oldPagesTurned = it->pagesTurned;
   it->progressPercent = nextProgress;
   if (elapsedSeconds > 0) {
     const uint32_t room = UINT32_MAX - it->readingSeconds;
@@ -148,32 +326,59 @@ void RecentBooksStore::recordReading(const std::string& path, uint8_t progress, 
     if (it->readingSessions < UINT16_MAX) ++it->readingSessions;
   }
   it->pagesTurned += std::min<uint32_t>(pagesTurned, UINT32_MAX - it->pagesTurned);
-  if (!saveToFile()) LOG_ERR("RBS", "Failed to persist reading statistics");
+  if (!saveToFileLocked()) {
+    it->progressPercent = oldProgress;
+    it->readingSeconds = oldReadingSeconds;
+    it->lastSessionSeconds = oldLastSessionSeconds;
+    it->dailyReadingSeconds = oldDailyReadingSeconds;
+    it->dailyReadingDateKey = oldDailyReadingDateKey;
+    it->readingSessions = oldReadingSessions;
+    it->pagesTurned = oldPagesTurned;
+    LOG_ERR("RBS", "Failed to persist reading statistics; reverted in-memory update");
+  }
 }
 
 void RecentBooksStore::updateBook(const std::string& path, const std::string& title, const std::string& author,
                                   const std::string& coverBmpPath, const std::string& synopsis) {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  if (rejectUnsafeMutation("update_book")) return;
   auto it =
       std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
   if (it != recentBooks.end()) {
     RecentBook& book = *it;
+    const std::string oldTitle = book.title;
+    const std::string oldAuthor = book.author;
+    const std::string oldCoverBmpPath = book.coverBmpPath;
+    const std::string oldSynopsis = book.synopsis;
     book.title = title;
     book.author = author;
     book.coverBmpPath = coverBmpPath;
     if (!synopsis.empty()) book.synopsis = synopsis.substr(0, 384);
     applyMetadataOverride(book);
-    saveToFile();
+    if (!saveToFileLocked()) {
+      book.title = oldTitle;
+      book.author = oldAuthor;
+      book.coverBmpPath = oldCoverBmpPath;
+      book.synopsis = oldSynopsis;
+      LOG_ERR("RBS", "update_book rolled back after persistence failure: %s", path.c_str());
+    }
   }
 }
 
 void RecentBooksStore::refreshBookMetadata(const std::string& path, const std::string& title,
                                            const std::string& author, const std::string& coverBmpPath,
                                            const std::string& synopsis) {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  if (rejectUnsafeMutation("refresh_metadata")) return;
   auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
                          [&](const RecentBook& book) { return book.path == path; });
   if (it == recentBooks.end()) return;
 
   RecentBook& book = *it;
+  const std::string oldTitle = book.title;
+  const std::string oldAuthor = book.author;
+  const std::string oldCoverBmpPath = book.coverBmpPath;
+  const std::string oldSynopsis = book.synopsis;
   const std::string nextTitle = title.empty() ? book.title : title;
   const std::string nextAuthor = author.empty() ? book.author : author;
   const std::string nextCover = coverBmpPath.empty() ? book.coverBmpPath : coverBmpPath;
@@ -191,18 +396,32 @@ void RecentBooksStore::refreshBookMetadata(const std::string& path, const std::s
   book.coverBmpPath = nextCover;
   book.synopsis = nextSynopsis;
   applyMetadataOverride(book);
-  if (!saveToFile()) LOG_ERR("RBS", "Failed to persist refreshed metadata: %s", path.c_str());
+  if (!saveToFileLocked()) {
+    book.title = oldTitle;
+    book.author = oldAuthor;
+    book.coverBmpPath = oldCoverBmpPath;
+    book.synopsis = oldSynopsis;
+    LOG_ERR("RBS", "Refreshed metadata rolled back after persistence failure: %s", path.c_str());
+  }
 }
 
 void RecentBooksStore::refreshXtcMetadata(const std::string& path, const std::string& title,
                                           const std::string& author, const std::string& coverBmpPath,
                                           const std::string& synopsis, const std::string& series,
                                           const bool metadataChecked) {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  if (rejectUnsafeMutation("refresh_xtc_metadata")) return;
   auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
                          [&](const RecentBook& book) { return book.path == path; });
   if (it == recentBooks.end()) return;
 
   RecentBook& book = *it;
+  const std::string oldTitle = book.title;
+  const std::string oldAuthor = book.author;
+  const std::string oldCoverBmpPath = book.coverBmpPath;
+  const std::string oldSynopsis = book.synopsis;
+  const std::string oldSeries = book.series;
+  const bool oldMetadataChecked = book.xtcMetadataChecked;
   const std::string nextTitle = title.empty() ? book.title : title;
   const std::string nextAuthor = author.empty() ? book.author : author;
   const std::string nextCover = coverBmpPath.empty() ? book.coverBmpPath : coverBmpPath;
@@ -221,28 +440,49 @@ void RecentBooksStore::refreshXtcMetadata(const std::string& path, const std::st
   book.series = nextSeries;
   book.xtcMetadataChecked = nextMetadataChecked;
   applyMetadataOverride(book);
-  if (!saveToFile()) LOG_ERR("RBS", "Failed to persist refreshed XTC metadata: %s", path.c_str());
+  if (!saveToFileLocked()) {
+    book.title = oldTitle;
+    book.author = oldAuthor;
+    book.coverBmpPath = oldCoverBmpPath;
+    book.synopsis = oldSynopsis;
+    book.series = oldSeries;
+    book.xtcMetadataChecked = oldMetadataChecked;
+    LOG_ERR("RBS", "Refreshed XTC metadata rolled back after persistence failure: %s", path.c_str());
+  }
 }
 
 void RecentBooksStore::markXtcMetadataChecked(const std::string& path) {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  if (rejectUnsafeMutation("mark_xtc_metadata_checked")) return;
   auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
                          [&](const RecentBook& book) { return book.path == path; });
   if (it == recentBooks.end() || it->xtcMetadataChecked) return;
   it->xtcMetadataChecked = true;
-  if (!saveToFile()) LOG_ERR("RBS", "Failed to persist XTC metadata check: %s", path.c_str());
+  if (!saveToFileLocked()) {
+    it->xtcMetadataChecked = false;
+    LOG_ERR("RBS", "XTC metadata check rolled back after persistence failure: %s", path.c_str());
+  }
 }
 
 bool RecentBooksStore::updateMetadata(const std::string& path, const std::string& title, const std::string& author,
                                       const std::string& synopsis) {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  if (rejectUnsafeMutation("update_metadata")) return false;
   auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
                          [&](const RecentBook& book) { return book.path == path; });
   if (it == recentBooks.end()) return false;
+  const std::string oldTitle = it->title;
+  const std::string oldAuthor = it->author;
+  const std::string oldSynopsis = it->synopsis;
   it->title = title.substr(0, 192);
   it->author = author.substr(0, 128);
   // Metadata edited explicitly through the web UI should not be truncated;
   // the shelf's generated EPUB cache remains bounded separately.
   it->synopsis = synopsis;
-  if (!saveToFile()) {
+  if (!saveToFileLocked()) {
+    it->title = oldTitle;
+    it->author = oldAuthor;
+    it->synopsis = oldSynopsis;
     LOG_ERR("RBS", "Failed to save edited metadata: %s", path.c_str());
     return false;
   }
@@ -250,9 +490,18 @@ bool RecentBooksStore::updateMetadata(const std::string& path, const std::string
 }
 
 bool RecentBooksStore::resetReading(const std::string& path) {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  if (rejectUnsafeMutation("reset_reading")) return false;
   auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
                          [&](const RecentBook& book) { return book.path == path; });
   if (it == recentBooks.end()) return false;
+  const uint8_t oldProgress = it->progressPercent;
+  const uint32_t oldReadingSeconds = it->readingSeconds;
+  const uint32_t oldLastSessionSeconds = it->lastSessionSeconds;
+  const uint32_t oldDailyReadingSeconds = it->dailyReadingSeconds;
+  const uint32_t oldDailyReadingDateKey = it->dailyReadingDateKey;
+  const uint16_t oldReadingSessions = it->readingSessions;
+  const uint32_t oldPagesTurned = it->pagesTurned;
   it->progressPercent = 0;
   it->readingSeconds = 0;
   it->lastSessionSeconds = 0;
@@ -260,7 +509,14 @@ bool RecentBooksStore::resetReading(const std::string& path) {
   it->dailyReadingDateKey = 0;
   it->readingSessions = 0;
   it->pagesTurned = 0;
-  if (!saveToFile()) {
+  if (!saveToFileLocked()) {
+    it->progressPercent = oldProgress;
+    it->readingSeconds = oldReadingSeconds;
+    it->lastSessionSeconds = oldLastSessionSeconds;
+    it->dailyReadingSeconds = oldDailyReadingSeconds;
+    it->dailyReadingDateKey = oldDailyReadingDateKey;
+    it->readingSessions = oldReadingSessions;
+    it->pagesTurned = oldPagesTurned;
     LOG_ERR("RBS", "Failed to reset reading data: %s", path.c_str());
     return false;
   }
@@ -268,22 +524,32 @@ bool RecentBooksStore::resetReading(const std::string& path) {
 }
 
 bool RecentBooksStore::removeByPath(const std::string& path) {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  if (rejectUnsafeMutation("remove_by_path")) return false;
   auto it =
       std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
   if (it == recentBooks.end()) {
     return false;
   }
+  const size_t oldIndex = static_cast<size_t>(std::distance(recentBooks.begin(), it));
+  RecentBook removed = std::move(*it);
   recentBooks.erase(it);
-  if (!saveToFile()) {
+  if (!saveToFileLocked()) {
+    recentBooks.insert(recentBooks.begin() + static_cast<std::ptrdiff_t>(oldIndex), std::move(removed));
     LOG_ERR("RBS", "Failed to persist removal of recent book: %s", path.c_str());
+    return false;
   }
   return true;
 }
 
 bool RecentBooksStore::clearAll() {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  if (rejectUnsafeMutation("clear_all")) return false;
   if (recentBooks.empty()) return true;
-  recentBooks.clear();
-  if (!saveToFile()) {
+  std::vector<RecentBook> previous;
+  previous.swap(recentBooks);
+  if (!saveToFileLocked()) {
+    recentBooks.swap(previous);
     LOG_ERR("RBS", "Failed to persist cleared recent books");
     return false;
   }
@@ -292,16 +558,24 @@ bool RecentBooksStore::clearAll() {
 
 void RecentBooksStore::updatePath(const std::string& oldPath, const std::string& newPath,
                                   const std::string& oldCachePath, const std::string& newCachePath) {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  if (rejectUnsafeMutation("update_path")) return;
   auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
                          [&](const RecentBook& book) { return book.path == oldPath; });
   if (it == recentBooks.end()) {
     return;
   }
+  const std::string oldBookPath = it->path;
+  const std::string oldCoverPath = it->coverBmpPath;
   it->path = newPath;
   if (!oldCachePath.empty() && !it->coverBmpPath.empty() && it->coverBmpPath.rfind(oldCachePath, 0) == 0) {
     it->coverBmpPath = newCachePath + it->coverBmpPath.substr(oldCachePath.size());
   }
-  saveToFile();
+  if (!saveToFileLocked()) {
+    it->path = oldBookPath;
+    it->coverBmpPath = oldCoverPath;
+    LOG_ERR("RBS", "update_path rolled back after persistence failure: %s", oldPath.c_str());
+  }
 }
 
 bool RecentBooksStore::isMissing(const RecentBook& book) { return !Storage.exists(book.path.c_str()); }

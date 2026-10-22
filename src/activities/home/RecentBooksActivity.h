@@ -249,6 +249,7 @@ class RecentBooksActivity final : public Activity {
 
   // Data loading
   void loadRecentBooks(bool renderLockHeld = false);
+  void logRecentViewState(const char* stage) const;
   void markStatsReturnFrameReady();
   void invalidateCarouselHqProbes();
   void invalidateCarouselHqProbesLocked();

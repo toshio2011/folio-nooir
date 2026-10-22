@@ -1,0 +1,3 @@
+add_executable(RecentBooksViewPolicyTest RecentBooksViewPolicyTest.cpp)
+target_link_libraries(RecentBooksViewPolicyTest PRIVATE crosspoint_test_common GTest::gtest_main)
+gtest_discover_tests(RecentBooksViewPolicyTest)

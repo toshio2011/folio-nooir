@@ -4,6 +4,7 @@
 #include <Logging.h>
 #include <ObfuscationUtils.h>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <string>
@@ -14,9 +15,43 @@ namespace {
 
 constexpr const char* SETTINGS_PATH = "/.crosspoint/settings.json";
 constexpr const char* SETTINGS_RECOVERY_MARKER = "/.crosspoint/settings.recovery-in-progress";
+constexpr const char* RECENT_BOOKS_PATH = "/.crosspoint/recent.json";
 
 bool isSettingsPath(const char* path) {
   return path && strcmp(path, SETTINGS_PATH) == 0;
+}
+
+bool isRecentBooksPath(const char* path) {
+  return path && strcmp(path, RECENT_BOOKS_PATH) == 0;
+}
+
+// Compare the temporary file to the serializer output in small chunks. A
+// second JSON DOM would duplicate the complete Recent document on the heap,
+// which can be unsafe on X3/X4 after BLE has claimed its buffers.
+bool temporaryFileMatches(const char* path, const String& expected) {
+  HalFile file;
+  if (!Storage.openFileForRead("PERSIST", path, file)) return false;
+  const size_t expectedSize = expected.length();
+  if (file.fileSize64() != expectedSize) {
+    file.close();
+    return false;
+  }
+
+  std::array<uint8_t, 256> buffer{};
+  size_t offset = 0;
+  bool matches = true;
+  while (offset < expectedSize) {
+    const size_t request = std::min(buffer.size(), expectedSize - offset);
+    const int count = file.read(buffer.data(), request);
+    if (count <= 0 || static_cast<size_t>(count) > request ||
+        memcmp(buffer.data(), expected.c_str() + offset, static_cast<size_t>(count)) != 0) {
+      matches = false;
+      break;
+    }
+    offset += static_cast<size_t>(count);
+  }
+  const bool closed = file.close();
+  return matches && closed && offset == expectedSize;
 }
 
 const char* settingsCandidateName(const size_t index) {
@@ -149,7 +184,8 @@ bool PersistableStoreBase::isSemanticallyValidSettingsDocument(JsonVariantConst 
 }
 
 static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
-                                   const bool useCachedSettingsValidation) {
+                                   const bool useCachedSettingsValidation,
+                                   const bool preserveRecoveredRecentBooks) {
   Storage.mkdir("/.crosspoint");
   String json;
   serializeJson(doc, json);
@@ -162,6 +198,8 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
   const String tmpPath = String(path) + ".tmp";
   const String backupPath = String(path) + ".bak";
   const bool settingsPath = isSettingsPath(path);
+  const bool recentPath = isRecentBooksPath(path);
+  const bool recentRecoveryWrite = recentPath && preserveRecoveredRecentBooks;
   const bool fastSettingsWrite = settingsPath && useCachedSettingsValidation &&
                                  settingsValidationCacheState != SettingsValidationCacheState::Unknown;
 
@@ -249,9 +287,20 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
                     : SettingsFileState::Missing;
   }
 
-  if (!fastSettingsWrite && Storage.exists(tmpPath.c_str()) && !Storage.remove(tmpPath.c_str())) {
-    LOG_ERR("PERSIST", "Failed to clear temporary document %s", tmpPath.c_str());
-    return false;
+  std::string preservedRecentTemp;
+  if (!fastSettingsWrite && Storage.exists(tmpPath.c_str())) {
+    if (recentPath) {
+      // A leftover Recent temp may be the only complete candidate after an
+      // interrupted save. Keep it under a unique sibling name before using
+      // the shared staging path again.
+      if (!moveToUniqueSibling(tmpPath.c_str(), ".recovery-candidate-", preservedRecentTemp)) {
+        LOG_ERR("PERSIST", "Failed to preserve prior Recent temporary candidate %s", tmpPath.c_str());
+        return false;
+      }
+    } else if (!Storage.remove(tmpPath.c_str())) {
+      LOG_ERR("PERSIST", "Failed to clear temporary document %s", tmpPath.c_str());
+      return false;
+    }
   }
   if (!Storage.writeFile(tmpPath.c_str(), json)) {
     LOG_ERR("PERSIST", "Failed to write temporary document %s", tmpPath.c_str());
@@ -259,9 +308,10 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
   }
 
   // A successful write call is not enough to prove that the completed
-  // temporary document is readable and meaningful.  Read it back only for
-  // the main settings file: settings saves are explicit and infrequent, and
-  // this closes the exact truncation/garbling window before promotion.
+  // temporary document reached storage intact. Settings retain their
+  // semantic readback validation below. Other JSON stores use a bounded
+  // byte-for-byte stream comparison, avoiding a second full JSON allocation
+  // while closing the truncation window before the last good file is rotated.
   if (isSettingsPath(path)) {
     String writtenTemp;
     const auto tempReadStatus = Storage.readFileChecked(tmpPath.c_str(), writtenTemp, 65536);
@@ -288,10 +338,15 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
       }
       return false;
     }
+  } else if (!temporaryFileMatches(tmpPath.c_str(), json)) {
+    LOG_ERR("PERSIST", "save_result=temporary_validation_failed path=%s bytes=%u",
+            path, static_cast<unsigned>(json.length()));
+    return false;
   }
 
   const bool hadOriginal = settingsPath ? mainState == SettingsFileState::Valid : Storage.exists(path);
   std::string displacedBackup;
+  std::string preservedRecentPrimary;
   if (hadOriginal) {
     if (fastSettingsWrite) {
       // The validated primary is the strongest known-good copy. Removing an
@@ -302,26 +357,41 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
       // operation result.
       Storage.remove(backupPath.c_str());
     }
-    // Do not delete an existing backup before the primary has been moved
-    // safely. If that rename fails, both original files remain recoverable.
-    if ((settingsPath ? backupState != SettingsFileState::Missing : Storage.exists(backupPath.c_str())) &&
-        !moveToUniqueSibling(backupPath.c_str(), ".previous-", displacedBackup)) {
-      LOG_ERR("PERSIST", "Failed to preserve existing backup %s", backupPath.c_str());
-      return false;
-    }
-    if (!Storage.rename(path, backupPath.c_str())) {
-      LOG_ERR("PERSIST", "Failed to preserve %s as %s", path, backupPath.c_str());
-      if (!displacedBackup.empty() && !Storage.rename(displacedBackup.c_str(), backupPath.c_str())) {
-        LOG_ERR("PERSIST", "Failed to restore prior backup %s", backupPath.c_str());
+    if (recentRecoveryWrite) {
+      // The primary was rejected during Recent recovery. Preserve it for
+      // diagnosis and leave the validated .bak at its canonical recovery
+      // path; rotating the damaged primary over .bak would destroy the only
+      // known-good generation.
+      if (!moveToUniqueSibling(path, ".recovered-primary-", preservedRecentPrimary)) {
+        LOG_ERR("PERSIST", "Failed to preserve damaged Recent primary %s", path);
+        return false;
       }
-      return false;
+    } else {
+      // Do not delete an existing backup before the primary has been moved
+      // safely. If that rename fails, both original files remain recoverable.
+      if ((settingsPath ? backupState != SettingsFileState::Missing : Storage.exists(backupPath.c_str())) &&
+          !moveToUniqueSibling(backupPath.c_str(), ".previous-", displacedBackup)) {
+        LOG_ERR("PERSIST", "Failed to preserve existing backup %s", backupPath.c_str());
+        return false;
+      }
+      if (!Storage.rename(path, backupPath.c_str())) {
+        LOG_ERR("PERSIST", "Failed to preserve %s as %s", path, backupPath.c_str());
+        if (!displacedBackup.empty() && !Storage.rename(displacedBackup.c_str(), backupPath.c_str())) {
+          LOG_ERR("PERSIST", "Failed to restore prior backup %s", backupPath.c_str());
+        }
+        return false;
+      }
     }
   }
 
   if (!Storage.rename(tmpPath.c_str(), path)) {
     LOG_ERR("PERSIST", "Failed to commit %s", path);
     // Keep the validated .tmp as a recovery candidate if promotion fails.
-    if (hadOriginal && !Storage.exists(path)) {
+    if (recentRecoveryWrite && !preservedRecentPrimary.empty() && !Storage.exists(path)) {
+      if (!Storage.rename(preservedRecentPrimary.c_str(), path)) {
+        LOG_ERR("PERSIST", "Failed to restore damaged Recent primary %s", path);
+      }
+    } else if (!recentRecoveryWrite && hadOriginal && !Storage.exists(path)) {
       if (!Storage.rename(backupPath.c_str(), path)) {
         LOG_ERR("PERSIST", "Failed to restore backup %s", path);
       }
@@ -375,20 +445,33 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
     // save. This both avoids a post-commit existence probe and leaves a useful
     // recovery copy if the new file is later damaged.
   } else {
-    if (Storage.exists(backupPath.c_str()) && (!settingsPath || hadOriginal)) Storage.remove(backupPath.c_str());
-    if (!displacedBackup.empty()) Storage.remove(displacedBackup.c_str());
+    // Recent history retains the prior committed primary as one recovery
+    // generation. If the primary was missing, keep an existing .bak as the
+    // only copy while the new main is promoted.
+    if (!recentPath && Storage.exists(backupPath.c_str()) && (!settingsPath || hadOriginal)) {
+      Storage.remove(backupPath.c_str());
+    }
+    if (!recentPath && !displacedBackup.empty()) Storage.remove(displacedBackup.c_str());
+    if (recentRecoveryWrite) {
+      LOG_INF("PERSIST", "recent_recovery_save=committed backup_preserved=1 primary_quarantined=%u temp_preserved=%u",
+              preservedRecentPrimary.empty() ? 0U : 1U, preservedRecentTemp.empty() ? 0U : 1U);
+    }
   }
   return true;
 }
 
 bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& doc) {
-  const bool saved = writeDocToFileInternal(path, doc, false);
+  const bool saved = writeDocToFileInternal(path, doc, false, false);
   if (isSettingsPath(path) && saved) settingsValidationCacheState = SettingsValidationCacheState::Valid;
   return saved;
 }
 
+bool PersistableStoreBase::writeRecoveredRecentBooksDocToFile(const char* path, const JsonDocument& doc) {
+  return writeDocToFileInternal(path, doc, false, true);
+}
+
 bool PersistableStoreBase::writeSettingsDocToFile(const char* path, const JsonDocument& doc) {
-  const bool saved = writeDocToFileInternal(path, doc, true);
+  const bool saved = writeDocToFileInternal(path, doc, true, false);
   if (isSettingsPath(path)) {
     settingsValidationCacheState = saved ? SettingsValidationCacheState::Valid : SettingsValidationCacheState::Unknown;
   }

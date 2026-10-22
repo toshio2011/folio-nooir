@@ -3,11 +3,38 @@
 #include <Arduino.h>
 
 #include <cstdint>
+#include <cstring>
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 
 enum class HalStorageReadStatus : uint8_t { Success, NotFound, ParentMissing, Unavailable, IoError, TooLarge };
+
+class HalFile {
+ public:
+  void bind(const std::string* data) {
+    data_ = data;
+    offset_ = 0;
+  }
+  uint64_t fileSize64() const { return data_ ? data_->size() : 0; }
+  int read(void* destination, size_t requested) {
+    if (!data_ || destination == nullptr || offset_ >= data_->size()) return 0;
+    const size_t count = std::min(requested, data_->size() - offset_);
+    std::memcpy(destination, data_->data() + offset_, count);
+    offset_ += count;
+    return static_cast<int>(count);
+  }
+  bool close() {
+    data_ = nullptr;
+    offset_ = 0;
+    return true;
+  }
+
+ private:
+  const std::string* data_ = nullptr;
+  size_t offset_ = 0;
+};
 
 class SimulatedPowerLoss : public std::runtime_error {
  public:
@@ -19,6 +46,14 @@ class TestStorage {
   enum class CrashPoint { None, DuringTempWrite, AfterFirstRename, AfterSecondRename };
 
   bool mkdir(const char*) { return true; }
+  bool openFileForRead(const char*, const char* path, HalFile& file) {
+    const auto it = files.find(path ? path : "");
+    if (!ready || failRead || failReadPaths.find(path ? path : "") != failReadPaths.end() || it == files.end()) {
+      return false;
+    }
+    file.bind(&it->second);
+    return true;
+  }
   bool exists(const char* path) const {
     ++existsCount;
     return files.find(path ? path : "") != files.end();
@@ -35,6 +70,7 @@ class TestStorage {
       throw SimulatedPowerLoss();
     }
     files[name] = value.c_str();
+    if (truncateTempWrite && name.ends_with(".tmp")) files[name].resize(files[name].size() / 2);
     return true;
   }
 
@@ -83,6 +119,7 @@ class TestStorage {
     failReadOnAttempt.clear();
     failReadPaths.clear();
     failWrite = false;
+    truncateTempWrite = false;
     failWritePaths.clear();
     failRename = false;
     failRenameFrom.clear();
@@ -102,6 +139,7 @@ class TestStorage {
   std::unordered_map<std::string, size_t> failReadOnAttempt;
   std::unordered_map<std::string, bool> failReadPaths;
   bool failWrite = false;
+  bool truncateTempWrite = false;
   std::unordered_map<std::string, bool> failWritePaths;
   bool failRename = false;
   std::unordered_map<std::string, bool> failRenameFrom;

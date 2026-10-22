@@ -37,6 +37,7 @@
 #include "util/HomeSnapshotPolicy.h"
 #include "util/FolioLiteLayoutPolicy.h"
 #include "util/StatisticsDate.h"
+#include "util/RecentBooksViewPolicy.h"
 #include "util/SynopsisPreview.h"
 #include "util/EpubDiagnostics.h"
 #include "components/UITheme.h"
@@ -240,7 +241,8 @@ SpineShelfPlanner::Rect threeRowSpineBounds(const int pageWidth, const FolioShel
   return SpineShelfPlanner::Rect{layout.gridGap, top, std::max(1, pageWidth - layout.gridGap * 2), height};
 }
 
-void displayHomeFrame(GfxRenderer& renderer, const char* reason, const uint32_t renderStartedUs) {
+void displayHomeFrame(GfxRenderer& renderer, const char* reason, const uint32_t renderStartedUs,
+                      const uint8_t activeLayout) {
   const uint32_t renderDurationUs = micros() - renderStartedUs;
   const char* themeName = SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR_LITE
                               ? "Lite"
@@ -258,11 +260,11 @@ void displayHomeFrame(GfxRenderer& renderer, const char* reason, const uint32_t 
                          (lastSlowDiagnosticMs == 0 || nowMs - lastSlowDiagnosticMs >= 5000);
   if (initialFrame || layoutFrame || selectionSample || slowFrame) {
     LOG_INF("SHELF", "render_ready theme=%s layout=%u reason=%s cpu_us=%lu free=%u largest=%u",
-            themeName, static_cast<unsigned>(SETTINGS.carouselLayout), reason ? reason : "unknown",
+            themeName, static_cast<unsigned>(activeLayout), reason ? reason : "unknown",
             static_cast<unsigned long>(renderDurationUs), static_cast<unsigned>(ESP.getFreeHeap()),
             static_cast<unsigned>(ESP.getMaxAllocHeap()));
     LOG_INF("SHELFPERF", "theme=%s layout=%u reason=%s total_us=%lu",
-            themeName, static_cast<unsigned>(SETTINGS.carouselLayout), reason ? reason : "unknown",
+            themeName, static_cast<unsigned>(activeLayout), reason ? reason : "unknown",
             static_cast<unsigned long>(renderDurationUs));
     if (slowFrame) lastSlowDiagnosticMs = nowMs;
     if (selectionSample) lastSelectionDiagnosticMs = nowMs;
@@ -813,7 +815,7 @@ void drawThreeRowSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner
 void RecentBooksActivity::loadRecentBooks(const bool renderLockHeld) {
   spineShelfVisualsDirty = true;
   liteSelectedDetailsDirty = true;
-  recentBooks = RECENT_BOOKS.getBooks();
+  RECENT_BOOKS.getBooks().copyTo(recentBooks);
   invalidateSpinePageWindow();
   if (renderLockHeld) {
     invalidateCarouselHqProbesLocked();
@@ -1057,10 +1059,8 @@ RecentBooksActivity::CarouselHqProbe& RecentBooksActivity::carouselHqProbe(const
 }
 
 void RecentBooksActivity::rebuildVisibleBooks() {
-  visibleBookCount = 0;
-  for (const auto& book : recentBooks) {
-    if (isVisibleRecentBook(book)) ++visibleBookCount;
-  }
+  visibleBookCount = RecentBooksViewPolicy::countVisible(
+      recentBooks, [this](const RecentBook& book) { return isVisibleRecentBook(book); });
   invalidateSpinePageWindow();
   if (visibleBookCount == 0) {
     selectorIndex = 0;
@@ -1069,20 +1069,30 @@ void RecentBooksActivity::rebuildVisibleBooks() {
   }
 }
 
+void RecentBooksActivity::logRecentViewState(const char* stage) const {
+  const int storeCount = RECENT_BOOKS.getCount();
+  const char* emptyReason = visibleBookCount != 0 ? "none"
+                            : storeCount > 0 ? "filtered_view"
+                            : RECENT_BOOKS.getLoadResult() == RecentBooksLoadResult::Uncertain ? "load_uncertain"
+                                                                                              : "no_records";
+  LOG_INF("SHELF", "stage=%s store_result=%s store_records=%u copied_records=%u visible=%u selected=%u tab=%u "
+                   "empty_reason=%s",
+          stage ? stage : "unknown", recentBooksLoadResultName(RECENT_BOOKS.getLoadResult()),
+          static_cast<unsigned>(storeCount), static_cast<unsigned>(recentBooks.size()),
+          static_cast<unsigned>(visibleBookCount), static_cast<unsigned>(selectorIndex),
+          static_cast<unsigned>(activeTab), emptyReason);
+}
+
 bool RecentBooksActivity::isVisibleRecentBook(const RecentBook& book) const {
   if (isClippingsExport(book.path)) return false;
   const BookState* state = BOOK_STATES.find(book.path);
   const bool finished = state ? state->status == BookStatus::Finished : book.progressPercent >= 100;
-  return activeTab == 0 || (activeTab == 1 && !finished) || (activeTab == 2 && finished);
+  return RecentBooksViewPolicy::tabIncludes(activeTab, finished);
 }
 
 size_t RecentBooksActivity::recentIndexForVisibleIndex(const size_t visibleIndex) const {
-  size_t visible = 0;
-  for (size_t index = 0; index < recentBooks.size(); ++index) {
-    if (!isVisibleRecentBook(recentBooks[index])) continue;
-    if (visible++ == visibleIndex) return index;
-  }
-  return SIZE_MAX;
+  return RecentBooksViewPolicy::rawIndexForVisible(
+      recentBooks, visibleIndex, [this](const RecentBook& book) { return isVisibleRecentBook(book); });
 }
 
 const RecentBooksActivity::SpinePageWindow& RecentBooksActivity::spinePageForSelection(
@@ -1800,6 +1810,7 @@ bool RecentBooksActivity::restoreSnapshot() {
     lastFeaturedCoverPath = featuredChanged ? std::string() : selected.coverBmpPath;
     lastFeaturedCoverVisible = !featuredChanged && SETTINGS.featuredShowCover != 0;
     LOG_DBG("SHELF", "Restored %u-byte Home snapshot", dataSize);
+    logRecentViewState("snapshot_restored");
   } else {
     activeTab = originalTab;
     rebuildVisibleBooks();
@@ -2400,10 +2411,14 @@ void RecentBooksActivity::onEnter() {
   // Load data
   loadRecentBooks();
   rebuildVisibleBooks();
-  LOG_INF("SHELF", "stage=onEnter_ready duration_us=%lu books=%u visible=%u free=%u largest=%u",
-          static_cast<unsigned long>(micros() - enterStartedUs), static_cast<unsigned>(recentBooks.size()),
-          static_cast<unsigned>(visibleBookCount), static_cast<unsigned>(ESP.getFreeHeap()),
-          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  LOG_INF("SHELF", "stage=onEnter_ready duration_us=%lu store_result=%s store_records=%u copied_records=%u "
+                   "visible=%u tab=%u filtered_empty=%u free=%u largest=%u",
+          static_cast<unsigned long>(micros() - enterStartedUs),
+          recentBooksLoadResultName(RECENT_BOOKS.getLoadResult()), static_cast<unsigned>(RECENT_BOOKS.getCount()),
+          static_cast<unsigned>(recentBooks.size()), static_cast<unsigned>(visibleBookCount),
+          static_cast<unsigned>(activeTab), RECENT_BOOKS.getCount() > 0 && visibleBookCount == 0 ? 1U : 0U,
+          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  logRecentViewState("on_enter_view");
 #if FREEINK_CAP_BLE_HID_HOST
   if (SETTINGS.bluetoothEnabled) {
     size_t stringCapacityChars = 0;
@@ -2441,6 +2456,7 @@ void RecentBooksActivity::onEnter() {
   snapshotWriteRequestedMs = 0;
   coverGenerationRequested = false;
   snapshotRestored = restoreSnapshot();
+  logRecentViewState(snapshotRestored ? "on_enter_snapshot_restored" : "on_enter_snapshot_invalidated");
   if (APP_STATE.selectFirstHomeBookAfterWake) {
     selectorIndex = 0;
     snapshotRestored = false;
@@ -2480,6 +2496,7 @@ void RecentBooksActivity::onEnter() {
 }
 
 void RecentBooksActivity::onExit() {
+  logRecentViewState("on_exit_view");
 #if FREEINK_CAP_BLE_HID_HOST
   LOG_INF("HEAPSHAPE", "stage=recentbooks_transition_before_release books=%u capacity=%u bytes=%u free=%u largest=%u",
           static_cast<unsigned>(recentBooks.size()), static_cast<unsigned>(recentBooks.capacity()),
@@ -2578,7 +2595,7 @@ void RecentBooksActivity::restoreTransientStateAfterReadingStats() {
   // carousel sources using the already-held lock; this is not an SD metadata
   // rescan and must not recursively acquire RenderLock.
   const size_t booksBeforeFree = ESP.getFreeHeap();
-  recentBooks = RECENT_BOOKS.getBooks();
+  RECENT_BOOKS.getBooks().copyTo(recentBooks);
   LOG_INF("RSDIAG", "owner=recentbooks_copy books=%u capacity=%u free=%u->%u largest=%u",
           static_cast<unsigned>(recentBooks.size()), static_cast<unsigned>(recentBooks.capacity()),
           static_cast<unsigned>(booksBeforeFree), static_cast<unsigned>(ESP.getFreeHeap()),
@@ -2618,6 +2635,7 @@ void RecentBooksActivity::restoreTransientStateAfterReadingStats() {
           static_cast<unsigned>(visibleBookCount), static_cast<unsigned>(selectorIndex),
           static_cast<unsigned>(activeTab), static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  logRecentViewState(snapshotRestored ? "stats_return_snapshot_restored" : "stats_return_snapshot_invalidated");
 }
 
 void RecentBooksActivity::loop() {
@@ -2809,6 +2827,7 @@ void RecentBooksActivity::loop() {
     activeTab = activeTab == 2 ? 1 : 2;
     selectorIndex = 0;
     rebuildVisibleBooks();
+    logRecentViewState("button_tab_switch");
     snapshotRestored = false;
     snapshotPageStart = SIZE_MAX;
     snapshotSelectorIndex = SIZE_MAX;
@@ -2848,6 +2867,7 @@ void RecentBooksActivity::loop() {
         activeTab = touchedTab;
         selectorIndex = 0;
         rebuildVisibleBooks();
+        logRecentViewState("touch_tab_switch");
         snapshotRestored = false;
         snapshotPageStart = SIZE_MAX;
         snapshotSelectorIndex = SIZE_MAX;
@@ -2900,6 +2920,7 @@ void RecentBooksActivity::loop() {
         activeTab = touchedTab;
         selectorIndex = 0;
         rebuildVisibleBooks();
+        logRecentViewState("touch_tab_switch");
         snapshotRestored = false;
         snapshotPageStart = SIZE_MAX;
         snapshotSelectorIndex = SIZE_MAX;
@@ -2947,6 +2968,7 @@ void RecentBooksActivity::loop() {
         activeTab = touchedTab;
         selectorIndex = 0;
         rebuildVisibleBooks();
+        logRecentViewState("touch_tab_switch");
         snapshotRestored = false;
         snapshotPageStart = SIZE_MAX;
         snapshotSelectorIndex = SIZE_MAX;
@@ -2994,6 +3016,7 @@ void RecentBooksActivity::loop() {
         activeTab = touchedTab;
         selectorIndex = 0;
         rebuildVisibleBooks();
+        logRecentViewState("touch_tab_switch");
         snapshotRestored = false;
         snapshotPageStart = SIZE_MAX;
         snapshotSelectorIndex = SIZE_MAX;
@@ -3045,6 +3068,7 @@ void RecentBooksActivity::loop() {
         activeTab = touchedTab;
         selectorIndex = 0;
         rebuildVisibleBooks();
+        logRecentViewState("touch_tab_switch");
         snapshotRestored = false;
         snapshotPageStart = SIZE_MAX;
         snapshotSelectorIndex = SIZE_MAX;
@@ -3306,7 +3330,7 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
               static_cast<unsigned long>(shelfUs), static_cast<unsigned long>(statsUs));
       if (selectionSample) lastSelectionDiagnosticMs = nowMs;
     }
-    displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs);
+    displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs, activeBookLayout());
   };
 
   const bool liteSpineMode = isFolioNooirLiteTheme(SETTINGS.uiTheme) &&
@@ -3942,7 +3966,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     const auto& folioTheme = static_cast<const FolioNooirTheme&>(GUI);
     const FolioShelfLayout layout = homeShelfLayout(folioTheme, renderer, metrics);
     drawSnapshotSelectionOutline(layout, selectorIndex, true);
-    displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs);
+    displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs, activeBookLayout());
     markStatsReturnFrameReady();
     snapshotFastPathUsed = true;
     initialRenderPending = false;
@@ -4020,7 +4044,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     }
     const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_OPEN), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-    displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs);
+    displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs, activeBookLayout());
     markStatsReturnFrameReady();
     return;
   }
@@ -4599,7 +4623,7 @@ void RecentBooksActivity::render(RenderLock&&) {
   }
   if (carouselHqCompletionPopupPending) {
     GUI.drawPopup(renderer, "All carousel covers are ready");
-    displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs);
+    displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs, activeBookLayout());
     carouselHqCompletionPopupPending = false;
     overlayFrameShown = true;
     return;
@@ -4619,7 +4643,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     GUI.fillPopupProgress(renderer, popup, retrievingBookCacheProgress);
     const auto cancelLabels = mappedInput.mapLabels(tr(STR_CANCEL), "", "", "");
     GUI.drawButtonHints(renderer, cancelLabels.btn1, cancelLabels.btn2, cancelLabels.btn3, cancelLabels.btn4);
-    displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs);
+    displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs, activeBookLayout());
     retrievingBookCachePopupRendered = true;
     overlayFrameShown = true;
     return;
@@ -4633,7 +4657,7 @@ void RecentBooksActivity::render(RenderLock&&) {
   if ((spineLayout || twoRowSpineLayout) && visibleBookCount > 0) {
     drawSnapshotSelectionOutline(layout, selectorIndex, true);
   }
-  displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs);
+  displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs, activeBookLayout());
   markStatsReturnFrameReady();
   if (manualSingleRefresh && !retrievingBookCache) manualSingleRefresh = false;
   if (initialRenderPending) {

@@ -22,8 +22,8 @@ std::string filenameFromPath(const std::string& path) {
   return name.empty() ? path : name;
 }
 
-const RecentBook* findRecent(const std::string& path) {
-  const auto& recents = RECENT_BOOKS.getBooks();
+template <typename RecentBooks>
+const RecentBook* findRecent(const std::string& path, const RecentBooks& recents) {
   const auto it = std::find_if(recents.begin(), recents.end(), [&](const RecentBook& book) { return book.path == path; });
   return it == recents.end() ? nullptr : &*it;
 }
@@ -98,10 +98,14 @@ StatisticsSnapshot StatisticsSnapshot::build(const StatisticsSnapshotOptions& op
     result.overview.todayPages = READING_STATS.pagesForDate(result.todayDateKey);
   }
 
+  const auto recentBooks = RECENT_BOOKS.getBooks();
   if (options.keepAllBooks) {
-    const size_t availableBooks = BOOK_STATES.getBooks().size() + RECENT_BOOKS.getBooks().size();
+    const size_t availableBooks = BOOK_STATES.getBooks().size() + recentBooks.size();
     result.books.reserve(options.maxBooks == 0 ? availableBooks : std::min(options.maxBooks, availableBooks));
   }
+  // Keep one stable, locked view while building and sorting statistics. This
+  // avoids repeated mutex acquisition and prevents pointers returned by
+  // findRecent() from outliving a temporary view.
   uint32_t bookSeconds = 0;
   uint32_t bookSessions = 0;
   uint32_t bookPages = 0;
@@ -112,12 +116,12 @@ StatisticsSnapshot StatisticsSnapshot::build(const StatisticsSnapshotOptions& op
       if (aSelected != bSelected) return aSelected;
     }
     if (a.lastOpenedDate != b.lastOpenedDate) return a.lastOpenedDate > b.lastOpenedDate;
-    const auto recentRank = [](const std::string& path) {
-      const auto& recents = RECENT_BOOKS.getBooks();
-      const auto it = std::find_if(recents.begin(), recents.end(), [&](const RecentBook& book) {
+    const auto recentRank = [&recentBooks](const std::string& path) {
+      const auto it = std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) {
         return book.path == path;
       });
-      return it == recents.end() ? recents.size() : static_cast<size_t>(std::distance(recents.begin(), it));
+      return it == recentBooks.end() ? recentBooks.size()
+                                     : static_cast<size_t>(std::distance(recentBooks.begin(), it));
     };
     const size_t aRank = recentRank(a.path);
     const size_t bRank = recentRank(b.path);
@@ -142,8 +146,9 @@ StatisticsSnapshot StatisticsSnapshot::build(const StatisticsSnapshotOptions& op
     }
   };
   if (options.scanBookStates) {
-    for (const auto& state : BOOK_STATES.getBooks()) consumeBook(makeBook(&state, findRecent(state.path), state.path));
-    for (const auto& recent : RECENT_BOOKS.getBooks()) {
+    for (const auto& state : BOOK_STATES.getBooks())
+      consumeBook(makeBook(&state, findRecent(state.path, recentBooks), state.path));
+    for (const auto& recent : recentBooks) {
       if (!BOOK_STATES.find(recent.path)) consumeBook(makeBook(nullptr, &recent, recent.path));
     }
   }

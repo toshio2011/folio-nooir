@@ -2,8 +2,21 @@
 #include <ArduinoJson.h>
 #include <PersistableStore.h>
 
+#include <atomic>
+#include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
+
+enum class RecentBooksLoadResult : uint8_t {
+  NotLoaded,
+  Valid,
+  Recovered,
+  MissingFirstBoot,
+  Uncertain,
+};
+
+const char* recentBooksLoadResultName(RecentBooksLoadResult result);
 
 struct RecentBook {
   std::string path;
@@ -30,16 +43,65 @@ struct RecentBook {
 class RecentBooksStore : public PersistableStore<RecentBooksStore> {
  private:
   std::vector<RecentBook> recentBooks;
+  mutable std::atomic<RecentBooksLoadResult> loadResult{RecentBooksLoadResult::NotLoaded};
+  bool hasLoadedValidHistory = false;
 
   RecentBooksStore() = default;
   ~RecentBooksStore() = default;
 
   friend class PersistableStore<RecentBooksStore>;
 
- public:
-  static const char* getFilePath() { return "/.crosspoint/recent.json"; }
+  // Called only by the CRTP persistence layer while storeMutex is held.
   void toJson(JsonDocument& doc) const;
   bool fromJson(JsonVariantConst doc);
+  bool saveToFileLocked() const;
+  static bool parseJsonBooks(JsonVariantConst doc, std::vector<RecentBook>& parsedBooks);
+  bool rejectUnsafeMutation(const char* operation) const;
+
+ public:
+  // A no-allocation, read-only view that keeps the store locked for the full
+  // lifetime of the view. Keep a named view alive while retaining iterators or
+  // references into its books.
+  class RecentBooksReadView {
+   public:
+    using const_iterator = std::vector<RecentBook>::const_iterator;
+
+    RecentBooksReadView(const RecentBooksReadView&) = delete;
+    RecentBooksReadView& operator=(const RecentBooksReadView&) = delete;
+    RecentBooksReadView(RecentBooksReadView&&) noexcept = default;
+    RecentBooksReadView& operator=(RecentBooksReadView&&) = delete;
+
+    const_iterator begin() const noexcept { return books_.begin(); }
+    const_iterator end() const noexcept { return books_.end(); }
+    const_iterator cbegin() const noexcept { return books_.cbegin(); }
+    const_iterator cend() const noexcept { return books_.cend(); }
+    const RecentBook& operator[](size_t index) const { return books_[index]; }
+    const RecentBook& front() const { return books_.front(); }
+    size_t size() const noexcept { return books_.size(); }
+    bool empty() const noexcept { return books_.empty(); }
+    void copyTo(std::vector<RecentBook>& destination) const { destination = books_; }
+
+   private:
+    friend class RecentBooksStore;
+    explicit RecentBooksReadView(const RecentBooksStore& store)
+        : lock_(store.storeMutex), books_(store.recentBooks) {}
+
+    std::unique_lock<std::mutex> lock_;
+    const std::vector<RecentBook>& books_;
+  };
+
+  static const char* getFilePath() { return "/.crosspoint/recent.json"; }
+  // Recent history has stronger durability rules than disposable cache stores.
+  // A failed/corrupt load is kept distinct from an intentional empty list so
+  // callers cannot overwrite existing history from an empty startup singleton.
+  bool loadFromFile();
+  bool saveToFile() const;
+  RecentBooksLoadResult getLoadResult() const { return loadResult.load(); }
+  bool automaticWritesAllowed() const {
+    const RecentBooksLoadResult result = loadResult.load();
+    return result == RecentBooksLoadResult::Valid || result == RecentBooksLoadResult::Recovered ||
+           result == RecentBooksLoadResult::MissingFirstBoot;
+  }
 
   // Add a book to the recent list (moves to front if already exists)
   void addBook(const std::string& path, const std::string& title, const std::string& author,
@@ -87,11 +149,11 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
   // Remove entries whose backing file is no longer on the SD card.
   // Returns true if any entry was removed. Does not persist — caller decides.
 
-  // Get the list of recent books (most recent first)
-  const std::vector<RecentBook>& getBooks() const { return recentBooks; }
+  // Get a locked, read-only list of recent books (most recent first).
+  RecentBooksReadView getBooks() const { return RecentBooksReadView(*this); }
 
   // Get the count of recent books
-  int getCount() const { return static_cast<int>(recentBooks.size()); }
+  int getCount() const;
 
   RecentBook getDataFromBook(std::string path) const;
 };

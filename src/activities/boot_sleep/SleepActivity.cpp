@@ -411,6 +411,51 @@ void displaySleepFrame(GfxRenderer& renderer, HalDisplay::RefreshMode mode) {
   renderer.setFadingFix(SETTINGS.fadingFix);
 }
 
+bool isFullTwoBitStatisticsCover(const std::string& path) {
+  constexpr char suffix[] = "/cover-2bit.bmp";
+  constexpr size_t suffixLength = sizeof(suffix) - 1;
+  return path.size() >= suffixLength && path.compare(path.size() - suffixLength, suffixLength, suffix) == 0;
+}
+
+template <typename DrawFrame>
+void displayStatisticsSleepFrame(GfxRenderer& renderer, bool& hasTwoBitCover, DrawFrame&& drawFrame) {
+  // Stats screens are normally rendered once in black and white. When the
+  // already-validated XTCH full cover cache is selected, redraw the complete
+  // bounded layout for both grayscale planes. This follows the normal sleep
+  // bitmap path and keeps the stats labels and controls present in each plane.
+  renderer.setRenderMode(GfxRenderer::BW);
+  if (!drawFrame(0xFF)) return;
+
+  if (!hasTwoBitCover) {
+    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+    renderer.setRenderMode(GfxRenderer::BW);
+    return;
+  }
+
+  renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
+
+  renderer.clearScreen(0x00);
+  renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
+  if (!drawFrame(0x00)) {
+    renderer.setRenderMode(GfxRenderer::BW);
+    return;  // Keep the complete BW base visible if the cache cannot be read.
+  }
+  renderer.copyGrayscaleLsbBuffers();
+
+  renderer.clearScreen(0x00);
+  renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
+  if (!drawFrame(0x00)) {
+    renderer.setRenderMode(GfxRenderer::BW);
+    return;
+  }
+  renderer.copyGrayscaleMsbBuffers();
+
+  renderer.setFadingFix(true);
+  renderer.displayGrayBuffer();
+  renderer.setFadingFix(SETTINGS.fadingFix);
+  renderer.setRenderMode(GfxRenderer::BW);
+}
+
 struct SleepClippingSnapshot {
   bool valid = false;
   std::string path;
@@ -452,10 +497,13 @@ SleepBitmapPlacement getSleepBitmapPlacement(const Bitmap& bitmap, const GfxRend
   return placement;
 }
 
-const RecentBook* recentBookForSleepPath(const std::string& path) {
-  const auto it = std::find_if(RECENT_BOOKS.getBooks().begin(), RECENT_BOOKS.getBooks().end(),
+bool recentBookForSleepPath(const std::string& path, RecentBook& result) {
+  const auto recentBooks = RECENT_BOOKS.getBooks();
+  const auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
                                [&](const RecentBook& book) { return book.path == path; });
-  return it == RECENT_BOOKS.getBooks().end() ? nullptr : &*it;
+  if (it == recentBooks.end()) return false;
+  result = *it;
+  return true;
 }
 
 std::string sleepBookPath() {
@@ -474,9 +522,10 @@ std::string sleepFilename(const std::string& path) {
 
 std::string sleepBookCoverCachePath(const std::string& bookPath) {
   if (bookPath.empty()) return {};
-  const RecentBook* recent = recentBookForSleepPath(bookPath);
-  if (recent && !recent->coverBmpPath.empty() && Storage.exists(recent->coverBmpPath.c_str())) {
-    return recent->coverBmpPath;
+  RecentBook recent;
+  if (recentBookForSleepPath(bookPath, recent) && !recent.coverBmpPath.empty() &&
+      Storage.exists(recent.coverBmpPath.c_str())) {
+    return recent.coverBmpPath;
   }
   if (FsHelpers::hasXtcExtension(bookPath)) {
     Xtc book(bookPath, "/.crosspoint");
@@ -1931,85 +1980,96 @@ void SleepActivity::renderReadingStatsSleepScreen() const {
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
   const int side = std::max(18, pageWidth / 20);
+  const std::string coverPath = hasCover ? selectStatisticsCoverPath(*book) : std::string{};
+  const bool usingHq = !coverPath.empty() && coverPath != book->coverPath220;
 
   preconditionSleepRefresh(renderer);
-  renderer.clearScreen();
+  bool hasTwoBitCover = false;
+  auto drawFrame = [&](const uint8_t clearColor) {
+    renderer.clearScreen(clearColor);
 
-  renderer.drawCenteredText(UI_12_FONT_ID, 28, tr(STR_STATS_READING_SLEEP), true, EpdFontFamily::BOLD);
-  renderer.drawLine(side, 54, pageWidth - side - 1, 54);
+    renderer.drawCenteredText(UI_12_FONT_ID, 28, tr(STR_STATS_READING_SLEEP), true, EpdFontFamily::BOLD);
+    renderer.drawLine(side, 54, pageWidth - side - 1, 54);
 
-  const int heroTop = 68;
-  const int heroHeight = std::max(190, pageHeight / 3 - 30);
-  bool coverDrawn = false;
-  if (book) {
-    const int coverWidth = std::min(118, pageWidth / 4);
-    const Rect coverBounds(side, heroTop + 4, coverWidth, heroHeight - 8);
-    const std::string coverPath = hasCover ? selectStatisticsCoverPath(*book) : std::string{};
-    const bool usingHq = !coverPath.empty() && coverPath != book->coverPath220;
-    coverDrawn = !coverPath.empty() && drawStatisticsCover(renderer, coverPath, coverBounds);
-    if (!coverDrawn && usingHq) coverDrawn = drawStatisticsCover(renderer, book->coverPath220, coverBounds);
-    if (hasCover && !coverDrawn) book->coverAvailable = false;
-    const int detailX = coverDrawn ? side + coverWidth + 18 : side;
-    const int detailWidth = pageWidth - side - detailX;
-    const auto titleLines = renderer.wrappedText(UI_12_FONT_ID, book->title.c_str(), detailWidth, 3);
-    int textY = heroTop + 12;
-    for (const auto& line : titleLines) {
-      renderer.drawText(UI_12_FONT_ID, detailX, textY, line.c_str(), true, EpdFontFamily::BOLD);
-      textY += renderer.getLineHeight(UI_12_FONT_ID);
+    const int heroTop = 68;
+    const int heroHeight = std::max(190, pageHeight / 3 - 30);
+    bool coverDrawn = false;
+    if (book) {
+      const int coverWidth = std::min(118, pageWidth / 4);
+      const Rect coverBounds(side, heroTop + 4, coverWidth, heroHeight - 8);
+      coverDrawn = !coverPath.empty() && drawStatisticsCover(renderer, coverPath, coverBounds);
+      if (renderer.getRenderMode() == GfxRenderer::BW) {
+        hasTwoBitCover = coverDrawn && isFullTwoBitStatisticsCover(coverPath) &&
+                         SETTINGS.sleepScreenCoverFilter ==
+                             CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::NO_FILTER;
+        if (!coverDrawn && usingHq) coverDrawn = drawStatisticsCover(renderer, book->coverPath220, coverBounds);
+        if (hasCover && !coverDrawn) book->coverAvailable = false;
+      } else if (hasTwoBitCover && !coverDrawn) {
+        return false;
+      }
+      const int detailX = coverDrawn ? side + coverWidth + 18 : side;
+      const int detailWidth = pageWidth - side - detailX;
+      const auto titleLines = renderer.wrappedText(UI_12_FONT_ID, book->title.c_str(), detailWidth, 3);
+      int textY = heroTop + 12;
+      for (const auto& line : titleLines) {
+        renderer.drawText(UI_12_FONT_ID, detailX, textY, line.c_str(), true, EpdFontFamily::BOLD);
+        textY += renderer.getLineHeight(UI_12_FONT_ID);
+      }
+      if (!book->author.empty()) {
+        renderer.drawText(SMALL_FONT_ID, detailX, textY + 5,
+                          renderer.truncatedText(SMALL_FONT_ID, book->author.c_str(), detailWidth).c_str());
+        textY += 28;
+      }
+      renderer.drawText(UI_10_FONT_ID, detailX, textY + 10,
+                        (std::to_string(book->progress) + "%  ·  " + sleepStatusText(book->status, book->progress))
+                            .c_str(),
+                        true, EpdFontFamily::BOLD);
+      const int barY = textY + 44;
+      renderer.drawRect(detailX, barY, detailWidth, 14);
+      if (book->progress > 0) renderer.fillRect(detailX + 2, barY + 2, (detailWidth - 4) * book->progress / 100, 10);
+      renderer.drawText(SMALL_FONT_ID, detailX, barY + 26,
+                        (sleepDuration(book->readingSeconds) + "  ·  " + std::to_string(book->sessions) + " " +
+                         tr(STR_SESSION_PLURAL))
+                            .c_str());
+    } else {
+      renderer.drawCenteredText(UI_12_FONT_ID, heroTop + 48, tr(STR_STATS_NO_BOOK_OPEN), true,
+                                EpdFontFamily::BOLD);
+      renderer.drawCenteredText(SMALL_FONT_ID, heroTop + 84, tr(STR_STATS_PURE_SUMMARY));
     }
-    if (!book->author.empty()) {
-      renderer.drawText(SMALL_FONT_ID, detailX, textY + 5,
-                        renderer.truncatedText(SMALL_FONT_ID, book->author.c_str(), detailWidth).c_str());
-      textY += 28;
-    }
-    renderer.drawText(UI_10_FONT_ID, detailX, textY + 10,
-                      (std::to_string(book->progress) + "%  ·  " + sleepStatusText(book->status, book->progress))
-                          .c_str(),
-                      true, EpdFontFamily::BOLD);
-    const int barY = textY + 44;
-    renderer.drawRect(detailX, barY, detailWidth, 14);
-    if (book->progress > 0) renderer.fillRect(detailX + 2, barY + 2, (detailWidth - 4) * book->progress / 100, 10);
-    renderer.drawText(SMALL_FONT_ID, detailX, barY + 26,
-                      (sleepDuration(book->readingSeconds) + "  ·  " + std::to_string(book->sessions) + " " +
-                       tr(STR_SESSION_PLURAL))
-                          .c_str());
-  } else {
-    renderer.drawCenteredText(UI_12_FONT_ID, heroTop + 48, tr(STR_STATS_NO_BOOK_OPEN), true,
-                              EpdFontFamily::BOLD);
-    renderer.drawCenteredText(SMALL_FONT_ID, heroTop + 84, tr(STR_STATS_PURE_SUMMARY));
-  }
 
-  const int dashboardTop = heroTop + heroHeight + 14;
-  renderer.drawLine(side, dashboardTop - 8, pageWidth - side, dashboardTop - 8);
-  const int halfWidth = (pageWidth - side * 2) / 2;
-  renderer.drawLine(side + halfWidth, dashboardTop + 4, side + halfWidth, dashboardTop + 76);
-  renderer.drawText(SMALL_FONT_ID, side, dashboardTop + 4, tr(STR_TODAY), true, EpdFontFamily::BOLD);
-  renderer.drawText(NOTOSERIF_18_FONT_ID, side, dashboardTop + 32,
-                    sleepDuration(snapshot.overview.todaySeconds).c_str(), true, EpdFontFamily::BOLD);
-  renderer.drawText(SMALL_FONT_ID, side + halfWidth, dashboardTop + 4, tr(STR_STATS_CURRENT_STREAK), true,
-                    EpdFontFamily::BOLD);
-  renderer.drawText(NOTOSERIF_18_FONT_ID, side + halfWidth, dashboardTop + 32,
-                    (std::to_string(snapshot.overview.currentStreak) + " d").c_str(), true,
-                    EpdFontFamily::BOLD);
+    const int dashboardTop = heroTop + heroHeight + 14;
+    renderer.drawLine(side, dashboardTop - 8, pageWidth - side, dashboardTop - 8);
+    const int halfWidth = (pageWidth - side * 2) / 2;
+    renderer.drawLine(side + halfWidth, dashboardTop + 4, side + halfWidth, dashboardTop + 76);
+    renderer.drawText(SMALL_FONT_ID, side, dashboardTop + 4, tr(STR_TODAY), true, EpdFontFamily::BOLD);
+    renderer.drawText(NOTOSERIF_18_FONT_ID, side, dashboardTop + 32,
+                      sleepDuration(snapshot.overview.todaySeconds).c_str(), true, EpdFontFamily::BOLD);
+    renderer.drawText(SMALL_FONT_ID, side + halfWidth, dashboardTop + 4, tr(STR_STATS_CURRENT_STREAK), true,
+                      EpdFontFamily::BOLD);
+    renderer.drawText(NOTOSERIF_18_FONT_ID, side + halfWidth, dashboardTop + 32,
+                      (std::to_string(snapshot.overview.currentStreak) + " d").c_str(), true,
+                      EpdFontFamily::BOLD);
 
-  uint32_t weekSeconds = 0;
-  for (const auto& day : snapshot.overview.week) weekSeconds += std::min(day.seconds, UINT32_MAX - weekSeconds);
-  const int chartTop = dashboardTop + 104;
-  renderer.drawText(SMALL_FONT_ID, side, chartTop, tr(STR_STATS_THIS_WEEK), true, EpdFontFamily::BOLD);
-  const std::string weekText = sleepDuration(weekSeconds);
-  renderer.drawText(SMALL_FONT_ID, pageWidth - side - renderer.getTextWidth(SMALL_FONT_ID, weekText.c_str()), chartTop,
-                    weekText.c_str());
-  drawSleepSevenDayChart(renderer, snapshot, side, chartTop + 24, pageWidth - side * 2, 146);
+    uint32_t weekSeconds = 0;
+    for (const auto& day : snapshot.overview.week) weekSeconds += std::min(day.seconds, UINT32_MAX - weekSeconds);
+    const int chartTop = dashboardTop + 104;
+    renderer.drawText(SMALL_FONT_ID, side, chartTop, tr(STR_STATS_THIS_WEEK), true, EpdFontFamily::BOLD);
+    const std::string weekText = sleepDuration(weekSeconds);
+    renderer.drawText(SMALL_FONT_ID, pageWidth - side - renderer.getTextWidth(SMALL_FONT_ID, weekText.c_str()), chartTop,
+                      weekText.c_str());
+    drawSleepSevenDayChart(renderer, snapshot, side, chartTop + 24, pageWidth - side * 2, 146);
 
-  const int footerY = pageHeight - 58;
-  renderer.drawLine(side, footerY - 16, pageWidth - side, footerY - 16);
-  renderer.drawText(SMALL_FONT_ID, side, footerY,
-                    (std::to_string(snapshot.overview.todayPages) + " " + tr(STR_PAGES)).c_str());
-  const std::string sessions = std::to_string(snapshot.overview.todaySessions) + " " + tr(STR_SESSION_PLURAL);
-  renderer.drawText(SMALL_FONT_ID, pageWidth - side - renderer.getTextWidth(SMALL_FONT_ID, sessions.c_str()), footerY,
-                    sessions.c_str());
-  drawPreviewControls();
-  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+    const int footerY = pageHeight - 58;
+    renderer.drawLine(side, footerY - 16, pageWidth - side, footerY - 16);
+    renderer.drawText(SMALL_FONT_ID, side, footerY,
+                      (std::to_string(snapshot.overview.todayPages) + " " + tr(STR_PAGES)).c_str());
+    const std::string sessions = std::to_string(snapshot.overview.todaySessions) + " " + tr(STR_SESSION_PLURAL);
+    renderer.drawText(SMALL_FONT_ID, pageWidth - side - renderer.getTextWidth(SMALL_FONT_ID, sessions.c_str()), footerY,
+                      sessions.c_str());
+    drawPreviewControls();
+    return true;
+  };
+  displayStatisticsSleepFrame(renderer, hasTwoBitCover, drawFrame);
 }
 
 void SleepActivity::renderReadingCalendarSleepScreen() const {
@@ -2174,87 +2234,100 @@ void SleepActivity::renderReadingSummarySleepScreen() const {
   const int contentTop = std::max(12, (pageHeight - contentHeight) / 2);
   const int heroTop = contentTop;
   const int recentTop = heroTop + heroHeight + sectionGap;
+  const std::string coverPath = hasCover ? selectStatisticsCoverPath(*book) : std::string{};
+  const bool usingHq = !coverPath.empty() && coverPath != book->coverPath220;
 
   preconditionSleepRefresh(renderer);
-  renderer.clearScreen();
+  bool hasTwoBitCover = false;
+  auto drawFrame = [&](const uint8_t clearColor) {
+    renderer.clearScreen(clearColor);
 
-  const int coverHeight = heroHeight - 12;
-  const int coverWidth = std::min(118, std::max(94, contentWidth / 3));
-  const int coverX = side;
-  const int coverTop = heroTop + 6;
-  bool coverDrawn = false;
-  if (book) {
-    const Rect coverBounds(coverX, coverTop, coverWidth, coverHeight);
-    const std::string coverPath = hasCover ? selectStatisticsCoverPath(*book) : std::string{};
-    const bool usingHq = !coverPath.empty() && coverPath != book->coverPath220;
-    coverDrawn = !coverPath.empty() && drawStatisticsCover(renderer, coverPath, coverBounds);
-    if (!coverDrawn && usingHq) {
-      // Match Carousel's safe fallback if an existing HQ file changes between
-      // selection and drawing; do not generate anything during sleep.
-      coverDrawn = drawStatisticsCover(renderer, book->coverPath220, coverBounds);
+    const int coverHeight = heroHeight - 12;
+    const int coverWidth = std::min(118, std::max(94, contentWidth / 3));
+    const int coverX = side;
+    const int coverTop = heroTop + 6;
+    bool coverDrawn = false;
+    if (book) {
+      const Rect coverBounds(coverX, coverTop, coverWidth, coverHeight);
+      coverDrawn = !coverPath.empty() && drawStatisticsCover(renderer, coverPath, coverBounds);
+      if (renderer.getRenderMode() == GfxRenderer::BW) {
+        hasTwoBitCover = coverDrawn && isFullTwoBitStatisticsCover(coverPath) &&
+                         SETTINGS.sleepScreenCoverFilter ==
+                             CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::NO_FILTER;
+      }
+      if (!coverDrawn && usingHq && renderer.getRenderMode() == GfxRenderer::BW) {
+        // Match Carousel's safe fallback if an existing HQ file changes between
+        // selection and drawing; do not generate anything during sleep.
+        coverDrawn = drawStatisticsCover(renderer, book->coverPath220, coverBounds);
+      }
+      if (renderer.getRenderMode() == GfxRenderer::BW) {
+        if (hasCover && !coverDrawn) book->coverAvailable = false;
+      } else if (hasTwoBitCover && !coverDrawn) {
+        return false;
+      }
+      const int detailX = coverDrawn ? coverX + coverWidth + 16 : side;
+      const int detailWidth = pageWidth - side - detailX;
+      const auto lines = renderer.wrappedText(UI_12_FONT_ID, book->title.c_str(), detailWidth, 2);
+      int textY = heroTop + 8;
+      for (const auto& line : lines) {
+        renderer.drawText(UI_12_FONT_ID, detailX, textY, line.c_str(), true, EpdFontFamily::BOLD);
+        textY += titleLineHeight;
+      }
+      if (!book->author.empty()) {
+        renderer.drawText(SMALL_FONT_ID, detailX, textY + 3,
+                          renderer.truncatedText(SMALL_FONT_ID, book->author.c_str(), detailWidth).c_str());
+        textY += smallLineHeight + 4;
+      }
+      const int progressY = textY + 5;
+      renderer.drawText(UI_10_FONT_ID, detailX, progressY,
+                        (std::to_string(book->progress) + "%  ·  " + sleepStatusText(book->status, book->progress))
+                            .c_str(),
+                        true, EpdFontFamily::BOLD);
+      const int barY = progressY + renderer.getLineHeight(UI_10_FONT_ID) + 5;
+      renderer.drawRect(detailX, barY, detailWidth, 12);
+      if (book->progress > 0) renderer.fillRect(detailX + 2, barY + 2, (detailWidth - 4) * book->progress / 100, 8);
+      const std::string metricsText = sleepDuration(book->readingSeconds) + "  ·  " + std::to_string(book->pages) + " " +
+                                      tr(STR_PAGES) + "  ·  " + std::to_string(book->sessions) + " " +
+                                      tr(STR_SESSION_PLURAL);
+      renderer.drawText(SMALL_FONT_ID, detailX, barY + 22,
+                        renderer.truncatedText(SMALL_FONT_ID, metricsText.c_str(), detailWidth).c_str());
+    } else {
+      renderer.drawCenteredText(UI_12_FONT_ID, heroTop + heroHeight / 2 - titleLineHeight / 2,
+                                tr(STR_STATS_NO_TRACKED_BOOKS), true,
+                                EpdFontFamily::BOLD);
+      renderer.drawCenteredText(SMALL_FONT_ID, heroTop + heroHeight / 2 + smallLineHeight,
+                                tr(STR_STATS_PURE_SUMMARY));
     }
-    if (hasCover && !coverDrawn) book->coverAvailable = false;
-    const int detailX = coverDrawn ? coverX + coverWidth + 16 : side;
-    const int detailWidth = pageWidth - side - detailX;
-    const auto lines = renderer.wrappedText(UI_12_FONT_ID, book->title.c_str(), detailWidth, 2);
-    int textY = heroTop + 8;
-    for (const auto& line : lines) {
-      renderer.drawText(UI_12_FONT_ID, detailX, textY, line.c_str(), true, EpdFontFamily::BOLD);
-      textY += titleLineHeight;
-    }
-    if (!book->author.empty()) {
-      renderer.drawText(SMALL_FONT_ID, detailX, textY + 3,
-                        renderer.truncatedText(SMALL_FONT_ID, book->author.c_str(), detailWidth).c_str());
-      textY += smallLineHeight + 4;
-    }
-    const int progressY = textY + 5;
-    renderer.drawText(UI_10_FONT_ID, detailX, progressY,
-                      (std::to_string(book->progress) + "%  ·  " + sleepStatusText(book->status, book->progress))
-                          .c_str(),
-                      true, EpdFontFamily::BOLD);
-    const int barY = progressY + renderer.getLineHeight(UI_10_FONT_ID) + 5;
-    renderer.drawRect(detailX, barY, detailWidth, 12);
-    if (book->progress > 0) renderer.fillRect(detailX + 2, barY + 2, (detailWidth - 4) * book->progress / 100, 8);
-    const std::string metricsText = sleepDuration(book->readingSeconds) + "  ·  " + std::to_string(book->pages) + " " +
-                                    tr(STR_PAGES) + "  ·  " + std::to_string(book->sessions) + " " +
-                                    tr(STR_SESSION_PLURAL);
-    renderer.drawText(SMALL_FONT_ID, detailX, barY + 22,
-                      renderer.truncatedText(SMALL_FONT_ID, metricsText.c_str(), detailWidth).c_str());
-  } else {
-    renderer.drawCenteredText(UI_12_FONT_ID, heroTop + heroHeight / 2 - titleLineHeight / 2,
-                              tr(STR_STATS_NO_TRACKED_BOOKS), true,
-                              EpdFontFamily::BOLD);
-    renderer.drawCenteredText(SMALL_FONT_ID, heroTop + heroHeight / 2 + smallLineHeight,
-                              tr(STR_STATS_PURE_SUMMARY));
-  }
 
-  renderer.drawLine(side, recentTop - 8, pageWidth - side, recentTop - 8);
-  renderer.drawText(SMALL_FONT_ID, side, recentTop, tr(STR_MENU_RECENT_BOOKS), true, EpdFontFamily::BOLD);
-  if (recentCount == 0) {
-    renderer.drawCenteredText(SMALL_FONT_ID, recentTop + recentHeaderHeight + 2, tr(STR_NO_RECENT_BOOKS));
-  }
-  int row = 0;
-  for (const auto& item : snapshot.books) {
-    if (book && item.path == book->path) continue;
-    if (row >= 3) break;
-    const int y = recentTop + recentHeaderHeight + row * recentRowHeight;
-    const std::string progress = std::to_string(item.progress) + "%";
-    const int progressWidth = renderer.getTextWidth(SMALL_FONT_ID, progress.c_str());
-    const int titleWidth = std::max(1, contentWidth - progressWidth - 20);
-    renderer.drawText(UI_10_FONT_ID, side + 8, y + 4,
-                      renderer.truncatedText(UI_10_FONT_ID, item.title.c_str(), titleWidth).c_str(), true,
-                      EpdFontFamily::REGULAR);
-    renderer.drawText(SMALL_FONT_ID, side + contentWidth - progressWidth, y + 6, progress.c_str());
-    const std::string meta = sleepDuration(item.readingSeconds) + "  ·  " + std::to_string(item.pages) + " " +
-                             tr(STR_PAGES) + "  ·  " + std::to_string(item.sessions) + " " +
-                             tr(STR_SESSION_PLURAL);
-    renderer.drawText(SMALL_FONT_ID, side + 8, y + 25,
-                      renderer.truncatedText(SMALL_FONT_ID, meta.c_str(), contentWidth - 16).c_str());
-    if (row + 1 < recentCount) renderer.drawLine(side + 8, y + recentRowHeight - 4, side + contentWidth, y + recentRowHeight - 4);
-    ++row;
-  }
-  drawPreviewControls();
-  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+    renderer.drawLine(side, recentTop - 8, pageWidth - side, recentTop - 8);
+    renderer.drawText(SMALL_FONT_ID, side, recentTop, tr(STR_MENU_RECENT_BOOKS), true, EpdFontFamily::BOLD);
+    if (recentCount == 0) {
+      renderer.drawCenteredText(SMALL_FONT_ID, recentTop + recentHeaderHeight + 2, tr(STR_NO_RECENT_BOOKS));
+    }
+    int row = 0;
+    for (const auto& item : snapshot.books) {
+      if (book && item.path == book->path) continue;
+      if (row >= 3) break;
+      const int y = recentTop + recentHeaderHeight + row * recentRowHeight;
+      const std::string progress = std::to_string(item.progress) + "%";
+      const int progressWidth = renderer.getTextWidth(SMALL_FONT_ID, progress.c_str());
+      const int titleWidth = std::max(1, contentWidth - progressWidth - 20);
+      renderer.drawText(UI_10_FONT_ID, side + 8, y + 4,
+                        renderer.truncatedText(UI_10_FONT_ID, item.title.c_str(), titleWidth).c_str(), true,
+                        EpdFontFamily::REGULAR);
+      renderer.drawText(SMALL_FONT_ID, side + contentWidth - progressWidth, y + 6, progress.c_str());
+      const std::string meta = sleepDuration(item.readingSeconds) + "  ·  " + std::to_string(item.pages) + " " +
+                               tr(STR_PAGES) + "  ·  " + std::to_string(item.sessions) + " " +
+                               tr(STR_SESSION_PLURAL);
+      renderer.drawText(SMALL_FONT_ID, side + 8, y + 25,
+                        renderer.truncatedText(SMALL_FONT_ID, meta.c_str(), contentWidth - 16).c_str());
+      if (row + 1 < recentCount) renderer.drawLine(side + 8, y + recentRowHeight - 4, side + contentWidth, y + recentRowHeight - 4);
+      ++row;
+    }
+    drawPreviewControls();
+    return true;
+  };
+  displayStatisticsSleepFrame(renderer, hasTwoBitCover, drawFrame);
 }
 
 void SleepActivity::renderMinimalStatsSleepScreen() const {
@@ -2273,63 +2346,74 @@ void SleepActivity::renderMinimalStatsSleepScreen() const {
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
   const int side = std::max(22, pageWidth / 18);
+  const std::string coverPath = hasCover ? selectStatisticsCoverPath(*book) : std::string{};
+  const bool usingHq = !coverPath.empty() && coverPath != book->coverPath220;
 
-  preconditionSleepRefresh(renderer);
-  renderer.clearScreen();
+  bool hasTwoBitCover = false;
+  auto drawFrame = [&](const uint8_t clearColor) {
+    renderer.clearScreen(clearColor);
 
-  renderer.drawText(SMALL_FONT_ID, side, 32, "FOLIO NOOIR", true, EpdFontFamily::BOLD);
-  renderer.drawLine(side, 48, pageWidth - side - 1, 48);
+    renderer.drawText(SMALL_FONT_ID, side, 32, "FOLIO NOOIR", true, EpdFontFamily::BOLD);
+    renderer.drawLine(side, 48, pageWidth - side - 1, 48);
 
-  const int statsY = pageHeight - 190;
-  const int heroTop = 70;
-  const int infoReserve = 112;
-  const int coverHeight = std::min(360, std::max(190, statsY - heroTop - infoReserve));
-  const int coverWidth = std::min(220, std::max(120, pageWidth - side * 2));
-  const int coverX = (pageWidth - coverWidth) / 2;
-  const int coverTop = heroTop;
-  bool coverDrawn = false;
-  if (book) {
-    const Rect coverBounds(coverX, coverTop, coverWidth, coverHeight);
-    const std::string coverPath = hasCover ? selectStatisticsCoverPath(*book) : std::string{};
-    const bool usingHq = !coverPath.empty() && coverPath != book->coverPath220;
-    coverDrawn = !coverPath.empty() && drawStatisticsCover(renderer, coverPath, coverBounds);
-    if (!coverDrawn && usingHq) coverDrawn = drawStatisticsCover(renderer, book->coverPath220, coverBounds);
-    if (hasCover && !coverDrawn) book->coverAvailable = false;
-    const int detailWidth = pageWidth - side * 2;
-    const auto lines = renderer.wrappedText(UI_12_FONT_ID, book->title.c_str(), detailWidth, 2);
-    int textY = (coverDrawn ? coverTop + coverHeight : heroTop + 22) + 10;
-    for (const auto& line : lines) {
-      renderer.drawCenteredText(UI_12_FONT_ID, textY, line.c_str(), true, EpdFontFamily::BOLD);
-      textY += renderer.getLineHeight(UI_12_FONT_ID);
+    const int statsY = pageHeight - 190;
+    const int heroTop = 70;
+    const int infoReserve = 112;
+    const int coverHeight = std::min(360, std::max(190, statsY - heroTop - infoReserve));
+    const int coverWidth = std::min(220, std::max(120, pageWidth - side * 2));
+    const int coverX = (pageWidth - coverWidth) / 2;
+    const int coverTop = heroTop;
+    bool coverDrawn = false;
+    if (book) {
+      const Rect coverBounds(coverX, coverTop, coverWidth, coverHeight);
+      coverDrawn = !coverPath.empty() && drawStatisticsCover(renderer, coverPath, coverBounds);
+      if (renderer.getRenderMode() == GfxRenderer::BW) {
+        hasTwoBitCover = coverDrawn && isFullTwoBitStatisticsCover(coverPath) &&
+                         SETTINGS.sleepScreenCoverFilter ==
+                             CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::NO_FILTER;
+        if (!coverDrawn && usingHq) coverDrawn = drawStatisticsCover(renderer, book->coverPath220, coverBounds);
+        if (hasCover && !coverDrawn) book->coverAvailable = false;
+      } else if (hasTwoBitCover && !coverDrawn) {
+        return false;
+      }
+      const int detailWidth = pageWidth - side * 2;
+      const auto lines = renderer.wrappedText(UI_12_FONT_ID, book->title.c_str(), detailWidth, 2);
+      int textY = (coverDrawn ? coverTop + coverHeight : heroTop + 22) + 10;
+      for (const auto& line : lines) {
+        renderer.drawCenteredText(UI_12_FONT_ID, textY, line.c_str(), true, EpdFontFamily::BOLD);
+        textY += renderer.getLineHeight(UI_12_FONT_ID);
+      }
+      const std::string progress = std::to_string(book->progress) + "%";
+      renderer.drawCenteredText(UI_12_FONT_ID, textY + 10, progress.c_str(), true, EpdFontFamily::BOLD);
+      renderer.drawCenteredText(SMALL_FONT_ID, textY + 40, sleepStatusText(book->status, book->progress));
+      const int barWidth = std::min(detailWidth, std::max(120, detailWidth * 3 / 4));
+      const int barX = (pageWidth - barWidth) / 2;
+      const int barY = textY + 70;
+      renderer.drawRect(barX, barY, barWidth, 14);
+      if (book->progress > 0) renderer.fillRect(barX + 2, barY + 2, (barWidth - 4) * book->progress / 100, 10);
+    } else {
+      renderer.drawCenteredText(UI_12_FONT_ID, heroTop + 48, tr(STR_STATS_NO_BOOK_OPEN), true,
+                                EpdFontFamily::BOLD);
+      renderer.drawCenteredText(SMALL_FONT_ID, heroTop + 86, tr(STR_STATS_PURE_SUMMARY));
     }
-    const std::string progress = std::to_string(book->progress) + "%";
-    renderer.drawCenteredText(UI_12_FONT_ID, textY + 10, progress.c_str(), true, EpdFontFamily::BOLD);
-    renderer.drawCenteredText(SMALL_FONT_ID, textY + 40, sleepStatusText(book->status, book->progress));
-    const int barWidth = std::min(detailWidth, std::max(120, detailWidth * 3 / 4));
-    const int barX = (pageWidth - barWidth) / 2;
-    const int barY = textY + 70;
-    renderer.drawRect(barX, barY, barWidth, 14);
-    if (book->progress > 0) renderer.fillRect(barX + 2, barY + 2, (barWidth - 4) * book->progress / 100, 10);
-  } else {
-    renderer.drawCenteredText(UI_12_FONT_ID, heroTop + 48, tr(STR_STATS_NO_BOOK_OPEN), true,
-                              EpdFontFamily::BOLD);
-    renderer.drawCenteredText(SMALL_FONT_ID, heroTop + 86, tr(STR_STATS_PURE_SUMMARY));
-  }
 
-  const int halfWidth = (pageWidth - side * 2) / 2;
-  renderer.drawLine(side, statsY - 24, pageWidth - side, statsY - 24);
-  renderer.drawText(SMALL_FONT_ID, side, statsY, tr(STR_TODAY), true, EpdFontFamily::BOLD);
-  renderer.drawText(NOTOSERIF_18_FONT_ID, side, statsY + 34, sleepDuration(snapshot.overview.todaySeconds).c_str(), true,
-                    EpdFontFamily::BOLD);
-  renderer.drawText(SMALL_FONT_ID, side + halfWidth, statsY, tr(STR_STATS_CURRENT_STREAK), true,
-                    EpdFontFamily::BOLD);
-  renderer.drawText(NOTOSERIF_18_FONT_ID, side + halfWidth, statsY + 34,
-                    (std::to_string(snapshot.overview.currentStreak) + " d").c_str(), true,
-                    EpdFontFamily::BOLD);
-  renderer.drawImage(MoonIcon, pageWidth - MOONICON_WIDTH - 16, pageHeight - MOONICON_HEIGHT - 12, MOONICON_WIDTH,
-                     MOONICON_HEIGHT);
-  drawPreviewControls();
-  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+    const int halfWidth = (pageWidth - side * 2) / 2;
+    renderer.drawLine(side, statsY - 24, pageWidth - side, statsY - 24);
+    renderer.drawText(SMALL_FONT_ID, side, statsY, tr(STR_TODAY), true, EpdFontFamily::BOLD);
+    renderer.drawText(NOTOSERIF_18_FONT_ID, side, statsY + 34, sleepDuration(snapshot.overview.todaySeconds).c_str(), true,
+                      EpdFontFamily::BOLD);
+    renderer.drawText(SMALL_FONT_ID, side + halfWidth, statsY, tr(STR_STATS_CURRENT_STREAK), true,
+                      EpdFontFamily::BOLD);
+    renderer.drawText(NOTOSERIF_18_FONT_ID, side + halfWidth, statsY + 34,
+                      (std::to_string(snapshot.overview.currentStreak) + " d").c_str(), true,
+                      EpdFontFamily::BOLD);
+    renderer.drawImage(MoonIcon, pageWidth - MOONICON_WIDTH - 16, pageHeight - MOONICON_HEIGHT - 12, MOONICON_WIDTH,
+                       MOONICON_HEIGHT);
+    drawPreviewControls();
+    return true;
+  };
+  preconditionSleepRefresh(renderer);
+  displayStatisticsSleepFrame(renderer, hasTwoBitCover, drawFrame);
 }
 
 void SleepActivity::renderClippingCoverSleepScreen() const {

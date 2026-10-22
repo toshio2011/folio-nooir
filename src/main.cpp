@@ -401,7 +401,17 @@ void setup() {
   renderer.setUiScalePercent(SETTINGS.uiScalePercent);
   APP_STATE.loadFromFile();
   BOOK_METADATA_OVERRIDES.loadFromFile();
-  RECENT_BOOKS.loadFromFile();
+  const bool recentBooksLoaded = RECENT_BOOKS.loadFromFile();
+  const RecentBooksLoadResult recentLoadResult = RECENT_BOOKS.getLoadResult();
+  if (recentBooksLoaded || recentLoadResult == RecentBooksLoadResult::MissingFirstBoot) {
+    LOG_INF("RBS", "boot_load=%s count=%u free=%u largest=%u",
+            recentBooksLoadResultName(recentLoadResult), static_cast<unsigned>(RECENT_BOOKS.getCount()),
+            static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  } else {
+    LOG_ERR("RBS", "boot_load=%s count=%u free=%u largest=%u recovery_candidates_preserved=1",
+            recentBooksLoadResultName(recentLoadResult), static_cast<unsigned>(RECENT_BOOKS.getCount()),
+            static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  }
   BOOK_STATES.loadFromFile();
   READING_STATS.loadFromFile();
   WEATHER_STORE.loadFromFile();

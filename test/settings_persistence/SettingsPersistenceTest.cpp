@@ -12,6 +12,7 @@ namespace {
 constexpr const char* kSettingsPath = "/.crosspoint/settings.json";
 constexpr const char* kBackupPath = "/.crosspoint/settings.json.bak";
 constexpr const char* kTempPath = "/.crosspoint/settings.json.tmp";
+constexpr const char* kRecentPath = "/.crosspoint/recent.json";
 
 JsonDocument settingsDocument(const uint8_t theme) {
   JsonDocument doc;
@@ -28,6 +29,20 @@ JsonDocument settingsDocument(const uint8_t theme) {
 String serializedSettings(const uint8_t theme) {
   String json;
   serializeJson(settingsDocument(theme), json);
+  return json;
+}
+
+String serializedRecent(const uint32_t readingSeconds) {
+  JsonDocument doc;
+  JsonArray books = doc["books"].to<JsonArray>();
+  JsonObject book = books.add<JsonObject>();
+  book["path"] = "/manga/One Piece.xtch";
+  book["title"] = "One Piece";
+  book["series"] = "One Piece";
+  book["xtcMetadataChecked"] = true;
+  book["readingSeconds"] = readingSeconds;
+  String json;
+  serializeJson(doc, json);
   return json;
 }
 
@@ -353,6 +368,76 @@ TEST_F(SettingsPersistenceTest, SuccessfulSaveReplacesMainOnlyAfterTemporaryVali
   EXPECT_FALSE(Storage.exists(kBackupPath));
   EXPECT_FALSE(Storage.exists(kTempPath));
   EXPECT_EQ(loadedTheme(), 6);
+}
+
+TEST_F(SettingsPersistenceTest, RecentSaveChecksCompleteTemporaryBytesAndRetainsPreviousPrimary) {
+  const String original = serializedRecent(17);
+  Storage.files[kRecentPath] = original.c_str();
+  Storage.files[std::string(kRecentPath) + ".bak"] = serializedRecent(9).c_str();
+
+  JsonDocument replacement;
+  JsonArray books = replacement["books"].to<JsonArray>();
+  JsonObject book = books.add<JsonObject>();
+  book["path"] = "/manga/One Piece.xtch";
+  book["title"] = "One Piece";
+  book["series"] = "One Piece";
+  book["xtcMetadataChecked"] = true;
+  book["readingSeconds"] = 25;
+
+  EXPECT_TRUE(PersistableStoreBase::writeDocToFile(kRecentPath, replacement));
+
+  EXPECT_EQ(Storage.files[kRecentPath], serializedRecent(25).c_str());
+  EXPECT_EQ(Storage.files[std::string(kRecentPath) + ".bak"], original.c_str());
+  EXPECT_FALSE(Storage.files.contains(std::string(kRecentPath) + ".tmp"));
+  EXPECT_FALSE(Storage.files.contains(std::string(kRecentPath) + ".previous-0"));
+}
+
+TEST_F(SettingsPersistenceTest, TruncatedRecentTemporaryWriteCannotReplaceHistoryOrBackup) {
+  const String original = serializedRecent(17);
+  const String backup = serializedRecent(9);
+  Storage.files[kRecentPath] = original.c_str();
+  Storage.files[std::string(kRecentPath) + ".bak"] = backup.c_str();
+  Storage.truncateTempWrite = true;
+
+  JsonDocument replacement;
+  JsonArray books = replacement["books"].to<JsonArray>();
+  JsonObject book = books.add<JsonObject>();
+  book["path"] = "/manga/One Piece.xtch";
+  book["title"] = "One Piece";
+  book["series"] = "One Piece";
+  book["xtcMetadataChecked"] = true;
+  book["readingSeconds"] = 25;
+
+  EXPECT_FALSE(PersistableStoreBase::writeDocToFile(kRecentPath, replacement));
+  EXPECT_EQ(Storage.files[kRecentPath], original.c_str());
+  EXPECT_EQ(Storage.files[std::string(kRecentPath) + ".bak"], backup.c_str());
+  EXPECT_TRUE(Storage.files.contains(std::string(kRecentPath) + ".tmp"));
+}
+
+TEST_F(SettingsPersistenceTest, RecentRecoverySaveKeepsValidatedBackupAndPriorTemporaryCandidate) {
+  const std::string damagedPrimary = "{\"books\":[{\"path\":\"/manga/partial";
+  const String validBackup = serializedRecent(17);
+  const String pendingCandidate = serializedRecent(22);
+  Storage.files[kRecentPath] = damagedPrimary;
+  Storage.files[std::string(kRecentPath) + ".bak"] = validBackup.c_str();
+  Storage.files[std::string(kRecentPath) + ".tmp"] = pendingCandidate.c_str();
+
+  JsonDocument replacement;
+  JsonArray books = replacement["books"].to<JsonArray>();
+  JsonObject book = books.add<JsonObject>();
+  book["path"] = "/manga/One Piece.xtch";
+  book["title"] = "One Piece";
+  book["series"] = "One Piece";
+  book["xtcMetadataChecked"] = true;
+  book["readingSeconds"] = 25;
+
+  ASSERT_TRUE(PersistableStoreBase::writeRecoveredRecentBooksDocToFile(kRecentPath, replacement));
+
+  EXPECT_EQ(Storage.files[kRecentPath], serializedRecent(25).c_str());
+  EXPECT_EQ(Storage.files[std::string(kRecentPath) + ".bak"], validBackup.c_str());
+  EXPECT_EQ(Storage.files[std::string(kRecentPath) + ".recovered-primary-0"], damagedPrimary);
+  EXPECT_EQ(Storage.files[std::string(kRecentPath) + ".tmp.recovery-candidate-0"], pendingCandidate.c_str());
+  EXPECT_FALSE(Storage.files.contains(std::string(kRecentPath) + ".tmp"));
 }
 
 TEST_F(SettingsPersistenceTest, UnchangedSettingsSkipAtomicWritesAfterValidatedLoad) {
