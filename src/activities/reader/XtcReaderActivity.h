@@ -14,17 +14,22 @@
 
 #include "EndOfBookOptions.h"
 #include "activities/Activity.h"
+#include "activities/reader/EpubReaderMenuActivity.h"
 
 class XtcReaderActivity final : public Activity {
   std::shared_ptr<Xtc> xtc;
 
   uint32_t currentPage = 0;
+  uint32_t lastPersistedPage = 0;
+  bool hasPersistedProgressPage = false;
   int pagesUntilFullRefresh = 0;
   unsigned long readingSessionStartedMs = 0UL;
   uint32_t sessionPagesTurned = 0;
   bool darkShortcutFired = false;
   bool longPowerShortcutFired = false;
   bool skipNextButtonCheck = false;
+  uint8_t autoTurnOption = 0;
+  unsigned long nextAutoTurnMs = 0UL;
   // Render the same saving feedback as EPUB before queuing the home transition.
   bool exitHomePending = false;
   bool exitPopupShown = false;
@@ -39,11 +44,16 @@ class XtcReaderActivity final : public Activity {
   };
 
   void renderPage();
-  // Opens chapter selection when the book has chapters (short-press Confirm); no-op otherwise
-  void openChapterSelection();
+  // Opens the XTC/XTCH reader menu (short-press Confirm or the touch menu gesture).
+  void openReaderMenu();
+  void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action, int quickAction);
+  void executeQuickAction(int actionValue);
+  void launchKOReaderSync();
+  void toggleCurrentBookmark();
+  void updateAutoPageTurn(uint8_t pageTurnOption);
   void renderStatusBarOverlay(StatusBarOverlayPosition position) const;
   StatusBarInfo getStatusBarInfo() const;
-  void saveProgress() const;
+  bool saveProgress();
   void loadProgress();
   void requestExitToHome();
 

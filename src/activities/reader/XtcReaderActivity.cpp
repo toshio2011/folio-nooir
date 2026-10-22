@@ -15,6 +15,7 @@
 #include <I18n.h>
 
 #include <algorithm>
+#include <climits>
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -28,11 +29,18 @@
 #include "RecentBooksStore.h"
 #include "BookStateStore.h"
 #include "ReadingStatsStore.h"
+#include "KOReaderCredentialStore.h"
+#include "KOReaderSyncActivity.h"
 #include "XtcReaderChapterSelectionActivity.h"
+#include "XtcReaderBookmarksActivity.h"
+#include "EpubReaderPercentSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/BookmarkFile.h"
+#include "util/QuickActions.h"
 #include "util/ScreenshotUtil.h"
 #include "activities/reader/XtcRenderMemoryPolicy.h"
+#include <Xtc/XtcFrameGeometry.h>
 
 namespace {
 enum class XtchRenderPass { Base, Lsb, Msb };
@@ -40,8 +48,46 @@ enum class XtchRenderPass { Base, Lsb, Msb };
 // XTCH stores two 2-bit planes in column-major order. Keep the page itself out
 // of heap memory, but use a larger SD chunk and preserve the B/W framebuffer in
 // GfxRenderer's non-contiguous 8 KB chunks so the base plane is not reread.
+bool mappedPixelRect(const xtc_frame::Mapping& mapping, const uint16_t sourceX, const uint16_t sourceY,
+                     xtc_frame::Rect& destination) {
+  const auto& source = mapping.source;
+  if (!mapping.valid || sourceX < source.x || sourceY < source.y ||
+      static_cast<uint32_t>(sourceX) >= static_cast<uint32_t>(source.x) + source.width ||
+      static_cast<uint32_t>(sourceY) >= static_cast<uint32_t>(source.y) + source.height) {
+    return false;
+  }
+  if (source.x == 0 && source.y == 0 && mapping.destination.width == source.width &&
+      mapping.destination.height == source.height) {
+    destination = {static_cast<uint16_t>(mapping.destination.x + sourceX),
+                   static_cast<uint16_t>(mapping.destination.y + sourceY), 1, 1};
+    return true;
+  }
+  const uint32_t relativeX = sourceX - source.x;
+  const uint32_t relativeY = sourceY - source.y;
+  const uint32_t left = mapping.destination.x + relativeX * mapping.destination.width / source.width;
+  const uint32_t right = mapping.destination.x + (relativeX + 1) * mapping.destination.width / source.width;
+  const uint32_t top = mapping.destination.y + relativeY * mapping.destination.height / source.height;
+  const uint32_t bottom = mapping.destination.y + (relativeY + 1) * mapping.destination.height / source.height;
+  if (right <= left || bottom <= top || right > UINT16_MAX || bottom > UINT16_MAX) return false;
+  destination = {static_cast<uint16_t>(left), static_cast<uint16_t>(top), static_cast<uint16_t>(right - left),
+                 static_cast<uint16_t>(bottom - top)};
+  return true;
+}
+
+void fillMappedCell(GfxRenderer& renderer, const xtc_frame::Rect& destination, const bool state) {
+  // Most source pixels remain 1:1 even when a narrow crop or small fit margin
+  // makes the overall mapping non-identity. Keep those writes on drawPixel's
+  // hot path instead of paying fillRect's clipping/setup cost per source pixel.
+  if (destination.width == 1 && destination.height == 1) {
+    renderer.drawPixel(destination.x, destination.y, state);
+  } else {
+    renderer.fillRect(destination.x, destination.y, destination.width, destination.height, state);
+  }
+}
+
 bool streamXtchRenderPass(const Xtc& xtc, const uint32_t pageIndex, const uint16_t pageWidth,
-                          const uint16_t pageHeight, GfxRenderer& renderer, const XtchRenderPass pass) {
+                          const uint16_t pageHeight, const xtc_frame::Mapping& mapping, GfxRenderer& renderer,
+                          const XtchRenderPass pass, const bool darkMode) {
   const size_t planeSize = (static_cast<size_t>(pageWidth) * pageHeight + 7) / 8;
   const size_t colBytes = (pageHeight + 7) / 8;
   const xtc::XtcError error = xtc.loadPageStreaming(
@@ -58,23 +104,38 @@ bool streamXtchRenderPass(const Xtc& xtc, const uint32_t pageIndex, const uint16
           const uint16_t yBase = static_cast<uint16_t>((planeOffset % colBytes) * 8);
           for (uint8_t bit = 0; bit < 8 && yBase + bit < pageHeight; ++bit) {
             const uint16_t y = static_cast<uint16_t>(yBase + bit);
-            const bool bitSet = ((data[i] >> (7 - bit)) & 1U) != 0;
+            const bool rawBitSet = ((data[i] >> (7 - bit)) & 1U) != 0;
+            const bool bitSet = darkMode ? !rawBitSet : rawBitSet;
+            xtc_frame::Rect destination;
+            if (!mappedPixelRect(mapping, x, y, destination)) continue;
             switch (pass) {
               case XtchRenderPass::Base:
-                if (bitSet) renderer.drawPixel(x, y, true);
+                if (darkMode) {
+                  if (!secondPlane && !rawBitSet) {
+                    fillMappedCell(renderer, destination, true);
+                  } else if (secondPlane && rawBitSet) {
+                    fillMappedCell(renderer, destination, false);
+                  }
+                } else if (rawBitSet) {
+                  fillMappedCell(renderer, destination, true);
+                }
                 break;
               case XtchRenderPass::Lsb:
                 if (!secondPlane) {
-                  if (!bitSet) renderer.drawPixel(x, y, false);
+                  if (!bitSet) fillMappedCell(renderer, destination, false);
                 } else if (!bitSet) {
-                  renderer.drawPixel(x, y, true);
+                  fillMappedCell(renderer, destination, true);
                 }
                 break;
               case XtchRenderPass::Msb:
                 if (!secondPlane && bitSet) {
-                  renderer.drawPixel(x, y, false);
+                  fillMappedCell(renderer, destination, false);
                 } else if (secondPlane && bitSet) {
-                  renderer.drawPixel(x, y, !renderer.isPixelBlack(x, y));
+                  for (uint16_t dy = destination.y; dy < destination.y + destination.height; ++dy) {
+                    for (uint16_t dx = destination.x; dx < destination.x + destination.width; ++dx) {
+                      renderer.drawPixel(dx, dy, !renderer.isPixelBlack(dx, dy));
+                    }
+                  }
                 }
                 break;
             }
@@ -141,18 +202,258 @@ void XtcReaderActivity::onExit() {
     APP_STATE.readerActivityLoadCount = 0;
     APP_STATE.saveToFile();
   }
+  // Flush only if the visible position changed since the last progress write.
+  saveProgress();
   xtc.reset();
 }
 
-void XtcReaderActivity::openChapterSelection() {
-  if (xtc && xtc->hasChapters() && !xtc->getChapters().empty()) {
-    startActivityForResult(std::make_unique<XtcReaderChapterSelectionActivity>(renderer, mappedInput, xtc, currentPage),
-                           [this](const ActivityResult& result) {
-                             if (!result.isCancelled) {
-                               currentPage = std::get<PageResult>(result.data).page;
-                             }
-                           });
+void XtcReaderActivity::openReaderMenu() {
+  if (!xtc) return;
+  std::vector<BookmarkEntry> bookmarks;
+  BookmarkFile::load(xtc->getPath(), bookmarks);
+  const uint32_t pageCount = xtc->getPageCount();
+  const int menuPageCount = static_cast<int>(std::min<uint32_t>(pageCount, static_cast<uint32_t>(INT_MAX)));
+  const int menuCurrentPage = pageCount == 0
+                                  ? 0
+                                  : static_cast<int>(std::min<uint64_t>(
+                                        static_cast<uint64_t>(currentPage) + 1, menuPageCount));
+  const uint8_t currentProgress = pageCount > 1
+                                      ? static_cast<uint8_t>(std::min<uint64_t>(100, static_cast<uint64_t>(currentPage) * 100 / (pageCount - 1)))
+                                      : 0;
+  const auto quickActionContext = QuickActions::Context{false, false, KOREADER_STORE.hasCredentials(), true, false};
+  startActivityForResult(
+      std::make_unique<EpubReaderMenuActivity>(renderer, mappedInput, xtc->getTitle(),
+                                               menuCurrentPage, menuPageCount, currentProgress, SETTINGS.orientation,
+                                               false, !bookmarks.empty(), false, quickActionContext, true,
+                                               xtc->hasChapters() && !xtc->getChapters().empty(),
+                                               SETTINGS.xtcReadingDirection, SETTINGS.xtcPageFitMode, autoTurnOption,
+                                               KOREADER_STORE.hasCredentials()),
+      [this](const ActivityResult& result) {
+        if (!xtc || !std::holds_alternative<MenuResult>(result.data)) return;
+        const auto& menu = std::get<MenuResult>(result.data);
+        const uint8_t orientation = menu.orientation % CrossPointSettings::ORIENTATION_COUNT;
+        const uint8_t readingDirection = menu.xtcReadingDirection <= 1 ? menu.xtcReadingDirection : 0;
+        const uint8_t pageFitMode = menu.xtcPageFitMode <= 1 ? menu.xtcPageFitMode : 0;
+        const bool displaySettingsChanged = SETTINGS.orientation != orientation ||
+                                            SETTINGS.xtcReadingDirection != readingDirection ||
+                                            SETTINGS.xtcPageFitMode != pageFitMode;
+        SETTINGS.orientation = orientation;
+        SETTINGS.xtcReadingDirection = readingDirection;
+        SETTINGS.xtcPageFitMode = pageFitMode;
+        if (displaySettingsChanged) SETTINGS.saveToFile();
+        if (displaySettingsChanged) pagesUntilFullRefresh = 1;
+        ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+        updateAutoPageTurn(menu.pageTurnOption);
+        if (!result.isCancelled) {
+          if (menu.action == static_cast<int>(EpubReaderMenuActivity::MenuAction::QUICK_ACTIONS)) {
+            executeQuickAction(menu.quickAction);
+          } else {
+            onReaderMenuConfirm(static_cast<EpubReaderMenuActivity::MenuAction>(menu.action), menu.quickAction);
+          }
+        }
+        requestUpdate();
+      });
+}
+
+void XtcReaderActivity::updateAutoPageTurn(const uint8_t pageTurnOption) {
+  autoTurnOption = std::min<uint8_t>(pageTurnOption, 4);
+  static constexpr uint8_t pagesPerMinute[] = {0, 1, 3, 6, 12};
+  const uint8_t rate = pagesPerMinute[autoTurnOption];
+  nextAutoTurnMs = rate == 0 ? 0 : millis() + (60000UL / rate);
+}
+
+void XtcReaderActivity::toggleCurrentBookmark() {
+  if (!xtc || xtc->getPageCount() == 0) return;
+  const uint32_t page = std::min(currentPage, xtc->getPageCount() - 1);
+  std::vector<BookmarkEntry> bookmarks;
+  BookmarkFile::load(xtc->getPath(), bookmarks);
+  const std::string position = "xtc-page:" + std::to_string(page);
+  const auto found = std::find_if(bookmarks.begin(), bookmarks.end(), [&position](const BookmarkEntry& bookmark) {
+    return bookmark.xpath == position;
+  });
+  if (found != bookmarks.end()) {
+    bookmarks.erase(found);
+  } else {
+    BookmarkEntry bookmark;
+    bookmark.xpath = position;
+    bookmark.summary = std::string(tr(STR_PAGE)) + " " + std::to_string(page + 1);
+    bookmark.percentage = xtc->getPageCount() > 1
+                              ? static_cast<float>(page) / static_cast<float>(xtc->getPageCount() - 1)
+                              : 0.0f;
+    bookmarks.push_back(std::move(bookmark));
   }
+  if (!BookmarkFile::save(xtc->getPath(), bookmarks)) {
+    LOG_ERR("XTR", "Failed to save XTC bookmark for page %lu", page + 1);
+  }
+  requestUpdate();
+}
+
+void XtcReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAction action, const int quickAction) {
+  switch (action) {
+    case EpubReaderMenuActivity::MenuAction::SELECT_CHAPTER:
+      if (xtc && xtc->hasChapters() && !xtc->getChapters().empty()) {
+        startActivityForResult(
+            std::make_unique<XtcReaderChapterSelectionActivity>(renderer, mappedInput, xtc, currentPage),
+            [this](const ActivityResult& result) {
+              if (!result.isCancelled) currentPage = std::get<PageResult>(result.data).page;
+              requestUpdate();
+            });
+      }
+      break;
+    case EpubReaderMenuActivity::MenuAction::READING_DIRECTION:
+    case EpubReaderMenuActivity::MenuAction::PAGE_FIT:
+      break;  // Values were committed when the menu returned.
+    case EpubReaderMenuActivity::MenuAction::GO_TO_PAGE:
+      if (xtc && xtc->getPageCount() > 0) {
+        const int maximum = static_cast<int>(std::min<uint32_t>(xtc->getPageCount() - 1, INT_MAX));
+        startActivityForResult(
+            std::make_unique<EpubReaderPercentSelectionActivity>(renderer, mappedInput,
+                                                                 static_cast<int>(std::min<uint32_t>(currentPage, maximum)),
+                                                                 maximum, true),
+            [this](const ActivityResult& result) {
+              if (!result.isCancelled) currentPage = std::get<PageResult>(result.data).page;
+              requestUpdate();
+            });
+      }
+      break;
+    case EpubReaderMenuActivity::MenuAction::GO_TO_PERCENT:
+      if (xtc && xtc->getPageCount() > 0) {
+        const int initialPercent = xtc->getPageCount() > 1
+                                      ? static_cast<int>(std::min<uint64_t>(100, static_cast<uint64_t>(currentPage) * 100 / (xtc->getPageCount() - 1)))
+                                      : 0;
+        startActivityForResult(
+            std::make_unique<EpubReaderPercentSelectionActivity>(renderer, mappedInput, initialPercent),
+            [this](const ActivityResult& result) {
+              if (!result.isCancelled && xtc && xtc->getPageCount() > 0) {
+                const int percent = std::clamp(std::get<PercentResult>(result.data).percent, 0, 100);
+                currentPage = static_cast<uint32_t>((static_cast<uint64_t>(xtc->getPageCount() - 1) * percent + 50) / 100);
+              }
+              requestUpdate();
+            });
+      }
+      break;
+    case EpubReaderMenuActivity::MenuAction::BOOKMARKS:
+      if (xtc) {
+        startActivityForResult(
+            std::make_unique<XtcReaderBookmarksActivity>(renderer, mappedInput, xtc->getPath()),
+            [this](const ActivityResult& result) {
+              if (!result.isCancelled && xtc && xtc->getPageCount() > 0) {
+                currentPage = std::min(std::get<PageResult>(result.data).page, xtc->getPageCount() - 1);
+              }
+              requestUpdate();
+            });
+      }
+      break;
+    case EpubReaderMenuActivity::MenuAction::TOGGLE_BOOKMARK:
+      toggleCurrentBookmark();
+      break;
+    case EpubReaderMenuActivity::MenuAction::AUTO_PAGE_TURN:
+      break;  // The selected option is committed when the menu returns.
+    case EpubReaderMenuActivity::MenuAction::SCREENSHOT: {
+      RenderLock lock(*this);
+      ScreenshotUtil::takeScreenshot(renderer);
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::GO_HOME:
+      requestExitToHome();
+      break;
+    case EpubReaderMenuActivity::MenuAction::DELETE_CACHE:
+      if (xtc && !xtc->clearCoverCache()) LOG_ERR("XTR", "Failed to clear XTC cover cache");
+      break;
+    case EpubReaderMenuActivity::MenuAction::SYNC:
+      launchKOReaderSync();
+      break;
+    case EpubReaderMenuActivity::MenuAction::QUICK_ACTIONS:
+      executeQuickAction(quickAction);
+      break;
+    case EpubReaderMenuActivity::MenuAction::BLUETOOTH:
+      bleinput::toggleReaderSessionBluetooth();
+      break;
+    case EpubReaderMenuActivity::MenuAction::READER_OPTIONS:
+    case EpubReaderMenuActivity::MenuAction::FOOTNOTES:
+    case EpubReaderMenuActivity::MenuAction::DISPLAY_QR:
+    case EpubReaderMenuActivity::MenuAction::DICTIONARY:
+    case EpubReaderMenuActivity::MenuAction::CLIP_TEXT:
+    case EpubReaderMenuActivity::MenuAction::CLIPPINGS:
+    case EpubReaderMenuActivity::MenuAction::ROTATE_SCREEN:
+      break;
+  }
+}
+
+void XtcReaderActivity::executeQuickAction(const int actionValue) {
+  const auto action = static_cast<QuickActions::ActionId>(actionValue);
+  const QuickActions::Context context{false, false, KOREADER_STORE.hasCredentials(), true, false};
+  if (!QuickActions::isAvailable(action, context)) return;
+
+  switch (action) {
+    case QuickActions::ActionId::RefreshScreen:
+      pagesUntilFullRefresh = 1;
+      requestUpdate();
+      break;
+    case QuickActions::ActionId::ToggleDarkMode:
+      SETTINGS.readerDarkMode = SETTINGS.readerDarkMode ? 0 : 1;
+      SETTINGS.saveToFile();
+      pagesUntilFullRefresh = 1;
+      requestUpdate();
+      break;
+    case QuickActions::ActionId::ToggleBookmark:
+      toggleCurrentBookmark();
+      break;
+    case QuickActions::ActionId::ReaderOptions:
+      startActivityForResult(
+          std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
+                                                 TextSettingsActivity::Tab::Size),
+          [this](const ActivityResult&) {
+            SETTINGS.saveToFile();
+            skipNextButtonCheck = true;
+            requestUpdate();
+          });
+      break;
+    case QuickActions::ActionId::Orientation:
+      SETTINGS.orientation = static_cast<uint8_t>((SETTINGS.orientation + 1) % CrossPointSettings::ORIENTATION_COUNT);
+      SETTINGS.saveToFile();
+      ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
+      requestUpdate();
+      break;
+    case QuickActions::ActionId::Screenshot: {
+      RenderLock lock(*this);
+      ScreenshotUtil::takeScreenshot(renderer);
+      break;
+    }
+    case QuickActions::ActionId::Home:
+      requestExitToHome();
+      break;
+    case QuickActions::ActionId::Sleep:
+      activityManager.requestSleep();
+      break;
+    case QuickActions::ActionId::ToggleBluetooth:
+      bleinput::toggleReaderSessionBluetooth();
+      break;
+    case QuickActions::ActionId::Lookup:
+    case QuickActions::ActionId::ReadingStats:
+      break;
+    case QuickActions::ActionId::Sync:
+      launchKOReaderSync();
+      break;
+    case QuickActions::ActionId::None:
+      break;
+  }
+}
+
+void XtcReaderActivity::launchKOReaderSync() {
+  if (!xtc || !KOREADER_STORE.hasCredentials()) return;
+  if (!saveProgress()) {
+    LOG_ERR("KOSync", "Aborting XTC sync because current progress could not be saved");
+    requestUpdate();
+    return;
+  }
+
+  const std::string documentPath = xtc->getPath();
+  const std::string cachePath = xtc->getCachePath();
+  const uint32_t pageCount = xtc->getPageCount();
+  const uint32_t page = pageCount > 0 ? std::min(currentPage, pageCount - 1) : 0;
+  activityManager.replaceActivity(std::make_unique<KOReaderSyncActivity>(renderer, mappedInput, documentPath,
+                                                                         cachePath, page, pageCount));
 }
 
 void XtcReaderActivity::loop() {
@@ -169,6 +470,17 @@ void XtcReaderActivity::loop() {
   }
 
   if (!xtc) {
+    return;
+  }
+
+  static constexpr uint8_t pagesPerMinute[] = {0, 1, 3, 6, 12};
+  const uint8_t turnRate = pagesPerMinute[std::min<uint8_t>(autoTurnOption, 4)];
+  if (turnRate > 0 && currentPage < xtc->getPageCount() && nextAutoTurnMs != 0 &&
+      static_cast<int32_t>(millis() - nextAutoTurnMs) >= 0) {
+    ++currentPage;
+    if (sessionPagesTurned < UINT32_MAX) ++sessionPagesTurned;
+    nextAutoTurnMs = millis() + (60000UL / turnRate);
+    requestUpdate();
     return;
   }
 
@@ -293,7 +605,8 @@ void XtcReaderActivity::loop() {
 
   // Enter chapter selection activity
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || ReaderUtils::isTouchMenuGesture(mappedInput)) {
-    openChapterSelection();
+    openReaderMenu();
+    return;
   }
 
   if (ReaderUtils::handleBackNavigation(mappedInput, activityManager, xtc ? xtc->getPath().c_str() : "",
@@ -304,6 +617,7 @@ void XtcReaderActivity::loop() {
   auto [prevTriggered, nextTriggered, fromTilt, fromSide] = ReaderUtils::detectPageTurn(mappedInput);
   prevTriggered = prevTriggered || touch.prev;
   nextTriggered = nextTriggered || touch.next;
+  if (SETTINGS.xtcReadingDirection == 1) std::swap(prevTriggered, nextTriggered);
   if (!prevTriggered && !nextTriggered) {
     return;
   }
@@ -369,10 +683,8 @@ void XtcReaderActivity::loop() {
     }
     requestUpdate();
   } else if (nextTriggered) {
-    currentPage += skipAmount;
-    if (currentPage >= xtc->getPageCount()) {
-      currentPage = xtc->getPageCount();  // Allow showing "End of book"
-    }
+    const uint64_t nextPage = static_cast<uint64_t>(currentPage) + static_cast<uint32_t>(skipAmount);
+    currentPage = static_cast<uint32_t>(std::min<uint64_t>(nextPage, xtc->getPageCount()));
     requestUpdate();
   }
   if (currentPage != oldPage && sessionPagesTurned < UINT32_MAX) ++sessionPagesTurned;
@@ -486,253 +798,165 @@ void XtcReaderActivity::renderPage() {
   const uint16_t pageWidth = xtc->getPageWidth();
   const uint16_t pageHeight = xtc->getPageHeight();
   const uint8_t bitDepth = xtc->getBitDepth();
-
-  // Calculate buffer size for one page
-  // XTG (1-bit): Row-major, ((width+7)/8) * height bytes
-  // XTH (2-bit): Two bit planes, column-major, ((width * height + 7) / 8) * 2 bytes
-  size_t pageBufferSize;
   const bool darkMode = renderer.isDarkMode();
-  if (bitDepth == 2) {
-    pageBufferSize = ((static_cast<size_t>(pageWidth) * pageHeight + 7) / 8) * 2;
-  } else {
-    pageBufferSize = ((pageWidth + 7) / 8) * pageHeight;
-  }
 
-  if (bitDepth == 2 && !darkMode) {
-    auto showStreamError = [&]() {
-      renderer.clearScreen();
-      const char* message =
-          xtc->getLastError() == xtc::XtcError::MEMORY_ERROR ? tr(STR_MEMORY_ERROR) : tr(STR_PAGE_LOAD_ERROR);
-      renderer.drawCenteredText(UI_12_FONT_ID, 300, message, true, EpdFontFamily::BOLD);
-      renderer.displayBuffer();
-    };
-
-    renderer.clearScreen();
-    if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Base)) {
-      showStreamError();
-      return;
-    }
-
-    if (pagesUntilFullRefresh <= 1) {
-      renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-      renderer.preconditionGrayscale();
-      pagesUntilFullRefresh = ReaderUtils::refreshCadence(renderer);
-    } else {
-      renderer.displayGrayscaleBase(HalDisplay::FAST_REFRESH);
-      pagesUntilFullRefresh--;
-    }
-
-    // Preserve the already-rendered B/W base in small non-contiguous chunks.
-    // This removes the fourth full SD read used by the old streaming path.
-    const bool hasBwSnapshotHeadroom = xtc_memory::canPreserveBwFrame(
-        static_cast<size_t>(ESP.getFreeHeap()), static_cast<size_t>(ESP.getMaxAllocHeap()),
-        renderer.getBufferSize());
-    const bool storedBw = hasBwSnapshotHeadroom && renderer.storeBwBuffer();
-
-    renderer.clearScreen(0x00);
-    if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Lsb)) {
-      if (storedBw) renderer.restoreBwBuffer();
-      showStreamError();
-      return;
-    }
-    renderer.copyGrayscaleLsbBuffers();
-
-    renderer.clearScreen(0x00);
-    if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Msb)) {
-      if (storedBw) renderer.restoreBwBuffer();
-      showStreamError();
-      return;
-    }
-    renderer.copyGrayscaleMsbBuffers();
-    renderer.displayGrayBuffer();
-
-    if (storedBw) {
-      renderer.restoreBwBuffer();
-    } else {
-      // Very low-memory devices can still fall back to the final base pass.
-      renderer.clearScreen();
-      if (streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, renderer, XtchRenderPass::Base)) {
-        renderer.cleanupGrayscaleWithFrameBuffer();
-      }
-    }
-    return;
-  }
-
-  // Allocate page buffer
-  uint8_t* pageBuffer = static_cast<uint8_t*>(malloc(pageBufferSize));
-  if (!pageBuffer) {
-    LOG_ERR("XTR", "Failed to allocate page buffer (%lu bytes)", pageBufferSize);
-    renderer.clearScreen();
-    renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_MEMORY_ERROR), true, EpdFontFamily::BOLD);
-    renderer.displayBuffer();
-    return;
-  }
-
-  // Load page data
-  size_t bytesRead = xtc->loadPage(currentPage, pageBuffer, pageBufferSize);
-  if (bytesRead == 0) {
-    LOG_ERR("XTR", "Failed to load page %lu: bufferSize=%lu bitDepth=%u error=%s", currentPage, pageBufferSize,
-            bitDepth, xtc::errorToString(xtc->getLastError()));
-    free(pageBuffer);
+  xtc_frame::Mapping mapping;
+  const auto fitMode = SETTINGS.xtcPageFitMode == CrossPointSettings::XTC_CROP_FILL
+                           ? xtc_frame::Mode::CropFill
+                           : xtc_frame::Mode::FitContain;
+  if (!xtc_frame::calculateMapping(pageWidth, pageHeight, 0, 0,
+                                   static_cast<uint16_t>(renderer.getScreenWidth()),
+                                   static_cast<uint16_t>(renderer.getScreenHeight()), fitMode, mapping)) {
+    LOG_ERR("XTR", "Invalid page mapping for %ux%u source", pageWidth, pageHeight);
     renderer.clearScreen();
     renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_PAGE_LOAD_ERROR), true, EpdFontFamily::BOLD);
     renderer.displayBuffer();
     return;
   }
 
-  // Clear screen first
-  renderer.clearScreen();
-
-  // Copy page bitmap using GfxRenderer's drawPixel
-  // XTC/XTCH pages are pre-rendered with status bar included, so render full page
-  const uint16_t maxSrcY = pageHeight;
+  auto showStreamError = [&]() {
+    renderer.clearScreen();
+    const char* message = xtc->getLastError() == xtc::XtcError::MEMORY_ERROR
+                              ? tr(STR_MEMORY_ERROR)
+                              : tr(STR_PAGE_LOAD_ERROR);
+    renderer.drawCenteredText(UI_12_FONT_ID, 300, message, true, EpdFontFamily::BOLD);
+    renderer.displayBuffer();
+  };
 
   if (bitDepth == 2) {
-    // XTH 2-bit mode: Two bit planes, column-major order
-    // - Columns scanned right to left (x = width-1 down to 0)
-    // - 8 vertical pixels per byte (MSB = topmost pixel in group)
-    // - First plane: Bit1, Second plane: Bit2
-    // - Pixel value = (bit1 << 1) | bit2
-    // - Grayscale: 0=White, 1=Dark Grey, 2=Light Grey, 3=Black
-
-    const size_t planeSize = (static_cast<size_t>(pageWidth) * pageHeight + 7) / 8;
-    const uint8_t* plane1 = pageBuffer;              // Bit1 plane
-    const uint8_t* plane2 = pageBuffer + planeSize;  // Bit2 plane
-    const size_t colBytes = (pageHeight + 7) / 8;    // Bytes per column (100 for 800 height)
-
-    // Lambda to get pixel value at (x, y)
-    auto getPixelValue = [&](uint16_t x, uint16_t y) -> uint8_t {
-      const size_t colIndex = pageWidth - 1 - x;
-      const size_t byteInCol = y / 8;
-      const size_t bitInByte = 7 - (y % 8);
-      const size_t byteOffset = colIndex * colBytes + byteInCol;
-      const uint8_t bit1 = (plane1[byteOffset] >> bitInByte) & 1;
-      const uint8_t bit2 = (plane2[byteOffset] >> bitInByte) & 1;
-      const uint8_t value = (bit1 << 1) | bit2;
-      return darkMode ? static_cast<uint8_t>(3 - value) : value;
-    };
-
-    // Optimized grayscale rendering without storeBwBuffer (saves 48KB peak memory)
-    // Flow: BW display → LSB/MSB passes → grayscale display → re-render BW for next frame
-
-    // Pass 1: BW buffer - draw all non-white pixels as black
-    for (uint16_t y = 0; y < pageHeight; y++) {
-      for (uint16_t x = 0; x < pageWidth; x++) {
-        const uint8_t value = getPixelValue(x, y);
-        if (darkMode ? value == 3 : value >= 1) {
-          renderer.drawPixel(x, y, true);
-        }
-      }
+    // XTCH stays out of page-sized heap buffers. The parser supplies bounded chunks
+    // while each grayscale plane is reconstructed directly into renderer storage.
+    renderer.setRenderMode(GfxRenderer::BW);
+    renderer.clearScreen();
+    if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, mapping, renderer,
+                              XtchRenderPass::Base, darkMode)) {
+      showStreamError();
+      return;
     }
 
     if (pagesUntilFullRefresh <= 1) {
-      // Periodic ghost cleanup: scrub via the normal path, then run the
-      // settle flavor of the grayscale base pass (DTM planes are equal after
-      // the display sync, so only the gentle reinforcement cells fire).
       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
       renderer.preconditionGrayscale();
       pagesUntilFullRefresh = ReaderUtils::refreshCadence(renderer);
     } else {
-      // OEM grayscale pipeline base: differential "AA-pre-BW(mid)" update as
-      // the page turn on X3; plain FAST refresh on X4 (previous behavior).
       renderer.displayGrayscaleBase(HalDisplay::FAST_REFRESH);
       pagesUntilFullRefresh--;
     }
 
-    // Pass 2: LSB buffer - mark DARK gray only (XTH value 1)
-    // In LUT: 0 bit = apply gray effect, 1 bit = untouched
+    // Preserve the B/W frame in non-contiguous chunks when heap shape permits.
+    // Low-heap devices can reconstruct that base with one additional SD pass.
+    const bool hasBwSnapshotHeadroom = xtc_memory::canPreserveBwFrame(
+        static_cast<size_t>(ESP.getFreeHeap()), static_cast<size_t>(ESP.getMaxAllocHeap()),
+        renderer.getBufferSize());
+    const bool storedBw = hasBwSnapshotHeadroom && renderer.storeBwBuffer();
+
     renderer.clearScreen(0x00);
-    for (uint16_t y = 0; y < pageHeight; y++) {
-      for (uint16_t x = 0; x < pageWidth; x++) {
-        if (getPixelValue(x, y) == 1) {  // Dark grey only
-          renderer.drawPixel(x, y, false);
-        }
-      }
+    renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
+    if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, mapping, renderer,
+                              XtchRenderPass::Lsb, darkMode)) {
+      if (storedBw) renderer.restoreBwBuffer();
+      showStreamError();
+      return;
     }
     renderer.copyGrayscaleLsbBuffers();
 
-    // Pass 3: MSB buffer - mark LIGHT AND DARK gray (XTH value 1 or 2)
-    // In LUT: 0 bit = apply gray effect, 1 bit = untouched
     renderer.clearScreen(0x00);
-    for (uint16_t y = 0; y < pageHeight; y++) {
-      for (uint16_t x = 0; x < pageWidth; x++) {
-        const uint8_t pv = getPixelValue(x, y);
-        if (pv == 1 || pv == 2) {  // Dark grey or Light grey
-          renderer.drawPixel(x, y, false);
-        }
-      }
+    renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
+    if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, mapping, renderer,
+                              XtchRenderPass::Msb, darkMode)) {
+      if (storedBw) renderer.restoreBwBuffer();
+      showStreamError();
+      return;
     }
     renderer.copyGrayscaleMsbBuffers();
-
-    // Display grayscale overlay
     renderer.displayGrayBuffer();
-
-    // Pass 4: Re-render BW to framebuffer (restore for next frame, instead of restoreBwBuffer)
     renderer.setRenderMode(GfxRenderer::BW);
-    renderer.clearScreen();
-    for (uint16_t y = 0; y < pageHeight; y++) {
-      for (uint16_t x = 0; x < pageWidth; x++) {
-        const uint8_t value = getPixelValue(x, y);
-        if (darkMode ? value == 3 : value >= 1) {
-          renderer.drawPixel(x, y, true);
-        }
+
+    if (storedBw) {
+      renderer.restoreBwBuffer();
+    } else {
+      renderer.setRenderMode(GfxRenderer::BW);
+      renderer.clearScreen();
+      if (streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, mapping, renderer,
+                               XtchRenderPass::Base, darkMode)) {
+        renderer.cleanupGrayscaleWithFrameBuffer();
       }
     }
-
-    // Cleanup grayscale buffers with current frame buffer
-    renderer.cleanupGrayscaleWithFrameBuffer();
-
-    free(pageBuffer);
-
-    LOG_DBG("XTR", "Rendered page %lu/%lu (2-bit grayscale)", currentPage + 1, xtc->getPageCount());
     return;
-  } else {
-    // 1-bit mode: 8 pixels per byte, MSB first
-    const size_t srcRowBytes = (pageWidth + 7) / 8;  // 60 bytes for 480 width
-
-    for (uint16_t srcY = 0; srcY < maxSrcY; srcY++) {
-      const size_t srcRowStart = srcY * srcRowBytes;
-
-      for (uint16_t srcX = 0; srcX < pageWidth; srcX++) {
-        // Read source pixel (MSB first, bit 7 = leftmost pixel)
-        const size_t srcByte = srcRowStart + srcX / 8;
-        const size_t srcBit = 7 - (srcX % 8);
-        const bool sourceBlack = !((pageBuffer[srcByte] >> srcBit) & 1);  // XTC: 0 = black, 1 = white
-        const bool isBlack = darkMode ? !sourceBlack : sourceBlack;
-
-        if (isBlack) {
-          renderer.drawPixel(srcX, srcY, true);
-        }
-      }
-    }
   }
-  // White pixels are already cleared by clearScreen()
 
-  free(pageBuffer);
+  // XTG is row-major and uses the same bounded streaming path. One byte supplies
+  // up to eight horizontal pixels, so no full-page allocation is needed on X3.
+  renderer.clearScreen();
+  const size_t sourceRowBytes = (static_cast<size_t>(pageWidth) + 7) / 8;
+  const bool identityMapping = mapping.source.x == 0 && mapping.source.y == 0 &&
+                               mapping.source.width == pageWidth && mapping.source.height == pageHeight &&
+                               mapping.destination.width == pageWidth && mapping.destination.height == pageHeight;
+  const auto streamError = xtc->loadPageStreaming(
+      currentPage,
+      [&](const uint8_t* data, const size_t size, const size_t offset) {
+        for (size_t i = 0; i < size; ++i) {
+          const size_t absoluteOffset = offset + i;
+          const size_t sourceY = absoluteOffset / sourceRowBytes;
+          if (sourceY >= pageHeight) continue;
+          const size_t byteInRow = absoluteOffset % sourceRowBytes;
+          const size_t sourceXBase = byteInRow * 8;
+          for (uint8_t bit = 0; bit < 8 && sourceXBase + bit < pageWidth; ++bit) {
+            const bool sourceBlack = ((data[i] >> (7 - bit)) & 1U) == 0;
+            const bool shouldPaint = darkMode ? !sourceBlack : sourceBlack;
+            if (!shouldPaint) continue;
+            xtc_frame::Rect destination;
+            if (!mappedPixelRect(mapping, static_cast<uint16_t>(sourceXBase + bit),
+                                 static_cast<uint16_t>(sourceY), destination)) {
+              continue;
+            }
+            // Keep the common 1:1 path as cheap as the old renderer. Scaled
+            // cells use explicit fill colors, while drawPixel preserves the
+            // renderer's established dark-mode polarity.
+            if (identityMapping) {
+              renderer.drawPixel(destination.x, destination.y, true);
+            } else {
+              fillMappedCell(renderer, destination, true);
+            }
+          }
+        }
+      },
+      8192);
+  if (streamError != xtc::XtcError::OK) {
+    LOG_ERR("XTR", "Failed to stream page %lu: %s", currentPage, xtc::errorToString(streamError));
+    showStreamError();
+    return;
+  }
 
   if (SETTINGS.statusBarSpec().xtcMode == CrossPointSettings::XTC_STATUS_BAR_MODE::XTC_STATUS_BAR_TOP) {
     renderStatusBarOverlay(StatusBarOverlayPosition::Top);
   } else {
     renderStatusBarOverlay(StatusBarOverlayPosition::Bottom);
   }
-
   ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
-
   LOG_DBG("XTR", "Rendered page %lu/%lu (%u-bit)", currentPage + 1, xtc->getPageCount(), bitDepth);
 }
-
-void XtcReaderActivity::saveProgress() const {
+bool XtcReaderActivity::saveProgress() {
+  if (!xtc) return false;
+  const uint32_t pageCount = xtc->getPageCount();
+  const uint32_t pageToPersist = pageCount > 0 && currentPage >= pageCount ? pageCount - 1 : currentPage;
+  if (hasPersistedProgressPage && lastPersistedPage == pageToPersist) return true;
   uint8_t data[4];
-  data[0] = currentPage & 0xFF;
-  data[1] = (currentPage >> 8) & 0xFF;
-  data[2] = (currentPage >> 16) & 0xFF;
-  data[3] = (currentPage >> 24) & 0xFF;
+  data[0] = pageToPersist & 0xFF;
+  data[1] = (pageToPersist >> 8) & 0xFF;
+  data[2] = (pageToPersist >> 16) & 0xFF;
+  data[3] = (pageToPersist >> 24) & 0xFF;
   if (!ProgressFile::writeAtomic(xtc->getCachePath(), data, sizeof(data))) {
-    LOG_ERR("XTR", "Failed to save progress: page %lu", currentPage);
+    LOG_ERR("XTR", "Failed to save progress: page %lu", pageToPersist);
+    return false;
   }
+  lastPersistedPage = pageToPersist;
+  hasPersistedProgressPage = true;
+  return true;
 }
 
 void XtcReaderActivity::loadProgress() {
+  hasPersistedProgressPage = false;
   HalFile f;
   if (Storage.openFileForRead("XTR", xtc->getCachePath() + "/progress.bin", f)) {
     uint8_t data[4];
@@ -743,6 +967,9 @@ void XtcReaderActivity::loadProgress() {
       // Validate page number
       if (currentPage >= xtc->getPageCount()) {
         currentPage = 0;
+      } else {
+        lastPersistedPage = currentPage;
+        hasPersistedProgressPage = true;
       }
     }
     f.close();

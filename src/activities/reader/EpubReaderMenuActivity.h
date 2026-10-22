@@ -2,6 +2,7 @@
 #include <Epub.h>
 #include <I18n.h>
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -16,7 +17,10 @@ class EpubReaderMenuActivity final : public Activity {
   enum class MenuAction {
     SELECT_CHAPTER,
     READER_OPTIONS,
+    READING_DIRECTION,
+    PAGE_FIT,
     FOOTNOTES,
+    GO_TO_PAGE,
     GO_TO_PERCENT,
     AUTO_PAGE_TURN,
     ROTATE_SCREEN,
@@ -37,7 +41,10 @@ class EpubReaderMenuActivity final : public Activity {
   explicit EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title,
                                   const int currentPage, const int totalPages, const int bookProgressPercent,
                                   const uint8_t currentOrientation, const bool hasFootnotes, bool hasBookmarks,
-                                  bool hasClippings, QuickActions::Context quickActionContext);
+                                  bool hasClippings, QuickActions::Context quickActionContext, bool xtcMode = false,
+                                  bool hasChapters = true, uint8_t xtcReadingDirection = 0,
+                                  uint8_t xtcPageFitMode = 0, uint8_t pageTurnOption = 0,
+                                  bool hasKoReaderCredentials = false);
 
   void onEnter() override;
   void onExit() override;
@@ -54,7 +61,8 @@ class EpubReaderMenuActivity final : public Activity {
     StrId labelId;
   };
 
-  static std::vector<MenuItem> buildMenuItems(bool hasFootnotes, bool hasBookmarks, bool hasClippings);
+  static std::vector<MenuItem> buildMenuItems(bool hasFootnotes, bool hasBookmarks, bool hasClippings, bool xtcMode,
+                                               bool hasChapters, bool hasKoReaderCredentials);
   void closeCancelled();
 
   // Fixed menu layout
@@ -73,8 +81,13 @@ class EpubReaderMenuActivity final : public Activity {
   QuickActions::Context quickActionContext;
   std::array<QuickActions::ActionId, QuickActions::SLOT_COUNT> quickActionIds{};
   bool quickActionPopup = false;
+  bool xtcMode = false;
+  uint8_t pendingXtcReadingDirection = 0;
+  uint8_t pendingXtcPageFitMode = 0;
   const std::vector<StrId> orientationLabels = {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_INVERTED,
                                                 StrId::STR_LANDSCAPE_CCW};
+  const std::array<StrId, 2> readingDirectionLabels = {StrId::STR_DIR_LEFT, StrId::STR_DIR_RIGHT};
+  const std::array<StrId, 2> pageFitLabels = {StrId::STR_FIT, StrId::STR_CROP};
   const std::vector<const char*> pageTurnLabels = {I18N.get(StrId::STR_STATE_OFF), "1", "3", "6", "12"};
   int currentPage = 0;
   int totalPages = 0;

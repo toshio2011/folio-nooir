@@ -32,6 +32,8 @@ struct Context {
   bool hasSection = false;
   bool hasDictionary = false;
   bool hasKoReaderCredentials = false;
+  bool hasPagePosition = false;
+  bool hasTextOptions = true;
 };
 
 // Defaults favor actions already exposed by the reader's configurable
@@ -84,15 +86,16 @@ inline bool isAvailable(const ActionId action, const Context& context) {
     case ActionId::Lookup:
       return context.hasSection && context.hasDictionary;
     case ActionId::ToggleBookmark:
-      return context.hasSection;
+      return context.hasSection || context.hasPagePosition;
     case ActionId::Sync:
       return context.hasKoReaderCredentials;
+    case ActionId::ReaderOptions:
+      return context.hasTextOptions;
     case ActionId::None:
       return false;
     case ActionId::RefreshScreen:
     case ActionId::ToggleDarkMode:
     case ActionId::ReadingStats:
-    case ActionId::ReaderOptions:
     case ActionId::Orientation:
     case ActionId::Screenshot:
     case ActionId::Home:

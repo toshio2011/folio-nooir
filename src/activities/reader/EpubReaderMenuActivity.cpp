@@ -13,19 +13,52 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
                                                const std::string& title, const int currentPage, const int totalPages,
                                                const int bookProgressPercent, const uint8_t currentOrientation,
                                                const bool hasFootnotes, const bool hasBookmarks, const bool hasClippings,
-                                               QuickActions::Context quickActionContext)
+                                               QuickActions::Context quickActionContext, const bool xtcMode,
+                                               const bool hasChapters, const uint8_t xtcReadingDirection,
+                                               const uint8_t xtcPageFitMode, const uint8_t pageTurnOption,
+                                               const bool hasKoReaderCredentials)
     : Activity("EpubReaderMenu", renderer, mappedInput),
-      menuItems(buildMenuItems(hasFootnotes, hasBookmarks, hasClippings)),
+      menuItems(buildMenuItems(hasFootnotes, hasBookmarks, hasClippings, xtcMode, hasChapters,
+                               hasKoReaderCredentials)),
       title(title),
       pendingOrientation(currentOrientation),
+      selectedPageTurnOption(std::min<uint8_t>(pageTurnOption, 4)),
       quickActionContext(quickActionContext),
+      xtcMode(xtcMode),
+      pendingXtcReadingDirection(xtcReadingDirection <= 1 ? xtcReadingDirection : 0),
+      pendingXtcPageFitMode(xtcPageFitMode <= 1 ? xtcPageFitMode : 0),
       currentPage(currentPage),
       totalPages(totalPages),
       bookProgressPercent(bookProgressPercent) {}
 
 std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuItems(bool hasFootnotes,
-                                                                                     bool hasBookmarks, bool hasClippings) {
+                                                                                     bool hasBookmarks,
+                                                                                     bool hasClippings,
+                                                                                     bool xtcMode,
+                                                                                     bool hasChapters,
+                                                                                     bool hasKoReaderCredentials) {
   std::vector<MenuItem> items;
+  items.reserve(18);
+  if (xtcMode) {
+    if (hasChapters) items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
+    items.push_back({MenuAction::READING_DIRECTION, StrId::STR_READING_DIRECTION});
+    items.push_back({MenuAction::PAGE_FIT, StrId::STR_PAGE_FIT});
+    if (hasBookmarks) items.push_back({MenuAction::BOOKMARKS, StrId::STR_BOOKMARKS});
+    items.push_back({MenuAction::TOGGLE_BOOKMARK, StrId::STR_TOGGLE_BOOKMARK});
+    items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN});
+    items.push_back({MenuAction::GO_TO_PAGE, StrId::STR_GO_TO_PAGE});
+    items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
+    items.push_back({MenuAction::SCREENSHOT, StrId::STR_SCREENSHOT_BUTTON});
+    items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON});
+    items.push_back({MenuAction::DELETE_CACHE, StrId::STR_CLEAR_COVER_CACHE});
+    if (hasKoReaderCredentials) items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS});
+    items.push_back({MenuAction::QUICK_ACTIONS, StrId::STR_QUICK_ACTIONS});
+#if FREEINK_CAP_BLE_HID_HOST
+    items.push_back({MenuAction::BLUETOOTH, StrId::STR_BLUETOOTH});
+#endif
+    return items;
+  }
+
   items.reserve(16);
   items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
   items.push_back({MenuAction::READER_OPTIONS, StrId::STR_READER_OPTIONS});
@@ -66,7 +99,8 @@ void EpubReaderMenuActivity::onExit() { Activity::onExit(); }
 void EpubReaderMenuActivity::closeCancelled() {
   ActivityResult result;
   result.isCancelled = true;
-  result.data = MenuResult{-1, pendingOrientation, selectedPageTurnOption};
+  result.data = MenuResult{-1, pendingOrientation, selectedPageTurnOption, -1, pendingXtcReadingDirection,
+                           pendingXtcPageFitMode};
   setResult(std::move(result));
   finish();
 }
@@ -128,6 +162,28 @@ void EpubReaderMenuActivity::loop() {
       return;
     }
 
+    if (selectedAction == MenuAction::READING_DIRECTION) {
+      const std::array<const char*, 2> labels = {I18N.get(readingDirectionLabels[0]), I18N.get(readingDirectionLabels[1])};
+      optionPopup.show(I18N.get(StrId::STR_READING_DIRECTION), labels.data(), static_cast<int>(labels.size()),
+                       pendingXtcReadingDirection, [this](int idx) {
+                         pendingXtcReadingDirection = static_cast<uint8_t>(idx);
+                         requestUpdate();
+                       });
+      requestUpdate();
+      return;
+    }
+
+    if (selectedAction == MenuAction::PAGE_FIT) {
+      const std::array<const char*, 2> labels = {I18N.get(pageFitLabels[0]), I18N.get(pageFitLabels[1])};
+      optionPopup.show(I18N.get(StrId::STR_PAGE_FIT), labels.data(), static_cast<int>(labels.size()),
+                       pendingXtcPageFitMode, [this](int idx) {
+                         pendingXtcPageFitMode = static_cast<uint8_t>(idx);
+                         requestUpdate();
+                       });
+      requestUpdate();
+      return;
+    }
+
     if (selectedAction == MenuAction::QUICK_ACTIONS) {
       const auto count = QuickActions::collectAvailable(quickActionContext, quickActionIds);
       if (count == 0) {
@@ -142,14 +198,16 @@ void EpubReaderMenuActivity::loop() {
         quickActionPopup = false;
         if (index < 0 || index >= static_cast<int>(QuickActions::SLOT_COUNT)) return;
         setResult(MenuResult{static_cast<int>(MenuAction::QUICK_ACTIONS), pendingOrientation,
-                             selectedPageTurnOption, static_cast<int>(quickActionIds[index])});
+                             selectedPageTurnOption, static_cast<int>(quickActionIds[index]),
+                             pendingXtcReadingDirection, pendingXtcPageFitMode});
         finish();
       });
       requestUpdate();
       return;
     }
 
-    setResult(MenuResult{static_cast<int>(selectedAction), pendingOrientation, selectedPageTurnOption});
+    setResult(MenuResult{static_cast<int>(selectedAction), pendingOrientation, selectedPageTurnOption, -1,
+                         pendingXtcReadingDirection, pendingXtcPageFitMode});
     finish();
   };
 
@@ -236,6 +294,10 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
         } else if (value == MenuAction::AUTO_PAGE_TURN) {
           // Render current page turn value on the right edge of the content area.
           return pageTurnLabels[selectedPageTurnOption];
+        } else if (xtcMode && value == MenuAction::READING_DIRECTION) {
+          return I18N.get(readingDirectionLabels[pendingXtcReadingDirection]);
+        } else if (xtcMode && value == MenuAction::PAGE_FIT) {
+          return I18N.get(pageFitLabels[pendingXtcPageFitMode]);
         } else {
           return "";
         }
@@ -243,7 +305,8 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
       true, nullptr, nullptr,
       [this](const int index) {
         const auto action = menuItems[index].action;
-        return action == MenuAction::ROTATE_SCREEN || action == MenuAction::AUTO_PAGE_TURN;
+        return action == MenuAction::ROTATE_SCREEN || action == MenuAction::AUTO_PAGE_TURN ||
+               (xtcMode && (action == MenuAction::READING_DIRECTION || action == MenuAction::PAGE_FIT));
       });
 
   // Footer / Hints

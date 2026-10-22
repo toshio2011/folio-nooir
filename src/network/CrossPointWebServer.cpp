@@ -2856,7 +2856,10 @@ void CrossPointWebServer::handlePostSettings() {
     }
   }
 
-  if (changed) SETTINGS.saveToFile();
+  if (changed) {
+    SETTINGS.invalidatePersistenceCache();
+    SETTINGS.saveToFile();
+  }
 
   LOG_INF("WEBRT", "route=/api/settings method=POST group=%s response_count=%d status=200 changed=%d free=%lu largest=%lu",
           settingsGroupKey(selectedGroup), applied, changed ? 1 : 0,
@@ -3200,6 +3203,7 @@ void CrossPointWebServer::handlePostClockWeather() {
   if (!doc["weatherSyncEnabled"].isNull()) SETTINGS.weatherSyncEnabled = (doc["weatherSyncEnabled"] | false) ? 1 : 0;
 
   WEATHER_STORE.saveToFile();
+  SETTINGS.invalidatePersistenceCache();
   SETTINGS.saveToFile();
 
   const bool shouldSync = doc["sync"] | false;

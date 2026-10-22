@@ -5,6 +5,7 @@
 #include <I18n.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 
 #include "MappedInputManager.h"
@@ -26,6 +27,12 @@ void EpubReaderPercentSelectionActivity::onEnter() {
 void EpubReaderPercentSelectionActivity::onExit() { Activity::onExit(); }
 
 void EpubReaderPercentSelectionActivity::adjustPercent(const int delta) {
+  if (pageMode) {
+    const int64_t candidate = static_cast<int64_t>(percent) + delta;
+    percent = static_cast<int>(std::clamp<int64_t>(candidate, 0, maximum));
+    requestUpdate();
+    return;
+  }
   // Wrap using a 100-value ring (0% and 100% are the same wrap point), but keep 100 as the
   // natural landing value when reached without crossing the boundary (e.g. 90 + 10 = 100).
   const int raw = percent + delta;
@@ -57,7 +64,10 @@ void EpubReaderPercentSelectionActivity::loop() {
     if (draggingBar ||
         (tx >= barX - 20 && tx < barX + barWidth + 20 && ty >= barY - 24 && ty < barY + barHeight + 24)) {
       draggingBar = true;
-      const int dragged = std::clamp((tx - barX) * 100 / barWidth, 0, 100);
+      const int dragged = maximum == 0
+                              ? 0
+                              : std::clamp(static_cast<int>(static_cast<int64_t>(tx - barX) * maximum / barWidth),
+                                           0, maximum);
       if (dragged != percent) {
         percent = dragged;
         requestUpdate();
@@ -81,7 +91,9 @@ void EpubReaderPercentSelectionActivity::loop() {
 
   if (mappedInput.wasScreenTapped(tx, ty) && tx >= barX - 20 && tx < barX + barWidth + 20 && ty >= barY - 24 &&
       ty < barY + barHeight + 24) {
-    percent = std::clamp((tx - barX) * 100 / barWidth, 0, 100);
+    percent = maximum == 0
+                  ? 0
+                  : std::clamp(static_cast<int>(static_cast<int64_t>(tx - barX) * maximum / barWidth), 0, maximum);
     requestUpdate();
     return;
   }
@@ -97,7 +109,11 @@ void EpubReaderPercentSelectionActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    setResult(PercentResult{percent});
+    if (pageMode) {
+      setResult(PageResult{static_cast<uint32_t>(percent)});
+    } else {
+      setResult(PercentResult{percent});
+    }
     finish();
     return;
   }
@@ -123,11 +139,13 @@ void EpubReaderPercentSelectionActivity::render(RenderLock&&) {
   Rect screen = theme.getScreenSafeArea(renderer, true, false);
 
   GUI.drawHeader(renderer, Rect{screen.x, screen.y + metrics.topPadding, screen.width, metrics.headerHeight},
-                 tr(STR_GO_TO_PERCENT));
+                 pageMode ? tr(STR_GO_TO_PAGE) : tr(STR_GO_TO_PERCENT));
 
   const int contentTop = screen.y + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing * 4;
 
-  const std::string percentText = std::to_string(percent) + "%";
+  const std::string percentText = pageMode ? std::string(tr(STR_PAGE)) + " " + std::to_string(percent + 1) + "/" +
+                                                 std::to_string(static_cast<uint64_t>(maximum) + 1)
+                                           : std::to_string(percent) + "%";
   UITheme::drawCenteredText(renderer, screen, UI_12_FONT_ID, contentTop, percentText.c_str(), true,
                             EpdFontFamily::BOLD);
 
@@ -140,7 +158,9 @@ void EpubReaderPercentSelectionActivity::render(RenderLock&&) {
   renderer.drawRect(barX, barY, barWidth, barHeight);
 
   // Fill slider based on percent.
-  const int fillWidth = (barWidth - 4) * percent / 100;
+  const int fillWidth = maximum > 0
+                            ? static_cast<int>(static_cast<int64_t>(barWidth - 4) * percent / maximum)
+                            : 0;
   if (fillWidth > 0) {
     renderer.fillRect(barX + 2, barY + 2, fillWidth, barHeight - 4);
   }

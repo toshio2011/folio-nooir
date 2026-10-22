@@ -22,6 +22,8 @@ struct MenuResult {
   uint8_t orientation = 0;
   uint8_t pageTurnOption = 0;
   int quickAction = -1;
+  uint8_t xtcReadingDirection = 0;
+  uint8_t xtcPageFitMode = 0;
 };
 
 struct ChapterResult {

@@ -37,3 +37,17 @@ TEST(QuickActions, AvailabilityKeepsReaderOnlyActionsBounded) {
   EXPECT_FALSE(QuickActions::isAvailable(QuickActions::ActionId::Sync,
                                          QuickActions::Context{true, true, false}));
 }
+
+TEST(QuickActions, XtcContextKeepsPageActionsAndHidesTextOnlyOptions) {
+  const QuickActions::Context xtcContext{false, false, false, true, false};
+  EXPECT_TRUE(QuickActions::isAvailable(QuickActions::ActionId::ToggleBookmark, xtcContext));
+  EXPECT_FALSE(QuickActions::isAvailable(QuickActions::ActionId::Lookup, xtcContext));
+  EXPECT_FALSE(QuickActions::isAvailable(QuickActions::ActionId::ReaderOptions, xtcContext));
+  EXPECT_FALSE(QuickActions::isAvailable(QuickActions::ActionId::Sync, xtcContext));
+  EXPECT_TRUE(QuickActions::isAvailable(QuickActions::ActionId::Screenshot, xtcContext));
+
+  const QuickActions::Context xtcWithSync{false, false, true, true, false};
+  EXPECT_TRUE(QuickActions::isAvailable(QuickActions::ActionId::Sync, xtcWithSync));
+  EXPECT_TRUE(QuickActions::isAvailable(QuickActions::ActionId::ToggleBookmark, xtcWithSync));
+  EXPECT_FALSE(QuickActions::isAvailable(QuickActions::ActionId::Lookup, xtcWithSync));
+}

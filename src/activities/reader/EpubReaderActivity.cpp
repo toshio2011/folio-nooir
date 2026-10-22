@@ -2417,6 +2417,11 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       addBookmark();
       break;
     }
+    case EpubReaderMenuActivity::MenuAction::READING_DIRECTION:
+    case EpubReaderMenuActivity::MenuAction::PAGE_FIT:
+    case EpubReaderMenuActivity::MenuAction::GO_TO_PAGE: {
+      break;
+    }
   }
 }
 
