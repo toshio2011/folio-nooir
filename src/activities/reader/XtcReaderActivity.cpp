@@ -40,7 +40,7 @@
 #include "util/QuickActions.h"
 #include "util/ScreenshotUtil.h"
 #include "activities/reader/XtcRenderMemoryPolicy.h"
-#include <Xtc/XtcFrameGeometry.h>
+#include <XtcFrameGeometry.h>
 
 namespace {
 enum class XtchRenderPass { Base, Lsb, Msb };

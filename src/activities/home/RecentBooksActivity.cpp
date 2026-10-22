@@ -1061,10 +1061,12 @@ RecentBooksActivity::CarouselHqProbe& RecentBooksActivity::carouselHqProbe(const
 }
 
 bool RecentBooksActivity::hasMissingRecentCache() const {
-  // Cheap in-memory fields can reveal missing descriptions anywhere in Recent
-  // without opening files. The one-time warmup then visits each eligible book
-  // incrementally, so later pages do not retain empty synopsis fields forever.
-  for (const auto& book : recentBooks) {
+  // Keep first-run repair bounded to the first planner window, as in 1.6.5.
+  // Normal reader opens refresh EPUB/CBZ synopsis data for the book that moves
+  // to the front; optional XTC trailers have a separate quiet queue below.
+  constexpr size_t BOOTSTRAP_WINDOW = SpineShelfPlanner::MAX_BOOKS;
+  for (size_t index = 0; index < recentBooks.size() && index < BOOTSTRAP_WINDOW; ++index) {
+    const auto& book = recentBooks[index];
     const bool isEpub = FsHelpers::hasEpubExtension(book.path);
     const bool isCbz = FsHelpers::hasCbzExtension(book.path);
     const bool isXtc = FsHelpers::hasXtcExtension(book.path);
@@ -1073,9 +1075,7 @@ bool RecentBooksActivity::hasMissingRecentCache() const {
     if ((isEpub || isCbz || isXtc) && book.title.empty()) return true;
   }
 
-  // Keep SD cache probes bounded to the first visible planner window. The
-  // synopsis check above is in-memory only and is safe across the full list.
-  constexpr size_t BOOTSTRAP_WINDOW = SpineShelfPlanner::MAX_BOOKS;
+  // SD cache probes stay within the same bounded first planner window.
   size_t scanned = 0;
   for (const auto& book : recentBooks) {
     if (scanned++ >= BOOTSTRAP_WINDOW) break;
@@ -1980,17 +1980,19 @@ void RecentBooksActivity::generateNextCover() {
   // source cover or generates a missing thumbnail.
   const bool forceRebuild = coverGenerationRequested && !recentCacheWarmupActive && !recentXtcMetadataWarmupActive;
   const bool metadataOnly = forceRebuild || recentCacheWarmupActive || recentXtcMetadataWarmupActive;
-  // Synopsis metadata may be missing anywhere in Recent, so scan the full
-  // in-memory list. Complete entries are skipped without touching the SD;
-  // only the first bootstrap window probes otherwise-complete CBZ cache files.
-  const size_t scanLimit = recentBooks.size();
+  // Bootstrap scans only the first planner window. Explicit refresh and the
+  // quiet XTC-only queue can walk farther, but complete entries are skipped
+  // without opening their files.
+  const size_t scanLimit = recentCacheBootstrapRunActive
+                               ? std::min(recentBooks.size(), SpineShelfPlanner::MAX_BOOKS)
+                               : recentBooks.size();
   while (nextCoverToGenerate < scanLimit) {
     const size_t bookIndex = nextCoverToGenerate++;
     RecentBook& book = recentBooks[bookIndex];
     if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path) &&
         !FsHelpers::hasCbzExtension(book.path)) continue;
-    if (recentXtcMetadataWarmupActive && !recentCacheBootstrapRunActive &&
-        !FsHelpers::hasXtcExtension(book.path)) {
+    const bool xtcOnlyWarmup = recentXtcMetadataWarmupActive && !recentCacheBootstrapRunActive;
+    if (xtcOnlyWarmup && (!FsHelpers::hasXtcExtension(book.path) || book.xtcMetadataChecked)) {
       continue;
     }
     const bool synopsisMetadataSupported = FsHelpers::hasEpubExtension(book.path) ||
@@ -2100,7 +2102,7 @@ void RecentBooksActivity::generateNextCover() {
         const std::string parsedSynopsis = xtc.getDescription();
         std::string synopsis = parsedSynopsis.empty() ? book.synopsis : parsedSynopsis.substr(0, 384);
         if (const BookMetadataOverride* overrideData = BOOK_METADATA_OVERRIDES.find(book.path)) {
-          if (!overrideData->title.empty()) title = overrideData->title;
+          title = overrideData->title;
           author = overrideData->author;
           synopsis = overrideData->synopsis.substr(0, 384);
         }
