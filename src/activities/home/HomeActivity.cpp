@@ -54,67 +54,66 @@ void HomeActivity::loadRecentBooks(int maxBooks) {
       break;
     }
 
-    // Skip if file no longer exists
-    if (RecentBooksStore::isMissing(book)) {
-      continue;
-    }
-
     recentBooks.push_back(book);
   }
 }
 
 void HomeActivity::loadRecentCovers(int coverHeight) {
+  // Normal Home visits consume cached thumbnails only. The legacy refresh
+  // action is explicit, so it may regenerate the selected book's cover.
+  if (!manualRecentCoverRefresh) {
+    (void)coverHeight;
+    nextRecentCover = recentBooks.size();
+    recentsLoaded = true;
+    recentsLoading = false;
+    return;
+  }
+
   recentsLoading = true;
   while (nextRecentCover < recentBooks.size()) {
     RecentBook& book = recentBooks[nextRecentCover++];
-    if (!book.coverBmpPath.empty()) {
-      std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
-      if (!isValidBookThumbnail(coverPath)) {
-        if (Storage.exists(coverPath.c_str())) Storage.remove(coverPath.c_str());
-        bool attempted = false;
-        bool success = false;
-        if (FsHelpers::hasEpubExtension(book.path)) {
-          Epub epub(book.path, "/.crosspoint");
-          if (epub.load(false, true)) {
-            attempted = true;
-            success = epub.generateThumbBmp(coverHeight);
-          }
-        } else if (FsHelpers::hasXtcExtension(book.path)) {
-          Xtc xtc(book.path, "/.crosspoint");
-          if (xtc.load()) {
-            attempted = true;
-            success = xtc.generateThumbBmp(coverHeight);
-          }
-        } else if (FsHelpers::hasCbzExtension(book.path)) {
-          Cbz cbz(book.path, "/.crosspoint");
-          if (cbz.loadMetadataOnly()) {
-            attempted = true;
-            success = cbz.generateThumbBmp(coverHeight);
-          }
-        }
+    if (book.coverBmpPath.empty()) break;
+    const std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
+    if (isValidBookThumbnail(coverPath)) break;
 
-        if (attempted && !success) {
-          // A failed conversion can be transient (low heap, an interrupted
-          // write, or a malformed cached BMP). Keep the source cover path so
-          // Home can show its placeholder and retry later; do not erase a
-          // working cover reference from RecentBooksStore.
-          LOG_DBG("HOME", "Keeping cover reference after thumbnail retry failure: %s", book.path.c_str());
-        }
-        if (attempted) {
-          // Yield back to the normal activity/render cycle after one expensive
-          // decode. This keeps Home responsive instead of decoding every missing
-          // recent cover in one long blocking batch.
-          coverRendered = false;
-          freeCoverBuffer();
-          recentsLoading = false;
-          if (nextRecentCover >= recentBooks.size()) recentsLoaded = true;
-          requestUpdate();
-          return;
-        }
+    bool attempted = false;
+    bool success = false;
+    if (FsHelpers::hasEpubExtension(book.path)) {
+      Epub epub(book.path, "/.crosspoint");
+      if (epub.load(false, true)) {
+        attempted = true;
+        success = epub.generateThumbBmp(coverHeight);
+      }
+    } else if (FsHelpers::hasXtcExtension(book.path)) {
+      Xtc xtc(book.path, "/.crosspoint");
+      if (xtc.load()) {
+        attempted = true;
+        success = xtc.generateThumbBmp(coverHeight);
+      }
+    } else if (FsHelpers::hasCbzExtension(book.path)) {
+      Cbz cbz(book.path, "/.crosspoint");
+      if (cbz.loadMetadataOnly()) {
+        attempted = true;
+        success = cbz.generateThumbBmp(coverHeight);
       }
     }
+    if (attempted && !success) {
+      LOG_DBG("HOME", "Keeping source cover reference after explicit refresh failure: %s", book.path.c_str());
+    }
+    if (attempted) {
+      manualRecentCoverRefresh = false;
+      coverRendered = false;
+      freeCoverBuffer();
+      recentsLoading = false;
+      recentsLoaded = true;
+      requestUpdate();
+      return;
+    }
+    // This action targets one selected book; do not scan the rest of Recent.
+    break;
   }
-
+  manualRecentCoverRefresh = false;
+  nextRecentCover = recentBooks.size();
   recentsLoaded = true;
   recentsLoading = false;
 }
@@ -213,6 +212,7 @@ void HomeActivity::showBookActions() {
       if (!selected.coverBmpPath.empty()) {
         Storage.remove(UITheme::getCoverThumbPath(selected.coverBmpPath, coverHeight).c_str());
       }
+      manualRecentCoverRefresh = true;
       freeCoverBuffer();
       coverRendered = false;
       nextRecentCover = selectorIndex;
@@ -236,7 +236,8 @@ void HomeActivity::showBookActions() {
       startActivityForResult(
           std::make_unique<SynopsisActivity>(renderer, mappedInput, selected.title, selected.author, selected.synopsis,
                                              selected.path, selected.coverBmpPath, selected.progressPercent,
-                                             selected.readingSeconds, selected.readingSessions),
+                                             selected.readingSeconds, selected.readingSessions, selected.series,
+                                             selected.xtcMetadataChecked),
           nullptr);
       return;
     } else if (action == 9) {

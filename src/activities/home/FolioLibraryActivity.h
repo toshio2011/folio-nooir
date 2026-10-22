@@ -27,7 +27,9 @@ class FolioLibraryActivity final : public Activity {
     std::string title;
     std::string author;
     std::string synopsis;
+    std::string series;
     std::string coverBmpPath;
+    bool xtcMetadataChecked = false;
   };
 
   // One-book, temporary cache inspection used by Retrieve All.  This is not

@@ -460,14 +460,15 @@ bool Epub::loadMetadataOnly() {
 }
 
 bool Epub::loadCachedMetadataOnly() {
-  // This is the fast shelf path: book.bin or the lightweight metadata.bin
-  // contains the six core metadata strings. Avoid constructing CssParser or
-  // touching the EPUB ZIP unless the selected item later enters loadMetadataOnly().
+  // Prefer the lightweight metadata.bin written by current versions. Loading
+  // book.bin first also fills its per-spine size table, which metadata-only
+  // consumers never use. Fall back to book.bin for older caches that predate
+  // metadata.bin, without parsing the EPUB source.
   metadataOnly = {};
   metadataOnlyLoaded = false;
   cssParser.reset();
   bookMetadataCache.reset(new BookMetadataCache(cachePath));
-  if (!bookMetadataCache->load() && !bookMetadataCache->loadMetadataOnly()) {
+  if (!bookMetadataCache->loadMetadataOnly() && !bookMetadataCache->load()) {
     bookMetadataCache.reset();
     return false;
   }

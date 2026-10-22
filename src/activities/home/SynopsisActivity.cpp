@@ -13,6 +13,7 @@
 #include <limits>
 
 #include "BookStateStore.h"
+#include "RecentBooksStore.h"
 #include "BookMetadataOverridesStore.h"
 #include "BookRatingPickerActivity.h"
 #include "MappedInputManager.h"
@@ -136,26 +137,31 @@ void SynopsisActivity::onEnter() {
       status = BookStatus::Reading;
     }
   }
-  // Shelf entries intentionally keep a small synopsis cache for boot and
-  // scrolling speed. This activity is the explicit full-text view, so always
-  // reload the EPUB metadata and replace the preview when a complete OPF
-  // description is available. This also handles short previews that were
-  // truncated at a paragraph boundary.
+  // Recent stores a bounded synopsis for shelf rendering while metadata.bin
+  // retains the complete description. Reuse that metadata cache first; parse
+  // and write the source metadata only when the cache is missing or invalid.
   if (!hasMetadataOverride && FsHelpers::hasEpubExtension(bookPath)) {
     Epub epub(bookPath, "/.crosspoint");
-    if (epub.loadMetadataOnly() && !epub.getDescription().empty()) {
+    bool metadataLoaded = epub.loadCachedMetadataOnly();
+    if (!metadataLoaded) metadataLoaded = epub.loadMetadataOnly();
+    if (metadataLoaded && !epub.getDescription().empty()) {
       synopsis = epub.getDescription();
+      RECENT_BOOKS.refreshBookMetadata(bookPath, epub.getTitle(), epub.getAuthor(), epub.getThumbBmpPath(), synopsis);
     }
   }
-  // MangaNooir XTC files may append a bounded optional metadata trailer. Load
-  // it only on the explicit Book Info screen; ordinary reader entry and page
-  // turns remain on the normal compact parser path. Legacy XTC/XTCH files
-  // without the trailer continue to use their fixed-header metadata.
-  if (FsHelpers::hasXtcExtension(bookPath)) {
+  // Older Recent records may predate the optional trailer fields. Resolve
+  // that metadata once on Book Info, then persist it in the existing Recent
+  // record so subsequent Home/Spine visits do not probe the source file.
+  if (FsHelpers::hasXtcExtension(bookPath) && !xtcMetadataChecked) {
     Xtc xtc(bookPath, "/.crosspoint");
     if (xtc.load()) {
-      if (!hasMetadataOverride && !xtc.getDescription().empty()) synopsis = xtc.getDescription();
-      if (!xtc.getSeries().empty()) series = xtc.getSeries();
+      const std::string sourceSynopsis = xtc.getDescription();
+      const std::string sourceSeries = xtc.getSeries();
+      if (!hasMetadataOverride && !sourceSynopsis.empty()) synopsis = sourceSynopsis;
+      if (!sourceSeries.empty()) series = sourceSeries;
+      RECENT_BOOKS.refreshXtcMetadata(bookPath, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath(),
+                                      sourceSynopsis, sourceSeries);
+      xtcMetadataChecked = true;
     }
   }
   // The shelf cache is bounded, but this view must not silently truncate a

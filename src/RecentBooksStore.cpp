@@ -32,6 +32,7 @@ void RecentBooksStore::toJson(JsonDocument& doc) const {
     obj["author"] = book.author;
     obj["coverBmpPath"] = book.coverBmpPath;
     obj["synopsis"] = book.synopsis;
+    obj["series"] = book.series;
     obj["xtcMetadataChecked"] = book.xtcMetadataChecked;
     obj["progressPercent"] = book.progressPercent;
     obj["readingSeconds"] = book.readingSeconds;
@@ -56,6 +57,7 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
     book.author = obj["author"] | "";
     book.coverBmpPath = obj["coverBmpPath"] | "";
     book.synopsis = obj["synopsis"] | "";
+    book.series = obj["series"] | "";
     book.xtcMetadataChecked = obj["xtcMetadataChecked"] | false;
     book.progressPercent = obj["progressPercent"] | 0;
     book.readingSeconds = obj["readingSeconds"] | 0;
@@ -73,17 +75,17 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
 }
 
 void RecentBooksStore::addBook(const std::string& path, const std::string& title, const std::string& author,
-                               const std::string& coverBmpPath, const std::string& synopsis) {
-  // Drop stale entries first so a new add can't evict a valid book in their stead.
-  const bool pruned = pruneMissing();
-
+                               const std::string& coverBmpPath, const std::string& synopsis,
+                               const std::string& series) {
   // Remove existing entry if present
   auto it =
       std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
-  RecentBook entry{path, title, author, coverBmpPath, synopsis.substr(0, 384)};
+  RecentBook entry{path, title, author, coverBmpPath, synopsis.substr(0, 384), series.substr(0, 128)};
+  entry.xtcMetadataChecked = FsHelpers::hasXtcExtension(path);
   applyMetadataOverride(entry);
   if (it != recentBooks.end()) {
     if (entry.synopsis.empty()) entry.synopsis = it->synopsis;
+    if (entry.series.empty()) entry.series = it->series;
     entry.progressPercent = it->progressPercent;
     entry.readingSeconds = it->readingSeconds;
     entry.lastSessionSeconds = it->lastSessionSeconds;
@@ -91,7 +93,10 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
     entry.dailyReadingDateKey = it->dailyReadingDateKey;
     entry.readingSessions = it->readingSessions;
     entry.pagesTurned = it->pagesTurned;
-    entry.xtcMetadataChecked = it->xtcMetadataChecked;
+    // A successful XTC reader open has already checked the optional trailer.
+    // Keep that fresh result when an older persisted Recent record was still
+    // unchecked; never force another parse on the next Book Info visit.
+    entry.xtcMetadataChecked = entry.xtcMetadataChecked || it->xtcMetadataChecked;
 
     // Reopening the same book is common. If it is already at the front and
     // none of its cached presentation fields changed, there is nothing to
@@ -104,8 +109,8 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
                            it->dailyReadingDateKey == entry.dailyReadingDateKey &&
                            it->readingSessions == entry.readingSessions &&
                            it->pagesTurned == entry.pagesTurned &&
-                           it->xtcMetadataChecked == entry.xtcMetadataChecked;
-    if (unchanged && !pruned) return;
+                           it->xtcMetadataChecked == entry.xtcMetadataChecked && it->series == entry.series;
+    if (unchanged) return;
     recentBooks.erase(it);
   }
 
@@ -186,21 +191,23 @@ void RecentBooksStore::refreshBookMetadata(const std::string& path, const std::s
 
 void RecentBooksStore::refreshXtcMetadata(const std::string& path, const std::string& title,
                                           const std::string& author, const std::string& coverBmpPath,
-                                          const std::string& synopsis) {
+                                          const std::string& synopsis, const std::string& series) {
   auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
                          [&](const RecentBook& book) { return book.path == path; });
   if (it == recentBooks.end()) return;
 
   RecentBook& book = *it;
   const std::string nextSynopsis = synopsis.empty() ? book.synopsis : synopsis.substr(0, 384);
+  const std::string nextSeries = series.empty() ? book.series : series.substr(0, 128);
   if (book.title == title && book.author == author && book.coverBmpPath == coverBmpPath &&
-      book.synopsis == nextSynopsis && book.xtcMetadataChecked) {
+      book.synopsis == nextSynopsis && book.series == nextSeries && book.xtcMetadataChecked) {
     return;
   }
   book.title = title;
   book.author = author;
   book.coverBmpPath = coverBmpPath;
   book.synopsis = nextSynopsis;
+  book.series = nextSeries;
   book.xtcMetadataChecked = true;
   applyMetadataOverride(book);
   if (!saveToFile()) LOG_ERR("RBS", "Failed to persist refreshed XTC metadata: %s", path.c_str());
@@ -288,12 +295,6 @@ void RecentBooksStore::updatePath(const std::string& oldPath, const std::string&
 
 bool RecentBooksStore::isMissing(const RecentBook& book) { return !Storage.exists(book.path.c_str()); }
 
-bool RecentBooksStore::pruneMissing() {
-  const size_t before = recentBooks.size();
-  recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(), &isMissing), recentBooks.end());
-  return recentBooks.size() != before;
-}
-
 RecentBook RecentBooksStore::getDataFromBook(std::string path) const {
   std::string lastBookFileName = "";
   const size_t lastSlash = path.find_last_of('/');
@@ -317,7 +318,9 @@ RecentBook RecentBooksStore::getDataFromBook(std::string path) const {
     // Handle XTC file
     Xtc xtc(path, "/.crosspoint");
     if (xtc.load()) {
-      RecentBook result{path, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath()};
+      RecentBook result{path, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath(), xtc.getDescription().substr(0, 384),
+                        xtc.getSeries().substr(0, 128)};
+      result.xtcMetadataChecked = true;
       applyMetadataOverride(result);
       return result;
     }

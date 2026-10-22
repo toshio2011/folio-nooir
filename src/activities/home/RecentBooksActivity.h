@@ -127,16 +127,6 @@ class RecentBooksActivity final : public Activity {
   // Refresh Book Cache regenerates 360px only when that exact file existed
   // before the refresh; ordinary refreshes must not create HQ files.
   std::string refreshCarouselHqPath;
-  // One-time post-install/update bootstrap: build missing recent-book
-  // metadata one book at a time while showing feedback. Thumbnails are
-  // intentionally left to the explicit Refresh Book Cache action.
-  bool recentCacheWarmupActive = false;
-  bool recentCacheBootstrapProbePending = false;
-  bool recentCacheBootstrapRunActive = false;
-  bool recentXtcMetadataWarmupActive = false;
-  unsigned long recentXtcMetadataWarmupNextMs = 0;
-  unsigned long recentCacheWarmupNextMs = 0;
-  volatile bool recentCacheWarmupPopupRendered = false;
   bool snapshotRestored = false;
   // Ignore the input that launched the preceding activity until it returns to
   // neutral; otherwise a held Settings button can leak into the new shelf.
@@ -288,7 +278,6 @@ class RecentBooksActivity final : public Activity {
   const ThreeRowSpinePageWindow& threeRowSpinePageForSelection(const SpineShelfPlanner::Rect& bounds);
   void invalidateThreeRowSpinePageWindow() { threeRowSpinePageWindow.valid = false; }
   size_t selectedRecentIndex() const;
-  bool hasMissingRecentCache() const;
   void generateNextCover();
   void startCarouselHqPreparation();
   void prepareNextCarouselCover();

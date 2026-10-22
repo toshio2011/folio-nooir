@@ -290,11 +290,10 @@ void FolioLibraryActivity::loadNextPreview() {
         if (!recentIt->title.empty()) preview.title = recentIt->title;
         preview.author = recentIt->author;
         preview.synopsis = recentIt->synopsis;
+        preview.series = recentIt->series;
         preview.coverBmpPath = recentIt->coverBmpPath;
-        const bool cachedThumbAvailable =
-            !preview.coverBmpPath.empty() &&
-            isValidBookThumbnail(UITheme::getCoverThumbPath(preview.coverBmpPath, FolioNooirTheme::COVER_HEIGHT));
-        preview.metadataAttempted = !preview.title.empty() && cachedThumbAvailable;
+        preview.xtcMetadataChecked = recentIt->xtcMetadataChecked;
+        preview.metadataAttempted = !preview.title.empty();
       }
       if (const BookMetadataOverride* overrideData = BOOK_METADATA_OVERRIDES.find(path)) {
         if (!overrideData->title.empty()) preview.title = overrideData->title;
@@ -1095,7 +1094,8 @@ void FolioLibraryActivity::showBookActions() {
     } else if (action == 7) {
       startActivityForResult(
           std::make_unique<SynopsisActivity>(renderer, mappedInput, preview.title, preview.author, preview.synopsis,
-                                             path, preview.coverBmpPath, preview.progressPercent),
+                                             path, preview.coverBmpPath, preview.progressPercent, 0, 0, preview.series,
+                                             preview.xtcMetadataChecked),
           nullptr);
       return;
     } else if (action == 8) {
@@ -1180,15 +1180,18 @@ void FolioLibraryActivity::loadSelectedMetadata() {
     const std::string thumb = xtc.getThumbBmpPath(FolioNooirTheme::COVER_HEIGHT);
     if (isValidBookThumbnail(thumb)) {
       preview.coverBmpPath = xtc.getThumbBmpPath();
-      if (const BookMetadataOverride* overrideData = BOOK_METADATA_OVERRIDES.find(path)) {
-        if (!overrideData->title.empty()) preview.title = overrideData->title;
-        preview.author = overrideData->author;
-        preview.synopsis = overrideData->synopsis;
-      }
-      preview.metadataAttempted = true;
-      requestUpdate();
-      return;
     }
+    if (const BookMetadataOverride* overrideData = BOOK_METADATA_OVERRIDES.find(path)) {
+      if (!overrideData->title.empty()) preview.title = overrideData->title;
+      preview.author = overrideData->author;
+      preview.synopsis = overrideData->synopsis;
+    }
+    // A missing cover is a cached-thumbnail miss, not a reason to open the
+    // XTC source while navigating the Library. Explicit Refresh or Book Info
+    // performs the selected source read when one is actually requested.
+    preview.metadataAttempted = true;
+    requestUpdate();
+    return;
   }
   if (!forceRefresh && !retrievingMetadata && FsHelpers::hasCbzExtension(path)) {
     Cbz cbz(path, "/.crosspoint");

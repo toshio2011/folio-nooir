@@ -17,6 +17,7 @@ class HomeActivity final : public Activity {
   int selectorIndex = 0;
   bool recentsLoading = false;
   bool recentsLoaded = false;
+  bool manualRecentCoverRefresh = false;
   bool firstRenderDone = false;
   size_t nextRecentCover = 0;
   bool hasOpdsServers = false;

@@ -11,6 +11,8 @@ struct RecentBook {
   std::string author;
   std::string coverBmpPath;
   std::string synopsis;
+  // Optional XTC/XTCH series value, bounded when persisted to recent.json.
+  std::string series;
   uint8_t progressPercent = 0;
   uint32_t readingSeconds = 0;
   uint32_t lastSessionSeconds = 0;
@@ -41,7 +43,7 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
 
   // Add a book to the recent list (moves to front if already exists)
   void addBook(const std::string& path, const std::string& title, const std::string& author,
-               const std::string& coverBmpPath, const std::string& synopsis = {});
+               const std::string& coverBmpPath, const std::string& synopsis = {}, const std::string& series = {});
 
   void updateBook(const std::string& path, const std::string& title, const std::string& author,
                   const std::string& coverBmpPath, const std::string& synopsis = {});
@@ -52,7 +54,7 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
   // Cache optional XTC synopsis/series after one successful parser load. Does
   // not modify reading progress or bookmark state.
   void refreshXtcMetadata(const std::string& path, const std::string& title, const std::string& author,
-                          const std::string& coverBmpPath, const std::string& synopsis);
+                          const std::string& coverBmpPath, const std::string& synopsis, const std::string& series);
   void markXtcMetadataChecked(const std::string& path);
   bool updateMetadata(const std::string& path, const std::string& title, const std::string& author,
                       const std::string& synopsis);
@@ -82,7 +84,6 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
 
   // Remove entries whose backing file is no longer on the SD card.
   // Returns true if any entry was removed. Does not persist — caller decides.
-  bool pruneMissing();
 
   // Get the list of recent books (most recent first)
   const std::vector<RecentBook>& getBooks() const { return recentBooks; }

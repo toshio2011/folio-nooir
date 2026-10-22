@@ -175,7 +175,11 @@ void XtcReaderActivity::onEnter() {
   // Save current XTC as last opened book and add to recent books
   APP_STATE.openEpubPath = xtc->getPath();
   APP_STATE.saveToFile();
-  RECENT_BOOKS.addBook(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getThumbBmpPath());
+  // The parser has already opened this book. Resolve its optional bounded
+  // trailer now and persist the result with the existing Recent metadata so
+  // Home/Spine and Book Info can reuse it without an idle SD scan.
+  RECENT_BOOKS.addBook(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getThumbBmpPath(),
+                       xtc->getDescription(), xtc->getSeries());
 
   // Trigger first update
   requestUpdate();
