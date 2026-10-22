@@ -76,12 +76,12 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
 
 void RecentBooksStore::addBook(const std::string& path, const std::string& title, const std::string& author,
                                const std::string& coverBmpPath, const std::string& synopsis,
-                               const std::string& series) {
+                               const std::string& series, const bool xtcMetadataChecked) {
   // Remove existing entry if present
   auto it =
       std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
   RecentBook entry{path, title, author, coverBmpPath, synopsis.substr(0, 384), series.substr(0, 128)};
-  entry.xtcMetadataChecked = FsHelpers::hasXtcExtension(path);
+  entry.xtcMetadataChecked = FsHelpers::hasXtcExtension(path) && xtcMetadataChecked;
   applyMetadataOverride(entry);
   if (it != recentBooks.end()) {
     if (entry.title.empty()) entry.title = it->title;
@@ -96,9 +96,8 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
     entry.dailyReadingDateKey = it->dailyReadingDateKey;
     entry.readingSessions = it->readingSessions;
     entry.pagesTurned = it->pagesTurned;
-    // A successful XTC reader open has already checked the optional trailer.
-    // Keep that fresh result when an older persisted Recent record was still
-    // unchecked; never force another parse on the next Book Info visit.
+    // Preserve an existing checked result, but do not promote a transient
+    // parser failure into a completed metadata check.
     entry.xtcMetadataChecked = entry.xtcMetadataChecked || it->xtcMetadataChecked;
 
     // Reopening the same book is common. If it is already at the front and
@@ -197,7 +196,8 @@ void RecentBooksStore::refreshBookMetadata(const std::string& path, const std::s
 
 void RecentBooksStore::refreshXtcMetadata(const std::string& path, const std::string& title,
                                           const std::string& author, const std::string& coverBmpPath,
-                                          const std::string& synopsis, const std::string& series) {
+                                          const std::string& synopsis, const std::string& series,
+                                          const bool metadataChecked) {
   auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
                          [&](const RecentBook& book) { return book.path == path; });
   if (it == recentBooks.end()) return;
@@ -208,8 +208,10 @@ void RecentBooksStore::refreshXtcMetadata(const std::string& path, const std::st
   const std::string nextCover = coverBmpPath.empty() ? book.coverBmpPath : coverBmpPath;
   const std::string nextSynopsis = synopsis.empty() ? book.synopsis : synopsis.substr(0, 384);
   const std::string nextSeries = series.empty() ? book.series : series.substr(0, 128);
+  const bool nextMetadataChecked = book.xtcMetadataChecked || metadataChecked;
   if (book.title == nextTitle && book.author == nextAuthor && book.coverBmpPath == nextCover &&
-      book.synopsis == nextSynopsis && book.series == nextSeries && book.xtcMetadataChecked) {
+      book.synopsis == nextSynopsis && book.series == nextSeries &&
+      book.xtcMetadataChecked == nextMetadataChecked) {
     return;
   }
   book.title = nextTitle;
@@ -217,7 +219,7 @@ void RecentBooksStore::refreshXtcMetadata(const std::string& path, const std::st
   book.coverBmpPath = nextCover;
   book.synopsis = nextSynopsis;
   book.series = nextSeries;
-  book.xtcMetadataChecked = true;
+  book.xtcMetadataChecked = nextMetadataChecked;
   applyMetadataOverride(book);
   if (!saveToFile()) LOG_ERR("RBS", "Failed to persist refreshed XTC metadata: %s", path.c_str());
 }
@@ -327,9 +329,11 @@ RecentBook RecentBooksStore::getDataFromBook(std::string path) const {
     // Handle XTC file
     Xtc xtc(path, "/.crosspoint");
     if (xtc.load()) {
-      RecentBook result{path, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath(), xtc.getDescription().substr(0, 384),
-                        xtc.getSeries().substr(0, 128)};
-      result.xtcMetadataChecked = true;
+      const std::string& synopsis = xtc.getDescription();
+      const std::string& series = xtc.getSeries();
+      RecentBook result{path, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath(), synopsis.substr(0, 384),
+                        series.substr(0, 128)};
+      result.xtcMetadataChecked = xtc.hasLoadedExtendedMetadata();
       applyMetadataOverride(result);
       return result;
     }

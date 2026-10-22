@@ -77,6 +77,9 @@ class XtcParser {
   // Optional MangaNooir trailer fields are read lazily, once per open file.
   const std::string& getDescription();
   const std::string& getSeries();
+  // True after the trailer was read or ruled absent/invalid. Transient storage
+  // and allocation failures leave this false so callers can retry later.
+  bool hasLoadedExtendedMetadata() const { return m_extendedMetadataLoaded; }
 
   bool hasChapters() const { return m_hasChapters; }
   const std::vector<ChapterInfo>& getChapters();

@@ -155,13 +155,14 @@ void SynopsisActivity::onEnter() {
   if (FsHelpers::hasXtcExtension(bookPath) && !xtcMetadataChecked) {
     Xtc xtc(bookPath, "/.crosspoint");
     if (xtc.load()) {
-      const std::string sourceSynopsis = xtc.getDescription();
-      const std::string sourceSeries = xtc.getSeries();
+      const std::string& sourceSynopsis = xtc.getDescription();
+      const std::string& sourceSeries = xtc.getSeries();
       if (!hasMetadataOverride && !sourceSynopsis.empty()) synopsis = sourceSynopsis;
       if (!sourceSeries.empty()) series = sourceSeries;
+      const bool metadataChecked = xtc.hasLoadedExtendedMetadata();
       RECENT_BOOKS.refreshXtcMetadata(bookPath, xtc.getTitle(), xtc.getAuthor(), xtc.getThumbBmpPath(),
-                                      sourceSynopsis, sourceSeries);
-      xtcMetadataChecked = true;
+                                      sourceSynopsis, sourceSeries, metadataChecked);
+      xtcMetadataChecked = xtcMetadataChecked || metadataChecked;
     }
   }
   // The shelf cache is bounded, but this view must not silently truncate a

@@ -20,8 +20,8 @@ struct RecentBook {
   uint32_t dailyReadingDateKey = 0;
   uint16_t readingSessions = 0;
   uint32_t pagesTurned = 0;
-  // Old recent.json files omit this key and remain valid. It prevents an
-  // absent/invalid optional trailer from being re-read on every idle warm-up.
+  // Old recent.json files omit this key and remain valid. Checked absent or
+  // invalid trailers are cached; transient storage failures remain retryable.
   bool xtcMetadataChecked = false;
 
   bool operator==(const RecentBook& other) const { return path == other.path; }
@@ -43,7 +43,8 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
 
   // Add a book to the recent list (moves to front if already exists)
   void addBook(const std::string& path, const std::string& title, const std::string& author,
-               const std::string& coverBmpPath, const std::string& synopsis = {}, const std::string& series = {});
+               const std::string& coverBmpPath, const std::string& synopsis = {}, const std::string& series = {},
+               bool xtcMetadataChecked = false);
 
   void updateBook(const std::string& path, const std::string& title, const std::string& author,
                   const std::string& coverBmpPath, const std::string& synopsis = {});
@@ -51,10 +52,11 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
   // synopsis. Used by Refresh Book Cache after rereading the source file.
   void refreshBookMetadata(const std::string& path, const std::string& title, const std::string& author,
                            const std::string& coverBmpPath, const std::string& synopsis);
-  // Cache optional XTC synopsis/series after one successful parser load. Does
-  // not modify reading progress or bookmark state.
+  // Cache optional XTC synopsis/series and the parser checked state. A
+  // transient read failure stays retryable; progress and bookmarks survive.
   void refreshXtcMetadata(const std::string& path, const std::string& title, const std::string& author,
-                          const std::string& coverBmpPath, const std::string& synopsis, const std::string& series);
+                          const std::string& coverBmpPath, const std::string& synopsis, const std::string& series,
+                          bool metadataChecked = false);
   void markXtcMetadataChecked(const std::string& path);
   bool updateMetadata(const std::string& path, const std::string& title, const std::string& author,
                       const std::string& synopsis);

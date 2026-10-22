@@ -2003,9 +2003,9 @@ void RecentBooksActivity::generateNextCover() {
         std::string title = xtc.getTitle().empty() ? book.title : xtc.getTitle();
         std::string author = xtc.getAuthor();
         const std::string cover = xtc.getThumbBmpPath();
-        const std::string parsedSynopsis = xtc.getDescription();
+        const std::string& parsedSynopsis = xtc.getDescription();
         std::string synopsis = parsedSynopsis.empty() ? book.synopsis : parsedSynopsis.substr(0, 384);
-        const std::string parsedSeries = xtc.getSeries();
+        const std::string& parsedSeries = xtc.getSeries();
         std::string series = parsedSeries.empty() ? book.series : parsedSeries.substr(0, 128);
         if (const BookMetadataOverride* overrideData = BOOK_METADATA_OVERRIDES.find(book.path)) {
           title = overrideData->title;
@@ -2023,9 +2023,9 @@ void RecentBooksActivity::generateNextCover() {
           book.synopsis = synopsis;
         }
         book.series = series;
-        book.xtcMetadataChecked = true;
+        book.xtcMetadataChecked = book.xtcMetadataChecked || xtc.hasLoadedExtendedMetadata();
         RECENT_BOOKS.refreshXtcMetadata(book.path, book.title, book.author, book.coverBmpPath, book.synopsis,
-                                        book.series);
+                                        book.series, book.xtcMetadataChecked);
         const std::string thumb = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
         if (forceRebuild && !isValidBookThumbnail(thumb)) {
           // The XTCH writer commits a validated temporary thumbnail, so the

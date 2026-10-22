@@ -280,6 +280,10 @@ const std::string& Xtc::getSeries() const {
   return parser->getSeries();
 }
 
+bool Xtc::hasLoadedExtendedMetadata() const {
+  return loaded && parser && parser->hasLoadedExtendedMetadata();
+}
+
 bool Xtc::hasChapters() const {
   if (!loaded || !parser) {
     return false;

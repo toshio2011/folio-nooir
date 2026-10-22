@@ -96,6 +96,7 @@ TEST(XtcMetadata, LazilyParsesNooirDescriptionAndSeriesEscapes) {
       R"json({"title":"Synthetic Manga","description":"A quote: \"yes\"\nA path \\ caf\u00e9","series":"Manga \u30EF\u30F3 \uD83D\uDE80","genres":["Action",2,true,null]})json";
   auto parser = openFixture(makeFixture(&json));
   ASSERT_TRUE(parser.isOpen());
+  EXPECT_FALSE(parser.hasLoadedExtendedMetadata());
   EXPECT_EQ(parser.getTitle(), "Synthetic Manga");
   EXPECT_EQ(parser.getAuthor(), "Test Artist");
   EXPECT_EQ(XtcMetadataTestStorage::openCalls, 1u);
@@ -113,11 +114,13 @@ TEST(XtcMetadata, RetriesAfterTransientTrailerReadFailure) {
   XtcMetadataTestStorage::failNextRead = true;
 
   EXPECT_TRUE(parser.getDescription().empty());
+  EXPECT_FALSE(parser.hasLoadedExtendedMetadata());
   EXPECT_EQ(XtcMetadataTestStorage::openCalls, 2u);
   EXPECT_EQ(XtcMetadataTestStorage::openHandles, 0u);
 
   EXPECT_EQ(parser.getDescription(), "retry synopsis");
   EXPECT_EQ(parser.getSeries(), "Retry Series");
+  EXPECT_TRUE(parser.hasLoadedExtendedMetadata());
   EXPECT_EQ(XtcMetadataTestStorage::openCalls, 3u);
   EXPECT_EQ(XtcMetadataTestStorage::openHandles, 0u);
 }

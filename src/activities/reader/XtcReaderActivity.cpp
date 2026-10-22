@@ -178,8 +178,11 @@ void XtcReaderActivity::onEnter() {
   // The parser has already opened this book. Resolve its optional bounded
   // trailer now and persist the result with the existing Recent metadata so
   // Home/Spine and Book Info can reuse it without an idle SD scan.
+  const std::string& xtcSynopsis = xtc->getDescription();
+  const std::string& xtcSeries = xtc->getSeries();
+  const bool xtcMetadataChecked = xtc->hasLoadedExtendedMetadata();
   RECENT_BOOKS.addBook(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getThumbBmpPath(),
-                       xtc->getDescription(), xtc->getSeries());
+                       xtcSynopsis, xtcSeries, xtcMetadataChecked);
 
   // Trigger first update
   requestUpdate();
