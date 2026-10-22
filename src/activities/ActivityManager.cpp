@@ -10,6 +10,7 @@
 
 #include "OpdsServerStore.h"
 #include "BleInput.h"
+#include "util/BleMemoryPolicy.h"
 #include "InterfaceFontSelection.h"
 #include "SdCardFontSystem.h"
 #include "components/UITheme.h"
@@ -456,7 +457,15 @@ void ActivityManager::loop() {
       // lifecycle gate runs before ActivityManager::loop(), so without this
       // boundary a Recent -> EPUB transition can begin its allocations while
       // the NimBLE heap is still resident for one full loop iteration.
-      if (currentActivity->bluetoothResourceSensitive() && BleHid.isRunning()) {
+      const bool bleRunning = BleHid.isRunning();
+      const bool recentBooksHeadroomStop = bleinput::homeTransitionNeedsBleSuspension(
+          bleRunning, recentBooksTransition, static_cast<size_t>(ESP.getFreeHeap()));
+      if (bleRunning && (currentActivity->bluetoothResourceSensitive() || recentBooksHeadroomStop)) {
+        if (recentBooksHeadroomStop) {
+          LOG_INF("BLEMEM", "stage=home_suspend reason=low_headroom free=%u largest=%u floor=%u",
+                  static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()),
+                  static_cast<unsigned>(bleinput::kHomeBleSuspendMinFreeHeap));
+        }
         bleinput::recordDiagnosticEvent("resource_stop activity=%.20s", currentActivity->name.c_str());
         if (currentActivity->isReaderActivity()) {
           bleinput::stopForReaderResourcePressure();

@@ -171,6 +171,10 @@ void XtcReaderActivity::onEnter() {
 
   // Load saved progress
   loadProgress();
+  if (initialBookmarkPage && xtc->getPageCount() > 0) {
+    currentPage = *initialBookmarkPage < xtc->getPageCount() ? *initialBookmarkPage : xtc->getPageCount() - 1;
+  }
+  initialBookmarkPage.reset();
 
   // Save current XTC as last opened book and add to recent books
   APP_STATE.openEpubPath = xtc->getPath();

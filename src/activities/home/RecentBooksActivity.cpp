@@ -2289,11 +2289,17 @@ void RecentBooksActivity::showBookActions() {
                                       tr(STR_RESET_PROGRESS), tr(STR_REFRESH_BOOK_CACHE),
                                       tr(STR_DELETE_CACHE), tr(STR_REMOVE_FROM_LIST),
                                       tr(STR_READ_FULL_SYNOPSIS), tr(STR_BOOK_STATISTICS)};
-  if (FsHelpers::hasEpubExtension(selectedBook.path)) {
+  int bookmarksAction = -1;
+  int clippingsAction = -1;
+  if (FsHelpers::hasEpubExtension(selectedBook.path) || FsHelpers::hasXtcExtension(selectedBook.path)) {
+    bookmarksAction = static_cast<int>(actions.size());
     actions.emplace_back(tr(STR_BOOKMARKS));
+  }
+  if (FsHelpers::hasEpubExtension(selectedBook.path)) {
+    clippingsAction = static_cast<int>(actions.size());
     actions.emplace_back(tr(STR_CLIPPINGS));
   }
-  bookActionsPopup.show(StrId::STR_BOOK_ACTIONS, actions, 0, [this](const int action) {
+  bookActionsPopup.show(StrId::STR_BOOK_ACTIONS, actions, 0, [this, bookmarksAction, clippingsAction](const int action) {
     if (visibleBookCount == 0 || selectorIndex >= visibleBookCount) return;
     const RecentBook selected = recentBooks[selectedRecentIndex()];
     if (action == 0) {
@@ -2353,7 +2359,7 @@ void RecentBooksActivity::showBookActions() {
       startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, selected.path), nullptr);
       return;
     }
-    if (action == 10 && FsHelpers::hasEpubExtension(selected.path)) {
+    if (action == bookmarksAction && bookmarksAction >= 0) {
       startActivityForResult(
           std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, selected.path),
           [this](const ActivityResult& result) {
@@ -2365,7 +2371,7 @@ void RecentBooksActivity::showBookActions() {
           });
       return;
     }
-    if (action == 11 && FsHelpers::hasEpubExtension(selected.path)) {
+    if (action == clippingsAction && clippingsAction >= 0) {
       startActivityForResult(std::make_unique<EpubReaderClippingListActivity>(
                                 renderer, mappedInput, selected.path, selected.title),
                             nullptr);

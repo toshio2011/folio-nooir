@@ -22,6 +22,13 @@ TEST(BleMemoryPolicy, ContaminatedLowFreeHeapIsDeferred) {
   EXPECT_FALSE(bleinput::readerBleStartMemoryAdmitted(85000, 65524));
 }
 
+TEST(BleMemoryPolicy, LowHeadroomRecentBooksTransitionSuspendsConnectedBle) {
+  EXPECT_TRUE(bleinput::homeTransitionNeedsBleSuspension(true, true, 24 * 1024));
+  EXPECT_FALSE(bleinput::homeTransitionNeedsBleSuspension(true, true, 96 * 1024));
+  EXPECT_FALSE(bleinput::homeTransitionNeedsBleSuspension(false, true, 24 * 1024));
+  EXPECT_FALSE(bleinput::homeTransitionNeedsBleSuspension(true, false, 24 * 1024));
+}
+
 TEST(BleMemoryPolicy, AnyReaderRenderWorkDefersBleAdmission) {
   // The application ORs RenderLock with pending/in-flight render work. The
   // current child activity has no bypass when a Reader remains on the stack.

@@ -9,6 +9,7 @@
 
 #include <Xtc.h>
 
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -20,6 +21,7 @@ class XtcReaderActivity final : public Activity {
   std::shared_ptr<Xtc> xtc;
 
   uint32_t currentPage = 0;
+  std::optional<uint32_t> initialBookmarkPage;
   uint32_t lastPersistedPage = 0;
   bool hasPersistedProgressPage = false;
   int pagesUntilFullRefresh = 0;
@@ -58,8 +60,11 @@ class XtcReaderActivity final : public Activity {
   void requestExitToHome();
 
  public:
-  explicit XtcReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Xtc> xtc)
-      : Activity("XtcReader", renderer, mappedInput), xtc(std::move(xtc)) {}
+  explicit XtcReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Xtc> xtc,
+                             std::optional<uint32_t> initialBookmarkPage = std::nullopt)
+      : Activity("XtcReader", renderer, mappedInput),
+        xtc(std::move(xtc)),
+        initialBookmarkPage(std::move(initialBookmarkPage)) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;

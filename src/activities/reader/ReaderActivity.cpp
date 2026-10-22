@@ -174,7 +174,13 @@ void ReaderActivity::onGoToBmpViewer(const std::string& path) {
 void ReaderActivity::onGoToXtcReader(std::unique_ptr<Xtc> xtc) {
   const auto xtcPath = xtc->getPath();
   currentBookPath = xtcPath;
-  activityManager.replaceActivity(std::make_unique<XtcReaderActivity>(renderer, mappedInput, std::move(xtc)));
+  std::optional<uint32_t> initialPage;
+  if (initialBookmark && initialBookmark->hasSavedProgress && initialBookmark->page >= 0) {
+    initialPage = static_cast<uint32_t>(initialBookmark->page);
+  }
+  initialBookmark.reset();
+  activityManager.replaceActivity(
+      std::make_unique<XtcReaderActivity>(renderer, mappedInput, std::move(xtc), std::move(initialPage)));
 }
 
 void ReaderActivity::onGoToTxtReader(std::unique_ptr<Txt> txt) {
