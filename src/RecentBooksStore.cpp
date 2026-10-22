@@ -84,6 +84,9 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
   entry.xtcMetadataChecked = FsHelpers::hasXtcExtension(path);
   applyMetadataOverride(entry);
   if (it != recentBooks.end()) {
+    if (entry.title.empty()) entry.title = it->title;
+    if (entry.author.empty()) entry.author = it->author;
+    if (entry.coverBmpPath.empty()) entry.coverBmpPath = it->coverBmpPath;
     if (entry.synopsis.empty()) entry.synopsis = it->synopsis;
     if (entry.series.empty()) entry.series = it->series;
     entry.progressPercent = it->progressPercent;
@@ -172,18 +175,21 @@ void RecentBooksStore::refreshBookMetadata(const std::string& path, const std::s
   if (it == recentBooks.end()) return;
 
   RecentBook& book = *it;
+  const std::string nextTitle = title.empty() ? book.title : title;
+  const std::string nextAuthor = author.empty() ? book.author : author;
+  const std::string nextCover = coverBmpPath.empty() ? book.coverBmpPath : coverBmpPath;
   // A device-side refresh must never erase a working synopsis because a
   // transient metadata pass returned an empty description. Explicit web
   // metadata edits use updateMetadata() and can still intentionally clear it.
   const std::string boundedSynopsis = synopsis.substr(0, 384);
   const std::string nextSynopsis = boundedSynopsis.empty() ? book.synopsis : boundedSynopsis;
-  if (book.title == title && book.author == author && book.coverBmpPath == coverBmpPath &&
+  if (book.title == nextTitle && book.author == nextAuthor && book.coverBmpPath == nextCover &&
       book.synopsis == nextSynopsis) {
     return;
   }
-  book.title = title;
-  book.author = author;
-  book.coverBmpPath = coverBmpPath;
+  book.title = nextTitle;
+  book.author = nextAuthor;
+  book.coverBmpPath = nextCover;
   book.synopsis = nextSynopsis;
   applyMetadataOverride(book);
   if (!saveToFile()) LOG_ERR("RBS", "Failed to persist refreshed metadata: %s", path.c_str());
@@ -197,15 +203,18 @@ void RecentBooksStore::refreshXtcMetadata(const std::string& path, const std::st
   if (it == recentBooks.end()) return;
 
   RecentBook& book = *it;
+  const std::string nextTitle = title.empty() ? book.title : title;
+  const std::string nextAuthor = author.empty() ? book.author : author;
+  const std::string nextCover = coverBmpPath.empty() ? book.coverBmpPath : coverBmpPath;
   const std::string nextSynopsis = synopsis.empty() ? book.synopsis : synopsis.substr(0, 384);
   const std::string nextSeries = series.empty() ? book.series : series.substr(0, 128);
-  if (book.title == title && book.author == author && book.coverBmpPath == coverBmpPath &&
+  if (book.title == nextTitle && book.author == nextAuthor && book.coverBmpPath == nextCover &&
       book.synopsis == nextSynopsis && book.series == nextSeries && book.xtcMetadataChecked) {
     return;
   }
-  book.title = title;
-  book.author = author;
-  book.coverBmpPath = coverBmpPath;
+  book.title = nextTitle;
+  book.author = nextAuthor;
+  book.coverBmpPath = nextCover;
   book.synopsis = nextSynopsis;
   book.series = nextSeries;
   book.xtcMetadataChecked = true;
