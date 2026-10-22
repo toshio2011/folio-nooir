@@ -1069,6 +1069,7 @@ bool RecentBooksActivity::hasMissingRecentCache() const {
     const bool isCbz = FsHelpers::hasCbzExtension(book.path);
     const bool isXtc = FsHelpers::hasXtcExtension(book.path);
     if ((isEpub || isCbz) && book.synopsis.empty()) return true;
+    if (isXtc && !book.xtcMetadataChecked) return true;
     if ((isEpub || isCbz || isXtc) && book.title.empty()) return true;
   }
 
@@ -1977,8 +1978,8 @@ void RecentBooksActivity::generateNextCover() {
   // Warm-up must process only entries whose metadata cache probe found a gap.
   // Manual Refresh Book Cache is the only path that intentionally rereads a
   // source cover or generates a missing thumbnail.
-  const bool forceRebuild = coverGenerationRequested && !recentCacheWarmupActive;
-  const bool metadataOnly = forceRebuild || recentCacheWarmupActive;
+  const bool forceRebuild = coverGenerationRequested && !recentCacheWarmupActive && !recentXtcMetadataWarmupActive;
+  const bool metadataOnly = forceRebuild || recentCacheWarmupActive || recentXtcMetadataWarmupActive;
   // Synopsis metadata may be missing anywhere in Recent, so scan the full
   // in-memory list. Complete entries are skipped without touching the SD;
   // only the first bootstrap window probes otherwise-complete CBZ cache files.
@@ -1988,13 +1989,19 @@ void RecentBooksActivity::generateNextCover() {
     RecentBook& book = recentBooks[bookIndex];
     if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path) &&
         !FsHelpers::hasCbzExtension(book.path)) continue;
+    if (recentXtcMetadataWarmupActive && !recentCacheBootstrapRunActive &&
+        !FsHelpers::hasXtcExtension(book.path)) {
+      continue;
+    }
     const bool synopsisMetadataSupported = FsHelpers::hasEpubExtension(book.path) ||
                                            FsHelpers::hasCbzExtension(book.path);
-    bool metadataMissing = book.title.empty() || book.coverBmpPath.empty() ||
-                           (recentCacheWarmupActive && synopsisMetadataSupported && book.synopsis.empty());
+    const bool xtcMetadataMissing = (recentCacheWarmupActive || recentXtcMetadataWarmupActive) &&
+                                    FsHelpers::hasXtcExtension(book.path) && !book.xtcMetadataChecked;
+    bool metadataMissing = book.title.empty() || book.coverBmpPath.empty() || xtcMetadataMissing ||
+                           (recentCacheBootstrapRunActive && synopsisMetadataSupported && book.synopsis.empty());
     bool cbzCacheProbeDone = false;
     bool cbzCacheLoaded = false;
-    if (recentCacheWarmupActive && !metadataMissing && bookIndex < SpineShelfPlanner::MAX_BOOKS &&
+    if (recentCacheBootstrapRunActive && !metadataMissing && bookIndex < SpineShelfPlanner::MAX_BOOKS &&
         FsHelpers::hasCbzExtension(book.path)) {
       // The first planner window also repairs a missing metadata cache when
       // Recent already has enough in-memory fields to render immediately.
@@ -2015,7 +2022,7 @@ void RecentBooksActivity::generateNextCover() {
       // description is missing for a Recent entry that also lacks one.
       bool loaded = false;
       bool sourceMetadataLoadAttempted = false;
-      if (recentCacheWarmupActive) {
+      if (recentCacheBootstrapRunActive) {
         loaded = epub.loadCachedMetadataOnly();
         // A legacy metadata cache can be valid but omit its description. When
         // the Recent entry also lacks one, do one metadata-only source pass in
@@ -2087,17 +2094,27 @@ void RecentBooksActivity::generateNextCover() {
       Xtc xtc(book.path, "/.crosspoint");
       if (xtc.load()) {
         attempted = true;
-        const std::string title = xtc.getTitle().empty() ? book.title : xtc.getTitle();
-        const std::string author = xtc.getAuthor();
+        std::string title = xtc.getTitle().empty() ? book.title : xtc.getTitle();
+        std::string author = xtc.getAuthor();
         const std::string cover = xtc.getThumbBmpPath();
-        const bool spineVisualChanged =
-            book.title != title || book.author != author || book.coverBmpPath != cover;
-        if (spineVisualChanged) {
-          spineShelfVisualsDirty = true;
+        const std::string parsedSynopsis = xtc.getDescription();
+        std::string synopsis = parsedSynopsis.empty() ? book.synopsis : parsedSynopsis.substr(0, 384);
+        if (const BookMetadataOverride* overrideData = BOOK_METADATA_OVERRIDES.find(book.path)) {
+          if (!overrideData->title.empty()) title = overrideData->title;
+          author = overrideData->author;
+          synopsis = overrideData->synopsis.substr(0, 384);
+        }
+        const bool spineVisualChanged = book.title != title || book.author != author || book.coverBmpPath != cover;
+        const bool synopsisChanged = book.synopsis != synopsis;
+        if (spineVisualChanged || synopsisChanged || !book.xtcMetadataChecked) {
+          if (spineVisualChanged) spineShelfVisualsDirty = true;
+          if (synopsisChanged) liteSelectedDetailsDirty = true;
           book.title = title;
           book.author = author;
           book.coverBmpPath = cover;
-          RECENT_BOOKS.updateBook(book.path, book.title, book.author, book.coverBmpPath);
+          book.synopsis = synopsis;
+          book.xtcMetadataChecked = true;
+          RECENT_BOOKS.refreshXtcMetadata(book.path, book.title, book.author, book.coverBmpPath, book.synopsis);
         }
         const std::string thumb = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
         if (forceRebuild && !isValidBookThumbnail(thumb)) {
@@ -2111,12 +2128,19 @@ void RecentBooksActivity::generateNextCover() {
             UITheme::getCoverThumbPath(book.coverBmpPath, CAROUSEL_HQ_COVER_HEIGHT) == refreshCarouselHqPath) {
           generateCarouselHqThumbnail(book, true);
         }
+      } else if (recentXtcMetadataWarmupActive && !book.xtcMetadataChecked) {
+        // A corrupt or unreadable optional book must not cause an SD retry on
+        // every Recent visit. Book Info and explicit cache refresh still make
+        // a fresh attempt if the user asks for the metadata later.
+        attempted = true;
+        book.xtcMetadataChecked = true;
+        RECENT_BOOKS.markXtcMetadataChecked(book.path);
       }
     } else if (FsHelpers::hasCbzExtension(book.path)) {
       Cbz cbz(book.path, "/.crosspoint");
-      bool loaded = recentCacheWarmupActive &&
+      bool loaded = recentCacheBootstrapRunActive &&
                     (cbzCacheProbeDone ? cbzCacheLoaded : cbz.loadCachedMetadataOnly());
-      if (recentCacheWarmupActive && loaded && book.synopsis.empty() && cbz.getSynopsis().empty()) {
+      if (recentCacheBootstrapRunActive && loaded && book.synopsis.empty() && cbz.getSynopsis().empty()) {
         loaded = cbz.loadMetadataOnly();
       } else if (!loaded) {
         loaded = cbz.loadMetadataOnly();
@@ -2191,8 +2215,9 @@ void RecentBooksActivity::generateNextCover() {
       // Continue until every missing recent entry has been attempted during
       // first-run warmup. Manual refresh intentionally processes one book at
       // a time so the shelf stays responsive.
-      coverGenerationRequested = recentCacheWarmupActive;
+      coverGenerationRequested = recentCacheWarmupActive || recentXtcMetadataWarmupActive;
       if (recentCacheWarmupActive) recentCacheWarmupNextMs = millis() + 500;
+      if (recentXtcMetadataWarmupActive) recentXtcMetadataWarmupNextMs = millis() + 500;
       requestUpdate();
       return;  // At most one expensive extraction per activity cycle.
     }
@@ -2201,11 +2226,13 @@ void RecentBooksActivity::generateNextCover() {
   coverGenerationRequested = false;
   if (recentCacheWarmupActive) {
     recentCacheWarmupActive = false;
+    recentCacheBootstrapRunActive = false;
     recentCacheWarmupPopupRendered = false;
     // Do not repeat the SD probe on every Recent visit. A failed/missing
     // source is still safe to retry through the explicit Refresh action.
     Storage.writeFile(RECENT_CACHE_BOOTSTRAP_MARKER, String("1"));
   }
+  recentXtcMetadataWarmupActive = false;
   requestUpdate();
 }
 
@@ -2414,6 +2441,9 @@ void RecentBooksActivity::showBookActions() {
       nextCoverToGenerate = selectedRecentIndex();
       coverGenerationActive = false;
       coverGenerationRequested = false;
+      // The explicit refresh owns the next extraction slot. Any unfinished
+      // optional XTC metadata warm-up can resume on a later idle visit.
+      recentXtcMetadataWarmupActive = false;
       manualSingleRefresh = true;
       retrievingBookCache = true;
       retrievingBookCacheProgress = 5;
@@ -2527,7 +2557,15 @@ void RecentBooksActivity::onEnter() {
   // Defer the potentially blocking probe until the shelf has rendered its
   // feedback popup. An empty Recent list has nothing to bootstrap.
   recentCacheBootstrapProbePending = cacheBootstrapPending && !recentBooks.empty();
+  recentCacheBootstrapRunActive = recentCacheBootstrapProbePending;
+  const bool hasUncheckedXtcMetadata = std::any_of(recentBooks.begin(), recentBooks.end(), [](const RecentBook& book) {
+    return FsHelpers::hasXtcExtension(book.path) && !book.xtcMetadataChecked;
+  });
+  // Keep the one-time cross-format bootstrap on its feedback path. Later
+  // XTC synopsis probes run as quiet idle work and must not gate navigation.
   recentCacheWarmupActive = recentCacheBootstrapProbePending;
+  recentXtcMetadataWarmupActive = !cacheBootstrapPending && hasUncheckedXtcMetadata;
+  recentXtcMetadataWarmupNextMs = millis() + 500;
   if (cacheBootstrapPending && !recentCacheBootstrapProbePending) {
     Storage.writeFile(RECENT_CACHE_BOOTSTRAP_MARKER, String("1"));
   }
@@ -3256,6 +3294,7 @@ void RecentBooksActivity::loop() {
       recentCacheBootstrapProbePending = false;
       recentCacheWarmupActive = hasMissingRecentCache();
       if (!recentCacheWarmupActive) {
+        recentCacheBootstrapRunActive = false;
         coverGenerationRequested = false;
         Storage.writeFile(RECENT_CACHE_BOOTSTRAP_MARKER, String("1"));
         recentCacheWarmupPopupRendered = false;
@@ -3273,6 +3312,16 @@ void RecentBooksActivity::loop() {
     }
     if (millis() < recentCacheWarmupNextMs) return;
     if (coverGenerationRequested) generateNextCover();
+  } else if (recentXtcMetadataWarmupActive) {
+    // Optional XTC trailers are small, but reading them still touches SD.
+    // Probe at most one book after a quiet interval so navigation stays ahead
+    // of background work.
+    if (mappedInput.wasAnyPressed() || mappedInput.wasAnyReleased() || hasActiveHomeInput(mappedInput)) {
+      recentXtcMetadataWarmupNextMs = millis() + 500;
+    } else if (millis() >= recentXtcMetadataWarmupNextMs) {
+      coverGenerationRequested = false;
+      generateNextCover();
+    }
   } else if (coverGenerationRequested) {
     generateNextCover();
   }

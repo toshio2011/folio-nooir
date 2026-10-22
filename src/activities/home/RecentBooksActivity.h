@@ -132,6 +132,9 @@ class RecentBooksActivity final : public Activity {
   // intentionally left to the explicit Refresh Book Cache action.
   bool recentCacheWarmupActive = false;
   bool recentCacheBootstrapProbePending = false;
+  bool recentCacheBootstrapRunActive = false;
+  bool recentXtcMetadataWarmupActive = false;
+  unsigned long recentXtcMetadataWarmupNextMs = 0;
   unsigned long recentCacheWarmupNextMs = 0;
   volatile bool recentCacheWarmupPopupRendered = false;
   bool snapshotRestored = false;

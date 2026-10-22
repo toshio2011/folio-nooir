@@ -6,6 +6,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <Xtc.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -64,10 +65,12 @@ InfoRows makeInfoRows(const GfxRenderer& renderer, const bool showFormat) {
   return rows;
 }
 
-int infoPanelTop(const GfxRenderer& renderer, const int titleY, const bool hasAuthor) {
+int infoPanelTop(const GfxRenderer& renderer, const int titleY, const bool hasAuthor, const bool hasSeries) {
   const int titleHeight = renderer.getLineHeight(UI_12_FONT_ID);
-  const int authorHeight = hasAuthor ? renderer.getLineHeight(UI_10_FONT_ID) : 0;
-  return titleY + titleHeight + authorHeight + (hasAuthor ? 8 : 6);
+  const int metadataHeight = renderer.getLineHeight(UI_10_FONT_ID);
+  const int authorHeight = hasAuthor ? metadataHeight : 0;
+  const int seriesHeight = hasSeries ? metadataHeight : 0;
+  return titleY + titleHeight + authorHeight + seriesHeight + (hasAuthor || hasSeries ? 8 : 6);
 }
 
 }  // namespace
@@ -144,6 +147,17 @@ void SynopsisActivity::onEnter() {
       synopsis = epub.getDescription();
     }
   }
+  // MangaNooir XTC files may append a bounded optional metadata trailer. Load
+  // it only on the explicit Book Info screen; ordinary reader entry and page
+  // turns remain on the normal compact parser path. Legacy XTC/XTCH files
+  // without the trailer continue to use their fixed-header metadata.
+  if (FsHelpers::hasXtcExtension(bookPath)) {
+    Xtc xtc(bookPath, "/.crosspoint");
+    if (xtc.load()) {
+      if (!hasMetadataOverride && !xtc.getDescription().empty()) synopsis = xtc.getDescription();
+      if (!xtc.getSeries().empty()) series = xtc.getSeries();
+    }
+  }
   // The shelf cache is bounded, but this view must not silently truncate a
   // longer description. Build all wrapped lines after converting the HTML
   // fragment while preserving paragraph and list structure.
@@ -160,7 +174,7 @@ int SynopsisActivity::synopsisTop() const {
   const int titleY = metrics.topPadding + 18;
   const bool showFormat = BookFormat::labelForPath(bookPath.c_str()) != nullptr;
   const InfoRows rows = makeInfoRows(renderer, showFormat);
-  const int infoTop = infoPanelTop(renderer, titleY, !author.empty());
+  const int infoTop = infoPanelTop(renderer, titleY, !author.empty(), !series.empty());
   return infoTop + rows.panelHeight + 12;
 }
 
@@ -245,11 +259,19 @@ void SynopsisActivity::render(RenderLock&&) {
     renderer.drawText(UI_10_FONT_ID, side, titleY + renderer.getLineHeight(UI_12_FONT_ID),
                       renderer.truncatedText(UI_10_FONT_ID, author.c_str(), safeTitleWidth).c_str());
   }
+  if (!series.empty()) {
+    const int metadataLineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+    const int seriesY = titleY + renderer.getLineHeight(UI_12_FONT_ID) +
+                        (!author.empty() ? metadataLineHeight : 0);
+    const std::string seriesText = std::string(tr(STR_SERIES)) + " " + series;
+    renderer.drawText(UI_10_FONT_ID, side, seriesY,
+                      renderer.truncatedText(UI_10_FONT_ID, seriesText.c_str(), safeTitleWidth).c_str());
+  }
 
   if (!bookPath.empty()) {
     const char* format = BookFormat::labelForPath(bookPath.c_str());
     const InfoRows rows = makeInfoRows(renderer, format != nullptr);
-    const int infoTop = infoPanelTop(renderer, titleY, !author.empty());
+    const int infoTop = infoPanelTop(renderer, titleY, !author.empty(), !series.empty());
     const int infoHeight = rows.panelHeight;
     const int coverWidth = std::min(104, std::max(54, width / 4));
     const int detailX = side + coverWidth + 14;

@@ -32,6 +32,7 @@ void RecentBooksStore::toJson(JsonDocument& doc) const {
     obj["author"] = book.author;
     obj["coverBmpPath"] = book.coverBmpPath;
     obj["synopsis"] = book.synopsis;
+    obj["xtcMetadataChecked"] = book.xtcMetadataChecked;
     obj["progressPercent"] = book.progressPercent;
     obj["readingSeconds"] = book.readingSeconds;
     obj["lastSessionSeconds"] = book.lastSessionSeconds;
@@ -55,6 +56,7 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
     book.author = obj["author"] | "";
     book.coverBmpPath = obj["coverBmpPath"] | "";
     book.synopsis = obj["synopsis"] | "";
+    book.xtcMetadataChecked = obj["xtcMetadataChecked"] | false;
     book.progressPercent = obj["progressPercent"] | 0;
     book.readingSeconds = obj["readingSeconds"] | 0;
     book.lastSessionSeconds = obj["lastSessionSeconds"] | 0;
@@ -89,6 +91,7 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
     entry.dailyReadingDateKey = it->dailyReadingDateKey;
     entry.readingSessions = it->readingSessions;
     entry.pagesTurned = it->pagesTurned;
+    entry.xtcMetadataChecked = it->xtcMetadataChecked;
 
     // Reopening the same book is common. If it is already at the front and
     // none of its cached presentation fields changed, there is nothing to
@@ -100,7 +103,8 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
                            it->dailyReadingSeconds == entry.dailyReadingSeconds &&
                            it->dailyReadingDateKey == entry.dailyReadingDateKey &&
                            it->readingSessions == entry.readingSessions &&
-                           it->pagesTurned == entry.pagesTurned;
+                           it->pagesTurned == entry.pagesTurned &&
+                           it->xtcMetadataChecked == entry.xtcMetadataChecked;
     if (unchanged && !pruned) return;
     recentBooks.erase(it);
   }
@@ -178,6 +182,36 @@ void RecentBooksStore::refreshBookMetadata(const std::string& path, const std::s
   book.synopsis = nextSynopsis;
   applyMetadataOverride(book);
   if (!saveToFile()) LOG_ERR("RBS", "Failed to persist refreshed metadata: %s", path.c_str());
+}
+
+void RecentBooksStore::refreshXtcMetadata(const std::string& path, const std::string& title,
+                                          const std::string& author, const std::string& coverBmpPath,
+                                          const std::string& synopsis) {
+  auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
+                         [&](const RecentBook& book) { return book.path == path; });
+  if (it == recentBooks.end()) return;
+
+  RecentBook& book = *it;
+  const std::string nextSynopsis = synopsis.empty() ? book.synopsis : synopsis.substr(0, 384);
+  if (book.title == title && book.author == author && book.coverBmpPath == coverBmpPath &&
+      book.synopsis == nextSynopsis && book.xtcMetadataChecked) {
+    return;
+  }
+  book.title = title;
+  book.author = author;
+  book.coverBmpPath = coverBmpPath;
+  book.synopsis = nextSynopsis;
+  book.xtcMetadataChecked = true;
+  applyMetadataOverride(book);
+  if (!saveToFile()) LOG_ERR("RBS", "Failed to persist refreshed XTC metadata: %s", path.c_str());
+}
+
+void RecentBooksStore::markXtcMetadataChecked(const std::string& path) {
+  auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
+                         [&](const RecentBook& book) { return book.path == path; });
+  if (it == recentBooks.end() || it->xtcMetadataChecked) return;
+  it->xtcMetadataChecked = true;
+  if (!saveToFile()) LOG_ERR("RBS", "Failed to persist XTC metadata check: %s", path.c_str());
 }
 
 bool RecentBooksStore::updateMetadata(const std::string& path, const std::string& title, const std::string& author,

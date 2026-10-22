@@ -36,6 +36,7 @@ class SynopsisActivity final : public Activity {
 
   std::string title;
   std::string author;
+  std::string series;
   std::string synopsis;
   std::string bookPath;
   std::string coverBmpPath;

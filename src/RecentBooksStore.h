@@ -18,6 +18,9 @@ struct RecentBook {
   uint32_t dailyReadingDateKey = 0;
   uint16_t readingSessions = 0;
   uint32_t pagesTurned = 0;
+  // Old recent.json files omit this key and remain valid. It prevents an
+  // absent/invalid optional trailer from being re-read on every idle warm-up.
+  bool xtcMetadataChecked = false;
 
   bool operator==(const RecentBook& other) const { return path == other.path; }
 };
@@ -46,6 +49,11 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
   // synopsis. Used by Refresh Book Cache after rereading the source file.
   void refreshBookMetadata(const std::string& path, const std::string& title, const std::string& author,
                            const std::string& coverBmpPath, const std::string& synopsis);
+  // Cache optional XTC synopsis/series after one successful parser load. Does
+  // not modify reading progress or bookmark state.
+  void refreshXtcMetadata(const std::string& path, const std::string& title, const std::string& author,
+                          const std::string& coverBmpPath, const std::string& synopsis);
+  void markXtcMetadataChecked(const std::string& path);
   bool updateMetadata(const std::string& path, const std::string& title, const std::string& author,
                       const std::string& synopsis);
   bool resetReading(const std::string& path);
