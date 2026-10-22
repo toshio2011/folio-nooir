@@ -3095,7 +3095,7 @@ void CbzReaderActivity::loadProgress() {
   lastPersistedPage = currentPage;
   progressDirty = false;
   HalFile file;
-  if (!Storage.openFileForRead("CBZR", cbz->getCachePath() + "/progress.bin", file)) return;
+  if (!ProgressFile::openForRead("CBZR", cbz->getCachePath(), file)) return;
   uint8_t data[PROGRESS_BYTES]{};
   if (file.read(data, sizeof(data)) == sizeof(data)) {
     currentPage = static_cast<size_t>(data[0]) | (static_cast<size_t>(data[1]) << 8) |

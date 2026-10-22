@@ -270,7 +270,8 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   // Progress summary
   std::string progressLine;
   if (totalPages > 0) {
-    progressLine = std::string(tr(STR_CHAPTER_PREFIX)) + std::to_string(currentPage) + "/" +
+    const char* positionLabel = xtcMode ? tr(STR_PAGE) : tr(STR_CHAPTER_PREFIX);
+    progressLine = std::string(positionLabel) + (xtcMode ? " " : "") + std::to_string(currentPage) + "/" +
                    std::to_string(totalPages) + std::string(tr(STR_PAGES_SEPARATOR));
   }
   progressLine += std::string(tr(STR_BOOK_PREFIX)) + std::to_string(bookProgressPercent) + "%";

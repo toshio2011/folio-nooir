@@ -45,9 +45,12 @@ TEST(QuickActions, XtcContextKeepsPageActionsAndHidesTextOnlyOptions) {
   EXPECT_FALSE(QuickActions::isAvailable(QuickActions::ActionId::ReaderOptions, xtcContext));
   EXPECT_FALSE(QuickActions::isAvailable(QuickActions::ActionId::Sync, xtcContext));
   EXPECT_TRUE(QuickActions::isAvailable(QuickActions::ActionId::Screenshot, xtcContext));
+  EXPECT_TRUE(QuickActions::isAvailable(QuickActions::ActionId::ReadingStats, xtcContext));
+  EXPECT_FALSE(QuickActions::isAvailable(QuickActions::ActionId::ToggleBluetooth, xtcContext));
 
-  const QuickActions::Context xtcWithSync{false, false, true, true, false};
+  const QuickActions::Context xtcWithSync{false, false, true, true, false, true};
   EXPECT_TRUE(QuickActions::isAvailable(QuickActions::ActionId::Sync, xtcWithSync));
   EXPECT_TRUE(QuickActions::isAvailable(QuickActions::ActionId::ToggleBookmark, xtcWithSync));
   EXPECT_FALSE(QuickActions::isAvailable(QuickActions::ActionId::Lookup, xtcWithSync));
+  EXPECT_TRUE(QuickActions::isAvailable(QuickActions::ActionId::ToggleBluetooth, xtcWithSync));
 }

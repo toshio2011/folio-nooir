@@ -34,6 +34,7 @@ struct Context {
   bool hasKoReaderCredentials = false;
   bool hasPagePosition = false;
   bool hasTextOptions = true;
+  bool hasBluetoothHid = false;
 };
 
 // Defaults favor actions already exposed by the reader's configurable
@@ -100,8 +101,9 @@ inline bool isAvailable(const ActionId action, const Context& context) {
     case ActionId::Screenshot:
     case ActionId::Home:
     case ActionId::Sleep:
-    case ActionId::ToggleBluetooth:
       return true;
+    case ActionId::ToggleBluetooth:
+      return context.hasBluetoothHid;
   }
   return false;
 }

@@ -491,7 +491,7 @@ void EpubReaderActivity::onEnter() {
   epub->setupCacheDir();
 
   HalFile f;
-  if (Storage.openFileForRead("ERS", epub->getCachePath() + "/progress.bin", f)) {
+  if (ProgressFile::openForRead("ERS", epub->getCachePath(), f)) {
     uint8_t data[6];
     int dataSize = f.read(data, 6);
     if (dataSize == 4 || dataSize == 6) {
@@ -1078,7 +1078,8 @@ void EpubReaderActivity::openReaderMenu() {
                              SETTINGS.orientation, !currentPageFootnotes.empty(), !cachedBookmarks.empty(),
                               !cachedClippings.empty(),
                               QuickActions::Context{section != nullptr, SETTINGS.dictionaryName[0] != '\0',
-                                                    KOREADER_STORE.hasCredentials()}),
+                                                    KOREADER_STORE.hasCredentials(), false, true,
+                                                    FREEINK_CAP_BLE_HID_HOST != 0}),
                          [this](const ActivityResult& result) {
                            // Always apply orientation change even if the menu was cancelled
                            const auto& menu = std::get<MenuResult>(result.data);
@@ -2428,7 +2429,8 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
 void EpubReaderActivity::executeQuickAction(const int actionValue) {
   const auto action = static_cast<QuickActions::ActionId>(actionValue);
   const QuickActions::Context context{section != nullptr, SETTINGS.dictionaryName[0] != '\0',
-                                      KOREADER_STORE.hasCredentials()};
+                                      KOREADER_STORE.hasCredentials(), false, true,
+                                      FREEINK_CAP_BLE_HID_HOST != 0};
   if (!QuickActions::isAvailable(action, context)) return;
 
   switch (action) {

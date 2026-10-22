@@ -1,0 +1,3 @@
+add_executable(gfx_bitmap_scaling_test BitmapDrawGeometryTest.cpp)
+target_link_libraries(gfx_bitmap_scaling_test PRIVATE GTest::gtest_main crosspoint_test_common)
+gtest_discover_tests(gfx_bitmap_scaling_test)

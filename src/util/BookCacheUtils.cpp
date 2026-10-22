@@ -19,7 +19,7 @@ void clearCachePreservingProgress(const std::string& cachePath, const size_t max
   uint8_t progress[6] = {};
   size_t progressBytes = 0;
   HalFile progressFile;
-  if (Storage.openFileForRead("BookCache", cachePath + "/progress.bin", progressFile)) {
+  if (ProgressFile::openForRead("BookCache", cachePath, progressFile)) {
     const int readBytes = progressFile.read(progress, sizeof(progress));
     // EPUB historically used either 4 or 6 bytes; XTC/TXT use 4 bytes.
     if (readBytes == 4 || (readBytes == 6 && maxProgressBytes >= 6)) progressBytes = readBytes;
@@ -96,7 +96,7 @@ void resetBookProgress(const std::string& path) {
 
   Cbz book(path, "/.crosspoint");
   book.setupCacheDir();
-  const char* progressFiles[] = {"/progress.bin", "/progress.bin.tmp"};
+  const char* progressFiles[] = {"/progress.bin", "/progress.bin.tmp", "/progress.bin.bak"};
   for (const char* suffix : progressFiles) {
     const std::string progressPath = book.getCachePath() + suffix;
     if (!Storage.exists(progressPath.c_str())) continue;

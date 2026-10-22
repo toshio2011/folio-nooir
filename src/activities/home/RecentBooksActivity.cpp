@@ -1979,18 +1979,29 @@ void RecentBooksActivity::generateNextCover() {
   // source cover or generates a missing thumbnail.
   const bool forceRebuild = coverGenerationRequested && !recentCacheWarmupActive;
   const bool metadataOnly = forceRebuild || recentCacheWarmupActive;
+  // Synopsis metadata may be missing anywhere in Recent, so scan the full
+  // in-memory list. Complete entries are skipped without touching the SD;
+  // only the first bootstrap window probes otherwise-complete CBZ cache files.
   const size_t scanLimit = recentBooks.size();
   while (nextCoverToGenerate < scanLimit) {
-    RecentBook& book = recentBooks[nextCoverToGenerate++];
+    const size_t bookIndex = nextCoverToGenerate++;
+    RecentBook& book = recentBooks[bookIndex];
     if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path) &&
         !FsHelpers::hasCbzExtension(book.path)) continue;
     const bool synopsisMetadataSupported = FsHelpers::hasEpubExtension(book.path) ||
                                            FsHelpers::hasCbzExtension(book.path);
     bool metadataMissing = book.title.empty() || book.coverBmpPath.empty() ||
                            (recentCacheWarmupActive && synopsisMetadataSupported && book.synopsis.empty());
-    if (FsHelpers::hasCbzExtension(book.path)) {
+    bool cbzCacheProbeDone = false;
+    bool cbzCacheLoaded = false;
+    if (recentCacheWarmupActive && !metadataMissing && bookIndex < SpineShelfPlanner::MAX_BOOKS &&
+        FsHelpers::hasCbzExtension(book.path)) {
+      // The first planner window also repairs a missing metadata cache when
+      // Recent already has enough in-memory fields to render immediately.
       Cbz cached(book.path, "/.crosspoint");
-      metadataMissing = metadataMissing || !cached.loadCachedMetadataOnly();
+      cbzCacheLoaded = cached.loadCachedMetadataOnly();
+      cbzCacheProbeDone = true;
+      metadataMissing = !cbzCacheLoaded;
     }
     // A manual Refresh Book Cache must reread metadata even when an old
     // thumbnail survived the cache cleanup. Normal warm-up only handles
@@ -2103,7 +2114,8 @@ void RecentBooksActivity::generateNextCover() {
       }
     } else if (FsHelpers::hasCbzExtension(book.path)) {
       Cbz cbz(book.path, "/.crosspoint");
-      bool loaded = recentCacheWarmupActive && cbz.loadCachedMetadataOnly();
+      bool loaded = recentCacheWarmupActive &&
+                    (cbzCacheProbeDone ? cbzCacheLoaded : cbz.loadCachedMetadataOnly());
       if (recentCacheWarmupActive && loaded && book.synopsis.empty() && cbz.getSynopsis().empty()) {
         loaded = cbz.loadMetadataOnly();
       } else if (!loaded) {

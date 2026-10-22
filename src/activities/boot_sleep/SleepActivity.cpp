@@ -430,29 +430,24 @@ SleepBitmapPlacement getSleepBitmapPlacement(const Bitmap& bitmap, const GfxRend
   SleepBitmapPlacement placement;
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
-  if (bitmap.getWidth() > pageWidth || bitmap.getHeight() > pageHeight) {
-    float ratio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
-    const float screenRatio = static_cast<float>(pageWidth) / static_cast<float>(pageHeight);
-    if (ratio > screenRatio) {
-      if (SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP) {
-        placement.cropX = 1.0f - (screenRatio / ratio);
-        ratio = (1.0f - placement.cropX) * static_cast<float>(bitmap.getWidth()) /
-                static_cast<float>(bitmap.getHeight());
-      }
-      placement.x = 0;
-      placement.y = std::round((static_cast<float>(pageHeight) - static_cast<float>(pageWidth) / ratio) / 2);
-    } else {
-      if (SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP) {
-        placement.cropY = 1.0f - (ratio / screenRatio);
-        ratio = static_cast<float>(bitmap.getWidth()) /
-                ((1.0f - placement.cropY) * static_cast<float>(bitmap.getHeight()));
-      }
-      placement.x = std::round((static_cast<float>(pageWidth) - static_cast<float>(pageHeight) * ratio) / 2);
-      placement.y = 0;
+  float ratio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
+  const float screenRatio = static_cast<float>(pageWidth) / static_cast<float>(pageHeight);
+  if (ratio > screenRatio) {
+    if (SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP) {
+      placement.cropX = 1.0f - (screenRatio / ratio);
+      ratio = (1.0f - placement.cropX) * static_cast<float>(bitmap.getWidth()) /
+              static_cast<float>(bitmap.getHeight());
     }
+    placement.x = 0;
+    placement.y = std::round((static_cast<float>(pageHeight) - static_cast<float>(pageWidth) / ratio) / 2);
   } else {
-    placement.x = (pageWidth - bitmap.getWidth()) / 2;
-    placement.y = (pageHeight - bitmap.getHeight()) / 2;
+    if (SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP) {
+      placement.cropY = 1.0f - (ratio / screenRatio);
+      ratio = static_cast<float>(bitmap.getWidth()) /
+              ((1.0f - placement.cropY) * static_cast<float>(bitmap.getHeight()));
+    }
+    placement.x = std::round((static_cast<float>(pageWidth) - static_cast<float>(pageHeight) * ratio) / 2);
+    placement.y = 0;
   }
   return placement;
 }
@@ -1162,12 +1157,12 @@ bool SleepActivity::drawCustomImageInBounds(const std::string& path, const Sleep
     if (fullFrame && SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP) {
       const auto placement = getSleepBitmapPlacement(bitmap, renderer);
       renderer.drawBitmap(bitmap, placement.x, placement.y, bounds.width, bounds.height, placement.cropX,
-                          placement.cropY);
+                          placement.cropY, true);
       return true;
     }
     const SleepComposerRect fit = sleepComposerFitRect(bitmap.getWidth(), bitmap.getHeight(), bounds);
     if (fit.width <= 0 || fit.height <= 0) return false;
-    renderer.drawBitmap(bitmap, fit.x, fit.y, fit.width, fit.height);
+    renderer.drawBitmap(bitmap, fit.x, fit.y, fit.width, fit.height, 0, 0, true);
     return true;
   };
 
@@ -1218,11 +1213,11 @@ bool SleepActivity::drawSleepBookCoverInBounds(const std::string& coverPath, con
   if (fullFrame && SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP) {
     const auto placement = getSleepBitmapPlacement(bitmap, renderer);
     renderer.drawBitmap(bitmap, placement.x, placement.y, bounds.width, bounds.height, placement.cropX,
-                        placement.cropY);
+                        placement.cropY, true);
   } else {
     const SleepComposerRect fit = sleepComposerFitRect(bitmap.getWidth(), bitmap.getHeight(), bounds);
     if (fit.width <= 0 || fit.height <= 0) return false;
-    renderer.drawBitmap(bitmap, fit.x, fit.y, fit.width, fit.height);
+    renderer.drawBitmap(bitmap, fit.x, fit.y, fit.width, fit.height, 0, 0, true);
   }
   return true;
 }
@@ -1550,7 +1545,7 @@ void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap) const {
   const bool hasGreyscale = bitmap.hasGreyscale() &&
                             SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::NO_FILTER;
   renderer.setRenderMode(GfxRenderer::BW);
-  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY, true);
   if (SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
     renderer.invertScreen();
   }
@@ -1561,14 +1556,16 @@ void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap) const {
     bitmap.rewindToData();
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
-    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY,
+                        true);
     drawPreviewControls();
     renderer.copyGrayscaleLsbBuffers();
 
     bitmap.rewindToData();
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
-    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY,
+                        true);
     drawPreviewControls();
     renderer.copyGrayscaleMsbBuffers();
 
@@ -1630,7 +1627,7 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
   preconditionSleepRefresh(renderer);
   bitmap.rewindToData();
   renderer.setRenderMode(GfxRenderer::BW);
-  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY, true);
   if (SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
     renderer.invertScreen();
   }
@@ -1655,7 +1652,7 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
   bitmap.rewindToData();
   renderer.clearScreen(0x00);
   renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
-  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY, true);
   if (!renderOverlayPngPass(selectedPath, GfxRenderer::GRAYSCALE_LSB, nullptr)) {
     renderer.setRenderMode(GfxRenderer::BW);
     return;
@@ -1666,7 +1663,7 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
   bitmap.rewindToData();
   renderer.clearScreen(0x00);
   renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
-  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY, true);
   if (!renderOverlayPngPass(selectedPath, GfxRenderer::GRAYSCALE_MSB, nullptr)) {
     renderer.setRenderMode(GfxRenderer::BW);
     return;
@@ -1691,7 +1688,7 @@ void SleepActivity::renderBitmapSleepScreenWithBookProgress(const Bitmap& bitmap
 
   preconditionSleepRefresh(renderer);
   renderer.setRenderMode(GfxRenderer::BW);
-  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY, true);
   drawSleepBookProgressCard(renderer, title, progress, readingSeconds, sessions);
   if (SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
     renderer.invertScreen();
@@ -1703,7 +1700,8 @@ void SleepActivity::renderBitmapSleepScreenWithBookProgress(const Bitmap& bitmap
     bitmap.rewindToData();
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
-    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY,
+                        true);
     drawSleepBookProgressCard(renderer, title, progress, readingSeconds, sessions);
     drawPreviewControls();
     renderer.copyGrayscaleLsbBuffers();
@@ -1711,7 +1709,8 @@ void SleepActivity::renderBitmapSleepScreenWithBookProgress(const Bitmap& bitmap
     bitmap.rewindToData();
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
-    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY,
+                        true);
     drawSleepBookProgressCard(renderer, title, progress, readingSeconds, sessions);
     drawPreviewControls();
     renderer.copyGrayscaleMsbBuffers();
@@ -1742,7 +1741,7 @@ void SleepActivity::renderBitmapSleepScreenWithClipping(const Bitmap& bitmap, co
 
   preconditionSleepRefresh(renderer);
   renderer.setRenderMode(GfxRenderer::BW);
-  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+  renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY, true);
   drawClippingSleepCard(renderer, cleanedText, cleanedTitle, page);
   if (SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
     renderer.invertScreen();
@@ -1754,7 +1753,8 @@ void SleepActivity::renderBitmapSleepScreenWithClipping(const Bitmap& bitmap, co
     bitmap.rewindToData();
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
-    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY,
+                        true);
     drawClippingSleepCard(renderer, cleanedText, cleanedTitle, page);
     drawPreviewControls();
     renderer.copyGrayscaleLsbBuffers();
@@ -1762,7 +1762,8 @@ void SleepActivity::renderBitmapSleepScreenWithClipping(const Bitmap& bitmap, co
     bitmap.rewindToData();
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
-    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY);
+    renderer.drawBitmap(bitmap, placement.x, placement.y, pageWidth, pageHeight, placement.cropX, placement.cropY,
+                        true);
     drawClippingSleepCard(renderer, cleanedText, cleanedTitle, page);
     drawPreviewControls();
     renderer.copyGrayscaleMsbBuffers();

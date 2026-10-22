@@ -1,0 +1,4 @@
+add_executable(progress_file_test ProgressFileRecoveryTest.cpp)
+target_include_directories(progress_file_test BEFORE PRIVATE stubs)
+target_link_libraries(progress_file_test PRIVATE crosspoint_test_common)
+add_test(NAME progress_file_test COMMAND progress_file_test)

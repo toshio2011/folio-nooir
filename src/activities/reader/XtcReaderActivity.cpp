@@ -220,7 +220,8 @@ void XtcReaderActivity::openReaderMenu() {
   const uint8_t currentProgress = pageCount > 1
                                       ? static_cast<uint8_t>(std::min<uint64_t>(100, static_cast<uint64_t>(currentPage) * 100 / (pageCount - 1)))
                                       : 0;
-  const auto quickActionContext = QuickActions::Context{false, false, KOREADER_STORE.hasCredentials(), true, false};
+  const auto quickActionContext = QuickActions::Context{false, false, KOREADER_STORE.hasCredentials(), true, false,
+                                                        FREEINK_CAP_BLE_HID_HOST != 0};
   startActivityForResult(
       std::make_unique<EpubReaderMenuActivity>(renderer, mappedInput, xtc->getTitle(),
                                                menuCurrentPage, menuPageCount, currentProgress, SETTINGS.orientation,
@@ -382,7 +383,8 @@ void XtcReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAc
 
 void XtcReaderActivity::executeQuickAction(const int actionValue) {
   const auto action = static_cast<QuickActions::ActionId>(actionValue);
-  const QuickActions::Context context{false, false, KOREADER_STORE.hasCredentials(), true, false};
+  const QuickActions::Context context{false, false, KOREADER_STORE.hasCredentials(), true, false,
+                                      FREEINK_CAP_BLE_HID_HOST != 0};
   if (!QuickActions::isAvailable(action, context)) return;
 
   switch (action) {
@@ -430,7 +432,10 @@ void XtcReaderActivity::executeQuickAction(const int actionValue) {
       bleinput::toggleReaderSessionBluetooth();
       break;
     case QuickActions::ActionId::Lookup:
+      break;
     case QuickActions::ActionId::ReadingStats:
+      startActivityForResult(std::make_unique<ReadingStatsActivity>(renderer, mappedInput, xtc->getPath()),
+                             [this](const ActivityResult&) { requestUpdate(); });
       break;
     case QuickActions::ActionId::Sync:
       launchKOReaderSync();
@@ -958,7 +963,7 @@ bool XtcReaderActivity::saveProgress() {
 void XtcReaderActivity::loadProgress() {
   hasPersistedProgressPage = false;
   HalFile f;
-  if (Storage.openFileForRead("XTR", xtc->getCachePath() + "/progress.bin", f)) {
+  if (ProgressFile::openForRead("XTR", xtc->getCachePath(), f)) {
     uint8_t data[4];
     if (f.read(data, 4) == 4) {
       currentPage = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
