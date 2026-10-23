@@ -74,4 +74,12 @@ constexpr bool settingsRecoveryRequired(const bool loadSucceeded, const bool any
   return !loadSucceeded && anyCandidateExists;
 }
 
+// A String serializer can fail to append bytes when the heap is fragmented or
+// exhausted. Do not stage or rotate any persisted document unless the DOM,
+// serializer's reported byte count, and actual output length all agree.
+constexpr bool serializedDocumentIsComplete(const bool documentOverflowed, const size_t expectedBytes,
+                                             const size_t writtenBytes, const size_t outputBytes) {
+  return !documentOverflowed && expectedBytes > 0 && expectedBytes == writtenBytes && expectedBytes == outputBytes;
+}
+
 }  // namespace persistable

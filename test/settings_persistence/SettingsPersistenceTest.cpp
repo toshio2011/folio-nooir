@@ -190,6 +190,14 @@ TEST_F(SettingsPersistenceTest, FailedLoadRequiresExplicitRecoveryOnlyWhenAFileE
   EXPECT_TRUE(persistable::settingsRecoveryRequired(false, Storage.exists(kSettingsPath)));
 }
 
+TEST(SettingsSerializationPolicy, RequiresCompleteNonOverflowedOutput) {
+  EXPECT_TRUE(persistable::serializedDocumentIsComplete(false, 128, 128, 128));
+  EXPECT_FALSE(persistable::serializedDocumentIsComplete(true, 128, 128, 128));
+  EXPECT_FALSE(persistable::serializedDocumentIsComplete(false, 128, 127, 128));
+  EXPECT_FALSE(persistable::serializedDocumentIsComplete(false, 128, 128, 127));
+  EXPECT_FALSE(persistable::serializedDocumentIsComplete(false, 0, 0, 0));
+}
+
 TEST_F(SettingsPersistenceTest, AutoRecoveryQuarantinesCorruptCandidatesAndValidatesFreshDefaults) {
   const std::string original("\x01\xFF\x00\xA5", 4);
   Storage.files[kSettingsPath] = original;

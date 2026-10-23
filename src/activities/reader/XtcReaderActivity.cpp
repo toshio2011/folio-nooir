@@ -885,10 +885,17 @@ void XtcReaderActivity::renderPage() {
 
     // Preserve the B/W frame in non-contiguous chunks when heap shape permits.
     // Low-heap devices can reconstruct that base with one additional SD pass.
+    const size_t freeBeforeSnapshot = static_cast<size_t>(ESP.getFreeHeap());
+    const size_t largestBeforeSnapshot = static_cast<size_t>(ESP.getMaxAllocHeap());
+    const size_t bwBufferSize = renderer.getBufferSize();
     const bool hasBwSnapshotHeadroom = xtc_memory::canPreserveBwFrame(
-        static_cast<size_t>(ESP.getFreeHeap()), static_cast<size_t>(ESP.getMaxAllocHeap()),
-        renderer.getBufferSize());
+        freeBeforeSnapshot, largestBeforeSnapshot, bwBufferSize);
     const bool storedBw = hasBwSnapshotHeadroom && renderer.storeBwBuffer();
+    if (!storedBw) {
+      LOG_DBG("XTR", "XTCH bw_snapshot=unavailable reason=%s free=%u largest=%u bytes=%u fallback=stream",
+              hasBwSnapshotHeadroom ? "allocation_failed" : "heap_floor", static_cast<unsigned>(freeBeforeSnapshot),
+              static_cast<unsigned>(largestBeforeSnapshot), static_cast<unsigned>(bwBufferSize));
+    }
 
     renderer.clearScreen(0x00);
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
@@ -917,9 +924,13 @@ void XtcReaderActivity::renderPage() {
     } else {
       renderer.setRenderMode(GfxRenderer::BW);
       renderer.clearScreen();
-      if (streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, mapping, renderer,
-                               XtchRenderPass::Base, darkMode)) {
+      const bool restoredFromStream = streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, mapping, renderer,
+                                                           XtchRenderPass::Base, darkMode);
+      if (restoredFromStream) {
         renderer.cleanupGrayscaleWithFrameBuffer();
+      } else {
+        LOG_ERR("XTR", "XTCH bw_snapshot_fallback=failed page=%lu error=%s",
+                currentPage + 1, xtc::errorToString(xtc->getLastError()));
       }
     }
     return;

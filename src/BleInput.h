@@ -36,6 +36,14 @@
 
 namespace bleinput {
 
+// End a Reader session's BLE runtime when the saved preference is Off, or when
+// a still-enabled session would carry a low-heap NimBLE host into exit-time SD
+// writes. This does not change the persisted user preference.
+constexpr bool readerSessionBleShouldStopOnExit(const bool savedBluetoothEnabled, const size_t freeHeap,
+                                                const size_t minFreeHeap) {
+  return !savedBluetoothEnabled || freeHeap < minFreeHeap;
+}
+
 // Advertised central name shown to peripherals during pairing.
 inline constexpr const char* kHostName = "Folio Nooir";
 

@@ -501,10 +501,27 @@ void beginReaderBluetoothSession() {
 void endReaderBluetoothSession() {
 #if FREEINK_CAP_BLE_HID_HOST
   if (!g_readerBluetoothSessionActive.exchange(false, std::memory_order_acq_rel)) return;
+  const bool savedBluetoothEnabled = SETTINGS.bluetoothEnabled != 0;
   g_readerSessionBluetoothEnabled.store(false, std::memory_order_release);
   clearReaderBleReturnPending();
+  // Invalidate work associated with the temporary Reader override before
+  // tearing down the activity. This prevents a delayed Reader return signal
+  // from reviving a session that is already over.
+  const uint32_t generation = g_readerBleReturnGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
   resetNoDeviceWindow();
-  LOG_INF("BLEMEM", "stage=reader_session_end saved=%d free=%u largest=%u", SETTINGS.bluetoothEnabled ? 1 : 0,
+  // The main lifecycle runs after Reader::onExit returns. Stop a temporary
+  // host when the saved preference is Off, and suspend it at low headroom
+  // before the activity's progress/statistics SD writes. Saved-on intent stays
+  // intact; the normal lifecycle may re-admit BLE at a later safe boundary.
+  const size_t freeBeforeStop = ESP.getFreeHeap();
+  const bool exitPolicyRequiresStop = readerSessionBleShouldStopOnExit(
+      savedBluetoothEnabled, freeBeforeStop, kReaderBleStartMinFreeHeap);
+  const bool stopForExit = exitPolicyRequiresStop && BleHid.isRunning();
+  if (stopForExit) stop();
+  const char* stopReason = !savedBluetoothEnabled ? "saved_off" :
+                           (exitPolicyRequiresStop ? "low_heap" : "none");
+  LOG_INF("BLEMEM", "stage=reader_session_end saved=%d stopped=%d reason=%s generation=%u free=%u largest=%u",
+          savedBluetoothEnabled ? 1 : 0, stopForExit ? 1 : 0, stopReason, static_cast<unsigned>(generation),
           static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
   requestLifecycleReevaluation();
 #endif

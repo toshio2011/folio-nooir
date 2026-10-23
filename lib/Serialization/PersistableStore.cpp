@@ -186,9 +186,26 @@ bool PersistableStoreBase::isSemanticallyValidSettingsDocument(JsonVariantConst 
 static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
                                    const bool useCachedSettingsValidation,
                                    const bool preserveRecoveredRecentBooks) {
-  Storage.mkdir("/.crosspoint");
+  const bool settingsPath = isSettingsPath(path);
+  const bool recentPath = isRecentBooksPath(path);
   String json;
-  serializeJson(doc, json);
+  const size_t expectedBytes = measureJson(doc);
+  const size_t writtenBytes = serializeJson(doc, json);
+  const bool documentComplete = persistable::serializedDocumentIsComplete(
+      doc.overflowed(), expectedBytes, writtenBytes, json.length());
+  if (!documentComplete) {
+    if (recentPath) {
+      LOG_ERR("RBS", "save_result=serialization_incomplete expected=%u wrote=%u output=%u overflow=%d",
+              static_cast<unsigned>(expectedBytes), static_cast<unsigned>(writtenBytes),
+              static_cast<unsigned>(json.length()), doc.overflowed() ? 1 : 0);
+    } else {
+      LOG_ERR("PERSIST", "save_result=serialization_incomplete path=%s expected=%u wrote=%u output=%u overflow=%d",
+              path, static_cast<unsigned>(expectedBytes), static_cast<unsigned>(writtenBytes),
+              static_cast<unsigned>(json.length()), doc.overflowed() ? 1 : 0);
+    }
+    return false;
+  }
+  Storage.mkdir("/.crosspoint");
 
   // Write the replacement separately first. Storage.writeFile() removes its
   // destination before writing, so using it on the live document could leave
@@ -197,8 +214,6 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
   // extra two renames do not affect reader or bookshelf speed.
   const String tmpPath = String(path) + ".tmp";
   const String backupPath = String(path) + ".bak";
-  const bool settingsPath = isSettingsPath(path);
-  const bool recentPath = isRecentBooksPath(path);
   const bool recentRecoveryWrite = recentPath && preserveRecoveredRecentBooks;
   const bool fastSettingsWrite = settingsPath && useCachedSettingsValidation &&
                                  settingsValidationCacheState != SettingsValidationCacheState::Unknown;
@@ -343,6 +358,9 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
             path, static_cast<unsigned>(json.length()));
     return false;
   }
+  if (recentPath) {
+    LOG_INF("RBS", "save_phase=temp_validated bytes=%u", static_cast<unsigned>(json.length()));
+  }
 
   const bool hadOriginal = settingsPath ? mainState == SettingsFileState::Valid : Storage.exists(path);
   std::string displacedBackup;
@@ -456,6 +474,9 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
       LOG_INF("PERSIST", "recent_recovery_save=committed backup_preserved=1 primary_quarantined=%u temp_preserved=%u",
               preservedRecentPrimary.empty() ? 0U : 1U, preservedRecentTemp.empty() ? 0U : 1U);
     }
+  }
+  if (recentPath && !recentRecoveryWrite) {
+    LOG_INF("RBS", "save_result=committed bytes=%u", static_cast<unsigned>(json.length()));
   }
   return true;
 }

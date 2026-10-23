@@ -482,7 +482,11 @@ void drawSpineBook(const GfxRenderer& renderer, const SpineShelfPlanner::Book& b
                    bool& thumbnailUnavailable, void* resolverContext,
                    const SpineThumbnailResolver resolveThumbnail, const bool fillCoverFaces = false) {
   if (coverFace) {
-    renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
+    // Full shelf renders enter here only after the parent renderer has cleared
+    // the framebuffer. Clearing each face again is redundant, and costs a
+    // framebuffer pass for every visible spine cover (especially in Lite's
+    // three-row layout). Bitmap drawing leaves white source pixels untouched,
+    // so the already-white full-frame background remains the correct base.
     bool drewCover = false;
     if (!thumbnailUnavailable && book.coverBmpPath != nullptr && *book.coverBmpPath != '\0') {
       // Spine shelves reuse the bounded parsed-source cache and never generate
@@ -3412,8 +3416,6 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
   renderedSpineFocus.clear();
   folioPresentation.drawShelfTabs(renderer, folioLayout, activeTab);
   folioPresentation.drawShelfBattery(renderer, folioLayout, metrics);
-  renderer.fillRect(carouselLayout.carouselRegion.x, carouselLayout.carouselRegion.y,
-                    carouselLayout.carouselRegion.width, carouselLayout.carouselRegion.height, false);
 
   uint32_t detailsDurationUs = 0;
   uint32_t shelfDurationUs = 0;
@@ -3450,7 +3452,6 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
 
     const uint32_t shelfStartedUs = micros();
     if (usesSpineLayout()) {
-      renderer.fillRect(0, displayLayout.gridTop, pageWidth, displayLayout.gridHeight, false);
       const auto bounds = spineShelfBounds(pageWidth, displayLayout);
       const auto& spineWindow = spinePageForSelection(bounds);
       markUnavailableThumbnails(spineWindow);
@@ -3460,7 +3461,6 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
       drawSpinePageSelectionMarker(renderer, spineWindow.page, selectorIndex, true, renderedSpineFocus);
       drawLitePageIndicator(renderer, carouselLayout, spineWindow.pageNumber, spineWindow.pageCount);
     } else if (usesTwoRowSpineLayout()) {
-      renderer.fillRect(0, displayLayout.gridTop, pageWidth, displayLayout.gridHeight, false);
       const auto bounds = twoRowSpineBounds(pageWidth, displayLayout);
       const auto& spineWindow = twoRowSpinePageForSelection(bounds);
       markUnavailableThumbnails(spineWindow);
@@ -3470,7 +3470,6 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
       drawTwoRowSpinePageSelectionMarker(renderer, spineWindow.page, selectorIndex, true, renderedSpineFocus);
       drawLitePageIndicator(renderer, carouselLayout, spineWindow.pageNumber, spineWindow.pageCount);
     } else if (usesThreeRowSpineLayout()) {
-      renderer.fillRect(0, displayLayout.gridTop, pageWidth, displayLayout.gridHeight, false);
       const auto bounds = threeRowSpineBounds(pageWidth, displayLayout);
       const auto& spineWindow = threeRowSpinePageForSelection(bounds);
       markUnavailableThumbnails(spineWindow);
@@ -3480,7 +3479,6 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
       drawThreeRowSpinePageSelectionMarker(renderer, spineWindow.page, selectorIndex, true, renderedSpineFocus);
       drawLitePageIndicator(renderer, carouselLayout, spineWindow.pageNumber, spineWindow.pageCount);
     } else if (usesFourByTwoGrid()) {
-      renderer.fillRect(0, displayLayout.gridTop, pageWidth, displayLayout.gridHeight, false);
       constexpr size_t pageItems = HomeSnapshotPolicy::FOUR_BY_TWO_PAGE_ITEMS;
       const size_t pageStart = (selectorIndex / pageItems) * pageItems;
       for (size_t slot = 0; slot < pageItems; ++slot) {
@@ -4479,7 +4477,6 @@ void RecentBooksActivity::render(RenderLock&&) {
                                activeBookLayout() == CrossPointSettings::FOLIO_LAYOUT_THREE_COVER_CAROUSEL);
     } else if (spineLayout) {
       if (!renderedFromSnapshot) {
-        renderer.fillRect(0, layout.gridTop, pageWidth, layout.gridHeight, false);
         const SpineShelfPlanner::Rect bounds = spineShelfBounds(pageWidth, layout);
         const auto& spineWindow = spinePageForSelection(bounds);
         for (size_t slotIndex = 0; slotIndex < spineWindow.page.itemCount; ++slotIndex) {
@@ -4509,7 +4506,6 @@ void RecentBooksActivity::render(RenderLock&&) {
       }
     } else if (twoRowSpineLayout) {
       if (!renderedFromSnapshot) {
-        renderer.fillRect(0, layout.gridTop, pageWidth, layout.gridHeight, false);
         const SpineShelfPlanner::Rect bounds = twoRowSpineBounds(pageWidth, layout);
         const auto& spineWindow = twoRowSpinePageForSelection(bounds);
         for (size_t slotIndex = 0; slotIndex < spineWindow.page.itemCount; ++slotIndex) {
@@ -4545,7 +4541,6 @@ void RecentBooksActivity::render(RenderLock&&) {
       const int cardWidth = threeCoverGrid ? (pageWidth - gap * (columns + 1)) / columns : layout.cardWidth;
       const int cardHeight = threeCoverGrid ? gridHeight : layout.cardHeight;
       const size_t pageStart = (selectorIndex / gridPageItems) * gridPageItems;
-      if (threeCoverGrid && !renderedFromSnapshot) renderer.fillRect(0, gridTop, pageWidth, gridHeight, false);
       unsigned long coverDecorationUs = 0;
       size_t decoratedCardCount = 0;
       for (int slot = 0; slot < gridPageItems; ++slot) {
