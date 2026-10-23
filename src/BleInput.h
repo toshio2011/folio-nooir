@@ -36,14 +36,6 @@
 
 namespace bleinput {
 
-// End a Reader session's BLE runtime when the saved preference is Off, or when
-// a still-enabled session would carry a low-heap NimBLE host into exit-time SD
-// writes. This does not change the persisted user preference.
-constexpr bool readerSessionBleShouldStopOnExit(const bool savedBluetoothEnabled, const size_t freeHeap,
-                                                const size_t minFreeHeap) {
-  return !savedBluetoothEnabled || freeHeap < minFreeHeap;
-}
-
 // Advertised central name shown to peripherals during pairing.
 inline constexpr const char* kHostName = "Folio Nooir";
 
@@ -64,15 +56,8 @@ void toggleBluetooth();
 // Clear a no-device timeout pause after an explicit retry action.
 void clearNoDeviceTimeoutSuppression();
 
-// Reader-scoped Bluetooth preference. The session starts from the saved
-// Settings value, but Reader controls change only the temporary override.
-// Ending the Reader session restores the saved preference without writing it.
+// Read the saved Bluetooth preference used by startup, Home, and all readers.
 bool bluetoothEnabled();
-bool readerSessionBluetoothEnabled();
-void beginReaderBluetoothSession();
-void endReaderBluetoothSession();
-void setReaderSessionBluetoothEnabled(bool enabled);
-void toggleReaderSessionBluetooth();
 
 // Drop the active link (e.g. before deep sleep or when the user disables BT).
 void stop();

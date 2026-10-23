@@ -167,8 +167,6 @@ void XtcReaderActivity::onEnter() {
     return;
   }
 
-  bleinput::beginReaderBluetoothSession();
-
   xtc->setupCacheDir();
 
   // Load saved progress
@@ -212,7 +210,6 @@ void XtcReaderActivity::onEnter() {
 
 void XtcReaderActivity::onExit() {
   Activity::onExit();
-  bleinput::endReaderBluetoothSession();
   mappedInput.setReaderMappingMode(false);
   renderer.setDarkMode(false);
 
@@ -403,7 +400,7 @@ void XtcReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAc
       executeQuickAction(quickAction);
       break;
     case EpubReaderMenuActivity::MenuAction::BLUETOOTH:
-      bleinput::toggleReaderSessionBluetooth();
+      bleinput::toggleBluetooth();
       break;
     case EpubReaderMenuActivity::MenuAction::READER_OPTIONS:
     case EpubReaderMenuActivity::MenuAction::FOOTNOTES:
@@ -464,7 +461,7 @@ void XtcReaderActivity::executeQuickAction(const int actionValue) {
       activityManager.requestSleep();
       break;
     case QuickActions::ActionId::ToggleBluetooth:
-      bleinput::toggleReaderSessionBluetooth();
+      bleinput::toggleBluetooth();
       break;
     case QuickActions::ActionId::Lookup:
       break;
@@ -609,7 +606,7 @@ void XtcReaderActivity::loop() {
       RenderLock lock(*this);
       ScreenshotUtil::takeScreenshot(renderer);
     } else {
-      bleinput::toggleReaderSessionBluetooth();
+      bleinput::toggleBluetooth();
     }
     return;
   }
@@ -682,7 +679,7 @@ void XtcReaderActivity::loop() {
   const unsigned long heldMs = (touch.prev || touch.next) ? touch.heldMs : mappedInput.getHeldTime();
   if (!fromTilt && fromSide && heldMs > ReaderUtils::SKIP_HOLD_MS &&
       SETTINGS.sideLongPressAction == CrossPointSettings::SIDE_LONG_TOGGLE_BLUETOOTH) {
-    bleinput::toggleReaderSessionBluetooth();
+    bleinput::toggleBluetooth();
     return;
   }
   const auto longPressBehavior = fromSide

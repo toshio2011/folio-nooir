@@ -20,7 +20,7 @@
 // gracefully when BLE is compiled out (BleHid.begin() returns false).
 class BluetoothSettingsActivity final : public Activity {
  public:
-  enum class Mode : uint8_t { Settings, ReaderSession };
+  enum class Mode : uint8_t { Settings, ReaderControl };
 
   explicit BluetoothSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                      const Mode mode = Mode::Settings)

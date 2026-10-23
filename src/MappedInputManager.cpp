@@ -1,5 +1,6 @@
 #include "MappedInputManager.h"
 
+#include <HalGPIO.h>
 #include <GfxRenderer.h>
 #include <Logging.h>
 
@@ -25,6 +26,8 @@ static_assert(static_cast<uint8_t>(MappedInputManager::Button::Down) + 1 ==
                   bleinput::mapping::kPhysicalButtonCount,
               "BLE Learn physical targets must remain Back/Confirm/Left/Right/Up/Down");
 }  // namespace
+
+void MappedInputManager::update() const { gpio.update(); }
 
 bool MappedInputManager::isNavDirectionSwapped() const {
   // Key the swap on the orientation the screen is *actually* rendered at, not the persisted reader
@@ -363,7 +366,7 @@ void MappedInputManager::setBleCaptureMode(const bool enabled) {
     blePressEdge[i] = false;
     bleReleaseEdge[i] = false;
     bleHeld[i] = false;
-    bleHeldSince[i] = 0;
+    bleHeldDuration[i].clear();
     bleActiveBinding[i] = false;
     bleActiveKinds[i] = 0;
     bleActiveValues[i] = 0;
@@ -407,7 +410,7 @@ void MappedInputManager::pollBle() {
       blePressEdge[i] = false;
       bleReleaseEdge[i] = false;
       bleHeld[i] = false;
-      bleHeldSince[i] = 0;
+      bleHeldDuration[i].clear();
       bleActiveBinding[i] = false;
       bleActiveKinds[i] = 0;
       bleActiveValues[i] = 0;
@@ -430,13 +433,14 @@ void MappedInputManager::pollBle() {
   // A stopped or disconnected host is an input lifecycle boundary. Clear the
   // application-side held state here as well as in the host so reconnect cannot
   // inherit a stale key after an intentional Reader/Web teardown.
-  if (!SETTINGS.bluetoothEnabled || !BleHid.isRunning() || !BleHid.isConnected()) {
+  if (!bleinput::bluetoothEnabled() || !BleHid.isRunning() || !BleHid.isConnected()) {
     clearBleInputState();
     return;
   }
   for (uint8_t i = 0; i < kButtonCount; i++) {
     blePressEdge[i] = false;
     bleReleaseEdge[i] = false;
+    bleHeldDuration[i].beginFrame();
   }
 
   freeink::KeyEvent event;
@@ -543,7 +547,7 @@ void MappedInputManager::pollBle() {
                                                             BLE_ACTION_DEBOUNCE_MS);
       if (transition == bleinput::mapping::ButtonTransition::Released) {
         bleHeld[button] = false;
-        bleHeldSince[button] = 0;
+        bleHeldDuration[button].release(static_cast<uint32_t>(now));
         bleActiveBinding[button] = false;
         bleReleaseEdge[button] = true;
         bleActivityThisFrame = true;
@@ -563,7 +567,7 @@ void MappedInputManager::pollBle() {
       if (transition != bleinput::mapping::ButtonTransition::Pressed) return;
       bleLastDispatchAt[button] = now;
       bleHeld[button] = true;
-      bleHeldSince[button] = now;
+      bleHeldDuration[button].press(static_cast<uint32_t>(now));
       bleActiveBinding[button] = true;
       bleActiveKinds[button] = matchedKind;
       bleActiveValues[button] = matchedValue;
@@ -701,17 +705,18 @@ bool MappedInputManager::wasAnyReleased() const {
 }
 
 unsigned long MappedInputManager::getHeldTime() const {
+  const uint32_t now = static_cast<uint32_t>(millis());
+  unsigned long bleHeldMs = 0;
+  for (uint8_t i = 0; i < kButtonCount; ++i) {
+    bleHeldMs = std::max(bleHeldMs, static_cast<unsigned long>(bleHeldDuration[i].duration(now)));
+  }
   if (!gpio.wasAnyPressed() && !gpio.wasAnyReleased() && touchHeldOverrideValid &&
-      millis() - touchHeldOverrideAt <= TOUCH_HELD_OVERRIDE_WINDOW_MS) {
-    return touchHeldOverrideMs;
+      static_cast<unsigned long>(now - static_cast<uint32_t>(touchHeldOverrideAt)) <=
+          TOUCH_HELD_OVERRIDE_WINDOW_MS) {
+    return std::max(touchHeldOverrideMs, bleHeldMs);
   }
   touchHeldOverrideValid = false;
-  unsigned long held = gpio.getHeldTime();
-  const unsigned long now = millis();
-  for (uint8_t i = 0; i < kButtonCount; ++i) {
-    if (bleHeld[i] && bleHeldSince[i] != 0) held = std::max(held, now - bleHeldSince[i]);
-  }
-  return held;
+  return std::max(gpio.getHeldTime(), bleHeldMs);
 }
 
 MappedInputManager::Labels MappedInputManager::mapLabels(const char* back, const char* confirm, const char* previous,

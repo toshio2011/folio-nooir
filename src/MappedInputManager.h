@@ -1,10 +1,54 @@
 #pragma once
 
-#include <HalGPIO.h>
+#include <cstdint>
 
 #include "util/BleKeyMapping.h"
 
+class HalGPIO;
 class GfxRenderer;
+
+namespace mappedinput {
+
+// Fixed-size per-button BLE hold timing. A release duration remains available
+// until the next input frame so consumers can classify release-frame actions.
+class BleHeldDuration {
+ public:
+  void beginFrame() { releaseValid_ = false; }
+
+  void press(const uint32_t now) {
+    pressedAt_ = now;
+    held_ = true;
+    releasedMs_ = 0;
+    releaseValid_ = false;
+  }
+
+  void release(const uint32_t now) {
+    if (!held_) return;
+    releasedMs_ = static_cast<uint32_t>(now - pressedAt_);
+    held_ = false;
+    releaseValid_ = true;
+  }
+
+  void clear() {
+    pressedAt_ = 0;
+    releasedMs_ = 0;
+    held_ = false;
+    releaseValid_ = false;
+  }
+
+  uint32_t duration(const uint32_t now) const {
+    if (held_) return static_cast<uint32_t>(now - pressedAt_);
+    return releaseValid_ ? releasedMs_ : 0;
+  }
+
+ private:
+  uint32_t pressedAt_ = 0;
+  uint32_t releasedMs_ = 0;
+  bool held_ = false;
+  bool releaseValid_ = false;
+};
+
+}  // namespace mappedinput
 
 class MappedInputManager {
  public:
@@ -21,7 +65,7 @@ class MappedInputManager {
 
   MappedInputManager(HalGPIO& gpio, const GfxRenderer& renderer) : gpio(gpio), renderer(renderer) {}
 
-  void update() const { gpio.update(); }
+  void update() const;
   bool wasPressed(Button button) const;
   bool wasReleased(Button button) const;
   bool isPressed(Button button) const;
@@ -108,7 +152,7 @@ class MappedInputManager {
   bool blePressEdge[kButtonCount] = {};
   bool bleReleaseEdge[kButtonCount] = {};
   bool bleHeld[kButtonCount] = {};
-  unsigned long bleHeldSince[kButtonCount] = {};
+  mappedinput::BleHeldDuration bleHeldDuration[kButtonCount] = {};
   bool bleActiveBinding[kButtonCount] = {};
   uint8_t bleActiveKinds[kButtonCount] = {};
   uint8_t bleActiveValues[kButtonCount] = {};

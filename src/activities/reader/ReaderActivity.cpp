@@ -208,11 +208,9 @@ void ReaderActivity::onEnter() {
   // A format may need to parse an archive, build a spine, or extract an
   // index before its reader can render. Acknowledge the open immediately so a
   // second button press cannot be mistaken for a dropped input.
-  // Do not carry the optional BLE controller into the synchronous open path.
-  // The lifecycle will bring it back after the concrete reader is ready.
   // Preserve the enabled/wanted Reader return intent even when a previous
-  // activity already left BLE off after a failed admission. The helper is
-  // intentionally idempotent and still performs the full stop when needed.
+  // activity already left BLE off after a failed admission. The helper arms
+  // that return path and remains safe when ActivityManager already yielded BLE.
   bleinput::stopForReaderResourcePressure();
   bleinput::signalReaderBleReturnLifecycleEvent("reader_enter");
   showOpeningBookFeedback(renderer, initialBookPath);

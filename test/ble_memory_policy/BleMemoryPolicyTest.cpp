@@ -29,11 +29,14 @@ TEST(BleMemoryPolicy, ContaminatedLowFreeHeapIsDeferred) {
   EXPECT_FALSE(bleinput::readerBleStartMemoryAdmitted(85000, 65524));
 }
 
-TEST(BleMemoryPolicy, LowHeadroomRecentBooksTransitionSuspendsConnectedBle) {
-  EXPECT_TRUE(bleinput::homeTransitionNeedsBleSuspension(true, true, 24 * 1024));
-  EXPECT_FALSE(bleinput::homeTransitionNeedsBleSuspension(true, true, 96 * 1024));
-  EXPECT_FALSE(bleinput::homeTransitionNeedsBleSuspension(false, true, 24 * 1024));
-  EXPECT_FALSE(bleinput::homeTransitionNeedsBleSuspension(true, false, 24 * 1024));
+TEST(BleMemoryPolicy, OrdinaryHomeTransitionsKeepConnectedBleAlive) {
+  EXPECT_FALSE(bleinput::activityTransitionNeedsBleSuspension(true, false));
+  EXPECT_FALSE(bleinput::activityTransitionNeedsBleSuspension(false, false));
+}
+
+TEST(BleMemoryPolicy, ResourceSensitiveTransitionsStillYieldConnectedBle) {
+  EXPECT_TRUE(bleinput::activityTransitionNeedsBleSuspension(true, true));
+  EXPECT_FALSE(bleinput::activityTransitionNeedsBleSuspension(false, true));
 }
 
 TEST(BleMemoryPolicy, AnyReaderRenderWorkDefersBleAdmission) {

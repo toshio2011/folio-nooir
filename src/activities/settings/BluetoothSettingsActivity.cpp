@@ -58,8 +58,7 @@ void BluetoothSettingsActivity::onEnter() {
   failureIndex.store(0, std::memory_order_release);
   menuIndex = 0;
   rebuildMenuRows();
-  const bool wanted = mode == Mode::ReaderSession ? bleinput::readerSessionBluetoothEnabled()
-                                                  : SETTINGS.bluetoothEnabled != 0;
+  const bool wanted = SETTINGS.bluetoothEnabled != 0;
   if (wanted && !BleHid.isRunning()) beginPreparation(false);
   else requestUpdate();
 }
@@ -111,9 +110,9 @@ void BluetoothSettingsActivity::onBluetoothActivationResult(const bool started) 
 
 void BluetoothSettingsActivity::rebuildMenuRows() {
   menuRows.clear();
-  menuRows.reserve(mode == Mode::ReaderSession ? 1 : 12);
+  menuRows.reserve(mode == Mode::ReaderControl ? 1 : 12);
   menuRows.push_back({Action::ToggleBt, StrId::STR_BLUETOOTH});
-  if (mode == Mode::ReaderSession) {
+  if (mode == Mode::ReaderControl) {
     menuIndex = 0;
     return;
   }
@@ -287,25 +286,13 @@ void BluetoothSettingsActivity::handleMenuConfirm() {
   const Action action = menuRows[menuIndex].action;
   switch (action) {
     case Action::ToggleBt:
-      if (mode == Mode::ReaderSession) {
-        const bool enabled = !bleinput::readerSessionBluetoothEnabled();
-        bleinput::setReaderSessionBluetoothEnabled(enabled);
-        if (enabled && !BleHid.isRunning()) beginPreparation(false);
-        else {
-          activityManager.setBluetoothSettingsActivationFailed(false);
-          activationState.store(ActivationState::Ready, std::memory_order_release);
-          rebuildMenuRows();
-          requestUpdate();
-        }
-      } else {
-        bleinput::setBluetoothEnabled(!SETTINGS.bluetoothEnabled);
-        if (SETTINGS.bluetoothEnabled && !BleHid.isRunning()) beginPreparation(false);
-        else {
-          activityManager.setBluetoothSettingsActivationFailed(false);
-          activationState.store(ActivationState::Ready, std::memory_order_release);
-          rebuildMenuRows();
-          requestUpdate();
-        }
+      bleinput::setBluetoothEnabled(!SETTINGS.bluetoothEnabled);
+      if (SETTINGS.bluetoothEnabled && !BleHid.isRunning()) beginPreparation(false);
+      else {
+        activityManager.setBluetoothSettingsActivationFailed(false);
+        activationState.store(ActivationState::Ready, std::memory_order_release);
+        rebuildMenuRows();
+        requestUpdate();
       }
       break;
     case Action::NoDeviceTimeout:
@@ -382,12 +369,12 @@ void BluetoothSettingsActivity::loop() {
       activationState.store(ActivationState::Ready, std::memory_order_release);
       rebuildMenuRows();
       LOG_INF("BLEMEM", "stage=bluetooth_settings_ready mode=%s free=%u largest=%u",
-              mode == Mode::ReaderSession ? "reader" : "settings", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+              mode == Mode::ReaderControl ? "reader" : "settings", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     } else {
       activationState.store(ActivationState::Failed, std::memory_order_release);
       failureIndex.store(0, std::memory_order_release);
       LOG_ERR("BLEMEM", "stage=bluetooth_settings_failed mode=%s retry_used=%d free=%u largest=%u",
-              mode == Mode::ReaderSession ? "reader" : "settings",
+              mode == Mode::ReaderControl ? "reader" : "settings",
               controlledRetryUsed.load(std::memory_order_acquire) ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     }
     requestUpdate();
@@ -410,11 +397,7 @@ void BluetoothSettingsActivity::loop() {
         // Keep an explicit escape hatch while admission or NimBLE startup is
         // pending. OFF cancels startup/reconnect through the same idempotent
         // path used by the normal Settings toggle.
-        if (mode == Mode::ReaderSession) {
-          bleinput::setReaderSessionBluetoothEnabled(false);
-        } else {
-          bleinput::setBluetoothEnabled(false);
-        }
+        bleinput::setBluetoothEnabled(false);
         activityManager.setBluetoothSettingsActivationFailed(false);
         activationResult.store(-1, std::memory_order_release);
         activationState.store(ActivationState::Ready, std::memory_order_release);
@@ -468,14 +451,9 @@ void BluetoothSettingsActivity::loop() {
         return;
       }
       if (selected == offOptionIndex) {
-        // Failure must not trap the user with Bluetooth left enabled. The
-        // Reader page controls only its temporary override; Settings persists
-        // the explicit OFF choice.
-        if (mode == Mode::ReaderSession) {
-          bleinput::setReaderSessionBluetoothEnabled(false);
-        } else {
-          bleinput::setBluetoothEnabled(false);
-        }
+        // An explicit OFF choice updates the shared preference and stops the
+        // host, even when activation failed or is still pending.
+        bleinput::setBluetoothEnabled(false);
         activityManager.setBluetoothSettingsActivationFailed(false);
         activationResult.store(-1, std::memory_order_release);
         activationState.store(ActivationState::Ready, std::memory_order_release);
@@ -811,8 +789,7 @@ void BluetoothSettingsActivity::render(RenderLock&&) {
         }, nullptr, nullptr,
         [this](int i) -> std::string {
           if (menuRows[i].action == Action::ToggleBt) {
-            const bool enabled = mode == Mode::ReaderSession ? bleinput::readerSessionBluetoothEnabled()
-                                                             : SETTINGS.bluetoothEnabled != 0;
+            const bool enabled = SETTINGS.bluetoothEnabled != 0;
             return enabled ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
           }
           if (menuRows[i].action == Action::NoDeviceTimeout)

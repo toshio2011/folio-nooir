@@ -1,8 +1,4 @@
-"""Contracts for reader-scoped Bluetooth controls.
-
-These checks keep reader shortcuts and menu controls on the temporary session
-preference, leaving the user's saved Bluetooth setting unchanged.
-"""
+"""Contracts for the shared 1.6.5 Bluetooth preference and mapped input path."""
 
 from pathlib import Path
 import unittest
@@ -16,6 +12,10 @@ BLE_SETTINGS = (REPO_ROOT / "src/activities/settings/BluetoothSettingsActivity.c
 ACTIVITY_MANAGER = (REPO_ROOT / "src/activities/ActivityManager.cpp").read_text(encoding="utf-8")
 MAIN = (REPO_ROOT / "src/main.cpp").read_text(encoding="utf-8")
 XTC_READER = (REPO_ROOT / "src/activities/reader/XtcReaderActivity.cpp").read_text(encoding="utf-8")
+READER_SHELL = (REPO_ROOT / "src/activities/reader/ReaderActivity.cpp").read_text(encoding="utf-8")
+ACTIVITY = (REPO_ROOT / "src/activities/Activity.h").read_text(encoding="utf-8")
+EPUB_READER = (REPO_ROOT / "src/activities/reader/EpubReaderActivity.cpp").read_text(encoding="utf-8")
+EPUB_MENU = (REPO_ROOT / "src/activities/reader/EpubReaderMenuActivity.cpp").read_text(encoding="utf-8")
 
 
 def function_body(source: str, signature: str) -> str:
@@ -33,26 +33,24 @@ def function_body(source: str, signature: str) -> str:
 
 
 class ReaderBluetoothToggleContract(unittest.TestCase):
-    def test_xtc_reader_controls_are_session_scoped(self):
-        self.assertNotIn("bleinput::toggleBluetooth()", XTC_READER)
-        self.assertNotIn("bleinput::setBluetoothEnabled", XTC_READER)
-        self.assertEqual(XTC_READER.count("bleinput::toggleReaderSessionBluetooth()"), 4)
-        self.assertIn("bleinput::beginReaderBluetoothSession();", XTC_READER)
-        self.assertIn("bleinput::endReaderBluetoothSession();", XTC_READER)
+    def test_epub_and_xtc_use_one_saved_preference_and_common_toggle(self):
+        self.assertNotIn("ReaderBluetoothSession", BLE_SOURCE)
+        self.assertNotIn("ReaderSessionBluetooth", BLE_SOURCE)
+        self.assertNotIn("beginReaderBluetoothSession", EPUB_READER + XTC_READER)
+        self.assertNotIn("endReaderBluetoothSession", EPUB_READER + XTC_READER)
+        self.assertIn("bleinput::toggleBluetooth()", EPUB_READER)
+        self.assertIn("bleinput::toggleBluetooth()", XTC_READER)
+        self.assertIn("bleinput::bluetoothEnabled()", EPUB_MENU)
 
-    def test_disabling_reader_bluetooth_cancels_return_before_stop(self):
-        body = function_body(BLE_SOURCE, "void setReaderSessionBluetoothEnabled(")
-        disabled = body[body.index("if (!enabled)") : body.index("} else {")]
-        self.assertLess(disabled.index("clearReaderBleReturnPending();"),
-                        disabled.index("requestLifecycleReevaluation();"))
-        self.assertLess(disabled.index("requestLifecycleReevaluation();"), disabled.index("stop();"))
-        self.assertNotIn("SETTINGS.bluetoothEnabled =", body)
-
-    def test_bluetooth_settings_redraw_reads_the_current_reader_session_value(self):
-        body = function_body(BLE_SETTINGS, "void BluetoothSettingsActivity::handleMenuConfirm()")
-        self.assertIn("bleinput::setReaderSessionBluetoothEnabled(enabled);", body)
-        render = function_body(BLE_SETTINGS, "void BluetoothSettingsActivity::render(")
-        self.assertIn("bleinput::readerSessionBluetoothEnabled()", render)
+    def test_home_and_both_reader_formats_share_mapped_hid_input(self):
+        input_source = (REPO_ROOT / "src/MappedInputManager.cpp").read_text(encoding="utf-8")
+        self.assertIn("SETTINGS.bleKeyMap", input_source)
+        poll = function_body(input_source, "void MappedInputManager::pollBle()")
+        self.assertIn("!bleinput::bluetoothEnabled()", poll)
+        self.assertIn("if (BleHid.isRunning()) BleHid.poll();", MAIN)
+        self.assertIn("mappedInputManager.pollBle();", MAIN)
+        self.assertIn("currentActivity->acceptsBluetoothInput()", ACTIVITY_MANAGER)
+        self.assertIn("virtual bool acceptsBluetoothInput() const { return true; }", ACTIVITY)
 
     def test_failed_bluetooth_activation_waits_for_explicit_retry(self):
         render = function_body(ACTIVITY_MANAGER, "void ActivityManager::renderTaskLoop()")
@@ -77,14 +75,39 @@ class ReaderBluetoothToggleContract(unittest.TestCase):
         loop = function_body(BLE_SETTINGS, "void BluetoothSettingsActivity::loop()")
         failed = loop[loop.index("if (activationState.load(std::memory_order_acquire) == ActivationState::Failed)") :]
         self.assertIn("const int optionCount = retryAvailable ? 3 : 2;", failed)
-        self.assertIn("if (mode == Mode::ReaderSession)", failed)
-        self.assertIn("bleinput::setReaderSessionBluetoothEnabled(false);", failed)
         self.assertIn("bleinput::setBluetoothEnabled(false);", failed)
         self.assertIn("activationState.store(ActivationState::Ready", failed)
 
         render = function_body(BLE_SETTINGS, "void BluetoothSettingsActivity::render(")
         failed_render = render[render.index("if (state == ActivationState::Failed)") :]
         self.assertIn("tr(STR_STATE_OFF)", failed_render)
+
+    def test_global_bluetooth_off_stops_and_persists_shared_preference(self):
+        body = function_body(BLE_SOURCE, "void setBluetoothEnabled(")
+        self.assertIn("SETTINGS.bluetoothEnabled = enabled ? 1 : 0;", body)
+        reevaluate = body.index("requestLifecycleReevaluation();")
+        stop = body.index("stop();")
+        self.assertLess(body.index("SETTINGS.bluetoothEnabled = enabled"), reevaluate)
+        self.assertLess(reevaluate, stop)
+        self.assertIn("SETTINGS.saveToFile();", body[stop:])
+
+    def test_reader_input_uses_saved_preference_and_off_skips_host_poll(self):
+        input_source = (REPO_ROOT / "src/MappedInputManager.cpp").read_text(encoding="utf-8")
+        poll = function_body(input_source, "void MappedInputManager::pollBle()")
+        self.assertIn("!bleinput::bluetoothEnabled()", poll)
+        loop = function_body(MAIN, "void loop()")
+        self.assertIn("if (BleHid.isRunning()) BleHid.poll();", loop)
+
+    def test_home_keeps_host_and_reader_resource_stop_remains(self):
+        transition = function_body(ACTIVITY_MANAGER, "void ActivityManager::loop()")
+        self.assertNotIn("homeTransitionNeedsBleSuspension", transition)
+        self.assertIn(
+            "activityTransitionNeedsBleSuspension(bleRunning, currentActivity->bluetoothResourceSensitive())",
+            transition,
+        )
+        reader_enter = function_body(READER_SHELL, "void ReaderActivity::onEnter()")
+        self.assertIn("bleinput::stopForReaderResourcePressure();", reader_enter)
+        self.assertIn("if (BleHid.isRunning()) BleHid.poll();", MAIN)
 
     def test_bluetooth_off_remains_available_while_activation_is_pending(self):
         loop = function_body(BLE_SETTINGS, "void BluetoothSettingsActivity::loop()")
@@ -93,7 +116,6 @@ class ReaderBluetoothToggleContract(unittest.TestCase):
             loop.index("if (activationState.load(std::memory_order_acquire) == ActivationState::Failed)")
         ]
         self.assertIn("handleListTouch(selectedOption, 2", preparing)
-        self.assertIn("bleinput::setReaderSessionBluetoothEnabled(false);", preparing)
         self.assertIn("bleinput::setBluetoothEnabled(false);", preparing)
 
         render = function_body(BLE_SETTINGS, "void BluetoothSettingsActivity::render(")

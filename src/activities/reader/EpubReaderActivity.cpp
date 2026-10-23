@@ -431,7 +431,6 @@ uint8_t highlightStyleMask(const std::span<const HighlightWord> words, const int
 void EpubReaderActivity::onEnter() {
   EpubDiagnostics::Scope diagnostics("reader_enter_start", "reader_enter_end");
   Activity::onEnter();
-  bleinput::beginReaderBluetoothSession();
   mappedInput.setReaderMappingMode(true);
   firstStableRenderComplete.store(false, std::memory_order_release);
   restartHeapSuspendedEmptyBuild.store(false, std::memory_order_release);
@@ -668,7 +667,6 @@ void EpubReaderActivity::onExit() {
   logExitHeap("before_section_release");
 #endif
   Activity::onExit();
-  bleinput::endReaderBluetoothSession();
   firstStableRenderComplete.store(false, std::memory_order_release);
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
   readerRenderWaitingForBleStop = false;
@@ -1960,7 +1958,7 @@ void EpubReaderActivity::loop() {
         if (mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && !darkShortcutFired) {
           darkShortcutFired = true;
           ignoreNextConfirmRelease = true;
-          bleinput::toggleReaderSessionBluetooth();
+          bleinput::toggleBluetooth();
           return;
         }
         break;
@@ -2087,7 +2085,7 @@ void EpubReaderActivity::loop() {
 
   if (longPress && fromSide &&
       SETTINGS.sideLongPressAction == CrossPointSettings::SIDE_LONG_TOGGLE_BLUETOOTH) {
-    bleinput::toggleReaderSessionBluetooth();
+    bleinput::toggleBluetooth();
     return;
   }
 
@@ -2403,7 +2401,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
 #if FREEINK_CAP_BLE_HID_HOST
     case EpubReaderMenuActivity::MenuAction::BLUETOOTH: {
       startActivityForResult(std::make_unique<BluetoothSettingsActivity>(
-                                 renderer, mappedInput, BluetoothSettingsActivity::Mode::ReaderSession),
+                                 renderer, mappedInput, BluetoothSettingsActivity::Mode::ReaderControl),
                              [this](const ActivityResult&) { requestUpdate(); });
       break;
     }
@@ -2482,7 +2480,7 @@ void EpubReaderActivity::executeQuickAction(const int actionValue) {
       activityManager.requestSleep();
       break;
     case QuickActions::ActionId::ToggleBluetooth:
-      bleinput::toggleReaderSessionBluetooth();
+      bleinput::toggleBluetooth();
       break;
     case QuickActions::ActionId::None:
       break;

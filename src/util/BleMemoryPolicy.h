@@ -17,14 +17,6 @@ namespace bleinput {
 inline constexpr std::size_t kReaderBleStartMinFreeHeap = 96 * 1024;
 inline constexpr std::size_t kReaderBleLogicalMinLargestBlock = 36 * 1024;
 
-// Recent/Home retains the complete visible book list and redraws covers while
-// BLE is otherwise allowed to stay connected. The X4 trace showed only about
-// 22 KiB free on the Settings -> RecentBooks transition before the 25-entry
-// shelf was constructed. Release the host before that construction whenever
-// the incoming Home transition starts below the normal cold-admission floor.
-// This is a transition-only guard; it does not poll or retry during rendering.
-inline constexpr std::size_t kHomeBleSuspendMinFreeHeap = 96 * 1024;
-
 // ESP-IDF heap poisoning reports the largest user payload after subtracting
 // poison_head_t (uint32_t + size_t) and poison_tail_t (uint32_t). On the 32-bit
 // target this is 12 bytes, so translate the logical 36 KiB region floor into
@@ -77,9 +69,10 @@ constexpr bool lifecycleReevaluationAllowed(const bool bluetoothEnabled, const b
   return bluetoothEnabled && !webExclusive && !noDeviceTimeoutStoppedHost;
 }
 
-constexpr bool homeTransitionNeedsBleSuspension(const bool bleRunning, const bool enteringRecentBooks,
-                                                const std::size_t freeHeap) {
-  return bleRunning && enteringRecentBooks && freeHeap < kHomeBleSuspendMinFreeHeap;
+// A connected host stays alive across ordinary UI transitions. It yields only
+// when the incoming activity explicitly declares a resource-sensitive phase.
+constexpr bool activityTransitionNeedsBleSuspension(const bool bleRunning, const bool resourceSensitive) {
+  return bleRunning && resourceSensitive;
 }
 
 // Any render-lock or queued/in-flight render blocks BLE admission while a

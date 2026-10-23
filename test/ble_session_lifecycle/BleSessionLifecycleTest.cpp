@@ -1,16 +1,13 @@
 #include <gtest/gtest.h>
 
 #include "src/BleInput.h"
+#include "src/util/BleMemoryPolicy.h"
 
-TEST(BleSessionLifecycle, ReaderOnlyBluetoothIsStoppedWhenSavedPreferenceIsOff) {
-  EXPECT_TRUE(bleinput::readerSessionBleShouldStopOnExit(false, 120 * 1024, 96 * 1024));
+TEST(BleSessionLifecycle, SavedOnPreferenceAllowsNormalReconnectAfterWake) {
+  EXPECT_TRUE(bleinput::lifecycleReevaluationAllowed(true, false, false));
 }
 
-TEST(BleSessionLifecycle, SavedBluetoothPreferenceKeepsHealthyRuntimeConnectionOnExit) {
-  EXPECT_FALSE(bleinput::readerSessionBleShouldStopOnExit(true, 100 * 1024, 96 * 1024));
-  EXPECT_FALSE(bleinput::readerSessionBleShouldStopOnExit(true, 96 * 1024, 96 * 1024));
-}
-
-TEST(BleSessionLifecycle, SavedBluetoothPreferenceSuspendsRuntimeAtLowHeap) {
-  EXPECT_TRUE(bleinput::readerSessionBleShouldStopOnExit(true, 96 * 1024 - 1, 96 * 1024));
+TEST(BleSessionLifecycle, ExplicitOffAndWebExclusiveStillBlockReconnect) {
+  EXPECT_FALSE(bleinput::lifecycleReevaluationAllowed(false, false, false));
+  EXPECT_FALSE(bleinput::lifecycleReevaluationAllowed(true, true, false));
 }

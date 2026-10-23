@@ -443,10 +443,6 @@ void ActivityManager::loop() {
       if (recentBooksToReader) logActivityHeapShape("reader_transition_after_recentbooks_destroyed");
       if (readerShellToConcrete) logActivityHeapShape("reader_transition_after_reader_shell_destroyed");
 #endif
-      const bool recentBooksTransition = pendingActivity->name == "RecentBooks";
-#if FREEINK_CAP_BLE_HID_HOST
-      if (recentBooksTransition) logActivityHeapShape("before_recent_books_construction");
-#endif
       pendingAction = PendingAction::None;
       currentActivity = std::move(pendingActivity);
       bleinput::clearNoDeviceTimeoutSuppression();
@@ -469,19 +465,11 @@ void ActivityManager::loop() {
         EpubDiagnostics::phaseRecord("sleep_section_stopped");
       }
 #if FREEINK_CAP_BLE_HID_HOST
-      // Stop BLE before entering resource-sensitive activities.  The main-loop
-      // lifecycle gate runs before ActivityManager::loop(), so without this
-      // boundary a Recent -> EPUB transition can begin its allocations while
-      // the NimBLE heap is still resident for one full loop iteration.
+      // Keep an established host connected across ordinary navigation. Yield
+      // only for activities that declare a real memory-sensitive phase (for
+      // example, opening a book or building an EPUB section).
       const bool bleRunning = BleHid.isRunning();
-      const bool recentBooksHeadroomStop = bleinput::homeTransitionNeedsBleSuspension(
-          bleRunning, recentBooksTransition, static_cast<size_t>(ESP.getFreeHeap()));
-      if (bleRunning && (currentActivity->bluetoothResourceSensitive() || recentBooksHeadroomStop)) {
-        if (recentBooksHeadroomStop) {
-          LOG_INF("BLEMEM", "stage=home_suspend reason=low_headroom free=%u largest=%u floor=%u",
-                  static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()),
-                  static_cast<unsigned>(bleinput::kHomeBleSuspendMinFreeHeap));
-        }
+      if (bleinput::activityTransitionNeedsBleSuspension(bleRunning, currentActivity->bluetoothResourceSensitive())) {
         bleinput::recordDiagnosticEvent("resource_stop activity=%.20s", currentActivity->name.c_str());
         if (currentActivity->isReaderActivity()) {
           bleinput::stopForReaderResourcePressure();
@@ -608,7 +596,8 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
     currentActivity = std::move(newActivity);
     bleinput::clearNoDeviceTimeoutSuppression();
 #if FREEINK_CAP_BLE_HID_HOST
-    if (currentActivity->bluetoothResourceSensitive() && BleHid.isRunning()) {
+    if (bleinput::activityTransitionNeedsBleSuspension(BleHid.isRunning(),
+                                                       currentActivity->bluetoothResourceSensitive())) {
       bleinput::recordDiagnosticEvent("resource_stop activity=%.20s", currentActivity->name.c_str());
       if (currentActivity->isReaderActivity()) {
         bleinput::stopForReaderResourcePressure();

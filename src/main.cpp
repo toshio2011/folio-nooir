@@ -757,7 +757,7 @@ void loop() {
   gpio.update();
   updateBluetoothLifecycle();
   ClockWeatherSyncService::processPendingWifiConnection();
-  BleHid.poll();
+  if (BleHid.isRunning()) BleHid.poll();
 #if FREEINK_CAP_BLE_HID_HOST
   bleinput::pollLifecycle();
   char bleNotification[64];

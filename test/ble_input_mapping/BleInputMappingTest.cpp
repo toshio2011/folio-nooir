@@ -1,4 +1,5 @@
 #include "util/BleKeyMapping.h"
+#include "MappedInputManager.h"
 
 #include <gtest/gtest.h>
 
@@ -176,6 +177,51 @@ TEST(BleInputMapping, VirtualButtonPreservesPressRepeatReleaseAndDebounceSemanti
   EXPECT_EQ(transition(InputPhase::Press, true, true, 1400, 1000, 280), ButtonTransition::Debounced);
   EXPECT_EQ(transition(InputPhase::Press, false, false, 1200, 1000, 280), ButtonTransition::Debounced);
   EXPECT_EQ(transition(InputPhase::Press, false, false, 1400, 1000, 280), ButtonTransition::Pressed);
+}
+
+TEST(BleInputMapping, HeldDurationSurvivesReleaseFrameAndUsesWrapSafeElapsedTime) {
+  mappedinput::BleHeldDuration duration;
+  duration.press(1000);
+  EXPECT_EQ(duration.duration(1125), 125);
+
+  duration.release(1375);
+  EXPECT_EQ(duration.duration(1375), 375);
+  // A reader may ask for the held time after processing the release edge.
+  EXPECT_EQ(duration.duration(1400), 375);
+
+  duration.beginFrame();
+  EXPECT_EQ(duration.duration(1401), 0);
+
+  duration.press(0xFFFFFFF0UL);
+  EXPECT_EQ(duration.duration(0x00000010UL), 32);
+  duration.release(0x00000020UL);
+  EXPECT_EQ(duration.duration(0x00000020UL), 48);
+}
+
+TEST(BleInputMapping, HeldDurationIsIsolatedPerButtonAndNewPressClearsReleasedTime) {
+  mappedinput::BleHeldDuration firstButton;
+  mappedinput::BleHeldDuration secondButton;
+  firstButton.press(100);
+  secondButton.press(120);
+
+  firstButton.release(150);
+  EXPECT_EQ(firstButton.duration(160), 50);
+  EXPECT_EQ(secondButton.duration(160), 40);
+
+  // Starting another press on one button discards only that button's old
+  // release-frame duration and starts counting from the new timestamp.
+  firstButton.press(200);
+  EXPECT_EQ(firstButton.duration(225), 25);
+  EXPECT_EQ(secondButton.duration(225), 105);
+
+  firstButton.beginFrame();
+  secondButton.beginFrame();
+  EXPECT_EQ(firstButton.duration(226), 26);
+  EXPECT_EQ(secondButton.duration(226), 106);
+  secondButton.release(230);
+  EXPECT_EQ(secondButton.duration(231), 110);
+  firstButton.release(240);
+  EXPECT_EQ(firstButton.duration(241), 40);
 }
 
 TEST(BleInputMapping, LearnTimeoutHandlesMillisWraparound) {

@@ -300,7 +300,7 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
         } else if (xtcMode && value == MenuAction::PAGE_FIT) {
           return I18N.get(pageFitLabels[pendingXtcPageFitMode]);
         } else if (value == MenuAction::BLUETOOTH) {
-          return I18N.get(bleinput::readerSessionBluetoothEnabled() ? StrId::STR_STATE_ON : StrId::STR_STATE_OFF);
+          return I18N.get(bleinput::bluetoothEnabled() ? StrId::STR_STATE_ON : StrId::STR_STATE_OFF);
         } else {
           return "";
         }
