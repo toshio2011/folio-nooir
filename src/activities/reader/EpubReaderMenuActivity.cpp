@@ -299,6 +299,8 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
           return I18N.get(readingDirectionLabels[pendingXtcReadingDirection]);
         } else if (xtcMode && value == MenuAction::PAGE_FIT) {
           return I18N.get(pageFitLabels[pendingXtcPageFitMode]);
+        } else if (value == MenuAction::BLUETOOTH) {
+          return I18N.get(bleinput::readerSessionBluetoothEnabled() ? StrId::STR_STATE_ON : StrId::STR_STATE_OFF);
         } else {
           return "";
         }
@@ -307,6 +309,7 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
       [this](const int index) {
         const auto action = menuItems[index].action;
         return action == MenuAction::ROTATE_SCREEN || action == MenuAction::AUTO_PAGE_TURN ||
+               action == MenuAction::BLUETOOTH ||
                (xtcMode && (action == MenuAction::READING_DIRECTION || action == MenuAction::PAGE_FIT));
       });
 

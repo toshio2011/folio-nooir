@@ -6,6 +6,18 @@
 #include <stdexcept>
 #include <string>
 
+enum class HalStorageReadStatus : uint8_t { Success, NotFound, ParentMissing, Unavailable, IoError, TooLarge };
+
+class String {
+ public:
+  size_t length() const { return value_.size(); }
+  const char* c_str() const { return value_.c_str(); }
+  void assign(const std::string& value) { value_ = value; }
+
+ private:
+  std::string value_;
+};
+
 class TestStorage;
 
 class HalFile {
@@ -41,6 +53,17 @@ class TestStorage {
     return true;
   }
 
+  HalStorageReadStatus readFileChecked(const char* path, String& content, const size_t maxBytes) const {
+    const std::string requested = path ? path : "";
+    const auto forcedStatus = readStatuses.find(requested);
+    if (forcedStatus != readStatuses.end()) return forcedStatus->second;
+    const auto file = files.find(requested);
+    if (file == files.end()) return HalStorageReadStatus::NotFound;
+    if (file->second.size() > maxBytes) return HalStorageReadStatus::TooLarge;
+    content.assign(file->second);
+    return HalStorageReadStatus::Success;
+  }
+
   bool exists(const char* path) const { return files.find(path ? path : "") != files.end(); }
   bool remove(const char* path) { return files.erase(path ? path : "") != 0; }
 
@@ -55,6 +78,7 @@ class TestStorage {
   }
 
   std::map<std::string, std::string> files;
+  std::map<std::string, HalStorageReadStatus> readStatuses;
   std::string failRenameFrom;
   int crashAfterRename = 0;
   int renameCount = 0;

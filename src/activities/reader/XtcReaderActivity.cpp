@@ -167,26 +167,44 @@ void XtcReaderActivity::onEnter() {
     return;
   }
 
+  bleinput::beginReaderBluetoothSession();
+
   xtc->setupCacheDir();
 
   // Load saved progress
   loadProgress();
   if (initialBookmarkPage && xtc->getPageCount() > 0) {
-    currentPage = *initialBookmarkPage < xtc->getPageCount() ? *initialBookmarkPage : xtc->getPageCount() - 1;
+    setCurrentPage(*initialBookmarkPage < xtc->getPageCount() ? *initialBookmarkPage : xtc->getPageCount() - 1);
   }
   initialBookmarkPage.reset();
 
   // Save current XTC as last opened book and add to recent books
   APP_STATE.openEpubPath = xtc->getPath();
   APP_STATE.saveToFile();
-  // The parser has already opened this book. Resolve its optional bounded
-  // trailer now and persist the result with the existing Recent metadata so
-  // Home/Spine and Book Info can reuse it without an idle SD scan.
-  const std::string& xtcSynopsis = xtc->getDescription();
-  const std::string& xtcSeries = xtc->getSeries();
-  const bool xtcMetadataChecked = xtc->hasLoadedExtendedMetadata();
-  RECENT_BOOKS.addBook(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getThumbBmpPath(),
-                       xtcSynopsis, xtcSeries, xtcMetadataChecked);
+  // Reuse a checked Recent metadata result before touching the optional XTC
+  // trailer. Otherwise resolve it once from the already-open parser and let
+  // Recent persist the result for Home/Spine and the next reader visit.
+  std::string xtcSynopsis;
+  std::string xtcSeries;
+  bool xtcMetadataChecked = false;
+  {
+    const auto recentBooks = RECENT_BOOKS.getBooks();
+    const auto cached = std::find_if(recentBooks.begin(), recentBooks.end(), [this](const RecentBook& book) {
+      return book.path == xtc->getPath();
+    });
+    if (cached != recentBooks.end() && cached->xtcMetadataChecked) {
+      xtcSynopsis = cached->synopsis;
+      xtcSeries = cached->series;
+      xtcMetadataChecked = true;
+    }
+  }
+  if (!xtcMetadataChecked) {
+    xtcSynopsis = xtc->getDescription();
+    xtcSeries = xtc->getSeries();
+    xtcMetadataChecked = xtc->hasLoadedExtendedMetadata();
+  }
+  RECENT_BOOKS.addBook(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getThumbBmpPath(), xtcSynopsis,
+                       xtcSeries, xtcMetadataChecked);
 
   // Trigger first update
   requestUpdate();
@@ -194,16 +212,21 @@ void XtcReaderActivity::onEnter() {
 
 void XtcReaderActivity::onExit() {
   Activity::onExit();
+  bleinput::endReaderBluetoothSession();
   mappedInput.setReaderMappingMode(false);
   renderer.setDarkMode(false);
 
   if (xtc) {
     const ScreenshotInfo info = getScreenshotInfo();
     const uint32_t elapsedSeconds = (millis() - readingSessionStartedMs) / 1000UL;
-    RECENT_BOOKS.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds,
-                               sessionPagesTurned);
-    BOOK_STATES.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds,
-                              sessionPagesTurned);
+    if (!progressLoadUncertain || progressPositionChangedSinceLoad) {
+      RECENT_BOOKS.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds,
+                                 sessionPagesTurned);
+      BOOK_STATES.recordReading(xtc->getPath(), static_cast<uint8_t>(info.progressPercent), elapsedSeconds,
+                                sessionPagesTurned);
+    } else {
+      LOG_ERR("XTR", "Skipping progress-derived Recent/BookState update after uncertain progress load");
+    }
     READING_STATS.recordSession(halClock.getDateKey(), elapsedSeconds, sessionPagesTurned);
   }
 
@@ -307,7 +330,7 @@ void XtcReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAc
         startActivityForResult(
             std::make_unique<XtcReaderChapterSelectionActivity>(renderer, mappedInput, xtc, currentPage),
             [this](const ActivityResult& result) {
-              if (!result.isCancelled) currentPage = std::get<PageResult>(result.data).page;
+              if (!result.isCancelled) setCurrentPage(std::get<PageResult>(result.data).page);
               requestUpdate();
             });
       }
@@ -323,7 +346,7 @@ void XtcReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAc
                                                                  static_cast<int>(std::min<uint32_t>(currentPage, maximum)),
                                                                  maximum, true),
             [this](const ActivityResult& result) {
-              if (!result.isCancelled) currentPage = std::get<PageResult>(result.data).page;
+              if (!result.isCancelled) setCurrentPage(std::get<PageResult>(result.data).page);
               requestUpdate();
             });
       }
@@ -338,7 +361,8 @@ void XtcReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAc
             [this](const ActivityResult& result) {
               if (!result.isCancelled && xtc && xtc->getPageCount() > 0) {
                 const int percent = std::clamp(std::get<PercentResult>(result.data).percent, 0, 100);
-                currentPage = static_cast<uint32_t>((static_cast<uint64_t>(xtc->getPageCount() - 1) * percent + 50) / 100);
+                setCurrentPage(static_cast<uint32_t>(
+                    (static_cast<uint64_t>(xtc->getPageCount() - 1) * percent + 50) / 100));
               }
               requestUpdate();
             });
@@ -350,7 +374,7 @@ void XtcReaderActivity::onReaderMenuConfirm(const EpubReaderMenuActivity::MenuAc
             std::make_unique<XtcReaderBookmarksActivity>(renderer, mappedInput, xtc->getPath()),
             [this](const ActivityResult& result) {
               if (!result.isCancelled && xtc && xtc->getPageCount() > 0) {
-                currentPage = std::min(std::get<PageResult>(result.data).page, xtc->getPageCount() - 1);
+                setCurrentPage(std::min(std::get<PageResult>(result.data).page, xtc->getPageCount() - 1));
               }
               requestUpdate();
             });
@@ -493,7 +517,7 @@ void XtcReaderActivity::loop() {
   const uint8_t turnRate = pagesPerMinute[std::min<uint8_t>(autoTurnOption, 4)];
   if (turnRate > 0 && currentPage < xtc->getPageCount() && nextAutoTurnMs != 0 &&
       static_cast<int32_t>(millis() - nextAutoTurnMs) >= 0) {
-    ++currentPage;
+    setCurrentPage(currentPage + 1);
     if (sessionPagesTurned < UINT32_MAX) ++sessionPagesTurned;
     nextAutoTurnMs = millis() + (60000UL / turnRate);
     requestUpdate();
@@ -608,7 +632,7 @@ void XtcReaderActivity::loop() {
         requestExitToHome();
         return;
       case EndOfBookOptions::Action::LastPage:
-        currentPage = xtc->getPageCount() > 0 ? xtc->getPageCount() - 1 : 0;
+        setCurrentPage(xtc->getPageCount() > 0 ? xtc->getPageCount() - 1 : 0);
         requestUpdate();
         return;
       case EndOfBookOptions::Action::Redraw:
@@ -649,7 +673,7 @@ void XtcReaderActivity::loop() {
     if (nextTriggered) {
       requestExitToHome();
     } else {
-      currentPage = xtc->getPageCount() - 1;
+      setCurrentPage(xtc->getPageCount() - 1);
       requestUpdate();
     }
     return;
@@ -693,14 +717,14 @@ void XtcReaderActivity::loop() {
 
   if (prevTriggered) {
     if (currentPage >= static_cast<uint32_t>(skipAmount)) {
-      currentPage -= skipAmount;
+      setCurrentPage(currentPage - static_cast<uint32_t>(skipAmount));
     } else {
-      currentPage = 0;
+      setCurrentPage(0);
     }
     requestUpdate();
   } else if (nextTriggered) {
     const uint64_t nextPage = static_cast<uint64_t>(currentPage) + static_cast<uint32_t>(skipAmount);
-    currentPage = static_cast<uint32_t>(std::min<uint64_t>(nextPage, xtc->getPageCount()));
+    setCurrentPage(static_cast<uint32_t>(std::min<uint64_t>(nextPage, xtc->getPageCount())));
     requestUpdate();
   }
   if (currentPage != oldPage && sessionPagesTurned < UINT32_MAX) ++sessionPagesTurned;
@@ -954,6 +978,10 @@ void XtcReaderActivity::renderPage() {
 }
 bool XtcReaderActivity::saveProgress() {
   if (!xtc) return false;
+  if (progressLoadUncertain && !progressPositionChangedSinceLoad) {
+    LOG_ERR("XTR", "Skipping progress save because saved progress could not be read safely");
+    return false;
+  }
   const uint32_t pageCount = xtc->getPageCount();
   const uint32_t pageToPersist = pageCount > 0 && currentPage >= pageCount ? pageCount - 1 : currentPage;
   if (hasPersistedProgressPage && lastPersistedPage == pageToPersist) return true;
@@ -968,28 +996,54 @@ bool XtcReaderActivity::saveProgress() {
   }
   lastPersistedPage = pageToPersist;
   hasPersistedProgressPage = true;
+  progressLoadUncertain = false;
+  progressPositionChangedSinceLoad = false;
   return true;
 }
 
 void XtcReaderActivity::loadProgress() {
   hasPersistedProgressPage = false;
-  HalFile f;
-  if (ProgressFile::openForRead("XTR", xtc->getCachePath(), f)) {
-    uint8_t data[4];
-    if (f.read(data, 4) == 4) {
-      currentPage = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
-      LOG_DBG("XTR", "Loaded progress: page %lu", currentPage);
-
-      // Validate page number
-      if (currentPage >= xtc->getPageCount()) {
-        currentPage = 0;
-      } else {
+  progressLoadUncertain = false;
+  progressPositionChangedSinceLoad = false;
+  uint8_t data[4]{};
+  const ProgressFile::ExactReadResult result = ProgressFile::readExact(xtc->getCachePath(), data, sizeof(data));
+  if (result == ProgressFile::ExactReadResult::Success || result == ProgressFile::ExactReadResult::Recovered) {
+    const uint32_t savedPage = static_cast<uint32_t>(data[0]) | (static_cast<uint32_t>(data[1]) << 8) |
+                               (static_cast<uint32_t>(data[2]) << 16) | (static_cast<uint32_t>(data[3]) << 24);
+    if (savedPage < xtc->getPageCount()) {
+      currentPage = savedPage;
+      if (result == ProgressFile::ExactReadResult::Success) {
         lastPersistedPage = currentPage;
         hasPersistedProgressPage = true;
+        LOG_DBG("XTR", "Loaded progress: page %lu", currentPage);
+      } else {
+        progressLoadUncertain = true;
+        LOG_ERR("XTR", "Loaded recovery progress page %lu; source is not authoritative, preserving candidates",
+                currentPage);
       }
+      return;
     }
-    f.close();
+    progressLoadUncertain = true;
+    LOG_ERR("XTR", "Saved progress page %lu is outside the book; preserving the saved file", savedPage);
+    return;
   }
+
+  if (result == ProgressFile::ExactReadResult::Missing) {
+    currentPage = 0;
+    LOG_DBG("XTR", "No saved progress; starting at page 0");
+    return;
+  }
+
+  progressLoadUncertain = true;
+  currentPage = 0;
+  LOG_ERR("XTR", "Progress load uncertain result=%u; will not save page 0 unless position changes",
+          static_cast<unsigned>(result));
+}
+
+void XtcReaderActivity::setCurrentPage(const uint32_t page) {
+  if (currentPage == page) return;
+  currentPage = page;
+  progressPositionChangedSinceLoad = true;
 }
 
 ScreenshotInfo XtcReaderActivity::getScreenshotInfo() const {

@@ -24,6 +24,8 @@ class XtcReaderActivity final : public Activity {
   std::optional<uint32_t> initialBookmarkPage;
   uint32_t lastPersistedPage = 0;
   bool hasPersistedProgressPage = false;
+  bool progressLoadUncertain = false;
+  bool progressPositionChangedSinceLoad = false;
   int pagesUntilFullRefresh = 0;
   unsigned long readingSessionStartedMs = 0UL;
   uint32_t sessionPagesTurned = 0;
@@ -57,6 +59,7 @@ class XtcReaderActivity final : public Activity {
   StatusBarInfo getStatusBarInfo() const;
   bool saveProgress();
   void loadProgress();
+  void setCurrentPage(uint32_t page);
   void requestExitToHome();
 
  public:

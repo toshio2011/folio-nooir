@@ -1,0 +1,4 @@
+add_executable(book_cache_utils_test BookCacheUtilsTest.cpp ${REPO_ROOT}/src/util/BookCacheUtils.cpp)
+target_include_directories(book_cache_utils_test BEFORE PRIVATE stubs)
+target_link_libraries(book_cache_utils_test PRIVATE crosspoint_test_common GTest::gtest_main)
+gtest_discover_tests(book_cache_utils_test)

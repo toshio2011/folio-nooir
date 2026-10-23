@@ -38,6 +38,11 @@ std::string makeHistory(const size_t count, const bool includeOptionalFields = t
   return serialized.c_str();
 }
 
+std::string makeBookWithField(const std::string& field, const std::string& encodedValue) {
+  return "{\"books\":[{\"path\":\"/manga/Typed.xtc\",\"title\":\"Typed\",\"author\":\"Author\",\"" +
+         field + "\":" + encodedValue + "}]}";
+}
+
 std::string readTruncatedFixture() {
   std::ifstream input(RECENT_BOOKS_FIXTURE_PATH, std::ios::binary);
   return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
@@ -231,6 +236,65 @@ TEST(RecentBooksStore, ProtectsHistoryAcrossCorruptionRecoveryAndFailedWrites) {
   EXPECT_EQ(store.getCount(), 0);
   EXPECT_EQ(Storage.files[kPrimary], "{\"books\":[]}");
   EXPECT_EQ(store.getLoadResult(), RecentBooksLoadResult::Uncertain);
+}
+
+TEST(RecentBooksStore, RejectsInvalidPresentFieldsWithoutReplacingLoadedHistory) {
+  Storage.reset();
+  RecentBooksStore& store = RECENT_BOOKS;
+  Storage.files[kPrimary] = makeHistory(2);
+  ASSERT_TRUE(store.loadFromFile());
+  ASSERT_EQ(store.getLoadResult(), RecentBooksLoadResult::Valid);
+  ASSERT_EQ(store.getCount(), 2);
+  const std::string retainedPath = store.getBooks()[0].path;
+
+  const std::pair<std::string, std::string> invalidFields[] = {
+      {"title", "42"},
+      {"author", "null"},
+      {"coverBmpPath", "false"},
+      {"synopsis", "[]"},
+      {"series", "{\"name\":\"Series\"}"},
+      {"xtcMetadataChecked", "\"true\""},
+      {"progressPercent", "101"},
+      {"progressPercent", "-1"},
+      {"progressPercent", "1.5"},
+      {"progressPercent", "\"50\""},
+      {"readingSeconds", "-1"},
+      {"lastSessionSeconds", "4294967296"},
+      {"dailyReadingSeconds", "1.5"},
+      {"dailyReadingDateKey", "\"20261023\""},
+      {"readingSessions", "65536"},
+      {"readingSessions", "-1"},
+      {"pagesTurned", "4294967296"},
+  };
+
+  for (const auto& [field, value] : invalidFields) {
+    SCOPED_TRACE(field + "=" + value);
+    Storage.files[kPrimary] = makeBookWithField(field, value);
+    EXPECT_FALSE(store.loadFromFile());
+    EXPECT_EQ(store.getLoadResult(), RecentBooksLoadResult::Uncertain);
+    EXPECT_FALSE(store.automaticWritesAllowed());
+    ASSERT_EQ(store.getCount(), 2);
+    EXPECT_EQ(store.getBooks()[0].path, retainedPath);
+  }
+
+  // The full unsigned range remains valid for accumulated counters and date
+  // keys. Progress and the narrower session count retain their domain limits.
+  Storage.files[kPrimary] =
+      "{\"books\":[{\"path\":\"/manga/Bounds.xtc\",\"progressPercent\":100,"
+      "\"readingSeconds\":4294967295,\"lastSessionSeconds\":4294967295,"
+      "\"dailyReadingSeconds\":4294967295,\"dailyReadingDateKey\":4294967295,"
+      "\"readingSessions\":65535,\"pagesTurned\":4294967295}]}";
+  ASSERT_TRUE(store.loadFromFile());
+  EXPECT_EQ(store.getLoadResult(), RecentBooksLoadResult::Valid);
+  ASSERT_EQ(store.getCount(), 1);
+  const RecentBook& loaded = store.getBooks()[0];
+  EXPECT_EQ(loaded.progressPercent, 100);
+  EXPECT_EQ(loaded.readingSeconds, UINT32_MAX);
+  EXPECT_EQ(loaded.lastSessionSeconds, UINT32_MAX);
+  EXPECT_EQ(loaded.dailyReadingSeconds, UINT32_MAX);
+  EXPECT_EQ(loaded.dailyReadingDateKey, UINT32_MAX);
+  EXPECT_EQ(loaded.readingSessions, UINT16_MAX);
+  EXPECT_EQ(loaded.pagesTurned, UINT32_MAX);
 }
 
 const BookMetadataOverride* BookMetadataOverridesStore::find(const std::string&) const { return nullptr; }

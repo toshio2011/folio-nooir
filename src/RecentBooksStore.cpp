@@ -23,6 +23,42 @@ void applyMetadataOverride(RecentBook& book) {
   book.author = overrideData->author;
   book.synopsis = overrideData->synopsis;
 }
+
+template <typename T>
+bool validOptionalField(const JsonObjectConst& object, const char* key) {
+  const JsonVariantConst value = object[key];
+  // `isUnbound()` distinguishes an omitted legacy key from an explicitly
+  // present JSON null, which must fail the declared-field type check.
+  return value.isUnbound() || value.is<T>();
+}
+
+bool validRecentBookFields(const JsonObjectConst& object) {
+  // Older histories may omit fields added later. If a known field is present,
+  // however, it must have the type the writer emits; otherwise ArduinoJson's
+  // defaulting conversions could silently turn damaged values into empty/zero
+  // values and a later save would make that loss permanent.
+  if (!validOptionalField<const char*>(object, "title") || !validOptionalField<const char*>(object, "author") ||
+      !validOptionalField<const char*>(object, "coverBmpPath") ||
+      !validOptionalField<const char*>(object, "synopsis") ||
+      !validOptionalField<const char*>(object, "series")) {
+    return false;
+  }
+
+  const JsonVariantConst checked = object["xtcMetadataChecked"];
+  if (!checked.isUnbound() && !checked.is<bool>()) return false;
+
+  const JsonVariantConst progress = object["progressPercent"];
+  if (!progress.isUnbound() && (!progress.is<uint8_t>() || progress.as<uint8_t>() > 100)) {
+    return false;
+  }
+
+  return validOptionalField<uint32_t>(object, "readingSeconds") &&
+         validOptionalField<uint32_t>(object, "lastSessionSeconds") &&
+         validOptionalField<uint32_t>(object, "dailyReadingSeconds") &&
+         validOptionalField<uint32_t>(object, "dailyReadingDateKey") &&
+         validOptionalField<uint16_t>(object, "readingSessions") &&
+         validOptionalField<uint32_t>(object, "pagesTurned");
+}
 }  // namespace
 
 const char* recentBooksLoadResultName(const RecentBooksLoadResult result) {
@@ -68,7 +104,7 @@ bool RecentBooksStore::parseJsonBooks(JsonVariantConst doc, std::vector<RecentBo
     if (!item.is<JsonObjectConst>()) return false;
     JsonObjectConst obj = item.as<JsonObjectConst>();
     const char* path = obj["path"].as<const char*>();
-    if (path == nullptr || path[0] == '\0') return false;
+    if (path == nullptr || path[0] == '\0' || !validRecentBookFields(obj)) return false;
     RecentBook book;
     book.path = path;
     book.title = obj["title"] | "";
@@ -221,6 +257,13 @@ bool RecentBooksStore::saveToFileLocked() const {
 int RecentBooksStore::getCount() const {
   std::lock_guard<std::mutex> lock(storeMutex);
   return static_cast<int>(recentBooks.size());
+}
+
+bool RecentBooksStore::getBookAt(const size_t index, RecentBook& destination) const {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  if (index >= recentBooks.size()) return false;
+  destination = recentBooks[index];
+  return true;
 }
 
 bool RecentBooksStore::rejectUnsafeMutation(const char* operation) const {

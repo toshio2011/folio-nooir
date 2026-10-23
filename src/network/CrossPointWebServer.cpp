@@ -22,6 +22,7 @@
 #include <cstring>
 #include <cstdint>
 #include <string_view>
+#include <utility>
 
 #include "CrossPointSettings.h"
 #include "BleInput.h"
@@ -90,6 +91,20 @@ void logWebOwnerDelta(const char* owner, const size_t beforeFree, const size_t b
   LOG_INF("WEBMEM", "owner=%s free=%u->%u largest=%u->%u", owner ? owner : "unknown",
           static_cast<unsigned>(beforeFree), static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(beforeLargest), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+}
+
+bool copyRecentBookByPath(const std::string& path, RecentBook& destination) {
+  const int storedBookCount = RECENT_BOOKS.getCount();
+  const size_t rawBookCount = storedBookCount > 0 ? static_cast<size_t>(storedBookCount) : 0;
+  for (size_t index = 0; index < rawBookCount; ++index) {
+    RecentBook candidate;
+    if (!RECENT_BOOKS.getBookAt(index, candidate)) return false;
+    if (candidate.path == path) {
+      destination = std::move(candidate);
+      return true;
+    }
+  }
+  return false;
 }
 
 String normalizeWebPath(const String& inputPath) {
@@ -902,10 +917,13 @@ void CrossPointWebServer::handleLibraryData() const {
   size_t visibleIndex = 0;
   size_t emitted = 0;
   bool hasMore = false;
+  const int storedBookCount = RECENT_BOOKS.getCount();
+  const size_t rawBookCount = storedBookCount > 0 ? static_cast<size_t>(storedBookCount) : 0;
   JsonDocument doc;
   String row;
-  for (const auto& book : RECENT_BOOKS.getBooks()) {
-    if (RecentBooksStore::isMissing(book)) continue;
+  for (size_t rawIndex = 0; rawIndex < rawBookCount; ++rawIndex) {
+    RecentBook book;
+    if (!RECENT_BOOKS.getBookAt(rawIndex, book)) break;
     if (visibleIndex < static_cast<size_t>(offset)) {
       ++visibleIndex;
       continue;
@@ -978,21 +996,30 @@ void CrossPointWebServer::handleLibraryCover() const {
     return;
   }
   const int wanted = server->arg("index").toInt();
+  if (wanted < 0) {
+    sendMissingThumbnail("Cover not found");
+    return;
+  }
   int index = 0;
-  const RecentBook* selected = nullptr;
-  for (const auto& book : RECENT_BOOKS.getBooks()) {
-    if (RecentBooksStore::isMissing(book)) continue;
+  RecentBook selected;
+  bool found = false;
+  const int storedBookCount = RECENT_BOOKS.getCount();
+  const size_t rawBookCount = storedBookCount > 0 ? static_cast<size_t>(storedBookCount) : 0;
+  for (size_t rawIndex = 0; rawIndex < rawBookCount; ++rawIndex) {
+    RecentBook book;
+    if (!RECENT_BOOKS.getBookAt(rawIndex, book)) break;
     if (index++ == wanted) {
-      selected = &book;
+      selected = std::move(book);
+      found = true;
       break;
     }
   }
-  if (!selected || selected->coverBmpPath.empty()) {
+  if (!found || selected.coverBmpPath.empty()) {
     sendMissingThumbnail("Cover not found");
     return;
   }
   const int coverHeight = UITheme::getInstance().getMetrics().homeCoverHeight;
-  const std::string coverPath = UITheme::getCoverThumbPath(selected->coverBmpPath, coverHeight);
+  const std::string coverPath = UITheme::getCoverThumbPath(selected.coverBmpPath, coverHeight);
   LOG_DBG("WEB", "[THUMB] resolved index=%d cachePath=%s", wanted, coverPath.c_str());
   // The Web Bookshelf is presentation-only. Never parse an EPUB or decode an
   // image from this request: opening the page should not compete with a file
@@ -1142,25 +1169,23 @@ void CrossPointWebServer::handleStatsData() const {
     server->sendContent(rowJson);
     seenBook = true;
   };
-  // Walk Recent Books once so each entry performs at most one SD existence
-  // check and receives its cover index. Recent order is also the useful
-  // presentation order for the web page.
+  // Walk Recent Books once, copying records without source-file probes, and
+  // assign their cover indices. Keep every stored history
+  // entry visible even if its source is temporarily unavailable; cached
+  // covers are optional presentation data.
   int visibleIndex = 0;
-  for (const auto& recent : RECENT_BOOKS.getBooks()) {
-    const bool missing = RecentBooksStore::isMissing(recent);
-    const int coverIndex = missing ? -1 : visibleIndex++;
-    appendBook(recent.path, BOOK_STATES.find(recent.path), &recent, coverIndex);
+  const int recentCount = RECENT_BOOKS.getCount();
+  for (int index = 0; index < recentCount; ++index) {
+    RecentBook recent;
+    if (!RECENT_BOOKS.getBookAt(static_cast<size_t>(index), recent)) break;
+    appendBook(recent.path, BOOK_STATES.find(recent.path), &recent, visibleIndex++);
   }
   // A book can exist in Book States without a Recent Books entry. Include it
   // too, preserving the full statistics feature without another SD scan.
   for (const auto& book : BOOK_STATES.getBooks()) {
     bool inRecent = false;
-    for (const auto& recent : RECENT_BOOKS.getBooks()) {
-      if (recent.path == book.path) {
-        inRecent = true;
-        break;
-      }
-    }
+    RecentBook recent;
+    inRecent = copyRecentBookByPath(book.path, recent);
     if (!inRecent) appendBook(book.path, &book, nullptr, -1);
   }
 
@@ -1185,13 +1210,9 @@ void CrossPointWebServer::handleGetBookInfo() const {
   const std::string path = itemPath.c_str();
   const std::string_view pathView(itemPath.c_str(), itemPath.length());
   const BookMetadataOverride* overrideData = BOOK_METADATA_OVERRIDES.find(path);
-  const RecentBook* recent = nullptr;
-  for (const auto& candidate : RECENT_BOOKS.getBooks()) {
-    if (candidate.path == path) {
-      recent = &candidate;
-      break;
-    }
-  }
+  RecentBook recentBook;
+  const bool hasRecent = copyRecentBookByPath(path, recentBook);
+  const RecentBook* recent = hasRecent ? &recentBook : nullptr;
 
   std::string title;
   std::string author;
@@ -1270,14 +1291,9 @@ void CrossPointWebServer::handlePostBookUpdate() {
 
   const std::string path = doc["path"] | "";
   bool knownBook = BOOK_STATES.find(path) != nullptr;
-  if (!knownBook) {
-    for (const auto& candidate : RECENT_BOOKS.getBooks()) {
-      if (candidate.path == path) {
-        knownBook = true;
-        break;
-      }
-    }
-  }
+  RecentBook recentBook;
+  bool hasRecent = copyRecentBookByPath(path, recentBook);
+  knownBook = knownBook || hasRecent;
   const bool metadataRequest = doc["title"].is<const char*>() || doc["author"].is<const char*>() ||
                                doc["synopsis"].is<const char*>();
   const bool stateRequest = !doc["progress"].isNull() || !doc["status"].isNull() || !doc["startDate"].isNull() ||
@@ -1301,13 +1317,8 @@ void CrossPointWebServer::handlePostBookUpdate() {
   }
 
   const BookState* existing = BOOK_STATES.find(path);
-  const RecentBook* recent = nullptr;
-  for (const auto& candidate : RECENT_BOOKS.getBooks()) {
-    if (candidate.path == path) {
-      recent = &candidate;
-      break;
-    }
-  }
+  if (!hasRecent) hasRecent = copyRecentBookByPath(path, recentBook);
+  const RecentBook* recent = hasRecent ? &recentBook : nullptr;
 
   // Metadata edits are stored separately from the EPUB/XTCH container. This
   // keeps uploads fast and makes edits available to the device Library even

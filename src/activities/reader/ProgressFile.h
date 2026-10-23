@@ -5,12 +5,56 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string>
 
 namespace ProgressFile {
 
+enum class ExactReadResult : uint8_t { Success, Recovered, Missing, Invalid, Unavailable };
+
 inline std::string backupPath(const std::string& cachePath) {
   return cachePath + "/progress.bin.bak";
+}
+
+// Read one fixed-size progress record without modifying recovery files. A
+// malformed or temporarily unreadable primary may still have a usable backup
+// or completed temporary candidate. Callers can distinguish a genuinely new
+// book from damaged/unavailable progress and avoid replacing it with page 0.
+inline ExactReadResult readExact(const std::string& cachePath, uint8_t* destination, const size_t length) {
+  // Progress records are fixed-size: 32-bit records are used by XTC/TXT, and
+  // EPUB's extended record is six bytes. Reject any other size before reading
+  // so this recovery helper can never become an unbounded allocator.
+  if (destination == nullptr || (length != 4 && length != 6)) return ExactReadResult::Invalid;
+
+  const std::string candidates[] = {cachePath + "/progress.bin", backupPath(cachePath),
+                                    cachePath + "/progress.bin.tmp"};
+  bool sawInvalid = false;
+  bool sawUnavailable = false;
+  for (const auto& path : candidates) {
+    String contents;
+    const HalStorageReadStatus status = Storage.readFileChecked(path.c_str(), contents, length);
+    if (status == HalStorageReadStatus::NotFound || status == HalStorageReadStatus::ParentMissing) continue;
+    if (status == HalStorageReadStatus::Unavailable || status == HalStorageReadStatus::IoError) {
+      sawUnavailable = true;
+      continue;
+    }
+    if (status == HalStorageReadStatus::TooLarge) {
+      sawInvalid = true;
+      continue;
+    }
+    if (status != HalStorageReadStatus::Success || contents.length() != length) {
+      sawInvalid = true;
+      continue;
+    }
+    std::memcpy(destination, contents.c_str(), length);
+    // A non-canonical candidate is useful for positioning the reader, but it
+    // must not be treated as authoritative: a later save could otherwise
+    // replace a primary file that was temporarily unreadable.
+    return path == candidates[0] ? ExactReadResult::Success : ExactReadResult::Recovered;
+  }
+
+  if (sawUnavailable) return ExactReadResult::Unavailable;
+  return sawInvalid ? ExactReadResult::Invalid : ExactReadResult::Missing;
 }
 
 // Open the canonical file first. If a reset interrupted the two-step FAT

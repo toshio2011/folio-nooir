@@ -152,6 +152,11 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
   // Get a locked, read-only list of recent books (most recent first).
   RecentBooksReadView getBooks() const { return RecentBooksReadView(*this); }
 
+  // Copy one record while holding the store lock, then release it before any
+  // caller performs SD/network work. This keeps long-running web responses
+  // from blocking Recent mutations without allocating a full-list snapshot.
+  bool getBookAt(size_t index, RecentBook& destination) const;
+
   // Get the count of recent books
   int getCount() const;
 
