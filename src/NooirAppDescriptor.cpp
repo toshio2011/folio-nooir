@@ -15,7 +15,7 @@
 #endif
 
 extern "C" {
-__attribute__((used, section(".rodata_desc"))) const esp_app_desc_t esp_app_desc = {
+extern __attribute__((used, section(".rodata_desc"))) const esp_app_desc_t esp_app_desc = {
     .magic_word = ESP_APP_DESC_MAGIC_WORD,
     .version = NOOIR_APP_VERSION,
     .project_name = "Folio Nooir",
