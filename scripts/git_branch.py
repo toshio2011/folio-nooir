@@ -80,7 +80,13 @@ def inject_version(env):
     project_dir = env['PROJECT_DIR']
     build_sha = run_git_value(project_dir, ['rev-parse', 'HEAD'], 'build SHA')
     env.Append(CPPDEFINES=[('NOOIR_BUILD_SHA', f'\\"{build_sha}\\"')])
+    app_version = f'{get_base_version(project_dir)}+{build_sha[:8]}'
+    if len(app_version.encode('ascii', errors='ignore')) > 31:
+        short_sha = build_sha[:8]
+        app_version = f'{get_base_version(project_dir)[:22]}+{short_sha}'
+    env.Append(CPPDEFINES=[('NOOIR_APP_VERSION', f'\\"{app_version}\\"')])
     print(f'Nooir build SHA: {build_sha}')
+    print(f'Nooir app descriptor version: {app_version}')
 
     # Only the default environment decorates the version string. Release
     # environments keep their configured version while still embedding the
