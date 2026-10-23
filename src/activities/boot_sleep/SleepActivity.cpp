@@ -630,8 +630,9 @@ SleepClippingSnapshot loadSleepClippingSnapshot(const bool selectedBookOnly = fa
     // raw replacement glyph from reaching the sleep card.
     snapshot.text = ClipFile::normalizeText(clipping.text);
     snapshot.page = clipping.page;
-    const RecentBook* recent = recentBookForSleepPath(path);
-    snapshot.title = recent && !recent->title.empty() ? recent->title : sleepFilename(path);
+    RecentBook recent;
+    const bool hasRecent = recentBookForSleepPath(path, recent);
+    snapshot.title = hasRecent && !recent.title.empty() ? recent.title : sleepFilename(path);
     break;
   }
   return snapshot;
@@ -2577,8 +2578,11 @@ void SleepActivity::renderFlexibleSleepScreen() const {
     std::string title;
     std::string author;
     std::string coverPath;
-    const RecentBook* recentBook = nullptr;
     bool hasBook = false;
+    uint8_t bookProgressPercent = 0;
+    uint32_t bookReadingSeconds = 0;
+    uint16_t bookReadingSessions = 0;
+    bool hasRecentBook = false;
     StatisticsSnapshot statistics;
     CalendarData calendar;
     SleepClippingSnapshot clipping;
@@ -2605,10 +2609,15 @@ void SleepActivity::renderFlexibleSleepScreen() const {
 
   data.bookPath = sleepBookPath();
   data.hasBook = !data.bookPath.empty();
-  data.recentBook = data.hasBook ? recentBookForSleepPath(data.bookPath) : nullptr;
-  data.title = data.recentBook && !data.recentBook->title.empty() ? data.recentBook->title
-                                                                  : sleepFilename(data.bookPath);
-  if (data.recentBook) data.author = data.recentBook->author;
+  RecentBook recentBook;
+  data.hasRecentBook = data.hasBook && recentBookForSleepPath(data.bookPath, recentBook);
+  data.title = data.hasRecentBook && !recentBook.title.empty() ? recentBook.title : sleepFilename(data.bookPath);
+  if (data.hasRecentBook) {
+    data.author = recentBook.author;
+    data.bookProgressPercent = recentBook.progressPercent;
+    data.bookReadingSeconds = recentBook.readingSeconds;
+    data.bookReadingSessions = recentBook.readingSessions;
+  }
   if (data.hasBook) {
     data.coverPath = sleepBookCoverCachePath(data.bookPath);
     if (!Storage.exists(data.coverPath.c_str())) data.coverPath.clear();
@@ -2929,9 +2938,9 @@ void SleepActivity::renderFlexibleSleepScreen() const {
         return true;
       case SleepComposerElement::BookProgress:
       case SleepComposerElement::BookStats: {
-        const uint8_t progress = data.recentBook ? data.recentBook->progressPercent : 0;
-        const uint32_t seconds = data.recentBook ? data.recentBook->readingSeconds : 0;
-        const uint16_t sessions = data.recentBook ? data.recentBook->readingSessions : 0;
+        const uint8_t progress = data.bookProgressPercent;
+        const uint32_t seconds = data.bookReadingSeconds;
+        const uint16_t sessions = data.bookReadingSessions;
         drawClamped(overlay ? UI_10_FONT_ID : UI_12_FONT_ID, content.x, y, content.width, data.title, true);
         y += (overlay ? renderer.getLineHeight(UI_10_FONT_ID) : titleLineHeight) + 7;
         char progressText[16];
