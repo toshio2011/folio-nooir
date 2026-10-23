@@ -38,6 +38,46 @@ std::string makeHistory(const size_t count, const bool includeOptionalFields = t
   return serialized.c_str();
 }
 
+std::string makeDurableHistory() {
+  JsonDocument doc;
+  JsonArray books = doc["books"].to<JsonArray>();
+  JsonObject book = books.add<JsonObject>();
+  book["path"] = "/manga/Original.xtch";
+  book["title"] = "Original title";
+  book["author"] = "Original author";
+  book["coverBmpPath"] = "/.crosspoint/original/cover.bmp";
+  book["synopsis"] = "Original synopsis";
+  book["series"] = "Original series";
+  book["xtcMetadataChecked"] = true;
+  book["progressPercent"] = 73;
+  book["readingSeconds"] = uint32_t{12345};
+  book["lastSessionSeconds"] = uint32_t{321};
+  book["dailyReadingSeconds"] = uint32_t{987};
+  book["dailyReadingDateKey"] = uint32_t{20261023};
+  book["readingSessions"] = uint16_t{42};
+  book["pagesTurned"] = uint32_t{333};
+  String serialized;
+  serializeJson(doc, serialized);
+  return serialized.c_str();
+}
+
+void expectOriginalBookData(const RecentBook& book) {
+  EXPECT_EQ(book.path, "/manga/Original.xtch");
+  EXPECT_EQ(book.title, "Original title");
+  EXPECT_EQ(book.author, "Original author");
+  EXPECT_EQ(book.coverBmpPath, "/.crosspoint/original/cover.bmp");
+  EXPECT_EQ(book.synopsis, "Original synopsis");
+  EXPECT_EQ(book.series, "Original series");
+  EXPECT_TRUE(book.xtcMetadataChecked);
+  EXPECT_EQ(book.progressPercent, 73);
+  EXPECT_EQ(book.readingSeconds, 12345U);
+  EXPECT_EQ(book.lastSessionSeconds, 321U);
+  EXPECT_EQ(book.dailyReadingSeconds, 987U);
+  EXPECT_EQ(book.dailyReadingDateKey, 20261023U);
+  EXPECT_EQ(book.readingSessions, 42U);
+  EXPECT_EQ(book.pagesTurned, 333U);
+}
+
 std::string makeBookWithField(const std::string& field, const std::string& encodedValue) {
   return "{\"books\":[{\"path\":\"/manga/Typed.xtc\",\"title\":\"Typed\",\"author\":\"Author\",\"" +
          field + "\":" + encodedValue + "}]}";
@@ -295,6 +335,77 @@ TEST(RecentBooksStore, RejectsInvalidPresentFieldsWithoutReplacingLoadedHistory)
   EXPECT_EQ(loaded.dailyReadingDateKey, UINT32_MAX);
   EXPECT_EQ(loaded.readingSessions, UINT16_MAX);
   EXPECT_EQ(loaded.pagesTurned, UINT32_MAX);
+}
+
+TEST(RecentBooksStore, RecoversPreviousHistoryAfterPowerLossMovingPrimaryToBackup) {
+  Storage.reset();
+  RecentBooksStore& store = RECENT_BOOKS;
+  const std::string original = makeDurableHistory();
+  Storage.files[kPrimary] = original;
+
+  ASSERT_TRUE(store.loadFromFile());
+  ASSERT_EQ(store.getLoadResult(), RecentBooksLoadResult::Valid);
+  ASSERT_EQ(store.getCount(), 1);
+
+  // The first rename for a save with no existing backup is the committed
+  // primary moving to .bak. Throw immediately after that filesystem step to
+  // model power loss before the staged replacement can become the primary.
+  Storage.armCrash(TestStorage::CrashPoint::AfterFirstRename);
+  EXPECT_THROW(store.addBook("/manga/Added.xtch", "Added title", "Added author", "", "", "", true),
+               SimulatedPowerLoss);
+
+  ASSERT_FALSE(Storage.files.contains(kPrimary));
+  ASSERT_EQ(Storage.files[kBackup], original);
+  ASSERT_TRUE(Storage.files.contains(kTemporary));
+
+  // Reload the singleton as a reboot would. The canonical backup wins over
+  // the staged, uncommitted Recent document, retaining every user field.
+  ASSERT_TRUE(store.loadFromFile());
+  EXPECT_EQ(store.getLoadResult(), RecentBooksLoadResult::Recovered);
+  ASSERT_EQ(store.getCount(), 1);
+  RecentBook recovered;
+  ASSERT_TRUE(store.getBookAt(0, recovered));
+  expectOriginalBookData(recovered);
+  EXPECT_EQ(Storage.files[kBackup], original);
+  EXPECT_TRUE(Storage.files.contains(kTemporary));
+}
+
+TEST(RecentBooksStore, LoadsCommittedHistoryAfterPowerLossPromotingStagedTemporaryFile) {
+  Storage.reset();
+  RecentBooksStore& store = RECENT_BOOKS;
+  const std::string original = makeDurableHistory();
+  Storage.files[kPrimary] = original;
+
+  ASSERT_TRUE(store.loadFromFile());
+  ASSERT_EQ(store.getLoadResult(), RecentBooksLoadResult::Valid);
+  ASSERT_EQ(store.getCount(), 1);
+
+  // The second rename promotes the fully read-back-validated .tmp after the
+  // old primary has already been retained as .bak.
+  Storage.armCrash(TestStorage::CrashPoint::AfterSecondRename);
+  EXPECT_THROW(store.addBook("/manga/Added.xtch", "Added title", "Added author", "", "", "", true),
+               SimulatedPowerLoss);
+
+  ASSERT_TRUE(Storage.files.contains(kPrimary));
+  ASSERT_EQ(Storage.files[kBackup], original);
+  EXPECT_FALSE(Storage.files.contains(kTemporary));
+
+  // Reload the primary after the simulated reset. The committed new record
+  // and all fields of the previous record must both survive.
+  ASSERT_TRUE(store.loadFromFile());
+  EXPECT_EQ(store.getLoadResult(), RecentBooksLoadResult::Valid);
+  ASSERT_EQ(store.getCount(), 2);
+  RecentBook added;
+  ASSERT_TRUE(store.getBookAt(0, added));
+  EXPECT_EQ(added.path, "/manga/Added.xtch");
+  EXPECT_EQ(added.title, "Added title");
+  EXPECT_EQ(added.author, "Added author");
+  EXPECT_EQ(added.series, "");
+  EXPECT_TRUE(added.xtcMetadataChecked);
+  RecentBook originalAfterCommit;
+  ASSERT_TRUE(store.getBookAt(1, originalAfterCommit));
+  expectOriginalBookData(originalAfterCommit);
+  EXPECT_EQ(Storage.files[kBackup], original);
 }
 
 const BookMetadataOverride* BookMetadataOverridesStore::find(const std::string&) const { return nullptr; }

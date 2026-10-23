@@ -78,6 +78,12 @@ class ActivityManager {
   // a cleared requestedUpdate cannot create a false idle window.
   std::atomic<bool> renderQueued{false};
   std::atomic<bool> renderInFlight{false};
+#if FREEINK_CAP_BLE_HID_HOST
+  // A failed Bluetooth Settings activation waits for an explicit Retry. Keep
+  // renderer completion from silently re-arming BLE admission while its error
+  // screen is being redrawn.
+  std::atomic<bool> bluetoothSettingsActivationFailed_{false};
+#endif
 
   void queueRenderNotification();
 
@@ -159,6 +165,8 @@ class ActivityManager {
   // BluetoothSettings uses the centralized lifecycle's actual start result to
   // leave its preparing screen only after a real host activation.
   void notifyBluetoothActivationResult(bool started);
+  void setBluetoothSettingsActivationFailed(bool failed);
+  bool bluetoothSettingsActivationFailed() const;
   bool hasPendingUpdate() const { return requestedUpdate.load(std::memory_order_acquire); }
   bool hasPendingRenderWork() const;
   void postBluetoothNotification(const char* message);

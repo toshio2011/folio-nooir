@@ -609,7 +609,7 @@ void XtcReaderActivity::loop() {
       RenderLock lock(*this);
       ScreenshotUtil::takeScreenshot(renderer);
     } else {
-      bleinput::toggleBluetooth();
+      bleinput::toggleReaderSessionBluetooth();
     }
     return;
   }
@@ -682,7 +682,7 @@ void XtcReaderActivity::loop() {
   const unsigned long heldMs = (touch.prev || touch.next) ? touch.heldMs : mappedInput.getHeldTime();
   if (!fromTilt && fromSide && heldMs > ReaderUtils::SKIP_HOLD_MS &&
       SETTINGS.sideLongPressAction == CrossPointSettings::SIDE_LONG_TOGGLE_BLUETOOTH) {
-    bleinput::toggleBluetooth();
+    bleinput::toggleReaderSessionBluetooth();
     return;
   }
   const auto longPressBehavior = fromSide

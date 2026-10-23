@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 
@@ -28,8 +29,15 @@ class HalFile {
   size_t offset_ = 0;
 };
 
+class SimulatedPowerLoss : public std::runtime_error {
+ public:
+  SimulatedPowerLoss() : std::runtime_error("simulated power loss") {}
+};
+
 class TestStorage {
  public:
+  enum class CrashPoint { None, AfterFirstRename, AfterSecondRename };
+
   bool ready() const { return sdReady; }
   bool mkdir(const char*) { return true; }
   bool exists(const char* path) const { return files.find(path ? path : "") != files.end(); }
@@ -41,6 +49,11 @@ class TestStorage {
     if (it == files.end() || files.find(target) != files.end()) return false;
     files[target] = std::move(it->second);
     files.erase(it);
+    ++renameCount;
+    if ((crashPoint == CrashPoint::AfterFirstRename && renameCount == 1) ||
+        (crashPoint == CrashPoint::AfterSecondRename && renameCount == 2)) {
+      throw SimulatedPowerLoss();
+    }
     return true;
   }
   bool writeFile(const char* path, const String& value) {
@@ -77,6 +90,13 @@ class TestStorage {
     failWrite = false;
     writeCount = 0;
     readCount = 0;
+    crashPoint = CrashPoint::None;
+    renameCount = 0;
+  }
+
+  void armCrash(const CrashPoint point) {
+    crashPoint = point;
+    renameCount = 0;
   }
 
   std::unordered_map<std::string, std::string> files;
@@ -85,6 +105,10 @@ class TestStorage {
   bool failWrite = false;
   size_t writeCount = 0;
   mutable size_t readCount = 0;
+
+ private:
+  CrashPoint crashPoint = CrashPoint::None;
+  size_t renameCount = 0;
 };
 
 inline TestStorage Storage;

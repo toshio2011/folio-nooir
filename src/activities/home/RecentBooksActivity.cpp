@@ -482,11 +482,10 @@ void drawSpineBook(const GfxRenderer& renderer, const SpineShelfPlanner::Book& b
                    bool& thumbnailUnavailable, void* resolverContext,
                    const SpineThumbnailResolver resolveThumbnail, const bool fillCoverFaces = false) {
   if (coverFace) {
-    // Full shelf renders enter here only after the parent renderer has cleared
-    // the framebuffer. Clearing each face again is redundant, and costs a
-    // framebuffer pass for every visible spine cover (especially in Lite's
-    // three-row layout). Bitmap drawing leaves white source pixels untouched,
-    // so the already-white full-frame background remains the correct base.
+    // Shelf furniture is drawn before cover faces, and bitmap drawing leaves
+    // white source pixels untouched. Clear this face so the shelf cannot show
+    // through the white parts of the cover.
+    renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
     bool drewCover = false;
     if (!thumbnailUnavailable && book.coverBmpPath != nullptr && *book.coverBmpPath != '\0') {
       // Spine shelves reuse the bounded parsed-source cache and never generate

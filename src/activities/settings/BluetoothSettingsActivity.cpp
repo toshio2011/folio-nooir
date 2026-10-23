@@ -49,6 +49,7 @@ bool BluetoothSettingsActivity::bluetoothResourceSensitive() const {
 
 void BluetoothSettingsActivity::onEnter() {
   Activity::onEnter();
+  activityManager.setBluetoothSettingsActivationFailed(false);
   view = View::Menu;
   activationState.store(ActivationState::Ready, std::memory_order_release);
   activationResult.store(-1, std::memory_order_release);
@@ -64,6 +65,7 @@ void BluetoothSettingsActivity::onEnter() {
 }
 
 void BluetoothSettingsActivity::onExit() {
+  activityManager.setBluetoothSettingsActivationFailed(false);
   if (BleHid.isScanning()) BleHid.stopScan();
   Activity::onExit();
 }
@@ -82,6 +84,10 @@ void BluetoothSettingsActivity::setBanner(const char* text) {
 }
 
 void BluetoothSettingsActivity::beginPreparation(const bool controlledRetry) {
+  // Initial activation and the explicit Retry action both permit exactly one
+  // post-render lifecycle attempt. A previously failed screen stays latched
+  // until this point.
+  activityManager.setBluetoothSettingsActivationFailed(false);
   controlledRetryUsed.store(controlledRetry, std::memory_order_release);
   activationResult.store(-1, std::memory_order_release);
   activationState.store(ActivationState::Preparing, std::memory_order_release);
@@ -97,6 +103,7 @@ void BluetoothSettingsActivity::beginPreparation(const bool controlledRetry) {
 
 void BluetoothSettingsActivity::onBluetoothActivationResult(const bool started) {
   if (activationState.load(std::memory_order_acquire) != ActivationState::Preparing) return;
+  activityManager.setBluetoothSettingsActivationFailed(!started);
   activationResult.store(started ? 1 : 0, std::memory_order_release);
   requestUpdate();
 }
@@ -283,6 +290,7 @@ void BluetoothSettingsActivity::handleMenuConfirm() {
         bleinput::setReaderSessionBluetoothEnabled(enabled);
         if (enabled && !BleHid.isRunning()) beginPreparation(false);
         else {
+          activityManager.setBluetoothSettingsActivationFailed(false);
           activationState.store(ActivationState::Ready, std::memory_order_release);
           rebuildMenuRows();
           requestUpdate();
@@ -291,6 +299,7 @@ void BluetoothSettingsActivity::handleMenuConfirm() {
         bleinput::setBluetoothEnabled(!SETTINGS.bluetoothEnabled);
         if (SETTINGS.bluetoothEnabled && !BleHid.isRunning()) beginPreparation(false);
         else {
+          activityManager.setBluetoothSettingsActivationFailed(false);
           activationState.store(ActivationState::Ready, std::memory_order_release);
           rebuildMenuRows();
           requestUpdate();

@@ -185,7 +185,20 @@ void ActivityManager::renderTaskLoop() {
     waitingTaskHandle = nullptr;
     renderInFlight.store(false, std::memory_order_release);
     taskEXIT_CRITICAL(&activityManagerSpinlock);
+#if FREEINK_CAP_BLE_HID_HOST
+    if (!bluetoothSettingsActivationFailed_.load(std::memory_order_acquire)) {
+      bleinput::requestLifecycleReevaluation();
+      // The failure can arrive between the first check and reevaluation. In
+      // that case discard this stale signal; an explicit Retry clears the
+      // latch before queuing its own lifecycle request.
+      if (bluetoothSettingsActivationFailed_.load(std::memory_order_acquire)) {
+        bleinput::clearReAdmissionPending();
+        (void)bleinput::takeLifecycleReevaluation();
+      }
+    }
+#else
     bleinput::requestLifecycleReevaluation();
+#endif
     if (waiter) {
       xTaskNotify(waiter, 1, eIncrement);
     }
@@ -823,6 +836,22 @@ void ActivityManager::notifyBluetoothActivationResult(const bool started) {
   if (currentActivity && currentActivity->name == "BluetoothSettings") {
     static_cast<BluetoothSettingsActivity*>(currentActivity.get())->onBluetoothActivationResult(started);
   }
+}
+
+void ActivityManager::setBluetoothSettingsActivationFailed(const bool failed) {
+#if FREEINK_CAP_BLE_HID_HOST
+  bluetoothSettingsActivationFailed_.store(failed, std::memory_order_release);
+#else
+  (void)failed;
+#endif
+}
+
+bool ActivityManager::bluetoothSettingsActivationFailed() const {
+#if FREEINK_CAP_BLE_HID_HOST
+  return bluetoothSettingsActivationFailed_.load(std::memory_order_acquire);
+#else
+  return false;
+#endif
 }
 
 bool ActivityManager::hasPendingRenderWork() const {

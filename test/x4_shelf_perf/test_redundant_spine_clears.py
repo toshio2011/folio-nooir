@@ -1,7 +1,8 @@
-"""Source contract for the full-frame spine shelf clearing optimization.
+"""Source contract for the spine shelf clearing optimization.
 
-The shelf painter must only be called after a full-frame clear. Clearing the
-same panel and each cover face again adds pixel work without changing output.
+The shelf painter follows a full-frame clear, so broad panel clears are
+redundant. Each cover face still needs clearing because bitmap white pixels are
+transparent to the renderer and shelf furniture is painted behind the cover.
 """
 
 from pathlib import Path
@@ -28,10 +29,12 @@ def function_body(signature: str) -> str:
 
 
 class RedundantSpineClearContract(unittest.TestCase):
-    def test_spine_cover_faces_reuse_the_cleared_framebuffer(self):
+    def test_spine_cover_faces_are_cleared_before_bitmap(self):
         body = function_body("void drawSpineBook(")
         self.assertIn("if (coverFace)", body)
-        self.assertNotIn("renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false)", body)
+        face_clear = body.index("renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false)")
+        cover_bitmap = body.index("renderer.drawBitmap(")
+        self.assertLess(face_clear, cover_bitmap)
 
     def test_lite_full_frame_clears_once_before_shelf_paint(self):
         body = function_body("bool RecentBooksActivity::renderCarousel(")

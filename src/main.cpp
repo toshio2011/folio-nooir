@@ -616,6 +616,7 @@ void updateBluetoothLifecycle() {
         WiFi.getMode() != WIFI_MODE_NULL) {
       activityManager.notifyBluetoothActivationResult(false);
       bleinput::clearReAdmissionPending();
+      (void)bleinput::takeLifecycleReevaluation();
       LOG_INF("BLEMEM", "stage=bluetooth_settings_failed reason=wifi_active free=%u largest=%u",
               ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     }
@@ -676,6 +677,14 @@ void updateBluetoothLifecycle() {
     return;
   }
   bluetoothSettingsRenderDeferReported = false;
+  if (strcmp(activityManager.currentActivityName(), "BluetoothSettings") == 0 &&
+      activityManager.bluetoothSettingsActivationFailed()) {
+    // Failed is a one-shot outcome. Leave the saved Bluetooth preference
+    // intact, but wait for the screen's explicit Retry action to re-arm it.
+    bleinput::clearReAdmissionPending();
+    (void)bleinput::takeLifecycleReevaluation();
+    return;
+  }
   if (BleHid.isRunning()) {
     activityManager.notifyBluetoothActivationResult(true);
     bleinput::clearReAdmissionPending();
@@ -696,6 +705,7 @@ void updateBluetoothLifecycle() {
       // The control screen owns a single explicit retry. Do not let a later
       // unrelated lifecycle signal silently start another attempt.
       bleinput::clearReAdmissionPending();
+      (void)bleinput::takeLifecycleReevaluation();
     }
     if (strcmp(activityManager.currentActivityName(), "Settings") == 0 && !settingsBleReturnFloorDeferReported) {
       settingsBleReturnFloorDeferReported = true;
@@ -725,6 +735,7 @@ void updateBluetoothLifecycle() {
     activityManager.notifyBluetoothActivationResult(false);
     if (strcmp(activityManager.currentActivityName(), "BluetoothSettings") == 0) {
       bleinput::clearReAdmissionPending();
+      (void)bleinput::takeLifecycleReevaluation();
     }
     return;
   }
