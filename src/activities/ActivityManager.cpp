@@ -496,9 +496,6 @@ void ActivityManager::loop() {
       if (recentBooksToReader) logActivityHeapShape("reader_transition_after_reader_activity_enter");
       if (readerShellToConcrete) logActivityHeapShape("reader_transition_after_epub_reader_enter");
 #endif
-#if FREEINK_CAP_BLE_HID_HOST
-      if (recentBooksTransition) logActivityHeapShape("after_recent_books_construction");
-#endif
       bleinput::requestLifecycleReevaluation();
 #if NOOIR_EPUB_DIAGNOSTICS
       if (!lifecycleHomeConstructionRecorded &&
