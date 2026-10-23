@@ -642,6 +642,19 @@ void ImageBlock::renderPlaceholder(GfxRenderer& renderer, const int x, const int
 }
 
 void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
+  renderInternal(renderer, x, y, false);
+}
+
+void ImageBlock::renderForCacheWarmup(GfxRenderer& renderer, const int x, const int y) {
+  // A new warm-up is the safe point for retrying a transient extraction
+  // failure. Page::warmImageCaches is followed by a full framebuffer clear.
+  sourceRefreshAttempted = false;
+  deferExtractionUntilWarmup = false;
+  renderInternal(renderer, x, y, true);
+}
+
+void ImageBlock::renderInternal(GfxRenderer& renderer, const int x, const int y,
+                                const bool allowFramebufferScratch) {
   // The font-prewarm scan pass only accumulates glyphs; an image contributes
   // none, and its DirectPixelWriter output bypasses the renderer's scan-mode
   // suppression, so it would otherwise do a full (discarded) cache render every
@@ -698,18 +711,56 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   const bool staleCacheWasRemoved = cacheExistedBeforeRender && !Storage.exists(cachePath.c_str());
   if (staleCacheWasRemoved) cachePresent = false;
 
+  // A failed warm-up extraction is retried only by a later safe warm-up, not
+  // by each BW/grayscale pass of this same page render.
+  if (!allowFramebufferScratch && deferExtractionUntilWarmup) {
+    renderPlaceholder(renderer, x, y);
+    return;
+  }
+
   // The build only header-probed the image for dimensions; pull the actual
   // file out of the book now, on first visit to the page.  A failed/partial
   // SD write can leave the destination present but empty.  Treat that exactly
   // like a missing file so the page gets one clean extraction retry instead of
   // permanently showing the placeholder.
+  bool retryableExtractionFailure = false;
+  auto logExtractionFailure = [&](const char* reason, const size_t freeHeap, const size_t largestHeap,
+                                  const bool framebufferLoaned) {
+    retryableExtractionFailure = true;
+    constexpr size_t kZipWindowBytes = 32u * 1024u;
+    constexpr size_t kStreamInflateHeapEstimate = 52u * 1024u;
+    LOG_ERR("EPUBIMG",
+            "failure=%s source=%s free=%u largest=%u fb_loan=%u largest_below_32k=%u free_below_52k=%u",
+            reason, srcPath.c_str(), static_cast<unsigned>(freeHeap), static_cast<unsigned>(largestHeap),
+            framebufferLoaned ? 1u : 0u, largestHeap < kZipWindowBytes ? 1u : 0u,
+            freeHeap < kStreamInflateHeapEstimate ? 1u : 0u);
+  };
   auto extractSource = [&](const bool replaceExisting) {
     if (srcPath.empty() || !extractFn) return false;
     if (replaceExisting) Storage.remove(imagePath.c_str());
     LOG_DBG("IMG", "%s %s -> %s", replaceExisting ? "Refreshing" : "Lazy-extracting", srcPath.c_str(),
             imagePath.c_str());
-    if (!extractFn(extractCtx, srcPath.c_str(), imagePath.c_str())) {
-      LOG_ERR("IMG", "Image extraction failed: %s", srcPath.c_str());
+    const size_t freeHeap = ESP.getFreeHeap();
+    const size_t largestHeap = ESP.getMaxAllocHeap();
+    const bool framebufferLoaned = allowFramebufferScratch && renderer.hasFrameBuffer();
+    bool extractedFromBook = false;
+    if (framebufferLoaned) {
+      GfxRenderer::FrameBufferLoan loan(renderer);
+      extractedFromBook = extractFn(extractCtx, srcPath.c_str(), imagePath.c_str());
+      loan.end();
+      if (!renderer.hasFrameBuffer()) {
+        LOG_ERR("EPUBIMG", "failure=framebuffer_restore source=%s", srcPath.c_str());
+        retryableExtractionFailure = true;
+        return false;
+      }
+    } else {
+      // When a caller already holds a framebuffer loan, InflateStream can
+      // claim that existing scratch directly. Otherwise this is the ordinary
+      // page-render path and it must not discard the in-progress framebuffer.
+      extractedFromBook = extractFn(extractCtx, srcPath.c_str(), imagePath.c_str());
+    }
+    if (!extractedFromBook) {
+      logExtractionFailure("extract_callback_failed", freeHeap, largestHeap, framebufferLoaned);
       return false;
     }
     // E-ink X3/X4 units can report a just-closed SdFat file before the card has
@@ -721,15 +772,14 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
     const bool readable = Storage.openFileForRead("IMG", imagePath, extracted) && extracted.size() > 16;
     if (extracted) extracted.close();
     if (!readable) {
-      LOG_ERR("IMG", "Image extraction produced no usable data: %s", srcPath.c_str());
+      logExtractionFailure("extract_output_invalid", freeHeap, largestHeap, framebufferLoaned);
       Storage.remove(imagePath.c_str());
     }
     return readable;
   };
 
-  if (!Storage.exists(imagePath.c_str())) {
-    extractSource(false);
-  }
+  const bool sourceWasPresent = Storage.exists(imagePath.c_str());
+  if (!sourceWasPresent) extractSource(false);
 
   // No cache - need to decode the image.  Verify the extracted source before
   // handing it to JPEGDEC/PNGdec; retry once when a previous interrupted write
@@ -742,7 +792,10 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
       file.close();
     }
   }
-  if (fileSize <= 16 && extractSource(true)) {
+  // Retry a pre-existing tiny/partial source once. A failed first extraction
+  // is transient and is deferred to the next warm-up rather than repeated in
+  // this same render.
+  if (sourceWasPresent && fileSize <= 16 && !retryableExtractionFailure && extractSource(true)) {
     HalFile refreshed;
     if (Storage.openFileForRead("IMG", imagePath, refreshed)) {
       fileSize = refreshed.size();
@@ -750,6 +803,12 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
     }
   }
   if (fileSize <= 16) {
+    if (retryableExtractionFailure) {
+      deferExtractionUntilWarmup = true;
+      cachePresent = false;
+      renderPlaceholder(renderer, x, y);
+      return;
+    }
     LOG_ERR("IMG", "Image source is missing or empty: %s", imagePath.c_str());
     rememberImageFailure(imagePath);
     renderPlaceholder(renderer, x, y);
@@ -810,6 +869,7 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
   // cache or a tiny/truncated extracted source, which are the cases where a
   // second extraction can actually repair the input.
   const bool sourceLooksTruncated = fileSize <= 4096;
+  bool sourceRefreshExtractionFailed = false;
   if (!success && !sourceRefreshAttempted && !srcPath.empty() && extractFn &&
       (staleCacheWasRemoved || sourceLooksTruncated)) {
     // A failed first extraction can leave a non-empty but truncated source on
@@ -825,12 +885,22 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
     Storage.remove(cachePath.c_str());
     if (!extractSource(true)) {
       LOG_ERR("IMG", "Could not re-extract image source: %s", srcPath.c_str());
+      sourceRefreshExtractionFailed = retryableExtractionFailure;
     } else if (Storage.exists(imagePath.c_str())) {
       LOG_DBG("IMG", "Retrying decode after source refresh: %s", imagePath.c_str());
       success = decodeImage(config);
     }
   }
   if (!success) {
+    if (sourceRefreshExtractionFailed) {
+      deferExtractionUntilWarmup = true;
+      cachePresent = false;
+      LOG_ERR("EPUBIMG", "failure=source_refresh_deferred source=%s", srcPath.c_str());
+      renderPlaceholder(renderer, x, y);
+      EpubDiagnostics::record("image_decode_end", -1, -1, millis() - decodeStartMs, fileSize, 0,
+                              static_cast<size_t>(width) * static_cast<size_t>(height), 0);
+      return;
+    }
     LOG_ERR("IMG", "Failed to decode image: %s", imagePath.c_str());
     LOG_ERR("EPUBIMG", "failure=decode progressive=%d fallback=%s path=%s", progressiveJpeg ? 1 : 0,
             useTjpgd ? "TJpgDec" : "JPEGDEC/PNGDEC", imagePath.c_str());

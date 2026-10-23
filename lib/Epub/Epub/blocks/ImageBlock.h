@@ -50,6 +50,11 @@ class ImageBlock final : public Block {
   static bool renderFromPixelCacheBand(GfxRenderer& renderer, const std::string& cachePath, int x, int y,
                                        int width, int height);
 
+  // Cache warm-up runs before the page's real render and clears the framebuffer
+  // afterward, so it may lend framebuffer storage to the EPUB inflater while
+  // extracting a missing image.
+  void renderForCacheWarmup(GfxRenderer& renderer, int x, int y);
+
   // Lazy extraction hook: the section build only header-probes images for their
   // dimensions; the file at imagePath is extracted out of the book on first
   // render, via this callback (function pointer + context, not std::function —
@@ -66,6 +71,8 @@ class ImageBlock final : public Block {
   static std::unique_ptr<ImageBlock> deserialize(HalFile& file);
 
  private:
+  void renderInternal(GfxRenderer& renderer, int x, int y, bool allowFramebufferScratch);
+
   std::string imagePath;
   std::string srcPath;  // book-internal source href; empty once known-extracted
   int16_t width;
@@ -73,6 +80,9 @@ class ImageBlock final : public Block {
   // Prevent repeated EPUB re-inflation across the BW and grayscale passes when
   // a decoder failure persists for this deserialized page image.
   bool sourceRefreshAttempted = false;
+  // Extraction failures are retryable on the next safe cache warm-up. This
+  // prevents repeated attempts in the same page render cycle only.
+  bool deferExtractionUntilWarmup = false;
   // The same ImageBlock may be rendered for the BW pass and several grayscale
   // bands. Cache existence is stable for that page render, so memoize the
   // cheap result and avoid an SD stat before every replay. The flag is scoped

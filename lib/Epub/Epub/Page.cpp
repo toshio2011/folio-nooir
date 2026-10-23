@@ -67,6 +67,10 @@ void PageImage::render(GfxRenderer& renderer, const int fontId, const int xOffse
   imageBlock->render(renderer, xPos + xOffset, yPos + yOffset);
 }
 
+void PageImage::renderForCacheWarmup(GfxRenderer& renderer, const int xOffset, const int yOffset) {
+  imageBlock->renderForCacheWarmup(renderer, xPos + xOffset, yPos + yOffset);
+}
+
 void PageImage::renderPlaceholder(GfxRenderer& renderer, const int xOffset, const int yOffset) const {
   imageBlock->renderPlaceholder(renderer, xPos + xOffset, yPos + yOffset);
 }
@@ -166,7 +170,7 @@ void Page::warmImageCaches(GfxRenderer& renderer, const int xOffset, const int y
     // This is intentionally a single decode pass.  ImageBlock's cache path
     // makes subsequent BW/gray passes stream from the completed .pxc instead
     // of allocating another decoder or re-reading the EPUB entry.
-    image.render(renderer, 0, xOffset, yOffset);
+    image.renderForCacheWarmup(renderer, xOffset, yOffset);
   }
 }
 

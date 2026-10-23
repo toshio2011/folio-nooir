@@ -73,6 +73,37 @@ class ReaderBluetoothToggleContract(unittest.TestCase):
         result = function_body(BLE_SETTINGS, "void BluetoothSettingsActivity::onBluetoothActivationResult(")
         self.assertIn("activityManager.setBluetoothSettingsActivationFailed(!started);", result)
 
+    def test_bluetooth_off_remains_available_after_activation_failure(self):
+        loop = function_body(BLE_SETTINGS, "void BluetoothSettingsActivity::loop()")
+        failed = loop[loop.index("if (activationState.load(std::memory_order_acquire) == ActivationState::Failed)") :]
+        self.assertIn("const int optionCount = retryAvailable ? 3 : 2;", failed)
+        self.assertIn("if (mode == Mode::ReaderSession)", failed)
+        self.assertIn("bleinput::setReaderSessionBluetoothEnabled(false);", failed)
+        self.assertIn("bleinput::setBluetoothEnabled(false);", failed)
+        self.assertIn("activationState.store(ActivationState::Ready", failed)
+
+        render = function_body(BLE_SETTINGS, "void BluetoothSettingsActivity::render(")
+        failed_render = render[render.index("if (state == ActivationState::Failed)") :]
+        self.assertIn("tr(STR_STATE_OFF)", failed_render)
+
+    def test_bluetooth_off_remains_available_while_activation_is_pending(self):
+        loop = function_body(BLE_SETTINGS, "void BluetoothSettingsActivity::loop()")
+        preparing = loop[
+            loop.index("if (activationState.load(std::memory_order_acquire) == ActivationState::Preparing)") :
+            loop.index("if (activationState.load(std::memory_order_acquire) == ActivationState::Failed)")
+        ]
+        self.assertIn("handleListTouch(selectedOption, 2", preparing)
+        self.assertIn("bleinput::setReaderSessionBluetoothEnabled(false);", preparing)
+        self.assertIn("bleinput::setBluetoothEnabled(false);", preparing)
+
+        render = function_body(BLE_SETTINGS, "void BluetoothSettingsActivity::render(")
+        preparing_render = render[
+            render.index("if (state == ActivationState::Preparing)") :
+            render.index("if (state == ActivationState::Failed)")
+        ]
+        self.assertIn("GUI.drawList(renderer, listRect, 2", preparing_render)
+        self.assertIn("tr(STR_STATE_OFF)", preparing_render)
+
 
 if __name__ == "__main__":
     unittest.main()
