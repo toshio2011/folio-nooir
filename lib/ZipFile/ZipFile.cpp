@@ -424,9 +424,10 @@ uint8_t* ZipFile::readFileToMemory(const char* filename, size_t* size, const boo
     const uint32_t freeBeforeInflate = static_cast<uint32_t>(ESP.getFreeHeap());
     const uint32_t largestBeforeInflate = static_cast<uint32_t>(ESP.getMaxAllocHeap());
     if (!inflate.init(false)) {
-      LOG_ERR("ZIP", "Failed to init inflate stream entry=%s mode=one_shot free=%u largest=%u compressed=%u output=%u",
-              filename, static_cast<unsigned>(freeBeforeInflate), static_cast<unsigned>(largestBeforeInflate),
-              static_cast<unsigned>(deflatedDataSize), static_cast<unsigned>(inflatedDataSize));
+      LOG_ERR("ZIP", "Failed to init inflate stream entry=%s mode=one_shot failure=%s free=%u largest=%u compressed=%u output=%u",
+              filename, inflate.initFailureName(), static_cast<unsigned>(freeBeforeInflate),
+              static_cast<unsigned>(largestBeforeInflate), static_cast<unsigned>(deflatedDataSize),
+              static_cast<unsigned>(inflatedDataSize));
       free(fileReadBuffer);
       free(data);
       return nullptr;
@@ -526,10 +527,10 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
     const uint32_t freeBeforeInflate = static_cast<uint32_t>(ESP.getFreeHeap());
     const uint32_t largestBeforeInflate = static_cast<uint32_t>(ESP.getMaxAllocHeap());
     if (!inflate.init(true)) {
-      LOG_ERR("ZIP", "Failed to init inflate stream entry=%s mode=streaming free=%u largest=%u chunk=%u compressed=%u output=%u",
-              filename, static_cast<unsigned>(freeBeforeInflate), static_cast<unsigned>(largestBeforeInflate),
-              static_cast<unsigned>(chunkSize), static_cast<unsigned>(deflatedDataSize),
-              static_cast<unsigned>(inflatedDataSize));
+      LOG_ERR("ZIP", "Failed to init inflate stream entry=%s mode=streaming failure=%s free=%u largest=%u chunk=%u compressed=%u output=%u",
+              filename, inflate.initFailureName(), static_cast<unsigned>(freeBeforeInflate),
+              static_cast<unsigned>(largestBeforeInflate), static_cast<unsigned>(chunkSize),
+              static_cast<unsigned>(deflatedDataSize), static_cast<unsigned>(inflatedDataSize));
       free(outputBuffer);
       free(fileReadBuffer);
       return false;

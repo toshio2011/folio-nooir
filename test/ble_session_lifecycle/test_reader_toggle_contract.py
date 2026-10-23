@@ -104,6 +104,42 @@ class ReaderBluetoothToggleContract(unittest.TestCase):
         self.assertIn("GUI.drawList(renderer, listRect, 2", preparing_render)
         self.assertIn("tr(STR_STATE_OFF)", preparing_render)
 
+    def test_failed_manual_scan_start_preserves_saved_bluetooth_preference(self):
+        scan = function_body(BLE_SETTINGS, "void BluetoothSettingsActivity::startScanView()")
+        failure = scan[scan.index("if (!BleHid.isRunning() && !bleinput::ensureStarted())") :]
+        self.assertNotIn("SETTINGS.bluetoothEnabled = 0", failure)
+        self.assertNotIn("SETTINGS.saveToFile()", failure)
+        self.assertIn("setBanner(tr(STR_BT_START_FAILED));", failure)
+
+    def test_no_device_timeout_stops_runtime_without_erasing_saved_preference(self):
+        timeout = function_body(BLE_SOURCE, "void updateNoDeviceWindow(")
+        self.assertIn("suppressNoDeviceRetryUntilLifecycleBoundary();", timeout)
+        self.assertIn("requestLifecycleReevaluation();", timeout)
+        self.assertNotIn("SETTINGS.bluetoothEnabled = 0", timeout)
+        self.assertNotIn("SETTINGS.saveToFile()", timeout)
+        self.assertIn("g_noDeviceTimeoutStoppedHost.store(true", BLE_SOURCE)
+        self.assertIn("lifecycleReevaluationAllowed(", BLE_SOURCE)
+        reevaluate = function_body(BLE_SOURCE, "void requestLifecycleReevaluation()")
+        self.assertIn("portENTER_CRITICAL(&g_noDeviceTimeoutMux);", reevaluate)
+        self.assertIn("portEXIT_CRITICAL(&g_noDeviceTimeoutMux);", reevaluate)
+        self.assertNotIn("currentActivityName()", BLE_SOURCE[: BLE_SOURCE.index("void updateNoDeviceWindow(")])
+        self.assertIn("bleinput::clearNoDeviceTimeoutSuppression();", BLE_SETTINGS)
+
+    def test_committed_activity_changes_clear_timeout_pause_before_reentry(self):
+        starts = []
+        offset = 0
+        while True:
+            offset = ACTIVITY_MANAGER.find("currentActivity = std::move(", offset)
+            if offset < 0:
+                break
+            starts.append(offset)
+            offset += 1
+        self.assertEqual(len(starts), 3)
+        for start in starts:
+            self.assertIn("bleinput::clearNoDeviceTimeoutSuppression();",
+                          ACTIVITY_MANAGER[start : start + 220])
+        self.assertIn("bleinput::requestLifecycleReevaluation();", ACTIVITY_MANAGER)
+
 
 if __name__ == "__main__":
     unittest.main()

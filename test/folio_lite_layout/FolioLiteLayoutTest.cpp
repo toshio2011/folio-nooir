@@ -94,3 +94,11 @@ TEST(FolioLiteLayout, SpineArtworkCanBePatchedOnlyForAnUnchangedSelectionFrame) 
   EXPECT_FALSE(FolioLiteLayoutPolicy::canPatchSpineSelection(true, true, true, false, true));
   EXPECT_FALSE(FolioLiteLayoutPolicy::canPatchSpineSelection(true, true, true, true, false));
 }
+
+TEST(FolioLiteLayout, PopupCanReuseOnlyAnUnchangedShelfWithoutBackgroundWork) {
+  EXPECT_TRUE(FolioLiteLayoutPolicy::canDrawPopupOverRetainedShelf(true, true, true, true));
+  EXPECT_FALSE(FolioLiteLayoutPolicy::canDrawPopupOverRetainedShelf(false, true, true, true));
+  EXPECT_FALSE(FolioLiteLayoutPolicy::canDrawPopupOverRetainedShelf(true, false, true, true));
+  EXPECT_FALSE(FolioLiteLayoutPolicy::canDrawPopupOverRetainedShelf(true, true, false, true));
+  EXPECT_FALSE(FolioLiteLayoutPolicy::canDrawPopupOverRetainedShelf(true, true, true, false));
+}

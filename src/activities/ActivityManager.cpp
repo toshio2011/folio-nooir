@@ -336,6 +336,7 @@ void ActivityManager::loop() {
       } else {
         currentActivity = std::move(stackActivities.back());
         stackActivities.pop_back();
+        bleinput::clearNoDeviceTimeoutSuppression();
         LOG_DBG("ACT", "Popped from activity stack, new size = %zu", stackActivities.size());
         if (currentActivity->isReaderActivity()) suppressRestoredReaderInput = true;
         bool lockReleasedForHandler = false;
@@ -362,6 +363,7 @@ void ActivityManager::loop() {
               recentBooks->restoreTransientStateAfterReadingStats();
             }
           }
+          bleinput::requestLifecycleReevaluation();
           requestUpdate();
           if (readingStatsActivity && currentActivity && currentActivity->name == "RecentBooks") {
             LOG_INF("RSDIAG", "stage=parent_redraw_requested free=%u largest=%u",
@@ -447,6 +449,7 @@ void ActivityManager::loop() {
 #endif
       pendingAction = PendingAction::None;
       currentActivity = std::move(pendingActivity);
+      bleinput::clearNoDeviceTimeoutSuppression();
       // These screens do not use the SD-backed UI font and may need the heap
       // immediately. Release its complete asset set while the transition lock
       // is still held, before the activity's onEnter() starts its own work.
@@ -603,6 +606,7 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
   } else {
     // No current activity, safe to launch immediately
     currentActivity = std::move(newActivity);
+    bleinput::clearNoDeviceTimeoutSuppression();
 #if FREEINK_CAP_BLE_HID_HOST
     if (currentActivity->bluetoothResourceSensitive() && BleHid.isRunning()) {
       bleinput::recordDiagnosticEvent("resource_stop activity=%.20s", currentActivity->name.c_str());

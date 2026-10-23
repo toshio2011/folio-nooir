@@ -72,6 +72,11 @@ constexpr bool readerBleStartMemoryAdmitted(const std::size_t freeHeap, const st
   return freeHeap >= kReaderBleStartMinFreeHeap && largestBlock >= kReaderBleStartMinLargestBlock;
 }
 
+constexpr bool lifecycleReevaluationAllowed(const bool bluetoothEnabled, const bool webExclusive,
+                                             const bool noDeviceTimeoutStoppedHost) {
+  return bluetoothEnabled && !webExclusive && !noDeviceTimeoutStoppedHost;
+}
+
 constexpr bool homeTransitionNeedsBleSuspension(const bool bleRunning, const bool enteringRecentBooks,
                                                 const std::size_t freeHeap) {
   return bleRunning && enteringRecentBooks && freeHeap < kHomeBleSuspendMinFreeHeap;

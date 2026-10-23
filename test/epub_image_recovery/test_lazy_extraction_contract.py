@@ -72,6 +72,8 @@ class EpubImageRecoveryContract(unittest.TestCase):
         self.assertIn("free=%u", streaming)
         self.assertIn("largest=%u", streaming)
         self.assertIn("chunk=%u", streaming)
+        self.assertIn("failure=%s", streaming)
+        self.assertIn("inflate.initFailureName()", streaming)
 
     def test_failed_stream_extraction_removes_partial_destination(self):
         extract = function_body(EPUB, "bool Epub::extractItemToFile(")

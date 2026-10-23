@@ -61,6 +61,8 @@ bool connectionAdmissionAllowed();
 // decide when startup is safe.
 void setBluetoothEnabled(bool enabled);
 void toggleBluetooth();
+// Clear a no-device timeout pause after an explicit retry action.
+void clearNoDeviceTimeoutSuppression();
 
 // Reader-scoped Bluetooth preference. The session starts from the saved
 // Settings value, but Reader controls change only the temporary override.

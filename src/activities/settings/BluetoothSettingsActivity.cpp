@@ -88,6 +88,7 @@ void BluetoothSettingsActivity::beginPreparation(const bool controlledRetry) {
   // post-render lifecycle attempt. A previously failed screen stays latched
   // until this point.
   activityManager.setBluetoothSettingsActivationFailed(false);
+  bleinput::clearNoDeviceTimeoutSuppression();
   controlledRetryUsed.store(controlledRetry, std::memory_order_release);
   activationResult.store(-1, std::memory_order_release);
   activationState.store(ActivationState::Preparing, std::memory_order_release);
@@ -203,15 +204,15 @@ void BluetoothSettingsActivity::resetMappingsToDefaults() {
 }
 
 void BluetoothSettingsActivity::startScanView() {
+  bleinput::clearNoDeviceTimeoutSuppression();
   if (!bleinput::connectionAdmissionAllowed()) {
     setBanner(tr(STR_BT_START_FAILED));
     requestUpdate();
     return;
   }
   if (!BleHid.isRunning() && !bleinput::ensureStarted()) {
-    SETTINGS.bluetoothEnabled = 0;
-    SETTINGS.saveToFile();
-    rebuildMenuRows();
+    // A failed scan startup is a runtime failure, not a user preference
+    // change. Keep saved ON intent so a later explicit retry can recover.
     setBanner(tr(STR_BT_START_FAILED));
     requestUpdate();
     return;
@@ -226,6 +227,7 @@ void BluetoothSettingsActivity::startScanView() {
 }
 
 void BluetoothSettingsActivity::beginPairedConnect() {
+  bleinput::clearNoDeviceTimeoutSuppression();
   if (pairedIndex >= BleHid.pairedCount()) return;
   if (!bleinput::connectionAdmissionAllowed()) {
     setBanner(tr(STR_BT_START_FAILED));

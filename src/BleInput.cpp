@@ -49,6 +49,8 @@ std::atomic<uint32_t> g_readerBleReturnGeneration{0};
 std::atomic<bool> g_webExclusiveActive{false};
 std::atomic<bool> g_readerBluetoothSessionActive{false};
 std::atomic<bool> g_readerSessionBluetoothEnabled{false};
+std::atomic<bool> g_noDeviceTimeoutStoppedHost{false};
+portMUX_TYPE g_noDeviceTimeoutMux = portMUX_INITIALIZER_UNLOCKED;
 char g_pendingNotification[64] = {};
 bool g_notificationPending = false;
 bool g_noDeviceWindowActive = false;
@@ -221,6 +223,12 @@ void resetNoDeviceWindow() {
   g_noDeviceWindowStartMs = 0;
 }
 
+void suppressNoDeviceRetryUntilLifecycleBoundary() {
+  portENTER_CRITICAL(&g_noDeviceTimeoutMux);
+  g_noDeviceTimeoutStoppedHost.store(true, std::memory_order_relaxed);
+  portEXIT_CRITICAL(&g_noDeviceTimeoutMux);
+}
+
 void updateNoDeviceWindow(const bool running, const bool connected) {
   const uint16_t timeoutSeconds = SETTINGS.bluetoothNoDeviceTimeoutSeconds;
   const bool hasConnectionOpportunity = BleHid.isConnecting() || BleHid.isScanning() || BleHid.pairedCount() > 0;
@@ -238,16 +246,18 @@ void updateNoDeviceWindow(const bool running, const bool connected) {
   }
   if (now - g_noDeviceWindowStartMs < static_cast<uint32_t>(timeoutSeconds) * 1000UL) return;
 
-  // Reclaim NimBLE before persisting or notifying: both settings I/O and a
-  // Reader notice must happen after the BLE heap has been returned.
-  if (g_readerBluetoothSessionActive.load(std::memory_order_acquire)) {
+  // Stop retrying after the configured timeout, but retain the saved
+  // preference so BLE can recover after a later lifecycle boundary.
+  const bool readerSession = g_readerBluetoothSessionActive.load(std::memory_order_acquire);
+  suppressNoDeviceRetryUntilLifecycleBoundary();
+  if (readerSession) {
     g_readerSessionBluetoothEnabled.store(false, std::memory_order_release);
-  } else {
-    SETTINGS.bluetoothEnabled = 0;
   }
   resetNoDeviceWindow();
   stop();
-  if (!g_readerBluetoothSessionActive.load(std::memory_order_acquire)) SETTINGS.saveToFile();
+  requestLifecycleReevaluation();
+  LOG_INF("BLEMEM", "stage=no_device_timeout stopped=1 saved=%d session=%d",
+          SETTINGS.bluetoothEnabled ? 1 : 0, readerSession ? 1 : 0);
   queueNotification(I18N.get(StrId::STR_BT_TURNED_OFF_NO_DEVICE));
 }
 
@@ -266,22 +276,23 @@ void setActivityContext(const char* name) {
 
 void requestLifecycleReevaluation() {
 #if FREEINK_CAP_BLE_HID_HOST
-  if (g_webExclusiveActive.load(std::memory_order_acquire)) {
+  portENTER_CRITICAL(&g_noDeviceTimeoutMux);
+  if (!lifecycleReevaluationAllowed(effectiveBluetoothEnabled(),
+                                   g_webExclusiveActive.load(std::memory_order_acquire),
+                                   g_noDeviceTimeoutStoppedHost.load(std::memory_order_relaxed))) {
     g_reAdmissionPending.store(false, std::memory_order_release);
     g_lifecycleReevaluationPending.store(false, std::memory_order_release);
+    portEXIT_CRITICAL(&g_noDeviceTimeoutMux);
     return;
   }
-  if (effectiveBluetoothEnabled()) {
-    g_reAdmissionPending.store(true, std::memory_order_release);
-    if (g_readerBleReturnPending.load(std::memory_order_acquire) &&
-        g_readerBleReturnRetryBlocked.load(std::memory_order_acquire)) {
-      return;
-    }
-    g_lifecycleReevaluationPending.store(true, std::memory_order_release);
-  } else {
-    g_reAdmissionPending.store(false, std::memory_order_release);
-    g_lifecycleReevaluationPending.store(false, std::memory_order_release);
+  g_reAdmissionPending.store(true, std::memory_order_release);
+  if (g_readerBleReturnPending.load(std::memory_order_acquire) &&
+      g_readerBleReturnRetryBlocked.load(std::memory_order_acquire)) {
+    portEXIT_CRITICAL(&g_noDeviceTimeoutMux);
+    return;
   }
+  g_lifecycleReevaluationPending.store(true, std::memory_order_release);
+  portEXIT_CRITICAL(&g_noDeviceTimeoutMux);
 #endif
 }
 
@@ -412,7 +423,8 @@ void recordDiagnosticEvent(const char* format, ...) {
 
 bool connectionAdmissionAllowed() {
 #if FREEINK_CAP_BLE_HID_HOST
-  if (g_webExclusiveActive.load(std::memory_order_acquire) || !effectiveBluetoothEnabled() ||
+  if (g_noDeviceTimeoutStoppedHost.load(std::memory_order_acquire) ||
+      g_webExclusiveActive.load(std::memory_order_acquire) || !effectiveBluetoothEnabled() ||
       !activityManager.bluetoothShouldBeActive() || WiFi.getMode() != WIFI_MODE_NULL)
     return false;
 
@@ -445,6 +457,7 @@ bool connectionAdmissionAllowed() {
 
 void setBluetoothEnabled(const bool enabled) {
 #if FREEINK_CAP_BLE_HID_HOST
+  clearNoDeviceTimeoutSuppression();
   SETTINGS.bluetoothEnabled = enabled ? 1 : 0;
   resetNoDeviceWindow();
   requestLifecycleReevaluation();
@@ -468,6 +481,15 @@ void toggleBluetooth() {
 #endif
 }
 
+void clearNoDeviceTimeoutSuppression() {
+#if FREEINK_CAP_BLE_HID_HOST
+  portENTER_CRITICAL(&g_noDeviceTimeoutMux);
+  const bool wasSuppressed = g_noDeviceTimeoutStoppedHost.exchange(false, std::memory_order_relaxed);
+  portEXIT_CRITICAL(&g_noDeviceTimeoutMux);
+  if (wasSuppressed) LOG_INF("BLEMEM", "stage=no_device_timeout_retry_unblocked boundary=explicit_or_activity");
+#endif
+}
+
 bool bluetoothEnabled() {
 #if FREEINK_CAP_BLE_HID_HOST
   return effectiveBluetoothEnabled();
@@ -488,6 +510,7 @@ bool readerSessionBluetoothEnabled() {
 void beginReaderBluetoothSession() {
 #if FREEINK_CAP_BLE_HID_HOST
   if (g_readerBluetoothSessionActive.load(std::memory_order_acquire)) return;
+  clearNoDeviceTimeoutSuppression();
   g_readerSessionBluetoothEnabled.store(SETTINGS.bluetoothEnabled != 0, std::memory_order_release);
   g_readerBluetoothSessionActive.store(true, std::memory_order_release);
   resetNoDeviceWindow();
@@ -530,6 +553,7 @@ void endReaderBluetoothSession() {
 void setReaderSessionBluetoothEnabled(const bool enabled) {
 #if FREEINK_CAP_BLE_HID_HOST
   if (!g_readerBluetoothSessionActive.load(std::memory_order_acquire)) return;
+  clearNoDeviceTimeoutSuppression();
   const bool previous = g_readerSessionBluetoothEnabled.exchange(enabled, std::memory_order_acq_rel);
   if (previous == enabled) return;
   resetNoDeviceWindow();

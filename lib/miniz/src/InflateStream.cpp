@@ -20,6 +20,7 @@ bool InflateStream::init(const bool streaming) {
   // Every consumer constructs a fresh stream per operation, so acquire storage
   // from scratch each init (releasing any prior backing first).
   deinit();
+  initFailureReason = InitFailure::None;
 
   // During a framebuffer loan the lent 48KB is up for grabs: state (~11KB) +
   // window (32KB) fit inside it, so a chapter-build inflate costs the heap
@@ -34,10 +35,16 @@ bool InflateStream::init(const bool streaming) {
     // an incomplete type so consumers never include miniz; both blocks are
     // freed in deinit()/the destructor.
     state = static_cast<tinfl_decompressor*>(malloc(sizeof(tinfl_decompressor)));
-    if (!state) return false;
+    if (!state) {
+      initFailureReason = InitFailure::StateAllocation;
+      return false;
+    }
     if (streaming) {
       window = static_cast<uint8_t*>(malloc(WINDOW_SIZE));
-      if (!window) return false;  // state kept; deinit()/next init reclaims it
+      if (!window) {
+        initFailureReason = InitFailure::WindowAllocation;
+        return false;  // state kept; deinit()/next init reclaims it
+      }
     }
   }
 

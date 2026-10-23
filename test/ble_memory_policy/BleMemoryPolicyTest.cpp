@@ -9,6 +9,13 @@ TEST(BleMemoryPolicy, RequiresBothGlobalColdStartFloors) {
   EXPECT_FALSE(bleinput::readerBleStartMemoryAdmitted(96 * 1024, 36 * 1024 - 1));
 }
 
+TEST(BleMemoryPolicy, LifecycleRetryRequiresPreferenceAndNoExclusiveOrTimeoutGate) {
+  EXPECT_TRUE(bleinput::lifecycleReevaluationAllowed(true, false, false));
+  EXPECT_FALSE(bleinput::lifecycleReevaluationAllowed(false, false, false));
+  EXPECT_FALSE(bleinput::lifecycleReevaluationAllowed(true, true, false));
+  EXPECT_FALSE(bleinput::lifecycleReevaluationAllowed(true, false, true));
+}
+
 TEST(BleMemoryPolicy, MeasuredCleanReaderIdleSampleIsAdmitted) {
   EXPECT_TRUE(bleinput::readerBleStartMemoryAdmitted(99952, 65524));
   EXPECT_TRUE(bleinput::readerBleStartMemoryAdmitted(105420, 38900));

@@ -244,6 +244,9 @@ class RecentBooksActivity final : public Activity {
   bool statsReturnAwaitingFirstRender = false;
   bool swallowMenuBackRelease = false;
   bool longPressActionShown = false;
+  // True only when the Lite framebuffer still contains an OptionPopup over a
+  // complete shelf, allowing another popup frame to reuse that background.
+  bool litePopupFrameRetainsShelf = false;
   bool swallowBookConfirmRelease = false;
   bool swallowBookBackRelease = false;
 

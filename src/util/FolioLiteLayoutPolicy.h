@@ -69,6 +69,11 @@ constexpr bool canPatchSpineSelection(const bool previousFrameMatches, const boo
   return previousFrameMatches && selectionChanged && sameTab && noOverlay && noBackgroundWork;
 }
 
+constexpr bool canDrawPopupOverRetainedShelf(const bool popupActive, const bool sameShelfFrame,
+                                             const bool noBackgroundWork, const bool retainedFrameIsShelf) {
+  return popupActive && sameShelfFrame && noBackgroundWork && retainedFrameIsShelf;
+}
+
 inline uint8_t fromFolioLayout(const uint8_t layout) {
   switch (layout) {
     case FOLIO_LAYOUT_THREE_COVER_CAROUSEL:

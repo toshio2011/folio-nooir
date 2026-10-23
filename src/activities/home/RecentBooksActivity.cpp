@@ -2494,6 +2494,7 @@ void RecentBooksActivity::onEnter() {
     lastFeaturedCoverPath.clear();
   }
   overlayFrameShown = false;
+  litePopupFrameRetainsShelf = false;
   initialRenderPending = true;
   requestUpdate();
 }
@@ -2508,6 +2509,7 @@ void RecentBooksActivity::onExit() {
 #endif
   if (usesPersistentHomeSnapshot() && visibleBookCount > 0) writeSnapshotNavigationState();
   Activity::onExit();
+  litePopupFrameRetainsShelf = false;
   // This activity is leaving permanently. Release the rebuildable book-vector
   // allocation before invalidating thumbnail sources so the outgoing shelf's
   // largest owner is returned at a deliberate transition boundary rather than
@@ -3373,6 +3375,29 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
             static_cast<unsigned>(activeBookLayout()), static_cast<unsigned long>(elapsedUs));
     return true;
   }
+
+  const bool popupActive = menuPopup.isActive() || bookActionsPopup.isActive();
+  const bool retainedFrameIsShelf = !overlayFrameShown || litePopupFrameRetainsShelf;
+  const bool sameLiteShelfFrame = !initialRenderPending && selectorIndex == lastRenderedSelectorIndex &&
+                                  activeTab == lastRenderedTab && activeBookLayout() == lastRenderedLiteLayout &&
+                                  liteSpineLayout == lastRenderedLiteSpineLayout &&
+                                  liteSpinePageStart == lastRenderedLiteSpinePageStart;
+  const bool noPopupBackgroundWork = noBackgroundWork && !liteSelectedDetailsDirty;
+  if (FolioLiteLayoutPolicy::canDrawPopupOverRetainedShelf(popupActive, sameLiteShelfFrame,
+                                                          noPopupBackgroundWork, retainedFrameIsShelf)) {
+    // The completed Lite shelf is still in the renderer framebuffer. Paint
+    // only the popup; render() forces one clean shelf rebuild after it closes.
+    if (menuPopup.processRender(renderer, mappedInput) || bookActionsPopup.processRender(renderer, mappedInput)) {
+      overlayFrameShown = true;
+      litePopupFrameRetainsShelf = true;
+      return false;
+    }
+  }
+
+  // Any full Lite repaint replaces the retained frame. A subsequent option
+  // popup may mark it reusable again after the complete shelf has been drawn.
+  litePopupFrameRetainsShelf = false;
+
   if (visibleBookCount > 0 && FolioLiteLayoutPolicy::canPatchSpineSelection(
                                   previousLiteSpineFrameMatches,
                                   detailsNeedPatch,
@@ -3659,10 +3684,12 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
 
   if (menuPopup.processRender(renderer, mappedInput)) {
     overlayFrameShown = true;
+    litePopupFrameRetainsShelf = true;
     return false;
   }
   if (bookActionsPopup.processRender(renderer, mappedInput)) {
     overlayFrameShown = true;
+    litePopupFrameRetainsShelf = true;
     return false;
   }
   if (carouselHqPreparationActive) {
@@ -3679,6 +3706,7 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
     displayLiteHomeFrame(detailsDurationUs, shelfDurationUs, statsDurationUs);
     carouselHqPopupRendered = true;
     overlayFrameShown = true;
+    litePopupFrameRetainsShelf = false;
     return false;
   }
   if (carouselHqCompletionPopupPending) {
@@ -3686,6 +3714,7 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
     displayLiteHomeFrame(detailsDurationUs, shelfDurationUs, statsDurationUs);
     carouselHqCompletionPopupPending = false;
     overlayFrameShown = true;
+    litePopupFrameRetainsShelf = false;
     return false;
   }
   if (retrievingBookCache && retrievingBookCacheIndex == selectorIndex) {
@@ -3706,6 +3735,7 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
     displayLiteHomeFrame(detailsDurationUs, shelfDurationUs, statsDurationUs);
     retrievingBookCachePopupRendered = true;
     overlayFrameShown = true;
+    litePopupFrameRetainsShelf = false;
     return false;
   }
   const auto labels = mappedInput.mapLabels(tr(STR_MENU), tr(STR_OPEN), tr(STR_LIBRARY),
@@ -3856,6 +3886,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     if (overlayFrameShown && !menuPopup.isActive() && !bookActionsPopup.isActive() && !retrievingBookCache &&
         !carouselHqPreparationActive) {
       overlayFrameShown = false;
+      litePopupFrameRetainsShelf = false;
       // The previous Lite frame contains popup pixels, so the next render must
       // rebuild the background before any selection-only fast path is eligible.
       initialRenderPending = true;
@@ -3880,6 +3911,7 @@ void RecentBooksActivity::render(RenderLock&&) {
   if (overlayFrameShown && !menuPopup.isActive() && !bookActionsPopup.isActive() && !retrievingBookCache &&
       !carouselHqPreparationActive) {
     overlayFrameShown = false;
+    litePopupFrameRetainsShelf = false;
     const bool spineLayout = usesSpineLayout() || usesTwoRowSpineLayout();
     if (spineLayout) {
       const size_t selectedBeforeRestore = selectorIndex;

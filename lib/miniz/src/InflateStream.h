@@ -35,6 +35,12 @@ struct tinfl_decompressor_tag;
 // zlib header (e.g. PNG IDAT).
 class InflateStream {
  public:
+  enum class InitFailure : uint8_t {
+    None,
+    StateAllocation,
+    WindowAllocation,
+  };
+
   enum class Status {
     Ok,     // Output buffer full; more decompressed data remains.
     Done,   // Stream ended cleanly. produced may be < maxLen.
@@ -52,6 +58,16 @@ class InflateStream {
   // stream state. Reuses existing allocations on repeated calls. Returns false
   // on OOM.
   bool init(bool streaming);
+
+  InitFailure initFailure() const { return initFailureReason; }
+  const char* initFailureName() const {
+    switch (initFailureReason) {
+      case InitFailure::None: return "none";
+      case InitFailure::StateAllocation: return "state_allocation";
+      case InitFailure::WindowAllocation: return "window_allocation";
+      default: return "unknown";
+    }
+  }
 
   // Free the decompressor state and window.
   void deinit();
@@ -76,6 +92,7 @@ class InflateStream {
   tinfl_decompressor_tag* state = nullptr;  // ~11KB: heap, or inside the claimed build scratch
   uint8_t* window = nullptr;                // 32KB ring, streaming mode only
   uint8_t* arenaBase = nullptr;             // non-null when state/window live in lent framebuffer bytes
+  InitFailure initFailureReason = InitFailure::None;
   size_t windowPos = 0;                     // ring write cursor
   // Decompressed-but-undelivered region of the window (tinfl can overshoot the
   // caller's requested length; the overshoot waits here for the next read).

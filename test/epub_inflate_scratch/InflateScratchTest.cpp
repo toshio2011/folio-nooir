@@ -24,6 +24,7 @@ TEST_F(BuildScratchFixture, StreamingInflaterClaimsAndReleasesFrameBufferScratch
   {
     InflateStream inflate;
     ASSERT_TRUE(inflate.init(true));
+    EXPECT_EQ(inflate.initFailure(), InflateStream::InitFailure::None);
 
     // A second consumer cannot take the same frame while the inflater owns it.
     EXPECT_EQ(buildscratch::claim(1), nullptr);
@@ -61,6 +62,7 @@ TEST_F(BuildScratchFixture, UndersizedScratchFallsBackToHeapWithoutClaimingIt) {
 
   InflateStream inflate;
   ASSERT_TRUE(inflate.init(true));
+  EXPECT_EQ(inflate.initFailure(), InflateStream::InitFailure::None);
 
   // A too-small loan remains available, while the inflater owns its heap
   // backing and must release it through deinit/destruction.
