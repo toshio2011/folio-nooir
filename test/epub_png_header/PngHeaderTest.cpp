@@ -12,16 +12,16 @@ constexpr std::array<uint8_t, 33> kOneByOnePngHeader = {
 }  // namespace
 
 TEST(PngHeader, ReadsDimensionsFromValidatedIhdrWithoutDecoderState) {
-  int width = -1;
-  int height = -1;
+  int16_t width = -1;
+  int16_t height = -1;
   EXPECT_TRUE(pngheader::parseDimensions(kOneByOnePngHeader.data(), kOneByOnePngHeader.size(), width, height));
   EXPECT_EQ(width, 1);
   EXPECT_EQ(height, 1);
 }
 
 TEST(PngHeader, RejectsTruncatedPrefixAndPreservesOutputValues) {
-  int width = 480;
-  int height = 800;
+  int16_t width = 480;
+  int16_t height = 800;
   EXPECT_FALSE(pngheader::parseDimensions(kOneByOnePngHeader.data(), 32, width, height));
   EXPECT_EQ(width, 480);
   EXPECT_EQ(height, 800);
@@ -29,8 +29,8 @@ TEST(PngHeader, RejectsTruncatedPrefixAndPreservesOutputValues) {
 
 TEST(PngHeader, RejectsBadSignatureChunkAndCrc) {
   auto header = kOneByOnePngHeader;
-  int width = 0;
-  int height = 0;
+  int16_t width = 0;
+  int16_t height = 0;
 
   header[0] = 0;
   EXPECT_FALSE(pngheader::parseDimensions(header.data(), header.size(), width, height));
@@ -42,9 +42,26 @@ TEST(PngHeader, RejectsBadSignatureChunkAndCrc) {
   EXPECT_FALSE(pngheader::parseDimensions(header.data(), header.size(), width, height));
 }
 
+TEST(PngHeader, RejectsDimensionsThatCannotFitImageDimensions) {
+  auto header = kOneByOnePngHeader;
+  header[18] = 0x80;  // Width 32768 exceeds ImageDimensions' signed 16-bit range.
+  header[19] = 0x00;
+  const uint32_t crc = pngheader::crc32(header.data() + 12, 17);
+  header[29] = static_cast<uint8_t>(crc >> 24);
+  header[30] = static_cast<uint8_t>(crc >> 16);
+  header[31] = static_cast<uint8_t>(crc >> 8);
+  header[32] = static_cast<uint8_t>(crc);
+
+  int16_t width = 120;
+  int16_t height = 180;
+  EXPECT_FALSE(pngheader::parseDimensions(header.data(), header.size(), width, height));
+  EXPECT_EQ(width, 120);
+  EXPECT_EQ(height, 180);
+}
+
 TEST(PngHeader, RejectsNullAndZeroSizedInputs) {
-  int width = 0;
-  int height = 0;
+  int16_t width = 0;
+  int16_t height = 0;
   EXPECT_FALSE(pngheader::parseDimensions(nullptr, kOneByOnePngHeader.size(), width, height));
   EXPECT_FALSE(pngheader::parseDimensions(kOneByOnePngHeader.data(), 0, width, height));
 }
