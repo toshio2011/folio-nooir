@@ -38,6 +38,16 @@ def function_body(source: str, signature: str) -> str:
 
 
 class ReaderBluetoothToggleContract(unittest.TestCase):
+    def test_lifecycle_settings_accessor_is_outside_interrupt_critical_section(self):
+        reevaluate = function_body(BLE_SOURCE, "void requestLifecycleReevaluation()")
+        settings_read = reevaluate.index("SETTINGS.bluetoothEnabled")
+        critical_enter = reevaluate.index("portENTER_CRITICAL(&g_noDeviceTimeoutMux)")
+        self.assertLess(settings_read, critical_enter)
+
+        critical_body = reevaluate[critical_enter:]
+        first_exit = critical_body.index("portEXIT_CRITICAL(&g_noDeviceTimeoutMux)")
+        self.assertNotIn("SETTINGS.", critical_body[:first_exit])
+
     def test_epub_and_xtc_use_one_saved_preference_and_common_toggle(self):
         self.assertNotIn("ReaderBluetoothSession", BLE_SOURCE)
         self.assertNotIn("ReaderSessionBluetooth", BLE_SOURCE)

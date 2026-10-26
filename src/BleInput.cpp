@@ -263,8 +263,13 @@ void setActivityContext(const char* name) {
 
 void requestLifecycleReevaluation() {
 #if FREEINK_CAP_BLE_HID_HOST
+  // SETTINGS is a function-local static store. Its accessor may enter the
+  // C++ initialization guard and block; never call it while interrupts are
+  // masked by this critical section. The saved preference is only a snapshot:
+  // a concurrent change is rechecked by the main lifecycle admission path.
+  const bool bluetoothEnabled = SETTINGS.bluetoothEnabled != 0;
   portENTER_CRITICAL(&g_noDeviceTimeoutMux);
-  if (!lifecycleReevaluationAllowed(SETTINGS.bluetoothEnabled != 0,
+  if (!lifecycleReevaluationAllowed(bluetoothEnabled,
                                    g_webExclusiveActive.load(std::memory_order_acquire),
                                    g_noDeviceTimeoutStoppedHost.load(std::memory_order_relaxed))) {
     g_reAdmissionPending.store(false, std::memory_order_release);
