@@ -334,6 +334,18 @@ bool MappedInputManager::bleEdge(const bool* edges, const Button button) const {
   }
 }
 
+bool MappedInputManager::bleNavigationAlias(const bool* edges, const Button button) const {
+  if (!readerMappingMode || !SETTINGS.bluetoothEnabled || !edges ||
+      (button != Button::NavNext && button != Button::NavPrevious))
+    return false;
+
+  return bleinput::mapping::navigationAliasForMenu(
+      button == Button::NavNext, isNavDirectionSwapped(), edges[static_cast<uint8_t>(Button::Left)],
+      edges[static_cast<uint8_t>(Button::Right)], edges[static_cast<uint8_t>(Button::Up)],
+      edges[static_cast<uint8_t>(Button::Down)], edges[static_cast<uint8_t>(Button::PageBack)],
+      edges[static_cast<uint8_t>(Button::PageForward)]);
+}
+
 bool MappedInputManager::wasPressed(const Button button) const {
   if (button == Button::Back && wasBackGesture()) return true;
   return mapButton(button, &HalGPIO::wasPressed) || bleEdge(blePressEdge, button);
@@ -346,6 +358,18 @@ bool MappedInputManager::wasReleased(const Button button) const {
 
 bool MappedInputManager::isPressed(const Button button) const {
   return mapButton(button, &HalGPIO::isPressed) || bleEdge(bleHeld, button);
+}
+
+bool MappedInputManager::wasNavigationPressed(const Button button) const {
+  return wasPressed(button) || bleNavigationAlias(blePressEdge, button);
+}
+
+bool MappedInputManager::wasNavigationReleased(const Button button) const {
+  return wasReleased(button) || bleNavigationAlias(bleReleaseEdge, button);
+}
+
+bool MappedInputManager::isNavigationPressed(const Button button) const {
+  return isPressed(button) || bleNavigationAlias(bleHeld, button);
 }
 
 void MappedInputManager::setBleCaptureMode(const bool enabled) {

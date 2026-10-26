@@ -1,8 +1,33 @@
 #include "ButtonNavigator.h"
 
+#include <Arduino.h>
+
 #include <algorithm>
 
 const MappedInputManager* ButtonNavigator::mappedInput = nullptr;
+
+namespace {
+bool inputWasNavigationPressed(const MappedInputManager* input, const MappedInputManager::Button button) {
+  if (!input) return false;
+  return button == MappedInputManager::Button::NavNext || button == MappedInputManager::Button::NavPrevious
+             ? input->wasNavigationPressed(button)
+             : input->wasPressed(button);
+}
+
+bool inputWasNavigationReleased(const MappedInputManager* input, const MappedInputManager::Button button) {
+  if (!input) return false;
+  return button == MappedInputManager::Button::NavNext || button == MappedInputManager::Button::NavPrevious
+             ? input->wasNavigationReleased(button)
+             : input->wasReleased(button);
+}
+
+bool inputIsNavigationPressed(const MappedInputManager* input, const MappedInputManager::Button button) {
+  if (!input) return false;
+  return button == MappedInputManager::Button::NavNext || button == MappedInputManager::Button::NavPrevious
+             ? input->isNavigationPressed(button)
+             : input->isPressed(button);
+}
+}  // namespace
 
 void ButtonNavigator::onNext(const Callback& callback) {
   onNextPress(callback);
@@ -33,7 +58,7 @@ void ButtonNavigator::onPreviousContinuous(const Callback& callback) { onContinu
 
 void ButtonNavigator::onPress(const Buttons& buttons, const Callback& callback) {
   const bool wasPressed = std::any_of(buttons.begin(), buttons.end(), [](const MappedInputManager::Button button) {
-    return mappedInput != nullptr && mappedInput->wasPressed(button);
+    return inputWasNavigationPressed(mappedInput, button);
   });
 
   if (wasPressed) {
@@ -43,7 +68,7 @@ void ButtonNavigator::onPress(const Buttons& buttons, const Callback& callback) 
 
 void ButtonNavigator::onRelease(const Buttons& buttons, const Callback& callback) {
   const bool wasReleased = std::any_of(buttons.begin(), buttons.end(), [](const MappedInputManager::Button button) {
-    return mappedInput != nullptr && mappedInput->wasReleased(button);
+    return inputWasNavigationReleased(mappedInput, button);
   });
 
   if (wasReleased) {
@@ -63,7 +88,7 @@ void ButtonNavigator::onContinuous(const Buttons& buttons, const Callback& callb
   // visible on Spine shelves where a continuous action changes pages.
   const bool wasPressedOrReleased =
       std::any_of(buttons.begin(), buttons.end(), [](const MappedInputManager::Button button) {
-        return mappedInput != nullptr && (mappedInput->wasPressed(button) || mappedInput->wasReleased(button));
+        return inputWasNavigationPressed(mappedInput, button) || inputWasNavigationReleased(mappedInput, button);
       });
   if (wasPressedOrReleased) {
     lastContinuousNavTime = 0;
@@ -71,7 +96,7 @@ void ButtonNavigator::onContinuous(const Buttons& buttons, const Callback& callb
   }
 
   const bool isPressed = std::any_of(buttons.begin(), buttons.end(), [this](const MappedInputManager::Button button) {
-    return mappedInput != nullptr && mappedInput->isPressed(button) && shouldNavigateContinuously();
+    return inputIsNavigationPressed(mappedInput, button) && shouldNavigateContinuously();
   });
 
   if (isPressed) {

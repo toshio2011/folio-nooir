@@ -16,6 +16,9 @@ READER_SHELL = (REPO_ROOT / "src/activities/reader/ReaderActivity.cpp").read_tex
 ACTIVITY = (REPO_ROOT / "src/activities/Activity.h").read_text(encoding="utf-8")
 EPUB_READER = (REPO_ROOT / "src/activities/reader/EpubReaderActivity.cpp").read_text(encoding="utf-8")
 EPUB_MENU = (REPO_ROOT / "src/activities/reader/EpubReaderMenuActivity.cpp").read_text(encoding="utf-8")
+MAPPED_INPUT = (REPO_ROOT / "src/MappedInputManager.cpp").read_text(encoding="utf-8")
+BUTTON_NAVIGATOR = (REPO_ROOT / "src/util/ButtonNavigator.cpp").read_text(encoding="utf-8")
+READER_UTILS = (REPO_ROOT / "src/activities/reader/ReaderUtils.h").read_text(encoding="utf-8")
 
 
 def function_body(source: str, signature: str) -> str:
@@ -43,9 +46,8 @@ class ReaderBluetoothToggleContract(unittest.TestCase):
         self.assertIn("bleinput::bluetoothEnabled()", EPUB_MENU)
 
     def test_home_and_both_reader_formats_share_mapped_hid_input(self):
-        input_source = (REPO_ROOT / "src/MappedInputManager.cpp").read_text(encoding="utf-8")
-        self.assertIn("SETTINGS.bleKeyMap", input_source)
-        poll = function_body(input_source, "void MappedInputManager::pollBle()")
+        self.assertIn("SETTINGS.bleKeyMap", MAPPED_INPUT)
+        poll = function_body(MAPPED_INPUT, "void MappedInputManager::pollBle()")
         self.assertIn("!bleinput::bluetoothEnabled()", poll)
         self.assertIn("if (BleHid.isRunning()) BleHid.poll();", MAIN)
         self.assertIn("mappedInputManager.pollBle();", MAIN)
@@ -92,11 +94,25 @@ class ReaderBluetoothToggleContract(unittest.TestCase):
         self.assertIn("SETTINGS.saveToFile();", body[stop:])
 
     def test_reader_input_uses_saved_preference_and_off_skips_host_poll(self):
-        input_source = (REPO_ROOT / "src/MappedInputManager.cpp").read_text(encoding="utf-8")
-        poll = function_body(input_source, "void MappedInputManager::pollBle()")
+        poll = function_body(MAPPED_INPUT, "void MappedInputManager::pollBle()")
         self.assertIn("!bleinput::bluetoothEnabled()", poll)
         loop = function_body(MAIN, "void loop()")
         self.assertIn("if (BleHid.isRunning()) BleHid.poll();", loop)
+
+    def test_directional_ble_mappings_reach_shared_reader_menus(self):
+        alias = function_body(MAPPED_INPUT, "bool MappedInputManager::bleNavigationAlias(")
+        self.assertIn("readerMappingMode", alias)
+        self.assertIn("navigationAliasForMenu(", alias)
+        self.assertIn("input->wasNavigationPressed(button)", BUTTON_NAVIGATOR)
+        self.assertIn("input->wasNavigationReleased(button)", BUTTON_NAVIGATOR)
+        self.assertIn("input->isNavigationPressed(button)", BUTTON_NAVIGATOR)
+
+        # Page turns continue to consume the same physical-style BLE edges;
+        # only ButtonNavigator's logical menu queries add the aliases.
+        page_turn = function_body(READER_UTILS, "inline PageTurnResult detectPageTurn(")
+        self.assertIn("input.wasPressed(nextButton)", page_turn)
+        self.assertIn("input.wasPressed(prevButton)", page_turn)
+        self.assertNotIn("wasNavigationPressed", page_turn)
 
     def test_home_keeps_host_and_reader_resource_stop_remains(self):
         transition = function_body(ACTIVITY_MANAGER, "void ActivityManager::loop()")

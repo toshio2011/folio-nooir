@@ -69,6 +69,11 @@ class MappedInputManager {
   bool wasPressed(Button button) const;
   bool wasReleased(Button button) const;
   bool isPressed(Button button) const;
+  // ButtonNavigator-only semantic queries. Directional BLE bindings remain
+  // available to menus while reader page-turn queries keep their own edges.
+  bool wasNavigationPressed(Button button) const;
+  bool wasNavigationReleased(Button button) const;
+  bool isNavigationPressed(Button button) const;
   bool hasTouch() const;
   bool wasScreenTapped(int& x, int& y) const;
   bool wasScreenTouchDown(int& x, int& y) const;
@@ -139,6 +144,7 @@ class MappedInputManager {
 
   bool mapButton(Button button, bool (HalGPIO::*fn)(uint8_t) const) const;
   bool bleEdge(const bool* edges, Button button) const;
+  bool bleNavigationAlias(const bool* edges, Button button) const;
   bool wasBackGesture() const;
   // Fetch the pending swipe (if any) and map both endpoints to logical screen coords
   bool decodeSwipe(int& sx, int& sy, int& ex, int& ey) const;

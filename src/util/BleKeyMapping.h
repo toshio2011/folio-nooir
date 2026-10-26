@@ -33,6 +33,19 @@ constexpr bool releaseKeepsPendingSignature(const InputPhase phase) {
   return phase == InputPhase::Release;
 }
 
+// Directional BLE bindings represent navigation direction as well as reader
+// page-turn input. The active consumer decides which meaning applies: a reader
+// page-turn loop queries its physical-style edge, while ButtonNavigator asks
+// for this alias when it owns a menu or list.
+constexpr bool navigationAliasForMenu(const bool next, const bool directionSwapped, const bool left,
+                                      const bool right, const bool up, const bool down, const bool pageBack,
+                                      const bool pageForward) {
+  if (next && pageForward) return true;
+  if (!next && pageBack) return true;
+  if (next) return directionSwapped ? (up || left) : (down || right);
+  return directionSwapped ? (down || right) : (up || left);
+}
+
 struct ResolvedAction {
   ResolvedActionType type = ResolvedActionType::Invalid;
   uint8_t target = 0xFF;

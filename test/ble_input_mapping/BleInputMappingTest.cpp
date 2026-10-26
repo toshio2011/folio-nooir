@@ -154,6 +154,30 @@ TEST(BleInputMapping, SignatureReleaseDoesNotCancelPendingSequence) {
   EXPECT_FALSE(releaseKeepsPendingSignature(InputPhase::Repeat));
 }
 
+TEST(BleInputMapping, DirectionalBindingsNavigateReaderMenusWithOrientationMapping) {
+  // A learned Right/Down mapping is both a reader page-turn edge and a Next
+  // action while ButtonNavigator owns a menu or list.
+  EXPECT_TRUE(navigationAliasForMenu(true, false, false, true, false, false, false, false));
+  EXPECT_TRUE(navigationAliasForMenu(true, false, false, false, false, true, false, false));
+  EXPECT_TRUE(navigationAliasForMenu(false, false, true, false, false, false, false, false));
+  EXPECT_TRUE(navigationAliasForMenu(false, false, false, false, true, false, false, false));
+
+  // Orientation-following navigation keeps the same axis swap as GPIO input.
+  EXPECT_TRUE(navigationAliasForMenu(true, true, true, false, false, false, false, false));
+  EXPECT_TRUE(navigationAliasForMenu(true, true, false, false, true, false, false, false));
+  EXPECT_TRUE(navigationAliasForMenu(false, true, false, true, false, false, false, false));
+  EXPECT_TRUE(navigationAliasForMenu(false, true, false, false, false, true, false, false));
+  EXPECT_FALSE(navigationAliasForMenu(true, false, true, false, false, false, false, false));
+  EXPECT_FALSE(navigationAliasForMenu(false, false, false, true, false, false, false, false));
+
+  // PageForward/PageBack can exist in saved settings created by older Learn
+  // screens and continue to move a menu in their original direction.
+  EXPECT_TRUE(navigationAliasForMenu(true, false, false, false, false, false, false, true));
+  EXPECT_TRUE(navigationAliasForMenu(false, false, false, false, false, false, true, false));
+  EXPECT_FALSE(navigationAliasForMenu(true, false, false, false, false, false, true, false));
+  EXPECT_FALSE(navigationAliasForMenu(false, false, false, false, false, false, false, true));
+}
+
 TEST(BleInputMapping, ShortcutDebounceHandlesQuickTapAndMillisWraparound) {
   EXPECT_FALSE(debounceElapsed(1200, 1000, 280));
   EXPECT_TRUE(debounceElapsed(1280, 1000, 280));
