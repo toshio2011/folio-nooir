@@ -18,6 +18,8 @@ EPUB_READER = (REPO_ROOT / "src/activities/reader/EpubReaderActivity.cpp").read_
 EPUB_MENU = (REPO_ROOT / "src/activities/reader/EpubReaderMenuActivity.cpp").read_text(encoding="utf-8")
 MAPPED_INPUT = (REPO_ROOT / "src/MappedInputManager.cpp").read_text(encoding="utf-8")
 BUTTON_NAVIGATOR = (REPO_ROOT / "src/util/ButtonNavigator.cpp").read_text(encoding="utf-8")
+HOME_ACTIVITY = (REPO_ROOT / "src/activities/home/HomeActivity.cpp").read_text(encoding="utf-8")
+BLE_MAP_ACTIVITY = (REPO_ROOT / "src/activities/settings/BleButtonMapActivity.cpp").read_text(encoding="utf-8")
 READER_UTILS = (REPO_ROOT / "src/activities/reader/ReaderUtils.h").read_text(encoding="utf-8")
 
 
@@ -53,6 +55,17 @@ class ReaderBluetoothToggleContract(unittest.TestCase):
         self.assertIn("mappedInputManager.pollBle();", MAIN)
         self.assertIn("currentActivity->acceptsBluetoothInput()", ACTIVITY_MANAGER)
         self.assertIn("virtual bool acceptsBluetoothInput() const { return true; }", ACTIVITY)
+
+    def test_active_key_release_uses_legacy_event_identity_after_typed_learn_match(self):
+        poll = function_body(MAPPED_INPUT, "void MappedInputManager::pollBle()")
+        self.assertIn("matchesAt(entry, learnedKind, learnedValue, index)", poll)
+        self.assertIn("bleActiveKinds[button] = legacyKind;", poll)
+        self.assertIn("bleActiveValues[button] = legacyValue;", poll)
+        release = poll[poll.index("const bool activeIdentityMatches") :]
+        release = release[: release.index("if (!bleActiveBinding[button]")]
+        self.assertIn("bleActiveKinds[button] == legacyKind", release)
+        self.assertIn("bleActiveValues[button] == legacyValue", release)
+        self.assertNotIn("learnedKind", release)
 
     def test_failed_bluetooth_activation_waits_for_explicit_retry(self):
         render = function_body(ACTIVITY_MANAGER, "void ActivityManager::renderTaskLoop()")
@@ -113,6 +126,34 @@ class ReaderBluetoothToggleContract(unittest.TestCase):
         self.assertIn("input.wasPressed(nextButton)", page_turn)
         self.assertIn("input.wasPressed(prevButton)", page_turn)
         self.assertNotIn("wasNavigationPressed", page_turn)
+
+    def test_legacy_page_back_and_forward_actions_remain_assignable(self):
+        mapping_functions = BLE_MAP_ACTIVITY.split("const BleButtonMapActivity::Fn BleButtonMapActivity::kFunctions[] =", 1)[1].split(
+            "};", 1
+        )[0]
+        self.assertIn(
+            "MappedInputManager::Button::PageBack", mapping_functions
+        )
+        self.assertIn("StrId::STR_BT_PAGE_BACK", mapping_functions)
+        self.assertIn("MappedInputManager::Button::PageForward", mapping_functions)
+        self.assertIn("StrId::STR_BT_PAGE_FORWARD", mapping_functions)
+
+        # One poll drains the key map before either Home or a reader consumes
+        # the frame. Page actions use the shared physical-style edge queried by
+        # ReaderUtils; Home uses ButtonNavigator's shared mapped-input pointer.
+        main_loop = function_body(MAIN, "void loop()")
+        self.assertLess(
+            main_loop.index("mappedInputManager.pollBle();"),
+            main_loop.index("activityManager.loop();"),
+        )
+        self.assertIn("buttonNavigator.onNext(", HOME_ACTIVITY)
+        self.assertIn("buttonNavigator.onPrevious(", HOME_ACTIVITY)
+        self.assertIn("input->wasNavigationPressed(button)", BUTTON_NAVIGATOR)
+        page_turn = function_body(READER_UTILS, "inline PageTurnResult detectPageTurn(")
+        self.assertIn("input.wasPressed(MappedInputManager::Button::PageBack)", page_turn)
+        self.assertIn("input.wasPressed(MappedInputManager::Button::PageForward)", page_turn)
+        self.assertIn("input.wasReleased(MappedInputManager::Button::PageBack)", page_turn)
+        self.assertIn("input.wasReleased(MappedInputManager::Button::PageForward)", page_turn)
 
     def test_home_keeps_host_and_reader_resource_stop_remains(self):
         transition = function_body(ACTIVITY_MANAGER, "void ActivityManager::loop()")

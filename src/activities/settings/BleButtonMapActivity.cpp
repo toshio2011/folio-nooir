@@ -15,12 +15,16 @@ namespace {
 constexpr unsigned long kLearnTimeoutMs = 30000;
 }
 
-// New bindings target virtual physical buttons or safe ActivityManager
-// shortcuts. Existing PageForward/PageBack mappings remain loadable and work as
-// before, but new learning does not create activity-specific actions.
+// New bindings target virtual buttons or safe ActivityManager shortcuts.
+// PageBack/PageForward remain explicit choices for reader remotes, matching the
+// 1.6.5 mapping workflow and the shared EPUB/XTC/XTCH page-turn input path.
 const BleButtonMapActivity::Fn BleButtonMapActivity::kFunctions[] = {
     {bleinput::mapping::kButtonAction, static_cast<uint8_t>(MappedInputManager::Button::Back), StrId::STR_BACK},
     {bleinput::mapping::kButtonAction, static_cast<uint8_t>(MappedInputManager::Button::Confirm), StrId::STR_CONFIRM},
+    {bleinput::mapping::kButtonAction,
+     static_cast<uint8_t>(MappedInputManager::Button::PageBack), StrId::STR_BT_PAGE_BACK},
+    {bleinput::mapping::kButtonAction,
+     static_cast<uint8_t>(MappedInputManager::Button::PageForward), StrId::STR_BT_PAGE_FORWARD},
     {bleinput::mapping::kButtonAction, static_cast<uint8_t>(MappedInputManager::Button::Left), StrId::STR_DIR_LEFT},
     {bleinput::mapping::kButtonAction, static_cast<uint8_t>(MappedInputManager::Button::Right), StrId::STR_DIR_RIGHT},
     {bleinput::mapping::kButtonAction, static_cast<uint8_t>(MappedInputManager::Button::Up), StrId::STR_DIR_UP},

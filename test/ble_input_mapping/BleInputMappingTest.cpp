@@ -43,6 +43,21 @@ TEST(BleInputMapping, LearningOverwritesByIdentityAndCanRemove) {
   EXPECT_EQ(remove(entries, captured, 1), AssignResult::NotFound);
 }
 
+TEST(BleInputMapping, ReaderPageActionsRemainAvailableForNewMappings) {
+  KeyMapEntry entries[kMapCapacity] = {};
+  const CapturedIdentity nextPage[] = {{0, 0x4F}};
+  const CapturedIdentity previousPage[] = {{0, 0x50}};
+  const uint8_t pageBack = static_cast<uint8_t>(MappedInputManager::Button::PageBack);
+  const uint8_t pageForward = static_cast<uint8_t>(MappedInputManager::Button::PageForward);
+
+  ASSERT_EQ(assign(entries, nextPage, 1, kButtonAction, pageForward), AssignResult::Added);
+  ASSERT_EQ(assign(entries, previousPage, 1, kButtonAction, pageBack), AssignResult::Added);
+  EXPECT_EQ(resolve(entries[0]).target, pageForward);
+  EXPECT_EQ(resolve(entries[1]).target, pageBack);
+  EXPECT_EQ(pageBack, 7);
+  EXPECT_EQ(pageForward, 8);
+}
+
 TEST(BleInputMapping, TypedKeyboardUsageDoesNotConflateWithLegacyUntypedCode) {
   KeyMapEntry entries[kMapCapacity] = {};
   const CapturedIdentity oldIdentity[] = {{1, 0x04}};

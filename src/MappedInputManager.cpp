@@ -545,20 +545,9 @@ void MappedInputManager::pollBle() {
     const bool isRelease = event.phase == freeink::KeyPhase::Release;
     const bool isRepeat = event.phase == freeink::KeyPhase::Repeat;
 
-    uint8_t matchedKind = legacyKind;
-    uint8_t matchedValue = legacyValue;
     auto entryMatches = [&](const CrossPointSettings::BleKeyMapEntry& entry, const uint8_t index) {
-      if (hasSafeLearnIdentity && bleinput::mapping::matchesAt(entry, learnedKind, learnedValue, index)) {
-        matchedKind = learnedKind;
-        matchedValue = learnedValue;
-        return true;
-      }
-      if (bleinput::mapping::matchesAt(entry, legacyKind, legacyValue, index)) {
-        matchedKind = legacyKind;
-        matchedValue = legacyValue;
-        return true;
-      }
-      return false;
+      return (hasSafeLearnIdentity && bleinput::mapping::matchesAt(entry, learnedKind, learnedValue, index)) ||
+             bleinput::mapping::matchesAt(entry, legacyKind, legacyValue, index);
     };
     auto applyButton = [&](const uint8_t button, const freeink::KeyPhase phase) {
       if (button >= kButtonCount) return;
@@ -593,8 +582,12 @@ void MappedInputManager::pollBle() {
       bleHeld[button] = true;
       bleHeldDuration[button].press(static_cast<uint32_t>(now));
       bleActiveBinding[button] = true;
-      bleActiveKinds[button] = matchedKind;
-      bleActiveValues[button] = matchedValue;
+      // The learned map may use a typed usage-page identity, but active
+      // press/release tracking stays on encodeKey()'s legacy event identity.
+      // This matches the 1.6.5 runtime path and tolerates a host release report
+      // that carries the usage code without its usage-page classification.
+      bleActiveKinds[button] = legacyKind;
+      bleActiveValues[button] = legacyValue;
       blePressEdge[button] = true;
       bleActivityThisFrame = true;
       mappedButton = button;
@@ -640,9 +633,7 @@ void MappedInputManager::pollBle() {
       }
       for (uint8_t button = 0; button < kButtonCount; ++button) {
         const bool activeIdentityMatches =
-            (bleActiveKinds[button] == legacyKind && bleActiveValues[button] == legacyValue) ||
-            (hasSafeLearnIdentity && bleActiveKinds[button] == learnedKind &&
-             bleActiveValues[button] == learnedValue);
+            bleActiveKinds[button] == legacyKind && bleActiveValues[button] == legacyValue;
         if (!bleActiveBinding[button] || !activeIdentityMatches) continue;
         mappingFound = true;
         applyButton(button, event.phase);
