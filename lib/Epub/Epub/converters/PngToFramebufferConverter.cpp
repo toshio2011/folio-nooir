@@ -7,7 +7,6 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <PNGdec.h>
-#include <SdCardFontSystem.h>
 
 #include <array>
 #include <cstdlib>
@@ -19,6 +18,7 @@
 #include "DitherUtils.h"
 #include "PngHeader.h"
 #include "PixelCache.h"
+#include "../../../../src/SdCardFontSystem.h"
 
 namespace {
 
