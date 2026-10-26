@@ -354,13 +354,21 @@ void ActivityManager::loop() {
 
         // Request an update to ensure the popped activity gets re-rendered
         if (pendingAction == PendingAction::None) {
-          if (readingStatsActivity && currentActivity && currentActivity->name == "RecentBooks") {
+          if (currentActivity && currentActivity->name == "RecentBooks") {
             auto* recentBooks = static_cast<RecentBooksActivity*>(currentActivity.get());
             if (lockReleasedForHandler) {
               RenderLock restoreLock;
-              recentBooks->restoreTransientStateAfterReadingStats();
+              if (readingStatsActivity) {
+                recentBooks->restoreTransientStateAfterReadingStats();
+              } else {
+                recentBooks->restoreRecentBooksViewAfterChild(true);
+              }
             } else {
-              recentBooks->restoreTransientStateAfterReadingStats();
+              if (readingStatsActivity) {
+                recentBooks->restoreTransientStateAfterReadingStats();
+              } else {
+                recentBooks->restoreRecentBooksViewAfterChild(true);
+              }
             }
           }
           bleinput::requestLifecycleReevaluation();
@@ -396,6 +404,8 @@ void ActivityManager::loop() {
                                              (pendingActivity->name == "ReadingStats" ||
                                               pendingActivity->name == "ReadingCalendar") &&
                                              pendingAction == PendingAction::Push;
+      const bool recentBooksToChild = currentActivity && currentActivity->name == "RecentBooks" &&
+                                      pendingAction == PendingAction::Push;
       const bool readerShellToConcrete = currentActivity && pendingActivity && currentActivity->name == "Reader" &&
                                          pendingActivity->name == "EpubReader" && pendingAction == PendingAction::Replace;
 #if FREEINK_CAP_BLE_HID_HOST
@@ -409,6 +419,8 @@ void ActivityManager::loop() {
 
       if (recentBooksToReadingStats) {
         static_cast<RecentBooksActivity*>(currentActivity.get())->releaseTransientStateForReadingStats();
+      } else if (recentBooksToChild) {
+        static_cast<RecentBooksActivity*>(currentActivity.get())->releaseRecentBooksViewForChild();
       }
 
       if (pendingAction == PendingAction::Replace) {
@@ -897,24 +909,32 @@ void ActivityManager::requestUpdate(bool immediate) {
 }
 
 void ActivityManager::queueRenderNotification() {
+  TaskHandle_t taskToNotify = nullptr;
   taskENTER_CRITICAL(&activityManagerSpinlock);
   if (renderTaskHandle) {
+    taskToNotify = renderTaskHandle;
     requestedUpdate.exchange(false, std::memory_order_acq_rel);
     // Publish queued state before handing the notification to the render task.
     renderQueued.store(true, std::memory_order_release);
-    xTaskNotify(renderTaskHandle, 1, eIncrement);
   }
   taskEXIT_CRITICAL(&activityManagerSpinlock);
+
+  // FreeRTOS notification may enter its own critical section and wake a task.
+  // Keep it outside this application spinlock to avoid nesting scheduler locks.
+  if (taskToNotify) xTaskNotify(taskToNotify, 1, eIncrement);
 }
 void ActivityManager::requestUpdateAndWait() {
   if (!renderTaskHandle) {
     return;
   }
 
-  // Atomic section to perform checks
+  // These FreeRTOS queries are kept outside the application spinlock. In
+  // particular, xSemaphoreGetMutexHolder() enters a kernel critical section.
+  const auto currTaskHandler = xTaskGetCurrentTaskHandle();
+  const auto mutexHolder = xSemaphoreGetMutexHolder(renderingMutex);
+
+  // Protect only the shared waiter state and render-task identity snapshot.
   taskENTER_CRITICAL(&activityManagerSpinlock);
-  auto currTaskHandler = xTaskGetCurrentTaskHandle();
-  auto mutexHolder = xSemaphoreGetMutexHolder(renderingMutex);
   bool isRenderTask = (currTaskHandler == renderTaskHandle);
   bool alreadyWaiting = (waitingTaskHandle != nullptr);
   bool holdingRenderLock = (mutexHolder == currTaskHandler);

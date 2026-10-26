@@ -47,6 +47,7 @@
 #include "util/ScreenshotUtil.h"
 #include "util/SleepScreenMode.h"
 #include "activities/reader/ReaderUtils.h"
+#include "util/MemoryPressureReclaimer.h"
 
 GfxRenderer renderer(display);
 MappedInputManager mappedInputManager(gpio, renderer);
@@ -697,7 +698,39 @@ void updateBluetoothLifecycle() {
           activityManager.currentActivityName(), ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
           static_cast<unsigned>(bleinput::kReaderBleStartMinFreeHeap),
           static_cast<unsigned>(bleinput::kReaderBleStartMinLargestBlock));
-  const bool admitted = bleinput::connectionAdmissionAllowed();
+  bool admitted = bleinput::connectionAdmissionAllowed();
+
+  if (!admitted) {
+    const char* activityName = activityManager.currentActivityName();
+    const bool homeActivity = strcmp(activityName, "Home") == 0 || strcmp(activityName, "RecentBooks") == 0;
+    const bool renderBusy = RenderLock::peek() || activityManager.hasPendingRenderWork();
+    const bool reclaimAllowed =
+        homeActivity && bleinput::homeBleStartReclaimAllowed(
+                            bleinput::bluetoothEnabled(), bleinput::webExclusiveActive(),
+                            WiFi.getMode() != WIFI_MODE_NULL, readerContext, renderBusy,
+                            static_cast<size_t>(ESP.getFreeHeap()),
+                            static_cast<size_t>(ESP.getMaxAllocHeap()));
+    if (reclaimAllowed) {
+      const auto reclaim = memorypressure::reclaimForHeadroom(
+          bleinput::kReaderBleStartMinFreeHeap, bleinput::kReaderBleStartMinLargestBlock,
+          "ble_home_cold_start", memorypressure::ReclaimLevel::Reconstructible);
+      LOG_INF("BLEMEM",
+              "stage=home_admission_reclaim result=%u free=%u->%u largest=%u->%u",
+              static_cast<unsigned>(reclaim.result), static_cast<unsigned>(reclaim.freeBefore),
+              static_cast<unsigned>(reclaim.freeAfter), static_cast<unsigned>(reclaim.largestBefore),
+              static_cast<unsigned>(reclaim.largestAfter));
+      if (reclaim.memoryImproved()) {
+        admitted = bleinput::connectionAdmissionAllowed();
+        if (!admitted) {
+          // One bounded retry consumes the updated heap shape. If the
+          // reconstructible caches did not close the gap, the next pass sees
+          // no additional candidate and leaves BLE deferred without polling.
+          bleinput::requestLifecycleReevaluation();
+          return;
+        }
+      }
+    }
+  }
 
   if (!admitted) {
     activityManager.notifyBluetoothActivationResult(false);

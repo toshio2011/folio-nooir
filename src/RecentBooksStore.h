@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 enum class RecentBooksLoadResult : uint8_t {
@@ -66,28 +67,51 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
    public:
     using const_iterator = std::vector<RecentBook>::const_iterator;
 
+    RecentBooksReadView() noexcept : books_(&emptyBooks()) {}
     RecentBooksReadView(const RecentBooksReadView&) = delete;
     RecentBooksReadView& operator=(const RecentBooksReadView&) = delete;
-    RecentBooksReadView(RecentBooksReadView&&) noexcept = default;
-    RecentBooksReadView& operator=(RecentBooksReadView&&) = delete;
+    RecentBooksReadView(RecentBooksReadView&& other) noexcept
+        : lock_(std::move(other.lock_)), books_(other.books_) {
+      other.books_ = &emptyBooks();
+    }
+    RecentBooksReadView& operator=(RecentBooksReadView&& other) noexcept {
+      if (this == &other) return *this;
+      lock_ = std::move(other.lock_);
+      books_ = other.books_;
+      other.books_ = &emptyBooks();
+      return *this;
+    }
 
-    const_iterator begin() const noexcept { return books_.begin(); }
-    const_iterator end() const noexcept { return books_.end(); }
-    const_iterator cbegin() const noexcept { return books_.cbegin(); }
-    const_iterator cend() const noexcept { return books_.cend(); }
-    const RecentBook& operator[](size_t index) const { return books_[index]; }
-    const RecentBook& front() const { return books_.front(); }
-    size_t size() const noexcept { return books_.size(); }
-    bool empty() const noexcept { return books_.empty(); }
-    void copyTo(std::vector<RecentBook>& destination) const { destination = books_; }
+    const_iterator begin() const noexcept { return books_->begin(); }
+    const_iterator end() const noexcept { return books_->end(); }
+    const_iterator cbegin() const noexcept { return books_->cbegin(); }
+    const_iterator cend() const noexcept { return books_->cend(); }
+    const RecentBook& operator[](size_t index) const { return (*books_)[index]; }
+    const RecentBook& front() const { return books_->front(); }
+    size_t size() const noexcept { return books_->size(); }
+    size_t capacity() const noexcept { return books_->capacity(); }
+    bool empty() const noexcept { return books_->empty(); }
+    bool ownsLock() const noexcept { return lock_.owns_lock(); }
+    void reset() noexcept {
+      if (lock_.owns_lock()) lock_.unlock();
+      books_ = &emptyBooks();
+    }
+    const std::vector<RecentBook>& vector() const noexcept { return *books_; }
+    operator const std::vector<RecentBook>&() const noexcept { return *books_; }
+    void copyTo(std::vector<RecentBook>& destination) const { destination = *books_; }
 
    private:
     friend class RecentBooksStore;
     explicit RecentBooksReadView(const RecentBooksStore& store)
-        : lock_(store.storeMutex), books_(store.recentBooks) {}
+        : lock_(store.storeMutex), books_(&store.recentBooks) {}
+
+    static const std::vector<RecentBook>& emptyBooks() noexcept {
+      static const std::vector<RecentBook> empty;
+      return empty;
+    }
 
     std::unique_lock<std::mutex> lock_;
-    const std::vector<RecentBook>& books_;
+    const std::vector<RecentBook>* books_;
   };
 
   static const char* getFilePath() { return "/.crosspoint/recent.json"; }

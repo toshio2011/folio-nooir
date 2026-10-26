@@ -29,6 +29,20 @@ TEST(BleMemoryPolicy, ContaminatedLowFreeHeapIsDeferred) {
   EXPECT_FALSE(bleinput::readerBleStartMemoryAdmitted(85000, 65524));
 }
 
+TEST(BleMemoryPolicy, HomeReclaimOnlyRunsForNearFloorQuiescentHeap) {
+  EXPECT_TRUE(bleinput::homeBleStartReclaimAllowed(true, false, false, false, false, 95 * 1024, 65524));
+  EXPECT_FALSE(bleinput::homeBleStartReclaimAllowed(true, false, false, false, false, 84 * 1024, 65524));
+  EXPECT_FALSE(bleinput::homeBleStartReclaimAllowed(true, false, false, false, false,
+                                                    96 * 1024, 65524));
+  EXPECT_FALSE(bleinput::homeBleStartReclaimAllowed(true, false, false, false, true, 95 * 1024, 65524));
+  EXPECT_FALSE(bleinput::homeBleStartReclaimAllowed(true, false, false, true, false, 95 * 1024, 65524));
+  EXPECT_FALSE(bleinput::homeBleStartReclaimAllowed(false, false, false, false, false, 95 * 1024, 65524));
+  EXPECT_FALSE(bleinput::homeBleStartReclaimAllowed(true, true, false, false, false, 95 * 1024, 65524));
+  EXPECT_FALSE(bleinput::homeBleStartReclaimAllowed(true, false, true, false, false, 95 * 1024, 65524));
+  EXPECT_FALSE(bleinput::homeBleStartReclaimAllowed(true, false, false, false, false,
+                                                    95 * 1024, 20 * 1024));
+}
+
 TEST(BleMemoryPolicy, OrdinaryHomeTransitionsKeepConnectedBleAlive) {
   EXPECT_FALSE(bleinput::activityTransitionNeedsBleSuspension(true, false));
   EXPECT_FALSE(bleinput::activityTransitionNeedsBleSuspension(false, false));

@@ -37,7 +37,10 @@ class RecentBooksActivity final : public Activity {
   size_t visibleBookCount = 0;
 
   // Recent tab state
-  std::vector<RecentBook> recentBooks;
+  // RecentBooksStore already owns the canonical metadata vector. Retain a
+  // locked read view while this activity is active instead of deep-copying all
+  // strings into a second heap-heavy vector on every Home visit.
+  RecentBooksStore::RecentBooksReadView recentBooks;
   size_t nextCoverToGenerate = 0;
   bool coverGenerationActive = false;
   bool coverGenerationRequested = false;
@@ -326,9 +329,14 @@ class RecentBooksActivity final : public Activity {
   // navigation state remain available for the parent resume.
   void releaseTransientStateForReadingStats();
   // Called once after the ReadingStats child is destroyed and the parent is
-  // resumed. Rehydrates the local shelf copy from RecentBooksStore before the
+  // resumed. Reacquires the canonical RecentBooksStore view before the
   // normal cached shelf render continues.
   void restoreTransientStateAfterReadingStats();
+  // ActivityManager brackets any child push/pop with these methods so the
+  // store lock is never held by a suspended parent while a child reads or
+  // mutates RecentBooksStore.
+  void releaseRecentBooksViewForChild();
+  void restoreRecentBooksViewAfterChild(bool renderLockHeld = false);
   bool bluetoothResourceSensitive() const override {
     return statsTransientStateReleased || statsReturnAwaitingFirstRender;
   }

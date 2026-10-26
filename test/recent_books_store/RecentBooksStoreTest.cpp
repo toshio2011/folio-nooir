@@ -9,6 +9,7 @@
 #include <chrono>
 #include <string>
 #include <thread>
+#include <utility>
 
 #include <BookMetadataOverridesStore.h>
 
@@ -148,6 +149,22 @@ TEST(RecentBooksStore, ProtectsHistoryAcrossCorruptionRecoveryAndFailedWrites) {
   countQuery.join();
   EXPECT_TRUE(mutationWaitedForView);
   EXPECT_TRUE(countWaitedForView);
+
+  // Moving the lock-backed view transfers ownership without copying any book
+  // strings, and explicit reset releases the store for the next operation.
+  RecentBooksStore::RecentBooksReadView movedView;
+  {
+    auto sourceView = store.getBooks();
+    ASSERT_TRUE(sourceView.ownsLock());
+    movedView = std::move(sourceView);
+    EXPECT_FALSE(sourceView.ownsLock());
+    EXPECT_TRUE(movedView.ownsLock());
+    EXPECT_EQ(movedView.size(), 28U);
+  }
+  movedView.reset();
+  EXPECT_FALSE(movedView.ownsLock());
+  EXPECT_EQ(store.getCount(), 28);
+
   Storage.files[kPrimary] = makeHistory(2, false);
   ASSERT_TRUE(store.loadFromFile());
   ASSERT_EQ(store.getCount(), 2);

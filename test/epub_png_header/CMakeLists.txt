@@ -1,0 +1,3 @@
+add_executable(PngHeaderTest PngHeaderTest.cpp)
+target_link_libraries(PngHeaderTest PRIVATE crosspoint_test_common GTest::gtest_main)
+gtest_discover_tests(PngHeaderTest)

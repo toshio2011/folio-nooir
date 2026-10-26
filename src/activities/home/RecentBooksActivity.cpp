@@ -818,13 +818,17 @@ void drawThreeRowSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner
 void RecentBooksActivity::loadRecentBooks(const bool renderLockHeld) {
   spineShelfVisualsDirty = true;
   liteSelectedDetailsDirty = true;
-  RECENT_BOOKS.getBooks().copyTo(recentBooks);
+  recentBooks.reset();
   invalidateSpinePageWindow();
   if (renderLockHeld) {
     invalidateCarouselHqProbesLocked();
   } else {
     invalidateCarouselHqProbes();
   }
+  // Take the view after any RenderLock acquisition above. This keeps lock
+  // ordering consistent and avoids holding the store mutex while waiting for
+  // a render boundary.
+  recentBooks = RECENT_BOOKS.getBooks();
 }
 
 void RecentBooksActivity::markStatsReturnFrameReady() {
@@ -1073,12 +1077,13 @@ void RecentBooksActivity::rebuildVisibleBooks() {
 }
 
 void RecentBooksActivity::logRecentViewState(const char* stage) const {
-  const int storeCount = RECENT_BOOKS.getCount();
+  const int storeCount = recentBooks.ownsLock() ? static_cast<int>(recentBooks.size()) : RECENT_BOOKS.getCount();
   const char* emptyReason = visibleBookCount != 0 ? "none"
+                            : !recentBooks.ownsLock() ? "view_suspended"
                             : storeCount > 0 ? "filtered_view"
                             : RECENT_BOOKS.getLoadResult() == RecentBooksLoadResult::Uncertain ? "load_uncertain"
                                                                                               : "no_records";
-  LOG_INF("SHELF", "stage=%s store_result=%s store_records=%u copied_records=%u visible=%u selected=%u tab=%u "
+  LOG_INF("SHELF", "stage=%s store_result=%s store_records=%u view_records=%u visible=%u selected=%u tab=%u "
                    "empty_reason=%s",
           stage ? stage : "unknown", recentBooksLoadResultName(RECENT_BOOKS.getLoadResult()),
           static_cast<unsigned>(storeCount), static_cast<unsigned>(recentBooks.size()),
@@ -1945,9 +1950,15 @@ void RecentBooksActivity::generateNextCover() {
   // metadata and thumbnails without a background migration queue.
   const bool forceRebuild = coverGenerationRequested;
   const bool metadataOnly = forceRebuild;
-  while (nextCoverToGenerate < recentBooks.size()) {
+  const size_t recentBookCount = recentBooks.size();
+  // Metadata extraction and thumbnail work may perform SD reads and update the
+  // store. Release the long-lived Home read view and copy only the one record
+  // being explicitly refreshed.
+  recentBooks.reset();
+  while (nextCoverToGenerate < recentBookCount) {
     const size_t bookIndex = nextCoverToGenerate++;
-    RecentBook& book = recentBooks[bookIndex];
+    RecentBook book;
+    if (!RECENT_BOOKS.getBookAt(bookIndex, book)) continue;
     if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path) &&
         !FsHelpers::hasCbzExtension(book.path)) continue;
     bool attempted = false;
@@ -2122,7 +2133,7 @@ void RecentBooksActivity::generateNextCover() {
       coverGenerationActive = false;
       refreshCarouselHqPath.clear();
       spineThumbnailPathMisses.clear();  // Explicit refresh may have created or replaced thumb_220.bmp.
-      invalidateCarouselHqProbes();
+      loadRecentBooks();
       // Refresh is an explicit one-book action; do not queue background
       // metadata migration after the selected cover is rebuilt.
       coverGenerationRequested = false;
@@ -2132,6 +2143,7 @@ void RecentBooksActivity::generateNextCover() {
   }
   coverGenerationActive = false;
   coverGenerationRequested = false;
+  loadRecentBooks();
   requestUpdate();
 }
 
@@ -2316,6 +2328,9 @@ void RecentBooksActivity::showBookActions() {
   bookActionsPopup.show(StrId::STR_BOOK_ACTIONS, actions, 0, [this, bookmarksAction, clippingsAction](const int action) {
     if (visibleBookCount == 0 || selectorIndex >= visibleBookCount) return;
     const RecentBook selected = recentBooks[selectedRecentIndex()];
+    // The store-backed view is held while the shelf is active. Release it
+    // before actions that write progress, metadata, or Recent history.
+    recentBooks.reset();
     if (action == 0) {
       logCbzPath("recent-book-selection", selected.path);
       onSelectBook(selected.path);
@@ -2414,12 +2429,12 @@ void RecentBooksActivity::onEnter() {
   // Load data
   loadRecentBooks();
   rebuildVisibleBooks();
-  LOG_INF("SHELF", "stage=onEnter_ready duration_us=%lu store_result=%s store_records=%u copied_records=%u "
+  LOG_INF("SHELF", "stage=onEnter_ready duration_us=%lu store_result=%s store_records=%u view_records=%u "
                    "visible=%u tab=%u filtered_empty=%u free=%u largest=%u",
           static_cast<unsigned long>(micros() - enterStartedUs),
-          recentBooksLoadResultName(RECENT_BOOKS.getLoadResult()), static_cast<unsigned>(RECENT_BOOKS.getCount()),
+          recentBooksLoadResultName(RECENT_BOOKS.getLoadResult()), static_cast<unsigned>(recentBooks.size()),
           static_cast<unsigned>(recentBooks.size()), static_cast<unsigned>(visibleBookCount),
-          static_cast<unsigned>(activeTab), RECENT_BOOKS.getCount() > 0 && visibleBookCount == 0 ? 1U : 0U,
+          static_cast<unsigned>(activeTab), !recentBooks.empty() && visibleBookCount == 0 ? 1U : 0U,
           static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
   logRecentViewState("on_enter_view");
 #if FREEINK_CAP_BLE_HID_HOST
@@ -2510,11 +2525,9 @@ void RecentBooksActivity::onExit() {
   if (usesPersistentHomeSnapshot() && visibleBookCount > 0) writeSnapshotNavigationState();
   Activity::onExit();
   litePopupFrameRetainsShelf = false;
-  // This activity is leaving permanently. Release the rebuildable book-vector
-  // allocation before invalidating thumbnail sources so the outgoing shelf's
-  // largest owner is returned at a deliberate transition boundary rather than
-  // being left to member-destruction order.
-  std::vector<RecentBook>().swap(recentBooks);
+  // This activity is leaving permanently. Release its view of the canonical
+  // Recent store before invalidating thumbnail sources.
+  recentBooks.reset();
   visibleBookCount = 0;
   // ActivityManager calls onExit() while holding RenderLock. Keep cache
   // destruction on the already-locked path so teardown cannot deadlock while
@@ -2547,12 +2560,9 @@ void RecentBooksActivity::releaseTransientStateForReadingStats() {
   const size_t afterPopupFree = ESP.getFreeHeap();
   const size_t afterPopupLargest = ESP.getMaxAllocHeap();
 
-  // The activity keeps its own copy of every RecentBook, including five
-  // per-book strings. It is rebuildable from the persistent RecentBooksStore
-  // and is the remaining parent-owned topology pin while ReadingStats is on
-  // top. Release it only for this explicit child transition; normal shelf
-  // scrolling and browsing keep the copy hot.
-  std::vector<RecentBook>().swap(recentBooks);
+  // Release the lock-backed view while the child is active. The store already
+  // owns the metadata, so there is no second vector to destroy or rebuild.
+  recentBooks.reset();
   visibleBookCount = 0;
   statsTransientStateReleased = true;
   const size_t afterBooksFree = ESP.getFreeHeap();
@@ -2572,7 +2582,7 @@ void RecentBooksActivity::releaseTransientStateForReadingStats() {
 
   LOG_INF("RSDIAG",
           "stage=recentbooks_stats_transient_release owner=carousel_source_cache free=%u->%u largest=%u->%u "
-          "owner=popup_state free=%u->%u owner=recentbooks_copy free=%u->%u total=%u->%u",
+          "owner=popup_state free=%u->%u owner=recentbooks_view free=%u->%u total=%u->%u",
           static_cast<unsigned>(beforeFree), static_cast<unsigned>(afterCacheFree),
           static_cast<unsigned>(beforeLargest), static_cast<unsigned>(afterCacheLargest),
           static_cast<unsigned>(afterCacheFree), static_cast<unsigned>(afterPopupFree),
@@ -2595,13 +2605,12 @@ void RecentBooksActivity::restoreTransientStateAfterReadingStats() {
           static_cast<unsigned>(selectedBefore), static_cast<unsigned>(tabBefore),
           static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
 
-  // ActivityManager calls this with RenderLock held. Rebuild the released copy
-  // from RecentBooksStore's in-memory data and invalidate only its rebuildable
-  // carousel sources using the already-held lock; this is not an SD metadata
-  // rescan and must not recursively acquire RenderLock.
+  // ActivityManager calls this with RenderLock held. Reacquire the canonical
+  // in-memory list and invalidate only rebuildable carousel sources; this is
+  // not an SD metadata rescan and must not recursively acquire RenderLock.
   const size_t booksBeforeFree = ESP.getFreeHeap();
-  RECENT_BOOKS.getBooks().copyTo(recentBooks);
-  LOG_INF("RSDIAG", "owner=recentbooks_copy books=%u capacity=%u free=%u->%u largest=%u",
+  recentBooks = RECENT_BOOKS.getBooks();
+  LOG_INF("RSDIAG", "owner=recentbooks_view books=%u capacity=%u free=%u->%u largest=%u",
           static_cast<unsigned>(recentBooks.size()), static_cast<unsigned>(recentBooks.capacity()),
           static_cast<unsigned>(booksBeforeFree), static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(ESP.getMaxAllocHeap()));
@@ -2641,6 +2650,26 @@ void RecentBooksActivity::restoreTransientStateAfterReadingStats() {
           static_cast<unsigned>(activeTab), static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(ESP.getMaxAllocHeap()));
   logRecentViewState(snapshotRestored ? "stats_return_snapshot_restored" : "stats_return_snapshot_invalidated");
+}
+
+void RecentBooksActivity::releaseRecentBooksViewForChild() {
+  recentBooks.reset();
+  invalidateSpinePageWindow();
+}
+
+void RecentBooksActivity::restoreRecentBooksViewAfterChild(const bool renderLockHeld) {
+  if (!recentBooks.ownsLock()) {
+    recentBooks = RECENT_BOOKS.getBooks();
+  }
+  invalidateSpinePageWindow();
+  if (renderLockHeld) {
+    invalidateCarouselHqProbesLocked();
+  } else {
+    invalidateCarouselHqProbes();
+  }
+  rebuildVisibleBooks();
+  selectorIndex = visibleBookCount == 0 ? 0 : std::min(selectorIndex, visibleBookCount - 1);
+  initialRenderPending = true;
 }
 
 void RecentBooksActivity::loop() {

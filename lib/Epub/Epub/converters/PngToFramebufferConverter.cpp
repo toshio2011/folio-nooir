@@ -1,12 +1,15 @@
 #include "PngToFramebufferConverter.h"
 
 #include <FsHelpers.h>
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <Memory.h>
 #include <PNGdec.h>
+#include <SdCardFontSystem.h>
 
+#include <array>
 #include <cstdlib>
 #include <memory>
 #include <new>
@@ -14,6 +17,7 @@
 #include "DirectPixelWriter.h"
 #include "BoundedAreaResampler.h"
 #include "DitherUtils.h"
+#include "PngHeader.h"
 #include "PixelCache.h"
 
 namespace {
@@ -75,12 +79,27 @@ int32_t pngSeekWithHandle(PNGFILE* pFile, int32_t pos) {
   return f->seek(pos);
 }
 
-// The PNG decoder (PNGdec) is ~42 KB due to internal zlib decompression buffers.
-// We heap-allocate it on demand rather than using a static instance, so this memory
-// is only consumed while actually decoding/querying PNG images. This is critical on
-// the ESP32-C3 where total RAM is ~320 KB.
-constexpr size_t PNG_DECODER_APPROX_SIZE = 44 * 1024;                          // ~42 KB + overhead
-constexpr size_t MIN_FREE_HEAP_FOR_PNG = PNG_DECODER_APPROX_SIZE + 16 * 1024;  // decoder + 16 KB headroom
+// Keep PNGdec on-demand for the ESP32-C3, but check the actual contiguous
+// allocation size. PNGIMAGE embeds the inflate window and scanline buffers, so
+// total free heap alone does not predict whether this allocation can succeed.
+constexpr size_t PNG_DECODER_HEADROOM = 16 * 1024;
+
+bool pngDecoderFitsHeap(const size_t freeHeap, const size_t largestBlock) {
+  return freeHeap >= sizeof(PNG) + PNG_DECODER_HEADROOM && largestBlock >= sizeof(PNG);
+}
+
+std::unique_ptr<PNG> tryAllocatePngDecoder(const size_t freeHeap, const size_t largestBlock) {
+  if (!pngDecoderFitsHeap(freeHeap, largestBlock)) return nullptr;
+  return std::unique_ptr<PNG>(new (std::nothrow) PNG());
+}
+
+void releaseRebuildableReaderFonts(GfxRenderer& renderer) {
+  // This is a failure-only recovery path called by the render owner. Reuse the
+  // same disposable font-cache releases already used at EPUB reader exit; the
+  // next text render rebuilds them lazily from the unchanged font sources.
+  if (auto* fontCache = renderer.getFontCacheManager()) fontCache->releaseSdFontCaches();
+  sdFontSystem.releaseReaderCaches();
+}
 
 // PNGdec keeps TWO scanlines in its internal ucPixels buffer (current + previous)
 // and each scanline includes a leading filter byte.
@@ -364,30 +383,22 @@ int pngDrawCallback(PNGDRAW* pDraw) {
 }  // namespace
 
 bool PngToFramebufferConverter::getDimensionsStatic(const std::string& imagePath, ImageDimensions& out) {
-  size_t freeHeap = ESP.getFreeHeap();
-  if (freeHeap < MIN_FREE_HEAP_FOR_PNG) {
-    LOG_ERR("PNG", "Not enough heap for PNG decoder (%u free, need %u)", freeHeap, MIN_FREE_HEAP_FOR_PNG);
+  // Layout only needs the fixed PNG signature/IHDR prefix. Avoid allocating
+  // PNGdec's ~59 KB inflate workspace just to read two 32-bit dimensions.
+  std::array<uint8_t, 33> header{};
+  HalFile file;
+  if (!Storage.openFileForRead("PNG", imagePath, file)) {
+    LOG_ERR("PNG", "Failed to open PNG header: %s", imagePath.c_str());
     return false;
   }
-
-  std::unique_ptr<PNG> png(new (std::nothrow) PNG());
-  if (!png) {
-    LOG_ERR("PNG", "Failed to allocate PNG decoder for dimensions");
+  const int bytesRead = file.read(header.data(), header.size());
+  file.close();
+  if (bytesRead != static_cast<int>(header.size()) ||
+      !pngheader::parseDimensions(header.data(), static_cast<size_t>(bytesRead), out.width, out.height)) {
+    LOG_ERR("PNG", "Invalid or incomplete signature/IHDR: %s bytes=%u", imagePath.c_str(),
+            static_cast<unsigned>(bytesRead > 0 ? bytesRead : 0));
     return false;
   }
-
-  int rc = png->open(imagePath.c_str(), pngOpenWithHandle, pngCloseWithHandle, pngReadWithHandle, pngSeekWithHandle,
-                     nullptr);
-  const ScopedCleanup cleanup{[&png]() { png->close(); }};
-
-  if (rc != 0) {
-    LOG_ERR("PNG", "Failed to open PNG for dimensions: %d", rc);
-    return false;
-  }
-
-  out.width = png->getWidth();
-  out.height = png->getHeight();
-
   return true;
 }
 
@@ -396,16 +407,21 @@ bool PngToFramebufferConverter::decodeToFramebuffer(const std::string& imagePath
   LOG_DBG("PNG", "Decoding PNG: %s", imagePath.c_str());
 
   size_t freeHeap = ESP.getFreeHeap();
-  if (freeHeap < MIN_FREE_HEAP_FOR_PNG) {
-    LOG_ERR("PNG", "Not enough heap for PNG decoder (%u free, need %u)", freeHeap, MIN_FREE_HEAP_FOR_PNG);
-    return false;
-  }
-
-  // Heap-allocate PNG decoder (~42 KB) - freed at end of function
-  std::unique_ptr<PNG> png(new (std::nothrow) PNG());
+  size_t largestBlock = ESP.getMaxAllocHeap();
+  std::unique_ptr<PNG> png = tryAllocatePngDecoder(freeHeap, largestBlock);
   if (!png) {
-    LOG_ERR("PNG", "Failed to allocate PNG decoder");
-    return false;
+    LOG_INF("PNG", "decoder_workspace_reclaim free=%u largest=%u required=%u headroom=%u",
+            static_cast<unsigned>(freeHeap), static_cast<unsigned>(largestBlock),
+            static_cast<unsigned>(sizeof(PNG)), static_cast<unsigned>(PNG_DECODER_HEADROOM));
+    releaseRebuildableReaderFonts(renderer);
+    freeHeap = ESP.getFreeHeap();
+    largestBlock = ESP.getMaxAllocHeap();
+    png = tryAllocatePngDecoder(freeHeap, largestBlock);
+    LOG_INF("PNG", "decoder_workspace_retry result=%s free=%u largest=%u required=%u",
+            png ? "allocated" : (largestBlock < sizeof(PNG) ? "contiguous_heap" : "headroom"),
+            static_cast<unsigned>(freeHeap), static_cast<unsigned>(largestBlock),
+            static_cast<unsigned>(sizeof(PNG)));
+    if (!png) return false;
   }
 
   PngContext ctx;

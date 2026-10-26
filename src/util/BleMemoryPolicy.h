@@ -29,6 +29,25 @@ inline constexpr std::size_t kHeapPoisonLargestBlockOverhead = 0;
 inline constexpr std::size_t kReaderBleStartMinLargestBlock =
     kReaderBleLogicalMinLargestBlock - kHeapPoisonLargestBlockOverhead;
 
+// A cold BLE start can be delayed at Home by a small amount of reconstructible
+// UI state. Allow the caller to reclaim that state once, and only when both
+// heap measures are near their existing floors and the screen is quiescent.
+// This does not weaken the admission floors or apply to Reader work.
+inline constexpr std::size_t kHomeBleReclaimMargin = 8 * 1024;
+
+constexpr bool homeBleStartReclaimAllowed(const bool bluetoothEnabled, const bool webExclusive,
+                                          const bool wifiActive, const bool readerContext,
+                                          const bool renderBusy, const std::size_t freeHeap,
+                                          const std::size_t largestBlock) {
+  const bool belowFloor = freeHeap < kReaderBleStartMinFreeHeap ||
+                          largestBlock < kReaderBleStartMinLargestBlock;
+  const bool nearBothFloors =
+      freeHeap >= kReaderBleStartMinFreeHeap - kHomeBleReclaimMargin &&
+      largestBlock >= kReaderBleStartMinLargestBlock - kHomeBleReclaimMargin;
+  return bluetoothEnabled && !webExclusive && !wifiActive && !readerContext && !renderBusy &&
+         belowFloor && nearBothFloors;
+}
+
 // Physical Reader traces show a small admission cliff around 97--98 KiB free
 // even when the heap is still one large, healthy region (about 59--65 KiB).
 // Permit only a 2 KiB soft margin, and only at a confirmed quiescent EPUB
