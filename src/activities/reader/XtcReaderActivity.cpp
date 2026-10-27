@@ -888,6 +888,33 @@ void XtcReaderActivity::renderPage() {
     const bool hasBwSnapshotHeadroom = xtc_memory::canPreserveBwFrame(
         freeBeforeSnapshot, largestBeforeSnapshot, bwBufferSize);
     const bool storedBw = hasBwSnapshotHeadroom && renderer.storeBwBuffer();
+#if defined(FREEINK_BLE_HID_LIFECYCLE_DIAGNOSTICS) && FREEINK_BLE_HID_LIFECYCLE_DIAGNOSTICS
+    const size_t freeAfterSnapshot = static_cast<size_t>(ESP.getFreeHeap());
+    const size_t largestAfterSnapshot = static_cast<size_t>(ESP.getMaxAllocHeap());
+    LOG_INF("XTR", "XTCH bw_snapshot phase=store page=%lu owner=xtch_bw_snapshot bytes=%u result=%s free=%u->%u "
+                    "largest=%u->%u",
+            static_cast<unsigned long>(currentPage + 1), static_cast<unsigned>(bwBufferSize),
+            storedBw ? "stored" : hasBwSnapshotHeadroom ? "alloc_failed" : "headroom_skip",
+            static_cast<unsigned>(freeBeforeSnapshot), static_cast<unsigned>(freeAfterSnapshot),
+            static_cast<unsigned>(largestBeforeSnapshot), static_cast<unsigned>(largestAfterSnapshot));
+#endif
+    const auto restoreBwSnapshot = [&](const char* stage) {
+      if (!storedBw) return;
+#if defined(FREEINK_BLE_HID_LIFECYCLE_DIAGNOSTICS) && FREEINK_BLE_HID_LIFECYCLE_DIAGNOSTICS
+      const size_t freeBeforeRestore = static_cast<size_t>(ESP.getFreeHeap());
+      const size_t largestBeforeRestore = static_cast<size_t>(ESP.getMaxAllocHeap());
+#endif
+      renderer.restoreBwBuffer();
+#if defined(FREEINK_BLE_HID_LIFECYCLE_DIAGNOSTICS) && FREEINK_BLE_HID_LIFECYCLE_DIAGNOSTICS
+      LOG_INF("XTR", "XTCH bw_snapshot phase=release page=%lu owner=xtch_bw_snapshot stage=%s bytes=%u "
+                      "free=%u->%u largest=%u->%u",
+              static_cast<unsigned long>(currentPage + 1), stage ? stage : "?", static_cast<unsigned>(bwBufferSize),
+              static_cast<unsigned>(freeBeforeRestore), static_cast<unsigned>(ESP.getFreeHeap()),
+              static_cast<unsigned>(largestBeforeRestore), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+#else
+      (void)stage;
+#endif
+    };
     if (!storedBw) {
       LOG_DBG("XTR", "XTCH bw_snapshot=unavailable reason=%s free=%u largest=%u bytes=%u fallback=stream",
               hasBwSnapshotHeadroom ? "allocation_failed" : "heap_floor", static_cast<unsigned>(freeBeforeSnapshot),
@@ -898,7 +925,7 @@ void XtcReaderActivity::renderPage() {
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
     if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, mapping, renderer,
                               XtchRenderPass::Lsb, darkMode)) {
-      if (storedBw) renderer.restoreBwBuffer();
+      restoreBwSnapshot("lsb_stream_error");
       showStreamError();
       return;
     }
@@ -908,7 +935,7 @@ void XtcReaderActivity::renderPage() {
     renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
     if (!streamXtchRenderPass(*xtc, currentPage, pageWidth, pageHeight, mapping, renderer,
                               XtchRenderPass::Msb, darkMode)) {
-      if (storedBw) renderer.restoreBwBuffer();
+      restoreBwSnapshot("msb_stream_error");
       showStreamError();
       return;
     }
@@ -917,7 +944,7 @@ void XtcReaderActivity::renderPage() {
     renderer.setRenderMode(GfxRenderer::BW);
 
     if (storedBw) {
-      renderer.restoreBwBuffer();
+      restoreBwSnapshot("render_complete");
     } else {
       renderer.setRenderMode(GfxRenderer::BW);
       renderer.clearScreen();
