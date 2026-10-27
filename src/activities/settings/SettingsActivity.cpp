@@ -105,6 +105,13 @@ void logSettingsDiagnostic(const char* stage, const int detail = -1) {
           static_cast<unsigned>(ESP.getMaxAllocHeap()), logSerial ? 1 : 0, static_cast<int>(esp_reset_reason()));
 }
 
+void logSettingsExitHeapCheckpoint(const char* stage, const size_t entryCount, const size_t capacity) {
+  LOG_INF("SETDIAG", "stage=%s entries=%u capacity=%u capacity_bytes=%u free=%u largest=%u", stage,
+          static_cast<unsigned>(entryCount), static_cast<unsigned>(capacity),
+          static_cast<unsigned>(capacity * sizeof(SettingInfo)), static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+}
+
 bool hasActiveButtonInput(const MappedInputManager& input) {
   if (input.wasAnyPressed() || input.wasAnyReleased()) return true;
   for (uint8_t index = 0; index < MappedInputManager::kButtonCount; ++index) {
@@ -624,10 +631,16 @@ void SettingsActivity::onExit() {
   logSettingsDiagnostic("onExit_begin");
   mappedInput.setReaderMappingMode(false);
   Activity::onExit();
+  logSettingsExitHeapCheckpoint("onExit_after_activity", currentGroupSettings.size(),
+                                currentGroupSettings.capacity());
 
   // The Settings activity is discarded on exit; the next visit starts clean.
   currentGroupSettings.clear();
+  logSettingsExitHeapCheckpoint("onExit_after_group_clear", currentGroupSettings.size(),
+                                currentGroupSettings.capacity());
   currentGroupSettings.shrink_to_fit();
+  logSettingsExitHeapCheckpoint("onExit_after_group_shrink", currentGroupSettings.size(),
+                                currentGroupSettings.capacity());
   currentSettings = &currentGroupSettings;
   settingsCount = 0;
   selectedCategoryIndex = selectedSectionIndex = selectedSettingIndex = 0;
@@ -635,7 +648,11 @@ void SettingsActivity::onExit() {
   loadedTabIndex = -1;
   sectionExpanded = false;
 
+  logSettingsExitHeapCheckpoint("onExit_before_theme_reload", currentGroupSettings.size(),
+                                currentGroupSettings.capacity());
   UITheme::getInstance().reload();  // Re-apply theme in case it was changed
+  logSettingsExitHeapCheckpoint("onExit_after_theme_reload", currentGroupSettings.size(),
+                                currentGroupSettings.capacity());
   logSettingsDiagnostic("onExit_end");
 }
 
