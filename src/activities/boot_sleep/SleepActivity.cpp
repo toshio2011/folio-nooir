@@ -45,7 +45,17 @@
 namespace {
 
 enum class OverlayOpenFailure : uint8_t { None, Allocation, Open };
-OverlayOpenFailure overlayOpenFailure = OverlayOpenFailure::None;
+struct OverlayPngIoDiagnostics {
+  OverlayOpenFailure openFailure = OverlayOpenFailure::None;
+  bool fileOpened = false;
+  bool fileSizeKnown = false;
+  int32_t fileSize = -1;
+  int32_t lastRequestedBytes = 0;
+  int32_t lastReadBytes = 0;
+  uint32_t readCalls = 0;
+  uint32_t shortReadCount = 0;
+};
+OverlayPngIoDiagnostics overlayPngIo;
 uint8_t sleepAssetLogCount = 0;
 constexpr uint8_t MAX_SLEEP_ASSET_LOGS = 18;
 constexpr size_t SLEEP_PNG_HEADROOM_BYTES = 16 * 1024;
@@ -60,6 +70,31 @@ void logSleepAsset(const char* stage, const char* path, const char* reason = nul
           reason ? reason : "none", static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(ESP.getMaxAllocHeap()));
   ++sleepAssetLogCount;
+}
+
+const char* overlayPngOpenFailureReason() {
+  switch (overlayPngIo.openFailure) {
+    case OverlayOpenFailure::Allocation:
+      return "file_handle";
+    case OverlayOpenFailure::Open:
+      return "storage_open";
+    case OverlayOpenFailure::None:
+      break;
+  }
+  if (!overlayPngIo.fileOpened) return "storage_open";
+  if (overlayPngIo.shortReadCount > 0) return "short_sd_read";
+  return "png_header_or_format";
+}
+
+void logOverlayPngIoFailure(const char* operation, const char* path, const char* reason, const int result,
+                            const int lastError) {
+  LOG_INF("SLP",
+          "png_io_failure operation=%s path=%.96s reason=%s result=%d last_error=%d file_opened=%d "
+          "file_size_known=%d file_size=%d read_calls=%u read_req=%d read_got=%d short_reads=%u",
+          operation ? operation : "unknown", path ? path : "-", reason ? reason : "unknown", result, lastError,
+          overlayPngIo.fileOpened ? 1 : 0, overlayPngIo.fileSizeKnown ? 1 : 0, overlayPngIo.fileSize,
+          static_cast<unsigned>(overlayPngIo.readCalls), overlayPngIo.lastRequestedBytes,
+          overlayPngIo.lastReadBytes, static_cast<unsigned>(overlayPngIo.shortReadCount));
 }
 
 template <typename Release>
@@ -197,17 +232,18 @@ struct OverlayPngContext {
 void* overlayPngOpen(const char* filename, int32_t* size) {
   auto* file = new (std::nothrow) HalFile();
   if (!file) {
-    overlayOpenFailure = OverlayOpenFailure::Allocation;
-    logSleepAsset("sleep_asset_alloc_fail", filename, "file_handle");
+    overlayPngIo.openFailure = OverlayOpenFailure::Allocation;
     return nullptr;
   }
   if (!Storage.openFileForRead("SLP", std::string(filename), *file)) {
-    overlayOpenFailure = OverlayOpenFailure::Open;
-    logSleepAsset("sleep_asset_open_fail", filename, "storage_open");
+    overlayPngIo.openFailure = OverlayOpenFailure::Open;
     delete file;
     return nullptr;
   }
   *size = file->size();
+  overlayPngIo.fileOpened = true;
+  overlayPngIo.fileSizeKnown = true;
+  overlayPngIo.fileSize = *size;
   return file;
 }
 
@@ -221,7 +257,12 @@ void overlayPngClose(void* handle) {
 
 int32_t overlayPngRead(PNGFILE* pngFile, uint8_t* buffer, int32_t length) {
   auto* file = reinterpret_cast<HalFile*>(pngFile->fHandle);
-  return file ? file->read(buffer, length) : 0;
+  const int32_t bytesRead = file ? file->read(buffer, length) : 0;
+  overlayPngIo.lastRequestedBytes = length;
+  overlayPngIo.lastReadBytes = bytesRead;
+  ++overlayPngIo.readCalls;
+  if (length >= 0 && bytesRead < length) ++overlayPngIo.shortReadCount;
+  return bytesRead;
 }
 
 int32_t overlayPngSeek(PNGFILE* pngFile, int32_t position) {
@@ -1436,13 +1477,27 @@ bool SleepActivity::renderOverlayPngPass(const std::string& path, const GfxRende
     return false;
   }
 
-  overlayOpenFailure = OverlayOpenFailure::None;
+  overlayPngIo = {};
   const int openResult = png->open(path.c_str(), overlayPngOpen, overlayPngClose, overlayPngRead,
                                    overlayPngSeek, overlayPngDraw);
+  const int openLastError = png->getLastError();
   const ScopedCleanup cleanup{[&png]() { png->close(); }};
-  if (openResult != PNG_SUCCESS) {
-    if (overlayOpenFailure == OverlayOpenFailure::None)
-      logSleepAsset("sleep_asset_invalid", path.c_str(), "png_header_or_format");
+  // PNGdec's PNG::open returns PNG_SUCCESS (zero) when the file-open callback
+  // returns nullptr. Check the callback result separately from the decoder
+  // result so a failed SD open cannot be mistaken for a successfully opened
+  // (but malformed) PNG.
+  if (overlayPngIo.openFailure != OverlayOpenFailure::None || openResult != PNG_SUCCESS) {
+    const char* reason = overlayPngOpenFailureReason();
+    logOverlayPngIoFailure("open", path.c_str(), reason, openResult, openLastError);
+    if (overlayPngIo.openFailure == OverlayOpenFailure::Allocation) {
+      logSleepAsset("sleep_asset_alloc_fail", path.c_str(), reason);
+    } else if (overlayPngIo.openFailure == OverlayOpenFailure::Open || !overlayPngIo.fileOpened) {
+      logSleepAsset("sleep_asset_open_fail", path.c_str(), reason);
+    } else if (overlayPngIo.shortReadCount > 0) {
+      logSleepAsset("sleep_asset_read_fail", path.c_str(), reason);
+    } else {
+      logSleepAsset("sleep_asset_invalid", path.c_str(), reason);
+    }
     return false;
   }
 
@@ -1506,8 +1561,13 @@ bool SleepActivity::renderOverlayPngPass(const std::string& path, const GfxRende
 
   LOG_DBG("SLP", "Overlay PNG %dx%d -> %dx%d (%s)", srcWidth, srcHeight, dstWidth, dstHeight,
           mode == GfxRenderer::BW ? "BW" : (mode == GfxRenderer::GRAYSCALE_LSB ? "LSB" : "MSB"));
-  if (png->decode(&context, 0) != PNG_SUCCESS) {
-    logSleepAsset("sleep_asset_decode_fail", path.c_str(), "png_decode");
+  const int decodeResult = png->decode(&context, 0);
+  if (decodeResult != PNG_SUCCESS) {
+    const int decodeLastError = png->getLastError();
+    const char* reason = overlayPngIo.shortReadCount > 0 ? "short_sd_read" : "png_decode";
+    logOverlayPngIoFailure("decode", path.c_str(), reason, decodeResult, decodeLastError);
+    logSleepAsset(overlayPngIo.shortReadCount > 0 ? "sleep_asset_read_fail" : "sleep_asset_decode_fail",
+                  path.c_str(), reason);
     return false;
   }
   return true;
