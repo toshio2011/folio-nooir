@@ -21,6 +21,10 @@ namespace {
 constexpr uint8_t kNooirMetadataMagic[8] = {'N', 'O', 'O', 'I', 'R', 'M', '0', '1'};
 constexpr uint32_t kMaxNooirMetadataBytes = 4096;
 constexpr uint8_t kMaxMetadataJsonDepth = 16;
+// Chapter names are retained as std::strings for the reader menu. Bound the
+// retained records so a corrupt chapter offset cannot turn the remainder of a
+// large XTC file into an unbounded allocation on the ESP32-C3.
+constexpr size_t kMaxChapterRecords = 128;
 
 class BoundedMetadataJsonParser {
  public:
@@ -706,14 +710,19 @@ XtcError XtcParser::readChapters() {
   if (chapterCount == 0) {
     return XtcError::OK;
   }
+  const size_t recordsToRead = chapterCount > kMaxChapterRecords ? kMaxChapterRecords : chapterCount;
+  if (recordsToRead < chapterCount) {
+    LOG_INF("XTC", "Chapter table bounded: reading %u of %u records", static_cast<unsigned>(recordsToRead),
+            static_cast<unsigned>(chapterCount));
+  }
 
   if (!m_file.seek64(chapterOffset)) {
     return XtcError::READ_ERROR;
   }
 
-  m_chapters.reserve(chapterCount);
+  m_chapters.reserve(recordsToRead);
   std::vector<uint8_t> chapterBuf(chapterSize);
-  for (size_t i = 0; i < chapterCount; i++) {
+  for (size_t i = 0; i < recordsToRead; i++) {
     if (m_file.read(chapterBuf.data(), chapterSize) != chapterSize) {
       return XtcError::READ_ERROR;
     }

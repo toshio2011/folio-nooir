@@ -207,3 +207,22 @@ TEST(XtcMetadata, PreservesPageAndChapterParsingAroundTheTrailer) {
   EXPECT_EQ(page[0], 0xA5);
   EXPECT_EQ(XtcMetadataTestStorage::openHandles, 1u);
 }
+
+TEST(XtcMetadata, BoundsChapterAllocationForCorruptOffsets) {
+  constexpr uint32_t corruptChapterOffset = 1024;
+  constexpr size_t maxChapterRecords = 128;
+  constexpr size_t extraChapterRecords = 24;
+  constexpr size_t chapterRecordSize = 96;
+
+  auto bytes = makeFixture();
+  bytes.resize(corruptChapterOffset + (maxChapterRecords + extraChapterRecords) * chapterRecordSize, 0);
+  store(bytes, 0x30, corruptChapterOffset);
+  for (size_t i = 0; i < maxChapterRecords + extraChapterRecords; ++i) {
+    writeChapter(bytes, corruptChapterOffset + i * chapterRecordSize, "Chapter beyond bounded table", 1, 1);
+  }
+
+  auto parser = openFixture(std::move(bytes));
+  const auto& chapters = parser.getChapters();
+  EXPECT_EQ(chapters.size(), maxChapterRecords);
+  EXPECT_EQ(XtcMetadataTestStorage::openHandles, 0u);
+}
