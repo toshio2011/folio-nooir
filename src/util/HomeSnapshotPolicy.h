@@ -51,6 +51,15 @@ constexpr bool pageRangeMatches(const size_t selectorIndex, const size_t pageSta
          selectorIndex - pageStart < pageItems;
 }
 
+// Snapshot pageItems records the layout's capacity. The final page may contain
+// fewer visible books, so clamp before validating or indexing its path keys.
+constexpr size_t visiblePageItemCount(const size_t pageStart, const size_t pageCapacity,
+                                      const size_t visibleBookCount) {
+  if (!isSupportedPageCapacity(pageCapacity) || pageStart >= visibleBookCount) return 0;
+  const size_t remaining = visibleBookCount - pageStart;
+  return pageCapacity < remaining ? pageCapacity : remaining;
+}
+
 constexpr RestoreAction classifyRestore(const uint64_t savedStructuralKey, const uint64_t currentStructuralKey,
                                          const uint64_t savedDynamicKey, const uint64_t currentDynamicKey) {
   if (savedStructuralKey != currentStructuralKey) return RestoreAction::Rebuild;

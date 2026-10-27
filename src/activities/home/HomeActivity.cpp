@@ -336,8 +336,8 @@ void HomeActivity::loop() {
   const bool menuActive = menuPopup.isActive();
   const bool menuBackPressed = menuActive && mappedInput.wasPressed(MappedInputManager::Button::Back);
 #if NOOIR_BLE_DIAGNOSTICS
-  const bool menuBleNext = menuActive && mappedInput.bleIsNavigationPressed(MappedInputManager::Button::NavNext);
-  const bool menuBlePrevious = menuActive && mappedInput.bleIsNavigationPressed(MappedInputManager::Button::NavPrevious);
+  const bool menuBleNext = menuActive && mappedInput.bleWasNavigationPressed(MappedInputManager::Button::NavNext);
+  const bool menuBlePrevious = menuActive && mappedInput.bleWasNavigationPressed(MappedInputManager::Button::NavPrevious);
   const bool menuBleConfirm = menuActive && mappedInput.bleWasPressed(MappedInputManager::Button::Confirm);
   const bool menuBleBack = menuActive && mappedInput.bleWasPressed(MappedInputManager::Button::Back);
 #endif
@@ -360,9 +360,10 @@ void HomeActivity::loop() {
   const bool bookPopupConfirmPressed = bookPopupActive && mappedInput.wasPressed(MappedInputManager::Button::Confirm);
   const bool bookPopupBackPressed = bookPopupActive && mappedInput.wasPressed(MappedInputManager::Button::Back);
 #if NOOIR_BLE_DIAGNOSTICS
-  const bool bookPopupBleNext = bookPopupActive && mappedInput.bleIsNavigationPressed(MappedInputManager::Button::NavNext);
+  const bool bookPopupBleNext =
+      bookPopupActive && mappedInput.bleWasNavigationPressed(MappedInputManager::Button::NavNext);
   const bool bookPopupBlePrevious =
-      bookPopupActive && mappedInput.bleIsNavigationPressed(MappedInputManager::Button::NavPrevious);
+      bookPopupActive && mappedInput.bleWasNavigationPressed(MappedInputManager::Button::NavPrevious);
   const bool bookPopupBleConfirm = bookPopupActive && mappedInput.bleWasPressed(MappedInputManager::Button::Confirm);
   const bool bookPopupBleBack = bookPopupActive && mappedInput.bleWasPressed(MappedInputManager::Button::Back);
 #endif

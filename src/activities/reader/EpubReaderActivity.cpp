@@ -2139,9 +2139,10 @@ void EpubReaderActivity::loop() {
   // Record only after the input has passed the end-of-book, screenshot, and
   // long-action branches: this confirms BLE reached normal page-turn handling.
 #if NOOIR_BLE_DIAGNOSTICS
-  if ((prevTriggered && fromBlePrev) || (nextTriggered && fromBleNext)) {
-    bleinput::recordDiagnosticEvent("consumer=EPUB action=%s", prevTriggered ? "page_back" : "page_forward");
-  }
+  if (prevTriggered && fromBlePrev)
+    bleinput::recordDiagnosticEvent("consumer=EPUB action=page_back");
+  else if (nextTriggered && fromBleNext)
+    bleinput::recordDiagnosticEvent("consumer=EPUB action=page_forward");
 #endif
 
   // No current section, attempt to rerender the book

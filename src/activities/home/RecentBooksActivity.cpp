@@ -1531,9 +1531,7 @@ uint64_t RecentBooksActivity::snapshotKey(const bool exactThemeKey) const {
 uint64_t RecentBooksActivity::snapshotPresentationKey() const {
   uint64_t hash = 1469598103934665603ULL;
   const uint8_t settings[] = {
-      static_cast<uint8_t>(isFolioShelfTheme(SETTINGS.uiTheme)
-                               ? CrossPointSettings::UI_THEME::FOLIO_NOOIR
-                               : SETTINGS.uiTheme),
+      static_cast<uint8_t>(SETTINGS.uiTheme),
       SETTINGS.coverProgressStyle, SETTINGS.featuredShowCover, SETTINGS.featuredShowFileType,
       SETTINGS.featuredShowAuthor, SETTINGS.featuredShowSynopsis, SETTINGS.featuredShowStatus,
       SETTINGS.featuredShowProgress, SETTINGS.featuredShowStartedDate, SETTINGS.featuredShowFinishedDate,
@@ -1545,7 +1543,7 @@ uint64_t RecentBooksActivity::snapshotPresentationKey() const {
   hashBytes(hash, &SETTINGS.uiScalePercent, sizeof(SETTINGS.uiScalePercent));
   const uint8_t layout = activeBookLayout();
   hashBytes(hash, &layout, sizeof(layout));
-  const bool spineSnapshot = usesSpineLayout() || usesTwoRowSpineLayout();
+  const bool spineSnapshot = usesSpineLayout() || usesTwoRowSpineLayout() || usesThreeRowSpineLayout();
   if (spineSnapshot) {
     hashBytes(hash, &SETTINGS.spineAppearanceMode, sizeof(SETTINGS.spineAppearanceMode));
     hashBytes(hash, &SETTINGS.spineDecorationStyle, sizeof(SETTINGS.spineDecorationStyle));
@@ -1831,10 +1829,12 @@ bool RecentBooksActivity::restoreSnapshot() {
     return false;
   }
   rebuildVisibleBooks();
-  const bool pageWithinVisibleRange = pageStart <= visibleBookCount && pageItems <= visibleBookCount - pageStart;
+  const size_t restoredVisiblePageItems =
+      HomeSnapshotPolicy::visiblePageItemCount(pageStart, pageItems, visibleBookCount);
+  const bool pageWithinVisibleRange = restoredVisiblePageItems > 0;
   bool sameVisiblePage = restoredVisibleBookCount == visibleBookCount && pageWithinVisibleRange;
   size_t visibleIndex = 0;
-  const size_t restoredPageEnd = pageWithinVisibleRange ? static_cast<size_t>(pageStart) + pageItems : 0;
+  const size_t restoredPageEnd = pageWithinVisibleRange ? static_cast<size_t>(pageStart) + restoredVisiblePageItems : 0;
   for (const auto& book : recentBooks) {
     if (!sameVisiblePage) break;
     if (!isVisibleRecentBook(book)) continue;

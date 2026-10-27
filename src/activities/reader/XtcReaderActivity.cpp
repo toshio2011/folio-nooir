@@ -723,9 +723,8 @@ void XtcReaderActivity::loop() {
 
   if (prevTriggered) {
 #if NOOIR_BLE_DIAGNOSTICS
-    if (fromBlePrev || fromBleNext) {
-      bleinput::recordDiagnosticEvent("consumer=XTC action=%s page=%lu",
-                                      fromBlePrev ? "page_back" : "page_forward",
+    if (fromBlePrev) {
+      bleinput::recordDiagnosticEvent("consumer=XTC action=page_back page=%lu",
                                       static_cast<unsigned long>(currentPage));
     }
 #endif
@@ -737,9 +736,8 @@ void XtcReaderActivity::loop() {
     requestUpdate();
   } else if (nextTriggered) {
 #if NOOIR_BLE_DIAGNOSTICS
-    if (fromBlePrev || fromBleNext) {
-      bleinput::recordDiagnosticEvent("consumer=XTC action=%s page=%lu",
-                                      fromBleNext ? "page_forward" : "page_back",
+    if (fromBleNext) {
+      bleinput::recordDiagnosticEvent("consumer=XTC action=page_forward page=%lu",
                                       static_cast<unsigned long>(currentPage));
     }
 #endif

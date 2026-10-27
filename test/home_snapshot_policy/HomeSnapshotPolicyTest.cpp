@@ -49,6 +49,17 @@ TEST(HomeSnapshotPolicy, RequiresExactThemeAndLayoutIdentity) {
   EXPECT_FALSE(HomeSnapshotPolicy::identityMatches(SnapshotIdentity{4, 0}, SnapshotIdentity{4, 1}));
 }
 
+TEST(HomeSnapshotPolicy, ClampsPartialSnapshotPagesToVisibleBooks) {
+  EXPECT_EQ(HomeSnapshotPolicy::visiblePageItemCount(0, 8, 5), 5u);
+  EXPECT_EQ(HomeSnapshotPolicy::visiblePageItemCount(8, 8, 15), 7u);
+  EXPECT_EQ(HomeSnapshotPolicy::visiblePageItemCount(0, 3, 2), 2u);
+  EXPECT_EQ(HomeSnapshotPolicy::visiblePageItemCount(0, HomeSnapshotPolicy::SPINE_THREE_ROW_MAX_PAGE_ITEMS, 42),
+            42u);
+  EXPECT_EQ(HomeSnapshotPolicy::visiblePageItemCount(15, 8, 15), 0u);
+  EXPECT_EQ(HomeSnapshotPolicy::visiblePageItemCount(16, 8, 15), 0u);
+  EXPECT_EQ(HomeSnapshotPolicy::visiblePageItemCount(0, 0, 15), 0u);
+}
+
 TEST(HomeSnapshotPolicy, SeparatesStructuralRebuildFromDynamicPatch) {
   using HomeSnapshotPolicy::RestoreAction;
   constexpr std::array<size_t, 2> pageSizes{HomeSnapshotPolicy::THREE_COVER_PAGE_ITEMS,
