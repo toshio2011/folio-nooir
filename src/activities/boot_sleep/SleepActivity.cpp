@@ -52,8 +52,12 @@ struct OverlayPngIoDiagnostics {
   int32_t fileSize = -1;
   int32_t lastRequestedBytes = 0;
   int32_t lastReadBytes = 0;
+  int32_t lastRequestedSeekPosition = 0;
+  int32_t lastSeekResult = 0;
   uint32_t readCalls = 0;
   uint32_t shortReadCount = 0;
+  uint32_t seekCalls = 0;
+  uint32_t seekFailureCount = 0;
 };
 OverlayPngIoDiagnostics overlayPngIo;
 uint8_t sleepAssetLogCount = 0;
@@ -90,11 +94,14 @@ void logOverlayPngIoFailure(const char* operation, const char* path, const char*
                             const int lastError) {
   LOG_INF("SLP",
           "png_io_failure operation=%s path=%.96s reason=%s result=%d last_error=%d file_opened=%d "
-          "file_size_known=%d file_size=%d read_calls=%u read_req=%d read_got=%d short_reads=%u",
+          "file_size_known=%d file_size=%d read_calls=%u read_req=%d read_got=%d short_reads=%u "
+          "seek_calls=%u seek_pos=%d seek_result=%d seek_failures=%u",
           operation ? operation : "unknown", path ? path : "-", reason ? reason : "unknown", result, lastError,
           overlayPngIo.fileOpened ? 1 : 0, overlayPngIo.fileSizeKnown ? 1 : 0, overlayPngIo.fileSize,
           static_cast<unsigned>(overlayPngIo.readCalls), overlayPngIo.lastRequestedBytes,
-          overlayPngIo.lastReadBytes, static_cast<unsigned>(overlayPngIo.shortReadCount));
+          overlayPngIo.lastReadBytes, static_cast<unsigned>(overlayPngIo.shortReadCount),
+          static_cast<unsigned>(overlayPngIo.seekCalls), overlayPngIo.lastRequestedSeekPosition,
+          overlayPngIo.lastSeekResult, static_cast<unsigned>(overlayPngIo.seekFailureCount));
 }
 
 template <typename Release>
@@ -267,7 +274,12 @@ int32_t overlayPngRead(PNGFILE* pngFile, uint8_t* buffer, int32_t length) {
 
 int32_t overlayPngSeek(PNGFILE* pngFile, int32_t position) {
   auto* file = reinterpret_cast<HalFile*>(pngFile->fHandle);
-  return file ? file->seek(position) : -1;
+  const bool succeeded = file && position >= 0 && file->seek(static_cast<size_t>(position));
+  overlayPngIo.lastRequestedSeekPosition = position;
+  overlayPngIo.lastSeekResult = succeeded ? 1 : 0;
+  ++overlayPngIo.seekCalls;
+  if (!succeeded) ++overlayPngIo.seekFailureCount;
+  return succeeded ? 1 : 0;
 }
 
 int overlayBytesPerPixel(int pixelType) {

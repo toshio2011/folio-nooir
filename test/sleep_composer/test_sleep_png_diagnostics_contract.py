@@ -34,6 +34,11 @@ class SleepPngDiagnosticsContract(unittest.TestCase):
         self.assertIn("overlayPngIo.lastReadBytes = bytesRead", read_callback)
         self.assertIn("++overlayPngIo.shortReadCount", read_callback)
 
+        seek_callback = function_body(SOURCE, "int32_t overlayPngSeek(")
+        self.assertIn("overlayPngIo.lastRequestedSeekPosition = position", seek_callback)
+        self.assertIn("overlayPngIo.lastSeekResult = succeeded ? 1 : 0", seek_callback)
+        self.assertIn("++overlayPngIo.seekFailureCount", seek_callback)
+
     def test_open_error_class_checks_callback_failure_and_short_reads_before_header_errors(self):
         classify = function_body(SOURCE, "const char* overlayPngOpenFailureReason(")
         self.assertIn('return "file_handle"', classify)
@@ -58,6 +63,10 @@ class SleepPngDiagnosticsContract(unittest.TestCase):
             "read_req=%d",
             "read_got=%d",
             "short_reads=%u",
+            "seek_calls=%u",
+            "seek_pos=%d",
+            "seek_result=%d",
+            "seek_failures=%u",
         ):
             self.assertIn(field, log)
 
