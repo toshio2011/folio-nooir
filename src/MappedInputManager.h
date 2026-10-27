@@ -79,11 +79,13 @@ class MappedInputManager {
   bool bleWasPressed(Button button) const;
   bool bleWasReleased(Button button) const;
   bool bleIsPressed(Button button) const;
+#endif
   // ButtonNavigator-only semantic queries. Directional BLE bindings remain
   // available to menus while reader page-turn queries keep their own edges.
   bool wasNavigationPressed(Button button) const;
   bool wasNavigationReleased(Button button) const;
   bool isNavigationPressed(Button button) const;
+#if NOOIR_BLE_DIAGNOSTICS
   bool bleWasNavigationPressed(Button button) const;
   bool bleWasNavigationReleased(Button button) const;
   bool bleIsNavigationPressed(Button button) const;

@@ -40,6 +40,11 @@ class BleConsumerTraceContract(unittest.TestCase):
         self.assertIn("return bleEdge(blePressEdge, button);", INPUT_SOURCE)
         self.assertIn("return bleEdge(bleReleaseEdge, button);", INPUT_SOURCE)
         self.assertIn("return bleWasPressed(button) || bleNavigationAlias(blePressEdge, button);", INPUT_SOURCE)
+        semantic_api = INPUT_HEADER.split("// ButtonNavigator-only semantic queries", 1)[1].split("bool hasTouch", 1)[0]
+        normal_api = semantic_api.split("#if NOOIR_BLE_DIAGNOSTICS", 1)[0]
+        self.assertIn("bool wasNavigationPressed(Button button) const;", normal_api)
+        self.assertIn("bool wasNavigationReleased(Button button) const;", normal_api)
+        self.assertIn("bool isNavigationPressed(Button button) const;", normal_api)
 
     def test_home_logs_only_after_a_ble_mapped_action_reaches_consumer(self):
         self.assertIn('consumer=Home action=confirm selection=%d', HOME)
