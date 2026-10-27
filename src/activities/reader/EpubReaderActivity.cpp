@@ -2025,6 +2025,10 @@ void EpubReaderActivity::loop() {
   }
 
   auto [prevTriggered, nextTriggered, fromTilt, fromSide] = ReaderUtils::detectPageTurn(mappedInput);
+#if NOOIR_BLE_DIAGNOSTICS
+  const bool fromBlePrev = ReaderUtils::blePageTurnInput(mappedInput, false);
+  const bool fromBleNext = ReaderUtils::blePageTurnInput(mappedInput, true);
+#endif
   prevTriggered = prevTriggered || touch.prev;
   nextTriggered = nextTriggered || touch.next;
   if (!prevTriggered && !nextTriggered) {
@@ -2131,6 +2135,14 @@ void EpubReaderActivity::loop() {
     requestPageRender();
     return;
   }
+
+  // Record only after the input has passed the end-of-book, screenshot, and
+  // long-action branches: this confirms BLE reached normal page-turn handling.
+#if NOOIR_BLE_DIAGNOSTICS
+  if ((prevTriggered && fromBlePrev) || (nextTriggered && fromBleNext)) {
+    bleinput::recordDiagnosticEvent("consumer=EPUB action=%s", prevTriggered ? "page_back" : "page_forward");
+  }
+#endif
 
   // No current section, attempt to rerender the book
   if (!section) {

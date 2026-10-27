@@ -4,6 +4,10 @@
 
 #include "util/BleKeyMapping.h"
 
+#ifndef NOOIR_BLE_DIAGNOSTICS
+#define NOOIR_BLE_DIAGNOSTICS 0
+#endif
+
 class HalGPIO;
 class GfxRenderer;
 
@@ -69,11 +73,21 @@ class MappedInputManager {
   bool wasPressed(Button button) const;
   bool wasReleased(Button button) const;
   bool isPressed(Button button) const;
+#if NOOIR_BLE_DIAGNOSTICS
+  // Diagnostics can identify when an activity consumed a BLE-mapped edge
+  // without treating a coincident GPIO event as remote input.
+  bool bleWasPressed(Button button) const;
+  bool bleWasReleased(Button button) const;
+  bool bleIsPressed(Button button) const;
   // ButtonNavigator-only semantic queries. Directional BLE bindings remain
   // available to menus while reader page-turn queries keep their own edges.
   bool wasNavigationPressed(Button button) const;
   bool wasNavigationReleased(Button button) const;
   bool isNavigationPressed(Button button) const;
+  bool bleWasNavigationPressed(Button button) const;
+  bool bleWasNavigationReleased(Button button) const;
+  bool bleIsNavigationPressed(Button button) const;
+#endif
   bool hasTouch() const;
   bool wasScreenTapped(int& x, int& y) const;
   bool wasScreenTouchDown(int& x, int& y) const;

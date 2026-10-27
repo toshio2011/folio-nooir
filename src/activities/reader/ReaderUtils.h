@@ -9,6 +9,7 @@
 #include <components/bars/tap-zones.h>
 
 #include "MappedInputManager.h"
+#include "BleInput.h"
 #include "activities/ActivityManager.h"
 
 namespace ReaderUtils {
@@ -104,6 +105,29 @@ inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
                                     input.wasReleased(MappedInputManager::Button::PageForward));
   return {prev, next, tiltPrev || tiltNext, sideEdge};
 }
+
+#if NOOIR_BLE_DIAGNOSTICS
+// Mirror only the BLE side of detectPageTurn() so diagnostic builds can show
+// that a remote-mapped event reached a reader consumer. Kept out of normal
+// builds so input timing and PageTurnResult remain unchanged.
+inline bool blePageTurnInput(const MappedInputManager& input, const bool forward) {
+  const bool sideLongAction = SETTINGS.sideLongPressAction != CrossPointSettings::SIDE_LONG_OFF;
+  const bool usePress = SETTINGS.longPressButtonBehavior == SETTINGS.OFF && !sideLongAction;
+  const bool swapFront = input.isNavDirectionSwapped();
+  const auto prevButton = swapFront ? MappedInputManager::Button::Right : MappedInputManager::Button::Left;
+  const auto nextButton = swapFront ? MappedInputManager::Button::Left : MappedInputManager::Button::Right;
+  if (!forward) {
+    return usePress ? (input.bleWasPressed(MappedInputManager::Button::PageBack) || input.bleWasPressed(prevButton))
+                    : (input.bleWasReleased(MappedInputManager::Button::PageBack) ||
+                       input.bleWasReleased(prevButton));
+  }
+  const bool powerTurn = SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::PAGE_TURN &&
+                         input.bleWasReleased(MappedInputManager::Button::Power);
+  return (usePress && input.bleWasPressed(MappedInputManager::Button::PageForward)) ||
+         (!usePress && input.bleWasReleased(MappedInputManager::Button::PageForward)) || powerTurn ||
+         (usePress ? input.bleWasPressed(nextButton) : input.bleWasReleased(nextButton));
+}
+#endif
 
 struct TouchPageTurn {
   bool prev;

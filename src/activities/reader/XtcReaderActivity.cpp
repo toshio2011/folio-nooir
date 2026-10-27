@@ -652,9 +652,18 @@ void XtcReaderActivity::loop() {
   }
 
   auto [prevTriggered, nextTriggered, fromTilt, fromSide] = ReaderUtils::detectPageTurn(mappedInput);
+#if NOOIR_BLE_DIAGNOSTICS
+  bool fromBlePrev = ReaderUtils::blePageTurnInput(mappedInput, false);
+  bool fromBleNext = ReaderUtils::blePageTurnInput(mappedInput, true);
+#endif
   prevTriggered = prevTriggered || touch.prev;
   nextTriggered = nextTriggered || touch.next;
-  if (SETTINGS.xtcReadingDirection == 1) std::swap(prevTriggered, nextTriggered);
+  if (SETTINGS.xtcReadingDirection == 1) {
+    std::swap(prevTriggered, nextTriggered);
+#if NOOIR_BLE_DIAGNOSTICS
+    std::swap(fromBlePrev, fromBleNext);
+#endif
+  }
   if (!prevTriggered && !nextTriggered) {
     return;
   }
@@ -713,6 +722,13 @@ void XtcReaderActivity::loop() {
   const uint32_t oldPage = currentPage;
 
   if (prevTriggered) {
+#if NOOIR_BLE_DIAGNOSTICS
+    if (fromBlePrev || fromBleNext) {
+      bleinput::recordDiagnosticEvent("consumer=XTC action=%s page=%lu",
+                                      fromBlePrev ? "page_back" : "page_forward",
+                                      static_cast<unsigned long>(currentPage));
+    }
+#endif
     if (currentPage >= static_cast<uint32_t>(skipAmount)) {
       setCurrentPage(currentPage - static_cast<uint32_t>(skipAmount));
     } else {
@@ -720,6 +736,13 @@ void XtcReaderActivity::loop() {
     }
     requestUpdate();
   } else if (nextTriggered) {
+#if NOOIR_BLE_DIAGNOSTICS
+    if (fromBlePrev || fromBleNext) {
+      bleinput::recordDiagnosticEvent("consumer=XTC action=%s page=%lu",
+                                      fromBleNext ? "page_forward" : "page_back",
+                                      static_cast<unsigned long>(currentPage));
+    }
+#endif
     const uint64_t nextPage = static_cast<uint64_t>(currentPage) + static_cast<uint32_t>(skipAmount);
     setCurrentPage(static_cast<uint32_t>(std::min<uint64_t>(nextPage, xtc->getPageCount())));
     requestUpdate();

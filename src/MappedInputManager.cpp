@@ -360,6 +360,14 @@ bool MappedInputManager::isPressed(const Button button) const {
   return mapButton(button, &HalGPIO::isPressed) || bleEdge(bleHeld, button);
 }
 
+#if NOOIR_BLE_DIAGNOSTICS
+bool MappedInputManager::bleWasPressed(const Button button) const { return bleEdge(blePressEdge, button); }
+
+bool MappedInputManager::bleWasReleased(const Button button) const { return bleEdge(bleReleaseEdge, button); }
+
+bool MappedInputManager::bleIsPressed(const Button button) const { return bleEdge(bleHeld, button); }
+#endif
+
 bool MappedInputManager::wasNavigationPressed(const Button button) const {
   return wasPressed(button) || bleNavigationAlias(blePressEdge, button);
 }
@@ -371,6 +379,20 @@ bool MappedInputManager::wasNavigationReleased(const Button button) const {
 bool MappedInputManager::isNavigationPressed(const Button button) const {
   return isPressed(button) || bleNavigationAlias(bleHeld, button);
 }
+
+#if NOOIR_BLE_DIAGNOSTICS
+bool MappedInputManager::bleWasNavigationPressed(const Button button) const {
+  return bleWasPressed(button) || bleNavigationAlias(blePressEdge, button);
+}
+
+bool MappedInputManager::bleWasNavigationReleased(const Button button) const {
+  return bleWasReleased(button) || bleNavigationAlias(bleReleaseEdge, button);
+}
+
+bool MappedInputManager::bleIsNavigationPressed(const Button button) const {
+  return bleIsPressed(button) || bleNavigationAlias(bleHeld, button);
+}
+#endif
 
 void MappedInputManager::setBleCaptureMode(const bool enabled) {
   bleCaptureMode = enabled;

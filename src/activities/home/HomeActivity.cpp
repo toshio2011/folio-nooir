@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "BookStateStore.h"
+#include "BleInput.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "MappedInputManager.h"
@@ -334,7 +335,19 @@ void HomeActivity::loop() {
 
   const bool menuActive = menuPopup.isActive();
   const bool menuBackPressed = menuActive && mappedInput.wasPressed(MappedInputManager::Button::Back);
+#if NOOIR_BLE_DIAGNOSTICS
+  const bool menuBleNext = menuActive && mappedInput.bleIsNavigationPressed(MappedInputManager::Button::NavNext);
+  const bool menuBlePrevious = menuActive && mappedInput.bleIsNavigationPressed(MappedInputManager::Button::NavPrevious);
+  const bool menuBleConfirm = menuActive && mappedInput.bleWasPressed(MappedInputManager::Button::Confirm);
+  const bool menuBleBack = menuActive && mappedInput.bleWasPressed(MappedInputManager::Button::Back);
+#endif
   if (menuPopup.handleInput(mappedInput, [this] { requestUpdate(); })) {
+#if NOOIR_BLE_DIAGNOSTICS
+    if (menuBleNext) bleinput::recordDiagnosticEvent("consumer=Home menu=main action=next");
+    if (menuBlePrevious) bleinput::recordDiagnosticEvent("consumer=Home menu=main action=previous");
+    if (menuBleConfirm) bleinput::recordDiagnosticEvent("consumer=Home menu=main action=confirm");
+    if (menuBleBack) bleinput::recordDiagnosticEvent("consumer=Home menu=main action=back");
+#endif
     if (menuBackPressed) swallowMenuBackRelease = true;
     return;
   }
@@ -346,7 +359,20 @@ void HomeActivity::loop() {
   const bool bookPopupActive = bookActionsPopup.isActive();
   const bool bookPopupConfirmPressed = bookPopupActive && mappedInput.wasPressed(MappedInputManager::Button::Confirm);
   const bool bookPopupBackPressed = bookPopupActive && mappedInput.wasPressed(MappedInputManager::Button::Back);
+#if NOOIR_BLE_DIAGNOSTICS
+  const bool bookPopupBleNext = bookPopupActive && mappedInput.bleIsNavigationPressed(MappedInputManager::Button::NavNext);
+  const bool bookPopupBlePrevious =
+      bookPopupActive && mappedInput.bleIsNavigationPressed(MappedInputManager::Button::NavPrevious);
+  const bool bookPopupBleConfirm = bookPopupActive && mappedInput.bleWasPressed(MappedInputManager::Button::Confirm);
+  const bool bookPopupBleBack = bookPopupActive && mappedInput.bleWasPressed(MappedInputManager::Button::Back);
+#endif
   if (bookActionsPopup.handleInput(mappedInput, [this] { requestUpdate(); })) {
+#if NOOIR_BLE_DIAGNOSTICS
+    if (bookPopupBleNext) bleinput::recordDiagnosticEvent("consumer=Home menu=book_actions action=next");
+    if (bookPopupBlePrevious) bleinput::recordDiagnosticEvent("consumer=Home menu=book_actions action=previous");
+    if (bookPopupBleConfirm) bleinput::recordDiagnosticEvent("consumer=Home menu=book_actions action=confirm");
+    if (bookPopupBleBack) bleinput::recordDiagnosticEvent("consumer=Home menu=book_actions action=back");
+#endif
     if (bookPopupConfirmPressed) swallowBookConfirmRelease = true;
     if (bookPopupBackPressed) swallowBookBackRelease = true;
     return;
@@ -363,6 +389,13 @@ void HomeActivity::loop() {
   }
 
   auto activateSelection = [this] {
+#if NOOIR_BLE_DIAGNOSTICS
+    if (mappedInput.bleWasPressed(MappedInputManager::Button::Confirm) ||
+        mappedInput.bleWasReleased(MappedInputManager::Button::Confirm) ||
+        mappedInput.bleIsPressed(MappedInputManager::Button::Confirm)) {
+      bleinput::recordDiagnosticEvent("consumer=Home action=confirm selection=%d", selectorIndex);
+    }
+#endif
     if (selectorIndex < recentBooks.size()) {
       onSelectBook(recentBooks[selectorIndex].path);
       return;
@@ -390,11 +423,21 @@ void HomeActivity::loop() {
   };
 
   buttonNavigator.onNext([this, menuCount] {
+#if NOOIR_BLE_DIAGNOSTICS
+    if (mappedInput.bleIsNavigationPressed(MappedInputManager::Button::NavNext)) {
+      bleinput::recordDiagnosticEvent("consumer=Home action=next selection=%d", selectorIndex);
+    }
+#endif
     selectorIndex = ButtonNavigator::nextIndex(selectorIndex, menuCount);
     requestUpdate();
   });
 
   buttonNavigator.onPrevious([this, menuCount] {
+#if NOOIR_BLE_DIAGNOSTICS
+    if (mappedInput.bleIsNavigationPressed(MappedInputManager::Button::NavPrevious)) {
+      bleinput::recordDiagnosticEvent("consumer=Home action=previous selection=%d", selectorIndex);
+    }
+#endif
     selectorIndex = ButtonNavigator::previousIndex(selectorIndex, menuCount);
     requestUpdate();
   });
