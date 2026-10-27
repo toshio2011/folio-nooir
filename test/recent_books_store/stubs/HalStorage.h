@@ -13,19 +13,42 @@ enum class HalStorageReadStatus : uint8_t { Success, NotFound, ParentMissing, Un
 
 class HalFile {
  public:
-  void bind(const std::string* value) { data_ = value; offset_ = 0; }
-  uint64_t fileSize64() const { return data_ ? data_->size() : 0; }
+  void bind(const std::string* value) {
+    data_ = value;
+    writeData_ = nullptr;
+    offset_ = 0;
+  }
+  void bindWrite(std::string* value) {
+    data_ = nullptr;
+    writeData_ = value;
+    offset_ = 0;
+  }
+  uint64_t fileSize64() const { return writeData_ ? writeData_->size() : (data_ ? data_->size() : 0); }
   int read(void* destination, size_t requested) {
-    if (!data_ || !destination || offset_ >= data_->size()) return 0;
-    const size_t count = std::min(requested, data_->size() - offset_);
-    std::memcpy(destination, data_->data() + offset_, count);
+    const std::string* source = writeData_ ? writeData_ : data_;
+    if (!source || !destination || offset_ >= source->size()) return 0;
+    const size_t count = std::min(requested, source->size() - offset_);
+    std::memcpy(destination, source->data() + offset_, count);
     offset_ += count;
     return static_cast<int>(count);
   }
-  bool close() { data_ = nullptr; offset_ = 0; return true; }
+  size_t write(const void* source, size_t requested) {
+    if (!writeData_ || !source) return 0;
+    writeData_->append(static_cast<const char*>(source), requested);
+    return requested;
+  }
+  size_t write(const uint8_t byte) { return write(&byte, 1); }
+  void flush() {}
+  bool close() {
+    data_ = nullptr;
+    writeData_ = nullptr;
+    offset_ = 0;
+    return true;
+  }
 
  private:
   const std::string* data_ = nullptr;
+  std::string* writeData_ = nullptr;
   size_t offset_ = 0;
 };
 
@@ -81,6 +104,14 @@ class TestStorage {
     const auto it = files.find(path ? path : "");
     if (it == files.end()) return false;
     file.bind(&it->second);
+    return true;
+  }
+  bool openFileForWrite(const char*, const char* path, HalFile& file) {
+    if (!sdReady || failWrite) return false;
+    std::string& destination = files[path ? path : ""];
+    destination.clear();
+    file.bindWrite(&destination);
+    ++writeCount;
     return true;
   }
   void reset() {

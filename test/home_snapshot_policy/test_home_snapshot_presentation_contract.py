@@ -35,6 +35,23 @@ class HomeSnapshotPresentationContract(unittest.TestCase):
         self.assertIn("SETTINGS.spineDecorationStyle", body)
         self.assertIn("spineSessionSeed", body)
 
+    def test_dynamic_snapshot_restore_patches_lite_details_without_rebuilding_the_shelf(self):
+        body = function_body(SOURCE, "bool RecentBooksActivity::renderCarousel(const bool threeCover)")
+        fast_path = body.split("canUseRestoredSnapshotFastPath", 1)[1].split("const bool selectionChanged", 1)[0]
+        self.assertIn("snapshotDynamicNeedsPatch", fast_path)
+        self.assertIn("liteSpineMode", fast_path)
+        self.assertIn("drawLiteSelectedBookDetails", fast_path)
+        self.assertIn("drawLiteShelfStats", fast_path)
+        self.assertIn("drawSnapshotSelectionOutline", fast_path)
+        self.assertIn("Other Lite layouts", body)
+
+    def test_spine_geometry_uses_one_active_layout_cache(self):
+        header = (ROOT / "src/activities/home/RecentBooksActivity.h").read_text(encoding="utf-8")
+        self.assertIn("std::variant<std::monostate, SpinePageWindow, TwoRowSpinePageWindow, ThreeRowSpinePageWindow>",
+                      header)
+        self.assertNotIn("TwoRowSpinePageWindow twoRowSpinePageWindow", header)
+        self.assertNotIn("ThreeRowSpinePageWindow threeRowSpinePageWindow", header)
+
 
 if __name__ == "__main__":
     unittest.main()

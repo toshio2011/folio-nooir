@@ -1109,22 +1109,22 @@ size_t RecentBooksActivity::recentIndexForVisibleIndex(const size_t visibleIndex
 
 const RecentBooksActivity::SpinePageWindow& RecentBooksActivity::spinePageForSelection(
     const SpineShelfPlanner::Rect& bounds) {
-  const auto& cached = spinePageWindow;
-  if (cached.valid && cached.bounds.x == bounds.x && cached.bounds.y == bounds.y &&
-      cached.bounds.width == bounds.width && cached.bounds.height == bounds.height &&
-      cached.visualSeed == spineSessionSeed && cached.decorationStyle == SETTINGS.spineDecorationStyle &&
-      cached.appearanceMode == SETTINGS.spineAppearanceMode &&
-      cached.page.itemCount > 0 && selectorIndex >= cached.page.firstIndex &&
-      selectorIndex < cached.page.firstIndex + cached.page.itemCount) {
-    return cached;
+  const auto* cached = std::get_if<SpinePageWindow>(&spinePageWindow);
+  if (cached != nullptr && cached->valid && cached->bounds.x == bounds.x && cached->bounds.y == bounds.y &&
+      cached->bounds.width == bounds.width && cached->bounds.height == bounds.height &&
+      cached->visualSeed == spineSessionSeed && cached->decorationStyle == SETTINGS.spineDecorationStyle &&
+      cached->appearanceMode == SETTINGS.spineAppearanceMode && cached->page.itemCount > 0 &&
+      selectorIndex >= cached->page.firstIndex && selectorIndex < cached->page.firstIndex + cached->page.itemCount) {
+    return *cached;
   }
 
-  spinePageWindow = {};
-  spinePageWindow.thumbnailUnavailable.fill(false);
-  spinePageWindow.bounds = bounds;
-  spinePageWindow.visualSeed = spineSessionSeed;
-  spinePageWindow.decorationStyle = SETTINGS.spineDecorationStyle;
-  spinePageWindow.appearanceMode = SETTINGS.spineAppearanceMode;
+  auto& window = spinePageWindow.emplace<SpinePageWindow>();
+  window = {};
+  window.thumbnailUnavailable.fill(false);
+  window.bounds = bounds;
+  window.visualSeed = spineSessionSeed;
+  window.decorationStyle = SETTINGS.spineDecorationStyle;
+  window.appearanceMode = SETTINGS.spineAppearanceMode;
   size_t rawStart = 0;
   size_t visibleStart = 0;
   size_t previousPageStart = 0;
@@ -1152,18 +1152,18 @@ const RecentBooksActivity::SpinePageWindow& RecentBooksActivity::spinePageForSel
     ++pageNumber;
     const size_t pageEnd = visibleStart + candidate.itemCount;
     if (!found && selectorIndex >= visibleStart && selectorIndex < pageEnd) {
-      spinePageWindow.page = candidate;
-      spinePageWindow.page.firstIndex = visibleStart;
-      spinePageWindow.pageNumber = pageNumber;
-      spinePageWindow.previousPageStart = pageNumber > 1 ? previousPageStart : 0;
+      window.page = candidate;
+      window.page.firstIndex = visibleStart;
+      window.pageNumber = pageNumber;
+      window.previousPageStart = pageNumber > 1 ? previousPageStart : 0;
       for (size_t i = 0; i < candidateCount; ++i) {
-        spinePageWindow.books[i] = candidateBooks[i];
-        spinePageWindow.recentIndexes[i] = candidateIndexes[i];
+        window.books[i] = candidateBooks[i];
+        window.recentIndexes[i] = candidateIndexes[i];
       }
-      for (size_t i = 0; i < spinePageWindow.page.itemCount; ++i) {
-        spinePageWindow.page.slots[i].itemIndex += visibleStart;
+      for (size_t i = 0; i < window.page.itemCount; ++i) {
+        window.page.slots[i].itemIndex += visibleStart;
       }
-      spinePageWindow.nextPageStart = pageEnd < visibleBookCount ? pageEnd : 0;
+      window.nextPageStart = pageEnd < visibleBookCount ? pageEnd : 0;
       found = true;
     }
 
@@ -1172,29 +1172,29 @@ const RecentBooksActivity::SpinePageWindow& RecentBooksActivity::spinePageForSel
     visibleStart = pageEnd;
   }
 
-  spinePageWindow.pageCount = pageNumber;
-  spinePageWindow.valid = true;
-  return spinePageWindow;
+  window.pageCount = pageNumber;
+  window.valid = true;
+  return window;
 }
 
 const RecentBooksActivity::TwoRowSpinePageWindow& RecentBooksActivity::twoRowSpinePageForSelection(
     const SpineShelfPlanner::Rect& bounds) {
-  const auto& cached = twoRowSpinePageWindow;
-  if (cached.valid && cached.bounds.x == bounds.x && cached.bounds.y == bounds.y &&
-      cached.bounds.width == bounds.width && cached.bounds.height == bounds.height &&
-      cached.visualSeed == spineSessionSeed && cached.decorationStyle == SETTINGS.spineDecorationStyle &&
-      cached.appearanceMode == SETTINGS.spineAppearanceMode &&
-      cached.page.itemCount > 0 && selectorIndex >= cached.page.firstIndex &&
-      selectorIndex < cached.page.firstIndex + cached.page.itemCount) {
-    return cached;
+  const auto* cached = std::get_if<TwoRowSpinePageWindow>(&spinePageWindow);
+  if (cached != nullptr && cached->valid && cached->bounds.x == bounds.x && cached->bounds.y == bounds.y &&
+      cached->bounds.width == bounds.width && cached->bounds.height == bounds.height &&
+      cached->visualSeed == spineSessionSeed && cached->decorationStyle == SETTINGS.spineDecorationStyle &&
+      cached->appearanceMode == SETTINGS.spineAppearanceMode && cached->page.itemCount > 0 &&
+      selectorIndex >= cached->page.firstIndex && selectorIndex < cached->page.firstIndex + cached->page.itemCount) {
+    return *cached;
   }
 
-  twoRowSpinePageWindow = {};
-  twoRowSpinePageWindow.thumbnailUnavailable.fill(false);
-  twoRowSpinePageWindow.bounds = bounds;
-  twoRowSpinePageWindow.visualSeed = spineSessionSeed;
-  twoRowSpinePageWindow.decorationStyle = SETTINGS.spineDecorationStyle;
-  twoRowSpinePageWindow.appearanceMode = SETTINGS.spineAppearanceMode;
+  auto& window = spinePageWindow.emplace<TwoRowSpinePageWindow>();
+  window = {};
+  window.thumbnailUnavailable.fill(false);
+  window.bounds = bounds;
+  window.visualSeed = spineSessionSeed;
+  window.decorationStyle = SETTINGS.spineDecorationStyle;
+  window.appearanceMode = SETTINGS.spineAppearanceMode;
   size_t rawStart = 0;
   size_t visibleStart = 0;
   size_t previousPageStart = 0;
@@ -1222,18 +1222,18 @@ const RecentBooksActivity::TwoRowSpinePageWindow& RecentBooksActivity::twoRowSpi
     ++pageNumber;
     const size_t pageEnd = visibleStart + candidate.itemCount;
     if (!found && selectorIndex >= visibleStart && selectorIndex < pageEnd) {
-      twoRowSpinePageWindow.page = candidate;
-      twoRowSpinePageWindow.page.firstIndex = visibleStart;
-      twoRowSpinePageWindow.pageNumber = pageNumber;
-      twoRowSpinePageWindow.previousPageStart = pageNumber > 1 ? previousPageStart : 0;
+      window.page = candidate;
+      window.page.firstIndex = visibleStart;
+      window.pageNumber = pageNumber;
+      window.previousPageStart = pageNumber > 1 ? previousPageStart : 0;
       for (size_t i = 0; i < candidateCount; ++i) {
-        twoRowSpinePageWindow.books[i] = candidateBooks[i];
-        twoRowSpinePageWindow.recentIndexes[i] = candidateIndexes[i];
+        window.books[i] = candidateBooks[i];
+        window.recentIndexes[i] = candidateIndexes[i];
       }
-      for (size_t i = 0; i < twoRowSpinePageWindow.page.itemCount; ++i) {
-        twoRowSpinePageWindow.page.slots[i].itemIndex += visibleStart;
+      for (size_t i = 0; i < window.page.itemCount; ++i) {
+        window.page.slots[i].itemIndex += visibleStart;
       }
-      twoRowSpinePageWindow.nextPageStart = pageEnd < visibleBookCount ? pageEnd : 0;
+      window.nextPageStart = pageEnd < visibleBookCount ? pageEnd : 0;
       found = true;
     }
 
@@ -1242,29 +1242,29 @@ const RecentBooksActivity::TwoRowSpinePageWindow& RecentBooksActivity::twoRowSpi
     visibleStart = pageEnd;
   }
 
-  twoRowSpinePageWindow.pageCount = pageNumber;
-  twoRowSpinePageWindow.valid = true;
-  return twoRowSpinePageWindow;
+  window.pageCount = pageNumber;
+  window.valid = true;
+  return window;
 }
 
 const RecentBooksActivity::ThreeRowSpinePageWindow& RecentBooksActivity::threeRowSpinePageForSelection(
     const SpineShelfPlanner::Rect& bounds) {
-  const auto& cached = threeRowSpinePageWindow;
-  if (cached.valid && cached.bounds.x == bounds.x && cached.bounds.y == bounds.y &&
-      cached.bounds.width == bounds.width && cached.bounds.height == bounds.height &&
-      cached.visualSeed == spineSessionSeed && cached.decorationStyle == SETTINGS.spineDecorationStyle &&
-      cached.appearanceMode == SETTINGS.spineAppearanceMode && cached.page.itemCount > 0 &&
-      selectorIndex >= cached.page.firstIndex &&
-      selectorIndex < cached.page.firstIndex + cached.page.itemCount) {
-    return cached;
+  const auto* cached = std::get_if<ThreeRowSpinePageWindow>(&spinePageWindow);
+  if (cached != nullptr && cached->valid && cached->bounds.x == bounds.x && cached->bounds.y == bounds.y &&
+      cached->bounds.width == bounds.width && cached->bounds.height == bounds.height &&
+      cached->visualSeed == spineSessionSeed && cached->decorationStyle == SETTINGS.spineDecorationStyle &&
+      cached->appearanceMode == SETTINGS.spineAppearanceMode && cached->page.itemCount > 0 &&
+      selectorIndex >= cached->page.firstIndex && selectorIndex < cached->page.firstIndex + cached->page.itemCount) {
+    return *cached;
   }
 
-  threeRowSpinePageWindow = {};
-  threeRowSpinePageWindow.thumbnailUnavailable.fill(false);
-  threeRowSpinePageWindow.bounds = bounds;
-  threeRowSpinePageWindow.visualSeed = spineSessionSeed;
-  threeRowSpinePageWindow.decorationStyle = SETTINGS.spineDecorationStyle;
-  threeRowSpinePageWindow.appearanceMode = SETTINGS.spineAppearanceMode;
+  auto& window = spinePageWindow.emplace<ThreeRowSpinePageWindow>();
+  window = {};
+  window.thumbnailUnavailable.fill(false);
+  window.bounds = bounds;
+  window.visualSeed = spineSessionSeed;
+  window.decorationStyle = SETTINGS.spineDecorationStyle;
+  window.appearanceMode = SETTINGS.spineAppearanceMode;
   size_t rawStart = 0;
   size_t visibleStart = 0;
   size_t previousPageStart = 0;
@@ -1292,18 +1292,18 @@ const RecentBooksActivity::ThreeRowSpinePageWindow& RecentBooksActivity::threeRo
     ++pageNumber;
     const size_t pageEnd = visibleStart + candidate.itemCount;
     if (!found && selectorIndex >= visibleStart && selectorIndex < pageEnd) {
-      threeRowSpinePageWindow.page = candidate;
-      threeRowSpinePageWindow.page.firstIndex = visibleStart;
-      threeRowSpinePageWindow.pageNumber = pageNumber;
-      threeRowSpinePageWindow.previousPageStart = pageNumber > 1 ? previousPageStart : 0;
+      window.page = candidate;
+      window.page.firstIndex = visibleStart;
+      window.pageNumber = pageNumber;
+      window.previousPageStart = pageNumber > 1 ? previousPageStart : 0;
       for (size_t i = 0; i < candidateCount; ++i) {
-        threeRowSpinePageWindow.books[i] = candidateBooks[i];
-        threeRowSpinePageWindow.recentIndexes[i] = candidateIndexes[i];
+        window.books[i] = candidateBooks[i];
+        window.recentIndexes[i] = candidateIndexes[i];
       }
-      for (size_t i = 0; i < threeRowSpinePageWindow.page.itemCount; ++i) {
-        threeRowSpinePageWindow.page.slots[i].itemIndex += visibleStart;
+      for (size_t i = 0; i < window.page.itemCount; ++i) {
+        window.page.slots[i].itemIndex += visibleStart;
       }
-      threeRowSpinePageWindow.nextPageStart = pageEnd < visibleBookCount ? pageEnd : 0;
+      window.nextPageStart = pageEnd < visibleBookCount ? pageEnd : 0;
       found = true;
     }
     rawStart = candidateIndexes[candidate.itemCount - 1] + 1;
@@ -1311,9 +1311,9 @@ const RecentBooksActivity::ThreeRowSpinePageWindow& RecentBooksActivity::threeRo
     visibleStart = pageEnd;
   }
 
-  threeRowSpinePageWindow.pageCount = pageNumber;
-  threeRowSpinePageWindow.valid = true;
-  return threeRowSpinePageWindow;
+  window.pageCount = pageNumber;
+  window.valid = true;
+  return window;
 }
 
 size_t RecentBooksActivity::moveSpinePage(const FolioShelfLayout& layout, const bool next) {
@@ -3540,6 +3540,23 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
     }
     displayHomeFrame(renderer, renderDiagnosticReason, renderStartedUs, activeBookLayout());
   };
+  auto drawLiteShelfStats = [&] {
+    const bool accumulated = !halClock.isAvailable();
+    const uint32_t today = halClock.getDateKey();
+    uint32_t middleSeconds = 0;
+    uint16_t finishedCount = 0;
+    for (const auto& book : recentBooks) {
+      const uint32_t seconds = accumulated ? book.readingSeconds
+                                           : (today != 0 && book.dailyReadingDateKey == today
+                                                  ? book.dailyReadingSeconds
+                                                  : 0);
+      middleSeconds += std::min(seconds, UINT32_MAX - middleSeconds);
+      if (book.progressPercent >= 100 && finishedCount < UINT16_MAX) ++finishedCount;
+    }
+    const uint32_t lastMinutes = recentBooks.empty() ? 0 : (recentBooks.front().lastSessionSeconds + 30) / 60;
+    folioPresentation.drawShelfStats(renderer, folioLayout, lastMinutes, (middleSeconds + 30) / 60,
+                                     finishedCount, accumulated);
+  };
 
   const bool liteSpineMode = isFolioNooirLiteTheme(SETTINGS.uiTheme) &&
                              (usesSpineLayout() || usesTwoRowSpineLayout() || usesThreeRowSpineLayout());
@@ -3583,14 +3600,38 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
     snapshotWritePending = true;
     snapshotWriteRequestedMs = millis();
   };
-  if (usesPersistentHomeSnapshot() && snapshotRestored && initialRenderPending && !snapshotFastPathUsed &&
-      noOverlay && noBackgroundWork && !snapshotDynamicNeedsPatch && !snapshotWritePending && visibleBookCount > 0 &&
-      restoredPageKnown && snapshotPageStart == restoredPageStart && snapshotPageItems == restoredPageItems) {
+  const auto restoreAction = !snapshotRestored
+                                 ? HomeSnapshotPolicy::RestoreAction::Rebuild
+                                 : snapshotDynamicNeedsPatch ? HomeSnapshotPolicy::RestoreAction::PatchDynamic
+                                                             : HomeSnapshotPolicy::RestoreAction::Restore;
+  const bool restoredPageMatches = restoredPageKnown && snapshotPageStart == restoredPageStart &&
+                                   snapshotPageItems == restoredPageItems;
+  // Lite Spine progress/status is part of the structural shelf key, so a
+  // dynamic-only snapshot difference is limited to the featured panel and
+  // stats. Other Lite layouts can have progress bars or selected covers in
+  // the saved pixels and must repaint those instead of reusing stale shelf art.
+  if (usesPersistentHomeSnapshot() && initialRenderPending && !snapshotFastPathUsed && visibleBookCount > 0 &&
+      HomeSnapshotPolicy::canUseRestoredSnapshotFastPath(restoreAction, restoredPageMatches, snapshotWritePending,
+                                                          !noOverlay || !noBackgroundWork, liteSpineMode)) {
     // The SD snapshot already contains the selected cover for carousel layouts.
     // Grid and spine layouts save a clean base and need only the small focus
     // marker before the panel refresh.
+    const uint32_t shelfStartedUs = micros();
     if (!usesCarouselLayout()) drawSnapshotSelectionOutline(displayLayout, selectorIndex, true);
-    displayLiteHomeFrame(0, 0, 0);
+    const uint32_t shelfUs = micros() - shelfStartedUs;
+    uint32_t detailsUs = 0;
+    uint32_t statsUs = 0;
+    if (snapshotDynamicNeedsPatch) {
+      const uint32_t detailsStartedUs = micros();
+      drawLiteSelectedBookDetails(renderer, folioPresentation, carouselLayout,
+                                  recentBooks[selectedRecentIndex()], true);
+      detailsUs = micros() - detailsStartedUs;
+      const uint32_t statsStartedUs = micros();
+      drawLiteShelfStats();
+      statsUs = micros() - statsStartedUs;
+      snapshotDynamicNeedsPatch = false;
+    }
+    displayLiteHomeFrame(detailsUs, shelfUs, statsUs);
     markStatsReturnFrameReady();
     snapshotFastPathUsed = true;
     initialRenderPending = false;
@@ -3608,6 +3649,7 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
     }
     snapshotSelectorIndex = selectorIndex;
     snapshotPresentationKeyValue = snapshotPresentationKey();
+    liteSelectedDetailsDirty = false;
     return true;
   }
 
@@ -3914,21 +3956,7 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
   }
 
   const uint32_t statsStartedUs = micros();
-  const bool accumulated = !halClock.isAvailable();
-  const uint32_t today = halClock.getDateKey();
-  uint32_t middleSeconds = 0;
-  uint16_t finishedCount = 0;
-  for (const auto& book : recentBooks) {
-    const uint32_t seconds = accumulated ? book.readingSeconds
-                                         : (today != 0 && book.dailyReadingDateKey == today
-                                                ? book.dailyReadingSeconds
-                                                : 0);
-    middleSeconds += std::min(seconds, UINT32_MAX - middleSeconds);
-    if (book.progressPercent >= 100 && finishedCount < UINT16_MAX) ++finishedCount;
-  }
-  const uint32_t lastMinutes = recentBooks.empty() ? 0 : (recentBooks.front().lastSessionSeconds + 30) / 60;
-  folioPresentation.drawShelfStats(renderer, folioLayout, lastMinutes, (middleSeconds + 30) / 60, finishedCount,
-                                   accumulated);
+  drawLiteShelfStats();
   const uint32_t statsDurationUs = micros() - statsStartedUs;
 
   if (menuPopup.processRender(renderer, mappedInput)) {

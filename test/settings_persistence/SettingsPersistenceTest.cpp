@@ -400,6 +400,42 @@ TEST_F(SettingsPersistenceTest, RecentSaveChecksCompleteTemporaryBytesAndRetains
   EXPECT_FALSE(Storage.files.contains(std::string(kRecentPath) + ".previous-0"));
 }
 
+TEST_F(SettingsPersistenceTest, LargeRecentSaveStreamsAndValidatesWithoutReplacingThePriorGeneration) {
+  const std::string original = serializedRecent(17).c_str();
+  const std::string backup = serializedRecent(9).c_str();
+  Storage.files[kRecentPath] = original;
+  Storage.files[std::string(kRecentPath) + ".bak"] = backup;
+
+  JsonDocument replacement;
+  JsonArray books = replacement["books"].to<JsonArray>();
+  const std::string title(80, 't');
+  const std::string author(40, 'a');
+  const std::string cover(70, 'c');
+  const std::string synopsis(180, 's');
+  const std::string series(40, 'r');
+  for (size_t index = 0; index < 22; ++index) {
+    JsonObject book = books.add<JsonObject>();
+    book["path"] = "/books/" + std::to_string(index) + ".xtch";
+    book["title"] = title;
+    book["author"] = author;
+    book["coverBmpPath"] = cover;
+    book["synopsis"] = synopsis;
+    book["series"] = series;
+    book["xtcMetadataChecked"] = true;
+    book["progressPercent"] = static_cast<uint8_t>(index);
+    book["readingSeconds"] = static_cast<uint32_t>(index * 60);
+  }
+
+  String expected;
+  serializeJson(replacement, expected);
+  ASSERT_GT(expected.length(), 10000u);
+  ASSERT_TRUE(PersistableStoreBase::writeDocToFile(kRecentPath, replacement));
+
+  EXPECT_EQ(Storage.files[kRecentPath], expected.c_str());
+  EXPECT_EQ(Storage.files[std::string(kRecentPath) + ".bak"], original);
+  EXPECT_FALSE(Storage.files.contains(std::string(kRecentPath) + ".tmp"));
+}
+
 TEST_F(SettingsPersistenceTest, TruncatedRecentTemporaryWriteCannotReplaceHistoryOrBackup) {
   const String original = serializedRecent(17);
   const String backup = serializedRecent(9);

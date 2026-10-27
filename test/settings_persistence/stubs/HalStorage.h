@@ -15,25 +15,46 @@ class HalFile {
  public:
   void bind(const std::string* data) {
     data_ = data;
+    writeData_ = nullptr;
     offset_ = 0;
   }
-  uint64_t fileSize64() const { return data_ ? data_->size() : 0; }
+  void bindWrite(std::string* data, const size_t writeLimit) {
+    data_ = nullptr;
+    writeData_ = data;
+    offset_ = 0;
+    writeLimit_ = writeLimit;
+  }
+  uint64_t fileSize64() const {
+    return writeData_ ? writeData_->size() : (data_ ? data_->size() : 0);
+  }
   int read(void* destination, size_t requested) {
-    if (!data_ || destination == nullptr || offset_ >= data_->size()) return 0;
-    const size_t count = std::min(requested, data_->size() - offset_);
-    std::memcpy(destination, data_->data() + offset_, count);
+    const std::string* source = writeData_ ? writeData_ : data_;
+    if (!source || destination == nullptr || offset_ >= source->size()) return 0;
+    const size_t count = std::min(requested, source->size() - offset_);
+    std::memcpy(destination, source->data() + offset_, count);
     offset_ += count;
     return static_cast<int>(count);
   }
+  size_t write(const void* source, const size_t requested) {
+    if (!writeData_ || source == nullptr || writeData_->size() >= writeLimit_) return 0;
+    const size_t count = std::min(requested, writeLimit_ - writeData_->size());
+    writeData_->append(static_cast<const char*>(source), count);
+    return count;
+  }
+  size_t write(const uint8_t byte) { return write(&byte, 1); }
+  void flush() {}
   bool close() {
     data_ = nullptr;
+    writeData_ = nullptr;
     offset_ = 0;
     return true;
   }
 
  private:
   const std::string* data_ = nullptr;
+  std::string* writeData_ = nullptr;
   size_t offset_ = 0;
+  size_t writeLimit_ = static_cast<size_t>(-1);
 };
 
 class SimulatedPowerLoss : public std::runtime_error {
@@ -52,6 +73,16 @@ class TestStorage {
       return false;
     }
     file.bind(&it->second);
+    return true;
+  }
+  bool openFileForWrite(const char*, const char* path, HalFile& file) {
+    const std::string name = path ? path : "";
+    ++writeCount;
+    if (!ready || failWrite || failWritePaths.find(name) != failWritePaths.end()) return false;
+    std::string& destination = files[name];
+    destination.clear();
+    const size_t limit = truncateTempWrite && name.ends_with(".tmp") ? 8 : static_cast<size_t>(-1);
+    file.bindWrite(&destination, limit);
     return true;
   }
   bool exists(const char* path) const {

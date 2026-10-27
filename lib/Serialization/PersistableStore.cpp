@@ -54,6 +54,127 @@ bool temporaryFileMatches(const char* path, const String& expected) {
   return matches && closed && offset == expectedSize;
 }
 
+class JsonDocumentFileWriter {
+ public:
+  explicit JsonDocumentFileWriter(HalFile& file) : file(file) {}
+
+  size_t write(const uint8_t byte) { return write(&byte, 1); }
+
+  size_t write(const uint8_t* data, size_t length) {
+    if (!ok) return 0;
+    const size_t requested = length;
+    while (length > 0) {
+      if (buffered == buffer.size() && !flushBuffer()) return requested - length;
+      const size_t chunk = std::min(length, buffer.size() - buffered);
+      memcpy(buffer.data() + buffered, data, chunk);
+      buffered += chunk;
+      data += chunk;
+      length -= chunk;
+    }
+    return requested;
+  }
+
+  bool flush() { return flushBuffer(); }
+  size_t fileBytesWritten() const { return bytesWritten; }
+
+ private:
+  bool flushBuffer() {
+    if (!ok || buffered == 0) return ok;
+    const size_t written = file.write(buffer.data(), buffered);
+    bytesWritten += written;
+    if (written != buffered) ok = false;
+    buffered = 0;
+    return ok;
+  }
+
+  HalFile& file;
+  std::array<uint8_t, 256> buffer{};
+  size_t buffered = 0;
+  size_t bytesWritten = 0;
+  bool ok = true;
+};
+
+class JsonDocumentFileCompareWriter {
+ public:
+  explicit JsonDocumentFileCompareWriter(HalFile& file) : file(file) {}
+
+  size_t write(const uint8_t byte) { return write(&byte, 1); }
+
+  size_t write(const uint8_t* data, size_t length) {
+    if (!ok) return 0;
+    const size_t requested = length;
+    while (length > 0) {
+      if (available == 0 && !readMore()) return requested - length;
+      const size_t chunk = std::min(length, available);
+      if (memcmp(buffer.data() + offset, data, chunk) != 0) {
+        ok = false;
+        return requested - length;
+      }
+      offset += chunk;
+      available -= chunk;
+      data += chunk;
+      length -= chunk;
+      compared += chunk;
+    }
+    return requested;
+  }
+
+  bool finish(const size_t expectedBytes) {
+    if (!ok || compared != expectedBytes || available != 0) return false;
+    uint8_t trailingByte = 0;
+    return file.read(&trailingByte, 1) == 0;
+  }
+
+ private:
+  bool readMore() {
+    const int count = file.read(buffer.data(), buffer.size());
+    if (count <= 0 || static_cast<size_t>(count) > buffer.size()) {
+      ok = false;
+      return false;
+    }
+    offset = 0;
+    available = static_cast<size_t>(count);
+    return true;
+  }
+
+  HalFile& file;
+  std::array<uint8_t, 256> buffer{};
+  size_t offset = 0;
+  size_t available = 0;
+  size_t compared = 0;
+  bool ok = true;
+};
+
+bool writeJsonDocumentToFile(const char* path, const JsonDocument& doc, const size_t expectedBytes,
+                             size_t& serializedBytes, size_t& outputBytes, bool& opened) {
+  opened = false;
+  HalFile file;
+  if (!Storage.openFileForWrite("PERSIST", path, file)) return false;
+  opened = true;
+  JsonDocumentFileWriter writer(file);
+  serializedBytes = serializeJson(doc, writer);
+  const bool flushed = writer.flush();
+  outputBytes = writer.fileBytesWritten();
+  file.flush();
+  const bool closed = file.close();
+  return flushed && closed && persistable::serializedDocumentIsComplete(
+                                  doc.overflowed(), expectedBytes, serializedBytes, outputBytes);
+}
+
+bool temporaryFileMatches(const char* path, const JsonDocument& expected, const size_t expectedBytes) {
+  HalFile file;
+  if (!Storage.openFileForRead("PERSIST", path, file)) return false;
+  if (file.fileSize64() != expectedBytes) {
+    file.close();
+    return false;
+  }
+  JsonDocumentFileCompareWriter writer(file);
+  const size_t serializedBytes = serializeJson(expected, writer);
+  const bool matches = serializedBytes == expectedBytes && writer.finish(expectedBytes);
+  const bool closed = file.close();
+  return matches && closed;
+}
+
 const char* settingsCandidateName(const size_t index) {
   switch (index) {
     case 0:
@@ -190,18 +311,29 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
   const bool recentPath = isRecentBooksPath(path);
   String json;
   const size_t expectedBytes = measureJson(doc);
-  const size_t writtenBytes = serializeJson(doc, json);
-  const bool documentComplete = persistable::serializedDocumentIsComplete(
-      doc.overflowed(), expectedBytes, writtenBytes, json.length());
+  size_t writtenBytes = 0;
+  size_t outputBytes = 0;
+  bool documentComplete = false;
+  if (recentPath) {
+    // Recent history can be larger than the remaining contiguous heap after
+    // BLE and reader allocations. Keep its JSON DOM as the only full copy and
+    // stream into the atomic temporary file below.
+    documentComplete = !doc.overflowed() && expectedBytes > 0;
+  } else {
+    writtenBytes = serializeJson(doc, json);
+    outputBytes = json.length();
+    documentComplete = persistable::serializedDocumentIsComplete(
+        doc.overflowed(), expectedBytes, writtenBytes, outputBytes);
+  }
   if (!documentComplete) {
     if (recentPath) {
       LOG_ERR("RBS", "save_result=serialization_incomplete expected=%u wrote=%u output=%u overflow=%d",
               static_cast<unsigned>(expectedBytes), static_cast<unsigned>(writtenBytes),
-              static_cast<unsigned>(json.length()), doc.overflowed() ? 1 : 0);
+              static_cast<unsigned>(outputBytes), doc.overflowed() ? 1 : 0);
     } else {
       LOG_ERR("PERSIST", "save_result=serialization_incomplete path=%s expected=%u wrote=%u output=%u overflow=%d",
               path, static_cast<unsigned>(expectedBytes), static_cast<unsigned>(writtenBytes),
-              static_cast<unsigned>(json.length()), doc.overflowed() ? 1 : 0);
+              static_cast<unsigned>(outputBytes), doc.overflowed() ? 1 : 0);
     }
     return false;
   }
@@ -317,7 +449,19 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
       return false;
     }
   }
-  if (!Storage.writeFile(tmpPath.c_str(), json)) {
+  if (recentPath) {
+    bool opened = false;
+    if (!writeJsonDocumentToFile(tmpPath.c_str(), doc, expectedBytes, writtenBytes, outputBytes, opened)) {
+      if (!opened) {
+        LOG_ERR("RBS", "save_result=temp_open_failed path=%s", tmpPath.c_str());
+      } else {
+        LOG_ERR("RBS", "save_result=serialization_incomplete expected=%u wrote=%u output=%u overflow=%d",
+                static_cast<unsigned>(expectedBytes), static_cast<unsigned>(writtenBytes),
+                static_cast<unsigned>(outputBytes), doc.overflowed() ? 1 : 0);
+      }
+      return false;
+    }
+  } else if (!Storage.writeFile(tmpPath.c_str(), json)) {
     LOG_ERR("PERSIST", "Failed to write temporary document %s", tmpPath.c_str());
     return false;
   }
@@ -353,13 +497,14 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
       }
       return false;
     }
-  } else if (!temporaryFileMatches(tmpPath.c_str(), json)) {
+  } else if (recentPath ? !temporaryFileMatches(tmpPath.c_str(), doc, expectedBytes)
+                        : !temporaryFileMatches(tmpPath.c_str(), json)) {
     LOG_ERR("PERSIST", "save_result=temporary_validation_failed path=%s bytes=%u",
-            path, static_cast<unsigned>(json.length()));
+            path, static_cast<unsigned>(recentPath ? expectedBytes : json.length()));
     return false;
   }
   if (recentPath) {
-    LOG_INF("RBS", "save_phase=temp_validated bytes=%u", static_cast<unsigned>(json.length()));
+    LOG_INF("RBS", "save_phase=temp_validated bytes=%u", static_cast<unsigned>(expectedBytes));
   }
 
   const bool hadOriginal = settingsPath ? mainState == SettingsFileState::Valid : Storage.exists(path);
@@ -476,7 +621,7 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
     }
   }
   if (recentPath && !recentRecoveryWrite) {
-    LOG_INF("RBS", "save_result=committed bytes=%u", static_cast<unsigned>(json.length()));
+    LOG_INF("RBS", "save_result=committed bytes=%u", static_cast<unsigned>(expectedBytes));
   }
   return true;
 }

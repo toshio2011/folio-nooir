@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <Logging.h>
+#include <GfxRenderer.h>
 
 #include "../SdCardFontSystem.h"
 #include "../activities/RenderLock.h"
@@ -16,8 +17,8 @@ bool targetsMet(const size_t freeHeap, const size_t largestBlock, const size_t t
 
 }  // namespace
 
-ReclaimReport reclaimForHeadroom(const size_t targetFree, const size_t targetLargest, const char* reason,
-                                 const ReclaimLevel allowedLevel) {
+ReclaimReport reclaimForHeadroom(GfxRenderer& renderer, const size_t targetFree, const size_t targetLargest,
+                                 const char* reason, const ReclaimLevel allowedLevel) {
   ReclaimReport report;
   report.freeBefore = ESP.getFreeHeap();
   report.largestBefore = ESP.getMaxAllocHeap();
@@ -56,8 +57,8 @@ ReclaimReport reclaimForHeadroom(const size_t targetFree, const size_t targetLar
 
   // The Reader's own FontCacheManager release is the cheaper, subsystem-owned
   // Level 1 and runs before this shared request. This Level 2 hook drops only
-  // disposable UI fallback/interface-font caches; registered font objects,
-  // coverage tables, settings, and fallback bindings stay.
+  // disposable UI fallback/interface-font caches and detaches the selected
+  // reader font when the renderer confirms it has no UI reference.
   sdFontSystem.releaseUiFallbackCaches();
   sdFontSystem.releaseInterfaceFontGlyphCaches();
   report.freeAfter = ESP.getFreeHeap();
@@ -68,6 +69,25 @@ ReclaimReport reclaimForHeadroom(const size_t targetFree, const size_t targetLar
                                  : 0;
   LOG_INF("MEMP", "reclaim level=2 item=sd_ui_fallback_glyph_caches freed=%u largest_gain=%u free=%u largest=%u",
           static_cast<unsigned>(freed), static_cast<unsigned>(largestGain),
+          static_cast<unsigned>(report.freeAfter), static_cast<unsigned>(report.largestAfter));
+
+  if (targetsMet(report.freeAfter, report.largestAfter, targetFree, targetLargest)) {
+    report.result = ReclaimResult::Reclaimed;
+    LOG_INF("MEMP", "stop result=target_met free=%u largest=%u", static_cast<unsigned>(report.freeAfter),
+            static_cast<unsigned>(report.largestAfter));
+    return report;
+  }
+
+  const size_t coverageFreeBefore = ESP.getFreeHeap();
+  const size_t coverageLargestBefore = ESP.getMaxAllocHeap();
+  sdFontSystem.releaseReaderFontOwner(renderer);
+  report.freeAfter = ESP.getFreeHeap();
+  report.largestAfter = ESP.getMaxAllocHeap();
+  LOG_INF("MEMP", "reclaim level=2 item=unreferenced_reader_font freed=%u largest_gain=%u free=%u largest=%u",
+          static_cast<unsigned>(report.freeAfter > coverageFreeBefore ? report.freeAfter - coverageFreeBefore : 0),
+          static_cast<unsigned>(report.largestAfter > coverageLargestBefore
+                                    ? report.largestAfter - coverageLargestBefore
+                                    : 0),
           static_cast<unsigned>(report.freeAfter), static_cast<unsigned>(report.largestAfter));
 
   if (targetsMet(report.freeAfter, report.largestAfter, targetFree, targetLargest)) {

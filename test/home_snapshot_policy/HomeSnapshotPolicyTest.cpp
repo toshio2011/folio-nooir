@@ -71,3 +71,14 @@ TEST(HomeSnapshotPolicy, SeparatesStructuralRebuildFromDynamicPatch) {
     EXPECT_EQ(HomeSnapshotPolicy::classifyRestore(10, 10, 20, 20), RestoreAction::Restore);
   }
 }
+
+TEST(HomeSnapshotPolicy, ReusesStableShelfPixelsWhilePatchingDynamicDetails) {
+  using HomeSnapshotPolicy::RestoreAction;
+  EXPECT_TRUE(HomeSnapshotPolicy::canUseRestoredSnapshotFastPath(RestoreAction::Restore, true, false, false, false));
+  EXPECT_TRUE(HomeSnapshotPolicy::canUseRestoredSnapshotFastPath(RestoreAction::PatchDynamic, true, false, false, true));
+  EXPECT_FALSE(HomeSnapshotPolicy::canUseRestoredSnapshotFastPath(RestoreAction::PatchDynamic, true, false, false, false));
+  EXPECT_FALSE(HomeSnapshotPolicy::canUseRestoredSnapshotFastPath(RestoreAction::Rebuild, true, false, false, true));
+  EXPECT_FALSE(HomeSnapshotPolicy::canUseRestoredSnapshotFastPath(RestoreAction::PatchDynamic, false, false, false, true));
+  EXPECT_FALSE(HomeSnapshotPolicy::canUseRestoredSnapshotFastPath(RestoreAction::PatchDynamic, true, true, false, true));
+  EXPECT_FALSE(HomeSnapshotPolicy::canUseRestoredSnapshotFastPath(RestoreAction::Restore, true, false, true, true));
+}

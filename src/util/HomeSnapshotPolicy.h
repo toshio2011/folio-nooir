@@ -65,4 +65,15 @@ constexpr RestoreAction classifyRestore(const uint64_t savedStructuralKey, const
   if (savedStructuralKey != currentStructuralKey) return RestoreAction::Rebuild;
   return savedDynamicKey == currentDynamicKey ? RestoreAction::Restore : RestoreAction::PatchDynamic;
 }
+
+// A dynamic difference can reuse the saved shelf pixels only when the caller
+// can patch every changed shelf detail in place. Structural changes always
+// require a full rebuild.
+constexpr bool canUseRestoredSnapshotFastPath(const RestoreAction action, const bool pageMatches,
+                                              const bool snapshotWritePending, const bool blockedByOverlayOrWork,
+                                              const bool dynamicPatchCanBeDrawnInPlace) {
+  return action != RestoreAction::Rebuild &&
+         (action != RestoreAction::PatchDynamic || dynamicPatchCanBeDrawnInPlace) && pageMatches &&
+         !snapshotWritePending && !blockedByOverlayOrWork;
+}
 }  // namespace HomeSnapshotPolicy

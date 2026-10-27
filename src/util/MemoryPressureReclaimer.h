@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
+class GfxRenderer;
+
 namespace memorypressure {
 
 // This is a deliberately small ordered policy, not a registry of arbitrary
@@ -34,7 +36,7 @@ struct ReclaimReport {
 // Synchronously releases known disposable caches, at most once per candidate,
 // and stops once both requested headroom measures are met. Call only after the
 // owning subsystem has released its own transient resources.
-ReclaimReport reclaimForHeadroom(size_t targetFree, size_t targetLargest, const char* reason,
-                                 ReclaimLevel allowedLevel);
+ReclaimReport reclaimForHeadroom(GfxRenderer& renderer, size_t targetFree, size_t targetLargest,
+                                 const char* reason, ReclaimLevel allowedLevel);
 
 }  // namespace memorypressure

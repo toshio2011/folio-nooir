@@ -722,7 +722,7 @@ void updateBluetoothLifecycle() {
     if (reclaimAllowed) {
       homeBleReclaimAttempted = true;
       const auto reclaim = memorypressure::reclaimForHeadroom(
-          bleinput::kReaderBleStartMinFreeHeap, bleinput::kReaderBleStartMinLargestBlock,
+          renderer, bleinput::kReaderBleStartMinFreeHeap, bleinput::kReaderBleStartMinLargestBlock,
           "ble_home_cold_start", memorypressure::ReclaimLevel::Reconstructible);
       LOG_INF("BLEMEM",
               "stage=home_admission_reclaim result=%u free=%u->%u largest=%u->%u",

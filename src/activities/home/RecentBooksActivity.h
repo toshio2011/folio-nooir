@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "CrossPointSettings.h"
@@ -157,7 +158,6 @@ class RecentBooksActivity final : public Activity {
     uint8_t appearanceMode = CrossPointSettings::SPINE_APPEARANCE_ALL_SPINES;
     bool valid = false;
   };
-  SpinePageWindow spinePageWindow{};
   struct TwoRowSpinePageWindow {
     std::array<SpineShelfPlanner::Book, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> books{};
     std::array<size_t, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> recentIndexes{};
@@ -173,7 +173,6 @@ class RecentBooksActivity final : public Activity {
     uint8_t appearanceMode = CrossPointSettings::SPINE_APPEARANCE_ALL_SPINES;
     bool valid = false;
   };
-  TwoRowSpinePageWindow twoRowSpinePageWindow{};
   struct ThreeRowSpinePageWindow {
     std::array<SpineShelfPlanner::Book, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> books{};
     std::array<size_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> recentIndexes{};
@@ -189,7 +188,13 @@ class RecentBooksActivity final : public Activity {
     uint8_t appearanceMode = CrossPointSettings::SPINE_APPEARANCE_ALL_SPINES;
     bool valid = false;
   };
-  ThreeRowSpinePageWindow threeRowSpinePageWindow{};
+  using SpinePageWindowStorage =
+      std::variant<std::monostate, SpinePageWindow, TwoRowSpinePageWindow, ThreeRowSpinePageWindow>;
+  static_assert(sizeof(SpinePageWindowStorage) + 2048 <
+                sizeof(SpinePageWindow) + sizeof(TwoRowSpinePageWindow) + sizeof(ThreeRowSpinePageWindow));
+  // Only the active layout's page geometry is retained. The three window
+  // types share one inline slot because their results are mutually exclusive.
+  SpinePageWindowStorage spinePageWindow{};
   // Stable across Home reconstruction so the same book keeps its geometry,
   // tone, decoration, and mixed-mode face-out choice when a framebuffer
   // snapshot is restored.
@@ -276,14 +281,16 @@ class RecentBooksActivity final : public Activity {
   size_t recentIndexForVisibleIndex(size_t visibleIndex) const;
   const SpinePageWindow& spinePageForSelection(const SpineShelfPlanner::Rect& bounds);
   void invalidateSpinePageWindow() {
-    spinePageWindow.valid = false;
-    twoRowSpinePageWindow.valid = false;
-    threeRowSpinePageWindow.valid = false;
+    spinePageWindow.emplace<std::monostate>();
   }
   const TwoRowSpinePageWindow& twoRowSpinePageForSelection(const SpineShelfPlanner::Rect& bounds);
-  void invalidateTwoRowSpinePageWindow() { twoRowSpinePageWindow.valid = false; }
+  void invalidateTwoRowSpinePageWindow() {
+    if (auto* window = std::get_if<TwoRowSpinePageWindow>(&spinePageWindow)) window->valid = false;
+  }
   const ThreeRowSpinePageWindow& threeRowSpinePageForSelection(const SpineShelfPlanner::Rect& bounds);
-  void invalidateThreeRowSpinePageWindow() { threeRowSpinePageWindow.valid = false; }
+  void invalidateThreeRowSpinePageWindow() {
+    if (auto* window = std::get_if<ThreeRowSpinePageWindow>(&spinePageWindow)) window->valid = false;
+  }
   size_t selectedRecentIndex() const;
   void generateNextCover();
   void startCarouselHqPreparation();
