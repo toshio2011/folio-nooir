@@ -470,6 +470,11 @@ void setup() {
   }
 
   // First serial output only here to avoid timing inconsistencies for power button press duration verification
+#if defined(FREEINK_BLE_HID_LIFECYCLE_DIAGNOSTICS) && defined(NOOIR_BUILD_SHA) && defined(NOOIR_APP_VERSION)
+  // Emit the exact source identity in diagnostic builds so a serial capture
+  // remains attributable even when monitoring starts after the boot banner.
+  LOG_INF("BUILD", "source_sha=%s app=%s", NOOIR_BUILD_SHA, NOOIR_APP_VERSION);
+#endif
   LOG_DBG("MAIN", "Starting CrossPoint version " CROSSPOINT_VERSION);
 
   // Resolve the single boot-presentation decision. Skipping the splash also
