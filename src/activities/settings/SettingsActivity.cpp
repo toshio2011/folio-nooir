@@ -947,7 +947,18 @@ void SettingsActivity::toggleCurrentSetting() {
                 return;
               }
               SETTINGS.saveToFile();
-              armBluetoothReturn("BluetoothSettings");
+              // BluetoothSettings is a child of this Settings activity. If it
+              // returns with the saved preference enabled and the existing
+              // host still running, the parent is already in a safe steady
+              // state: keep the connection and consume the transition rather
+              // than stopping NimBLE just to start it again below.
+              if (SETTINGS.bluetoothEnabled && BleHid.isRunning()) {
+                markBluetoothAdmitted();
+              } else {
+                // A host stopped by an explicit OFF, or one that could not be
+                // admitted, follows the established deferred readmission path.
+                armBluetoothReturn("BluetoothSettings");
+              }
             });
         break;
 #endif
