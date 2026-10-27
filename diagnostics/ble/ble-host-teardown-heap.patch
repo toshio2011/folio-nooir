@@ -1,0 +1,81 @@
+diff --git a/freeink-sdk/libs/network/BleKeyboardHost/src/BleKeyboardHost.cpp b/freeink-sdk/libs/network/BleKeyboardHost/src/BleKeyboardHost.cpp
+index 567dcf23..6d768de8 100644
+--- a/freeink-sdk/libs/network/BleKeyboardHost/src/BleKeyboardHost.cpp
++++ b/freeink-sdk/libs/network/BleKeyboardHost/src/BleKeyboardHost.cpp
+@@ -69,20 +69,31 @@ constexpr uint16_t kBackoffScanInterval = 80;
+ constexpr uint16_t kBackoffScanWindow = 16;
+ constexpr size_t kScanDebugPayloadMax = 31;
+ 
+-void lifecycleStage(const char* stage) {
++void lifecycleStage(const char* stage, const int result = -1) {
+ #if FREEINK_BLE_HID_LIFECYCLE_DIAGNOSTICS
+   if (!stage || (std::strcmp(stage, "pre_init") != 0 && std::strcmp(stage, "nimble_init") != 0 &&
+                  std::strcmp(stage, "client_created") != 0 && std::strcmp(stage, "host_ready") != 0 &&
+                  std::strcmp(stage, "connect_start") != 0 && std::strcmp(stage, "connect_join_inflight") != 0 &&
+                  std::strcmp(stage, "link_connected") != 0 &&
+                  std::strcmp(stage, "hid_service_found") != 0 && std::strcmp(stage, "security_ready") != 0 &&
+-                 std::strcmp(stage, "hid_input_ready") != 0 && std::strcmp(stage, "scan_start") != 0))
++                 std::strcmp(stage, "hid_input_ready") != 0 && std::strcmp(stage, "scan_start") != 0 &&
++                 std::strcmp(stage, "host_end_pre") != 0 && std::strcmp(stage, "host_end_scan_stopped") != 0 &&
++                 std::strcmp(stage, "host_end_links_closed") != 0 &&
++                 std::strcmp(stage, "host_end_clients_deleted") != 0 &&
++                 std::strcmp(stage, "host_end_worker_deleted") != 0 &&
++                 std::strcmp(stage, "host_end_deinit_pre") != 0 &&
++                 std::strcmp(stage, "host_end_deinit_post") != 0 &&
++                 std::strcmp(stage, "host_end_retry_pre") != 0 &&
++                 std::strcmp(stage, "host_end_retry_post") != 0 &&
++                 std::strcmp(stage, "host_end_post") != 0))
+     return;
+-  Serial.printf("[BLEMEM] stage=%s free=%lu largest=%lu\n", stage,
++  Serial.printf("[BLEMEM] stage=%s initialized=%u result=%d free=%lu largest=%lu\n", stage,
++                NimBLEDevice::isInitialized() ? 1u : 0u, result,
+                 static_cast<unsigned long>(ESP.getFreeHeap()),
+                 static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+ #else
+   (void)stage;
++  (void)result;
+ #endif
+ }
+ 
+@@ -686,6 +697,7 @@ void BleKeyboardHost::end() {
+ 
+     NimBLEScan* scan = NimBLEDevice::getScan();
+     if (scan && scan->isScanning()) scan->stop();
++    lifecycleStage("host_end_scan_stopped");
+   }
+ 
+   // If auto-reconnect is in the middle of g_client->connect(), do not delete the
+@@ -733,9 +745,11 @@ void BleKeyboardHost::end() {
+     if (g_connTask && !calledFromConnWorker) xTaskNotifyGive(g_connTask);
+     return;
+   }
++  lifecycleStage("host_end_links_closed");
+   vTaskDelay(pdMS_TO_TICKS(150));  // let DISCONNECTING settle to DISCONNECTED
+   if (NimBLEDevice::isInitialized()) deleteDisconnectedClients();
+   g_client = nullptr;
++  lifecycleStage("host_end_clients_deleted");
+ 
+   // The connection worker stays alive until all GAP links are gone. This lets it
+   // retry teardown after an unusually slow disconnect without racing deinit.
+@@ -743,14 +757,19 @@ void BleKeyboardHost::end() {
+     vTaskDelete(g_connTask);
+     g_connTask = nullptr;
+   }
++  lifecycleStage("host_end_worker_deleted");
+ 
+   // Free the NimBLE host + BT controller memory back to the heap. Bonds live in
+   // NVS and survive this; begin() re-initializes cleanly. Retry once if the stack
+   // didn't fully tear down (stop raced something), so re-init isn't a no-op.
+-  NimBLEDevice::deinit(true);
++  lifecycleStage("host_end_deinit_pre");
++  const bool firstDeinitSucceeded = NimBLEDevice::deinit(true);
++  lifecycleStage("host_end_deinit_post", firstDeinitSucceeded ? 1 : 0);
+   if (NimBLEDevice::isInitialized()) {
+     vTaskDelay(pdMS_TO_TICKS(50));
+-    NimBLEDevice::deinit(true);
++    lifecycleStage("host_end_retry_pre");
++    const bool retryDeinitSucceeded = NimBLEDevice::deinit(true);
++    lifecycleStage("host_end_retry_post", retryDeinitSucceeded ? 1 : 0);
+   }
+   lifecycleStage("host_end_post");
+   g_connecting = false;
