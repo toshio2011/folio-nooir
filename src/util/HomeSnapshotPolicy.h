@@ -6,17 +6,29 @@
 namespace HomeSnapshotPolicy {
 constexpr size_t THREE_COVER_PAGE_ITEMS = 3;
 constexpr size_t FOUR_BY_TWO_PAGE_ITEMS = 8;
+constexpr size_t CAROUSEL_PAGE_ITEMS = 1;
 constexpr size_t SPINE_ONE_ROW_MAX_PAGE_ITEMS = 10;
 constexpr size_t SPINE_TWO_ROW_MAX_PAGE_ITEMS = 28;
+constexpr size_t SPINE_THREE_ROW_MAX_PAGE_ITEMS = 42;
+
+struct SnapshotIdentity {
+  uint8_t theme = 0;
+  uint8_t layout = 0;
+};
 
 enum class RestoreAction : uint8_t { Rebuild, Restore, PatchDynamic };
 
 constexpr bool isSupportedPageSize(const size_t pageItems) {
-  return pageItems == THREE_COVER_PAGE_ITEMS || pageItems == FOUR_BY_TWO_PAGE_ITEMS;
+  return pageItems == CAROUSEL_PAGE_ITEMS || pageItems == THREE_COVER_PAGE_ITEMS ||
+         pageItems == FOUR_BY_TWO_PAGE_ITEMS;
 }
 
 constexpr bool isSupportedPageCapacity(const size_t pageItems) {
-  return pageItems > 0 && pageItems <= SPINE_TWO_ROW_MAX_PAGE_ITEMS;
+  return pageItems > 0 && pageItems <= SPINE_THREE_ROW_MAX_PAGE_ITEMS;
+}
+
+constexpr bool identityMatches(const SnapshotIdentity saved, const SnapshotIdentity current) {
+  return saved.theme == current.theme && saved.layout == current.layout;
 }
 
 constexpr bool pageSizeMatches(const size_t savedPageItems, const size_t currentPageItems) {

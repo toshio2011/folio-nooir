@@ -137,7 +137,7 @@ class RecentBooksActivity final : public Activity {
   bool ignoreEntryInputUntilNeutral = false;
   const char* renderDiagnosticReason = "queued";
   uint64_t snapshotPresentationKeyValue = 0;
-  std::array<uint64_t, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> snapshotBookVisualKeys{};
+  std::array<uint64_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> snapshotBookVisualKeys{};
   bool snapshotDynamicNeedsPatch = false;
   size_t snapshotPageStart = SIZE_MAX;
   size_t snapshotPageItems = 0;
@@ -291,7 +291,7 @@ class RecentBooksActivity final : public Activity {
   bool generateCarouselHqThumbnail(const RecentBook& book, bool force);
   void showMenu();
   void showBookActions();
-  uint64_t snapshotKey(bool legacyThemeKey = false) const;
+  uint64_t snapshotKey(bool exactThemeKey = false) const;
   uint64_t snapshotPresentationKey() const;
   uint64_t bookDynamicKey(const RecentBook& book) const;
   uint64_t bookCoverVisualKey(const RecentBook& book) const;

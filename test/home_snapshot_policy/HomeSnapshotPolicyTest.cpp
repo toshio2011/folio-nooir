@@ -7,12 +7,13 @@
 TEST(HomeSnapshotPolicy, SupportsBothPersistentGridSizes) {
   EXPECT_TRUE(HomeSnapshotPolicy::isSupportedPageSize(3));
   EXPECT_TRUE(HomeSnapshotPolicy::isSupportedPageSize(8));
-  EXPECT_FALSE(HomeSnapshotPolicy::isSupportedPageSize(1));
+  EXPECT_TRUE(HomeSnapshotPolicy::isSupportedPageSize(1));
   EXPECT_FALSE(HomeSnapshotPolicy::isSupportedPageSize(4));
   EXPECT_FALSE(HomeSnapshotPolicy::isSupportedPageCapacity(0));
   EXPECT_TRUE(HomeSnapshotPolicy::isSupportedPageCapacity(HomeSnapshotPolicy::SPINE_ONE_ROW_MAX_PAGE_ITEMS));
   EXPECT_TRUE(HomeSnapshotPolicy::isSupportedPageCapacity(HomeSnapshotPolicy::SPINE_TWO_ROW_MAX_PAGE_ITEMS));
-  EXPECT_FALSE(HomeSnapshotPolicy::isSupportedPageCapacity(HomeSnapshotPolicy::SPINE_TWO_ROW_MAX_PAGE_ITEMS + 1));
+  EXPECT_TRUE(HomeSnapshotPolicy::isSupportedPageCapacity(HomeSnapshotPolicy::SPINE_THREE_ROW_MAX_PAGE_ITEMS));
+  EXPECT_FALSE(HomeSnapshotPolicy::isSupportedPageCapacity(HomeSnapshotPolicy::SPINE_THREE_ROW_MAX_PAGE_ITEMS + 1));
   EXPECT_TRUE(HomeSnapshotPolicy::pageSizeMatches(3, 3));
   EXPECT_TRUE(HomeSnapshotPolicy::pageSizeMatches(8, 8));
   EXPECT_FALSE(HomeSnapshotPolicy::pageSizeMatches(3, 8));
@@ -20,6 +21,10 @@ TEST(HomeSnapshotPolicy, SupportsBothPersistentGridSizes) {
 }
 
 TEST(HomeSnapshotPolicy, PagesSelectionByTheActiveGridSize) {
+  EXPECT_EQ(HomeSnapshotPolicy::pageStartForSelection(0, HomeSnapshotPolicy::CAROUSEL_PAGE_ITEMS), 0u);
+  EXPECT_EQ(HomeSnapshotPolicy::pageStartForSelection(17, HomeSnapshotPolicy::CAROUSEL_PAGE_ITEMS), 17u);
+  EXPECT_TRUE(HomeSnapshotPolicy::pageSelectionMatches(17, 17, HomeSnapshotPolicy::CAROUSEL_PAGE_ITEMS, 18));
+  EXPECT_FALSE(HomeSnapshotPolicy::pageSelectionMatches(17, 16, HomeSnapshotPolicy::CAROUSEL_PAGE_ITEMS, 18));
   EXPECT_EQ(HomeSnapshotPolicy::pageStartForSelection(0, 3), 0u);
   EXPECT_EQ(HomeSnapshotPolicy::pageStartForSelection(2, 3), 0u);
   EXPECT_EQ(HomeSnapshotPolicy::pageStartForSelection(3, 3), 3u);
@@ -32,6 +37,16 @@ TEST(HomeSnapshotPolicy, PagesSelectionByTheActiveGridSize) {
   EXPECT_TRUE(HomeSnapshotPolicy::pageRangeMatches(8, 5, 10, 20));
   EXPECT_TRUE(HomeSnapshotPolicy::pageRangeMatches(27, 18, 10, 40));
   EXPECT_FALSE(HomeSnapshotPolicy::pageRangeMatches(28, 18, 10, 40));
+  EXPECT_TRUE(HomeSnapshotPolicy::pageRangeMatches(41, 0, HomeSnapshotPolicy::SPINE_THREE_ROW_MAX_PAGE_ITEMS, 42));
+  EXPECT_FALSE(HomeSnapshotPolicy::pageRangeMatches(42, 0, HomeSnapshotPolicy::SPINE_THREE_ROW_MAX_PAGE_ITEMS, 43));
+  EXPECT_FALSE(HomeSnapshotPolicy::pageRangeMatches(42, 0, HomeSnapshotPolicy::SPINE_THREE_ROW_MAX_PAGE_ITEMS + 1, 43));
+}
+
+TEST(HomeSnapshotPolicy, RequiresExactThemeAndLayoutIdentity) {
+  using HomeSnapshotPolicy::SnapshotIdentity;
+  EXPECT_TRUE(HomeSnapshotPolicy::identityMatches(SnapshotIdentity{4, 0}, SnapshotIdentity{4, 0}));
+  EXPECT_FALSE(HomeSnapshotPolicy::identityMatches(SnapshotIdentity{4, 0}, SnapshotIdentity{5, 0}));
+  EXPECT_FALSE(HomeSnapshotPolicy::identityMatches(SnapshotIdentity{4, 0}, SnapshotIdentity{4, 1}));
 }
 
 TEST(HomeSnapshotPolicy, SeparatesStructuralRebuildFromDynamicPatch) {

@@ -54,8 +54,12 @@ using SpineThumbnailResolver = Bitmap* (*)(void*, const char*);
 ThumbnailPathMissMemo spineThumbnailPathMisses;
 constexpr char FOLIO_HOME_SNAPSHOT[] = "/.crosspoint/folio_home.bin";
 constexpr uint32_t FOLIO_HOME_MAGIC = 0x464E484D;  // "FNHM"
-constexpr uint16_t FOLIO_HOME_VERSION = 9;
-constexpr uint16_t FOLIO_HOME_PREVIOUS_VERSION = 8;
+constexpr uint16_t FOLIO_HOME_VERSION = 10;
+constexpr uint16_t FOLIO_HOME_PREVIOUS_VERSION = 9;
+constexpr uint16_t FOLIO_HOME_LEGACY_VERSION = 8;
+constexpr size_t FOLIO_HOME_LEGACY_PAGE_CAPACITY = SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY;
+static_assert(HomeSnapshotPolicy::SPINE_THREE_ROW_MAX_PAGE_ITEMS == SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY,
+              "Home snapshot capacity must match the three-row planner bound");
 // Manual cover refresh is the only path that may decode a source image. Keep
 // it bounded for X3/X4, but allow normal high-quality covers (the old 512 KiB
 // limit rejected many perfectly usable 2 MiB JPEGs before the converter could
@@ -1390,13 +1394,19 @@ bool RecentBooksActivity::usesFourByTwoGrid() const {
 }
 
 bool RecentBooksActivity::usesPersistentHomeSnapshot() const {
-  // Lite restores the original Carousel page and intentionally does not use
-  // the main Folio snapshot format or its rendered-frame fast path.
-  if (isFolioNooirLiteTheme(SETTINGS.uiTheme)) return false;
-  return usesFourByTwoGrid() || usesThreeCoverGrid() || usesSpineLayout() || usesTwoRowSpineLayout();
+  // Folio Nooir and Lite share this single framebuffer snapshot. Theme and
+  // layout are both stored as explicit identity fields so a frame from one
+  // presentation can never be reused by the other.
+  return isFolioShelfTheme(SETTINGS.uiTheme);
 }
 
 bool RecentBooksActivity::currentSnapshotPageInfo(size_t& pageStart, size_t& pageItems) {
+  if (usesCarouselLayout()) {
+    pageItems = HomeSnapshotPolicy::CAROUSEL_PAGE_ITEMS;
+    pageStart = HomeSnapshotPolicy::pageStartForSelection(selectorIndex, pageItems);
+    return pageStart != SIZE_MAX && selectorIndex < visibleBookCount;
+  }
+
   if (usesThreeCoverGrid() || usesFourByTwoGrid()) {
     pageItems = usesThreeCoverGrid() ? HomeSnapshotPolicy::THREE_COVER_PAGE_ITEMS
                                      : HomeSnapshotPolicy::FOUR_BY_TWO_PAGE_ITEMS;
@@ -1407,7 +1417,14 @@ bool RecentBooksActivity::currentSnapshotPageInfo(size_t& pageStart, size_t& pag
   if (!usesSpineLayout() && !usesTwoRowSpineLayout() && !usesThreeRowSpineLayout()) return false;
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto& folioTheme = static_cast<const FolioNooirTheme&>(GUI);
-  const FolioShelfLayout layout = homeShelfLayout(folioTheme, renderer, metrics);
+  FolioShelfLayout layout = homeShelfLayout(folioTheme, renderer, metrics);
+  if (isFolioNooirLiteTheme(SETTINGS.uiTheme)) {
+    static const CarouselTheme carouselPresentation;
+    const CarouselLayout carouselLayout = liteCarouselLayoutCacheValid
+                                              ? liteCarouselLayoutCache
+                                              : liteCarouselPageLayout(renderer, carouselPresentation, layout);
+    layout = liteBookDisplayLayout(layout, carouselLayout, renderer.getScreenWidth());
+  }
   if (usesSpineLayout()) {
     const auto& window = spinePageForSelection(spineShelfBounds(renderer.getScreenWidth(), layout));
     pageStart = window.page.firstIndex;
@@ -1421,8 +1438,11 @@ bool RecentBooksActivity::currentSnapshotPageInfo(size_t& pageStart, size_t& pag
     pageStart = window.page.firstIndex;
     pageItems = window.page.itemCount;
   }
-  const size_t pageCapacity = usesThreeRowSpineLayout() ? SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY
-                                                        : SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY;
+  const size_t pageCapacity = usesThreeRowSpineLayout()
+                                  ? SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY
+                              : usesTwoRowSpineLayout()
+                                  ? SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY
+                                  : SpineShelfPlanner::MAX_BOOKS;
   return pageItems > 0 && pageItems <= pageCapacity;
 }
 
@@ -1434,16 +1454,15 @@ int RecentBooksActivity::activePageItems() const {
   return BOOKS_PER_PAGE;
 }
 
-uint64_t RecentBooksActivity::snapshotKey(const bool legacyThemeKey) const {
+uint64_t RecentBooksActivity::snapshotKey(const bool exactThemeKey) const {
   uint64_t hash = 1469598103934665603ULL;
   const int width = renderer.getScreenWidth();
   const int height = renderer.getScreenHeight();
   hashBytes(hash, &width, sizeof(width));
   hashBytes(hash, &height, sizeof(height));
-  // Folio Nooir and Lite share the same shelf renderer, metrics, and layouts.
-  // Normalize the theme for current snapshots so changing between them can
-  // reuse the frame. Version-8 snapshots keep their original theme key.
-  const uint8_t themeKey = legacyThemeKey
+  // Version 9 normalized Folio Nooir and Lite. Pass exactThemeKey only for
+  // version 8 and the new format; version 9 validation keeps its old key.
+  const uint8_t themeKey = exactThemeKey
                                ? SETTINGS.uiTheme
                                : (isFolioShelfTheme(SETTINGS.uiTheme)
                                       ? static_cast<uint8_t>(CrossPointSettings::UI_THEME::FOLIO_NOOIR)
@@ -1464,7 +1483,7 @@ uint64_t RecentBooksActivity::snapshotKey(const bool legacyThemeKey) const {
   hashBytes(hash, visualSettings, sizeof(visualSettings));
   hashBytes(hash, &SETTINGS.language, sizeof(SETTINGS.language));
   hashBytes(hash, &SETTINGS.hideBatteryPercentage, sizeof(SETTINGS.hideBatteryPercentage));
-  const bool spineSnapshot = usesSpineLayout() || usesTwoRowSpineLayout();
+  const bool spineSnapshot = usesSpineLayout() || usesTwoRowSpineLayout() || usesThreeRowSpineLayout();
   if (spineSnapshot) {
     hashBytes(hash, &SETTINGS.spineAppearanceMode, sizeof(SETTINGS.spineAppearanceMode));
     hashBytes(hash, &SETTINGS.spineDecorationStyle, sizeof(SETTINGS.spineDecorationStyle));
@@ -1699,6 +1718,12 @@ void RecentBooksActivity::drawSnapshotSelectionOutline(const FolioShelfLayout& l
     drawTwoRowSpinePageSelectionMarker(renderer, window.page, index, selected, renderedSpineFocus);
     return;
   }
+  if (usesThreeRowSpineLayout()) {
+    const auto bounds = threeRowSpineBounds(renderer.getScreenWidth(), layout);
+    const auto& window = threeRowSpinePageForSelection(bounds);
+    drawThreeRowSpinePageSelectionMarker(renderer, window.page, index, selected, renderedSpineFocus);
+    return;
+  }
   if (usesThreeCoverGrid()) {
     constexpr int gap = 10;
     constexpr int columns = 3;
@@ -1735,44 +1760,81 @@ bool RecentBooksActivity::restoreSnapshot() {
   uint16_t height = 0;
   uint32_t dataSize = 0;
   uint8_t pageItems = 0;
+  HomeSnapshotPolicy::SnapshotIdentity savedIdentity{};
   uint64_t key = 0;
   uint32_t pageStart = 0;
+  uint32_t frameSelectorIndex = 0;
   uint32_t restoredSelectorIndex = 0;
   uint8_t restoredTab = 0;
   uint32_t restoredVisibleBookCount = 0;
   uint64_t dynamicKey = 0;
   uint64_t savedFeaturedKey = 0;
-  std::array<uint64_t, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> bookPathKeys{};
-  std::array<uint64_t, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> bookVisualKeys{};
+  std::array<uint64_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> bookPathKeys{};
+  std::array<uint64_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> bookVisualKeys{};
   if (file.read(&magic, sizeof(magic)) != sizeof(magic) || file.read(&version, sizeof(version)) != sizeof(version) ||
       file.read(&width, sizeof(width)) != sizeof(width) || file.read(&height, sizeof(height)) != sizeof(height) ||
       file.read(&dataSize, sizeof(dataSize)) != sizeof(dataSize) || file.read(&pageItems, sizeof(pageItems)) != sizeof(pageItems) ||
-      file.read(&key, sizeof(key)) != sizeof(key)) {
+      magic != FOLIO_HOME_MAGIC ||
+      (version != FOLIO_HOME_VERSION && version != FOLIO_HOME_PREVIOUS_VERSION &&
+       version != FOLIO_HOME_LEGACY_VERSION)) {
     return false;
   }
-  const bool legacySnapshotCompatible = version == FOLIO_HOME_PREVIOUS_VERSION &&
+  const bool legacySnapshotCompatible = version != FOLIO_HOME_VERSION &&
                                         SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR;
-  if (magic != FOLIO_HOME_MAGIC || (version != FOLIO_HOME_VERSION && !legacySnapshotCompatible) ||
-      width != renderer.getScreenWidth() ||
+  if ((version != FOLIO_HOME_VERSION && !legacySnapshotCompatible) || width != renderer.getScreenWidth() ||
       height != renderer.getScreenHeight() || dataSize != renderer.getBufferSize() ||
       !HomeSnapshotPolicy::isSupportedPageCapacity(pageItems) ||
+      (version != FOLIO_HOME_VERSION && pageItems > FOLIO_HOME_LEGACY_PAGE_CAPACITY)) {
+    return false;
+  }
+  if (version == FOLIO_HOME_VERSION) {
+    if (file.read(&savedIdentity.theme, sizeof(savedIdentity.theme)) != sizeof(savedIdentity.theme) ||
+        file.read(&savedIdentity.layout, sizeof(savedIdentity.layout)) != sizeof(savedIdentity.layout) ||
+        savedIdentity.theme != SETTINGS.uiTheme) {
+      return false;
+    }
+  }
+  if (file.read(&key, sizeof(key)) != sizeof(key) ||
       file.read(&pageStart, sizeof(pageStart)) != sizeof(pageStart) ||
+      (version == FOLIO_HOME_VERSION &&
+       file.read(&frameSelectorIndex, sizeof(frameSelectorIndex)) != sizeof(frameSelectorIndex)) ||
       file.read(&restoredSelectorIndex, sizeof(restoredSelectorIndex)) != sizeof(restoredSelectorIndex) ||
       file.read(&restoredTab, sizeof(restoredTab)) != sizeof(restoredTab) ||
       file.read(&restoredVisibleBookCount, sizeof(restoredVisibleBookCount)) != sizeof(restoredVisibleBookCount) ||
       file.read(&dynamicKey, sizeof(dynamicKey)) != sizeof(dynamicKey) ||
-      file.read(&savedFeaturedKey, sizeof(savedFeaturedKey)) != sizeof(savedFeaturedKey) ||
-      file.read(bookPathKeys.data(), sizeof(bookPathKeys)) != sizeof(bookPathKeys) ||
-      file.read(bookVisualKeys.data(), sizeof(bookVisualKeys)) != sizeof(bookVisualKeys)) {
+      file.read(&savedFeaturedKey, sizeof(savedFeaturedKey)) != sizeof(savedFeaturedKey)) {
     return false;
+  }
+  if (version != FOLIO_HOME_VERSION) frameSelectorIndex = restoredSelectorIndex;
+  if (version == FOLIO_HOME_VERSION) {
+    if (file.read(bookPathKeys.data(), sizeof(bookPathKeys)) != sizeof(bookPathKeys) ||
+        file.read(bookVisualKeys.data(), sizeof(bookVisualKeys)) != sizeof(bookVisualKeys)) {
+      return false;
+    }
+  } else {
+    std::array<uint64_t, FOLIO_HOME_LEGACY_PAGE_CAPACITY> legacyPathKeys{};
+    std::array<uint64_t, FOLIO_HOME_LEGACY_PAGE_CAPACITY> legacyVisualKeys{};
+    if (file.read(legacyPathKeys.data(), sizeof(legacyPathKeys)) != sizeof(legacyPathKeys) ||
+        file.read(legacyVisualKeys.data(), sizeof(legacyVisualKeys)) != sizeof(legacyVisualKeys)) {
+      return false;
+    }
+    std::copy(legacyPathKeys.begin(), legacyPathKeys.end(), bookPathKeys.begin());
+    std::copy(legacyVisualKeys.begin(), legacyVisualKeys.end(), bookVisualKeys.begin());
   }
   if (restoredTab != 1 && restoredTab != 2) return false;
   const uint8_t originalTab = activeTab;
   activeTab = restoredTab;
+  if (version == FOLIO_HOME_VERSION &&
+      !HomeSnapshotPolicy::identityMatches(
+          savedIdentity, HomeSnapshotPolicy::SnapshotIdentity{SETTINGS.uiTheme, activeBookLayout()})) {
+    activeTab = originalTab;
+    return false;
+  }
   rebuildVisibleBooks();
-  bool sameVisiblePage = restoredVisibleBookCount == visibleBookCount;
+  const bool pageWithinVisibleRange = pageStart <= visibleBookCount && pageItems <= visibleBookCount - pageStart;
+  bool sameVisiblePage = restoredVisibleBookCount == visibleBookCount && pageWithinVisibleRange;
   size_t visibleIndex = 0;
-  const size_t restoredPageEnd = static_cast<size_t>(pageStart) + pageItems;
+  const size_t restoredPageEnd = pageWithinVisibleRange ? static_cast<size_t>(pageStart) + pageItems : 0;
   for (const auto& book : recentBooks) {
     if (!sameVisiblePage) break;
     if (!isVisibleRecentBook(book)) continue;
@@ -1788,10 +1850,20 @@ bool RecentBooksActivity::restoreSnapshot() {
   size_t currentPageStart = SIZE_MAX;
   size_t currentPageItems = 0;
   const bool currentPageKnown = currentSnapshotPageInfo(currentPageStart, currentPageItems);
-  const uint64_t currentStructuralKey = snapshotKey(version == FOLIO_HOME_PREVIOUS_VERSION);
+  const uint64_t currentStructuralKey = snapshotKey(version != FOLIO_HOME_PREVIOUS_VERSION);
   if (!sameVisiblePage || key != currentStructuralKey ||
-      !HomeSnapshotPolicy::pageRangeMatches(restoredSelectorIndex, pageStart, pageItems, visibleBookCount) ||
-      !currentPageKnown || currentPageStart != pageStart || currentPageItems != pageItems) {
+      restoredSelectorIndex >= visibleBookCount ||
+      !HomeSnapshotPolicy::pageRangeMatches(frameSelectorIndex, pageStart, pageItems, visibleBookCount)) {
+    activeTab = originalTab;
+    rebuildVisibleBooks();
+    selectorIndex = 0;
+    return false;
+  }
+  if (!currentPageKnown || currentPageStart != pageStart || currentPageItems != pageItems) {
+    // Navigation may move beyond the saved frame while the activity is open.
+    // Keep the persisted tab and selection, but repaint this frame instead of
+    // restoring pixels from another page/layout position.
+    if (version == FOLIO_HOME_VERSION) return false;
     activeTab = originalTab;
     rebuildVisibleBooks();
     selectorIndex = 0;
@@ -1813,6 +1885,8 @@ bool RecentBooksActivity::restoreSnapshot() {
     snapshotBookVisualKeys = bookVisualKeys;
     const bool featuredChanged = savedFeaturedKey != featuredVisualKey();
     snapshotDynamicNeedsPatch = restoreAction == HomeSnapshotPolicy::RestoreAction::PatchDynamic || featuredChanged;
+    spineShelfVisualsDirty = false;
+    liteSelectedDetailsDirty = false;
     const RecentBook& selected = recentBooks[selectedRecentIndex()];
     lastFeaturedPath = featuredChanged ? std::string() : selected.path;
     lastFeaturedCoverPath = featuredChanged ? std::string() : selected.coverBmpPath;
@@ -1820,9 +1894,11 @@ bool RecentBooksActivity::restoreSnapshot() {
     LOG_DBG("SHELF", "Restored %u-byte Home snapshot", dataSize);
     logRecentViewState("snapshot_restored");
   } else {
-    activeTab = originalTab;
-    rebuildVisibleBooks();
-    selectorIndex = 0;
+    if (version != FOLIO_HOME_VERSION) {
+      activeTab = originalTab;
+      rebuildVisibleBooks();
+      selectorIndex = 0;
+    }
   }
   return loaded;
 }
@@ -1832,7 +1908,7 @@ void RecentBooksActivity::writeSnapshot() {
   size_t pageStart = SIZE_MAX;
   size_t pageItemsValue = 0;
   if (!currentSnapshotPageInfo(pageStart, pageItemsValue) ||
-      pageItemsValue > SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY || pageStart != snapshotPageStart ||
+      pageItemsValue > SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY || pageStart != snapshotPageStart ||
       pageItemsValue != snapshotPageItems) return;
   Storage.ensureDirectoryExists("/.crosspoint");
   HalFile file;
@@ -1843,15 +1919,18 @@ void RecentBooksActivity::writeSnapshot() {
   const uint16_t height = static_cast<uint16_t>(renderer.getScreenHeight());
   const uint32_t dataSize = renderer.getBufferSize();
   const uint8_t pageItems = static_cast<uint8_t>(pageItemsValue);
-  const uint64_t key = snapshotKey();
+  const uint8_t savedTheme = SETTINGS.uiTheme;
+  const uint8_t savedLayout = activeBookLayout();
+  const uint64_t key = snapshotKey(true);
   const uint32_t savedPageStart = static_cast<uint32_t>(pageStart);
+  const uint32_t savedFrameSelectorIndex = static_cast<uint32_t>(selectorIndex);
   const uint64_t dynamicKey = snapshotDynamicKey();
   const uint32_t savedSelectorIndex = static_cast<uint32_t>(selectorIndex);
   const uint8_t savedTab = activeTab;
   const uint32_t savedVisibleBookCount = static_cast<uint32_t>(visibleBookCount);
   const uint64_t savedFeaturedKey = featuredVisualKey();
-  std::array<uint64_t, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> bookPathKeys{};
-  std::array<uint64_t, SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY> bookVisualKeys{};
+  std::array<uint64_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> bookPathKeys{};
+  std::array<uint64_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> bookVisualKeys{};
   size_t visibleIndex = 0;
   const size_t pageEnd = pageStart + pageItems;
   for (const auto& book : recentBooks) {
@@ -1869,8 +1948,11 @@ void RecentBooksActivity::writeSnapshot() {
                   file.write(&height, sizeof(height)) == sizeof(height) &&
                   file.write(&dataSize, sizeof(dataSize)) == sizeof(dataSize) &&
                   file.write(&pageItems, sizeof(pageItems)) == sizeof(pageItems) &&
+                  file.write(&savedTheme, sizeof(savedTheme)) == sizeof(savedTheme) &&
+                  file.write(&savedLayout, sizeof(savedLayout)) == sizeof(savedLayout) &&
                   file.write(&key, sizeof(key)) == sizeof(key) &&
                   file.write(&savedPageStart, sizeof(savedPageStart)) == sizeof(savedPageStart) &&
+                  file.write(&savedFrameSelectorIndex, sizeof(savedFrameSelectorIndex)) == sizeof(savedFrameSelectorIndex) &&
                   file.write(&savedSelectorIndex, sizeof(savedSelectorIndex)) == sizeof(savedSelectorIndex) &&
                   file.write(&savedTab, sizeof(savedTab)) == sizeof(savedTab) &&
                   file.write(&savedVisibleBookCount, sizeof(savedVisibleBookCount)) == sizeof(savedVisibleBookCount) &&
@@ -1905,31 +1987,50 @@ void RecentBooksActivity::writeSnapshotNavigationState() {
   uint16_t height = 0;
   uint32_t dataSize = 0;
   uint8_t pageItems = 0;
+  HomeSnapshotPolicy::SnapshotIdentity savedIdentity{};
   uint64_t key = 0;
   if (file.read(&magic, sizeof(magic)) != sizeof(magic) || file.read(&version, sizeof(version)) != sizeof(version) ||
       file.read(&width, sizeof(width)) != sizeof(width) || file.read(&height, sizeof(height)) != sizeof(height) ||
       file.read(&dataSize, sizeof(dataSize)) != sizeof(dataSize) || file.read(&pageItems, sizeof(pageItems)) != sizeof(pageItems) ||
-      file.read(&key, sizeof(key)) != sizeof(key) ||
       magic != FOLIO_HOME_MAGIC || width != renderer.getScreenWidth() ||
       height != renderer.getScreenHeight() || dataSize != renderer.getBufferSize() ||
-      !HomeSnapshotPolicy::isSupportedPageCapacity(pageItems)) {
+      !HomeSnapshotPolicy::isSupportedPageCapacity(pageItems) ||
+      (version != FOLIO_HOME_VERSION && version != FOLIO_HOME_PREVIOUS_VERSION &&
+       version != FOLIO_HOME_LEGACY_VERSION) ||
+      (version != FOLIO_HOME_VERSION && pageItems > FOLIO_HOME_LEGACY_PAGE_CAPACITY)) {
     return;
   }
-  const bool legacySnapshotCompatible = version == FOLIO_HOME_PREVIOUS_VERSION &&
+  const bool legacySnapshotCompatible = version != FOLIO_HOME_VERSION &&
                                         SETTINGS.uiTheme == CrossPointSettings::UI_THEME::FOLIO_NOOIR;
+  if (version == FOLIO_HOME_VERSION &&
+      (file.read(&savedIdentity.theme, sizeof(savedIdentity.theme)) != sizeof(savedIdentity.theme) ||
+       file.read(&savedIdentity.layout, sizeof(savedIdentity.layout)) != sizeof(savedIdentity.layout) ||
+       !HomeSnapshotPolicy::identityMatches(
+           savedIdentity, HomeSnapshotPolicy::SnapshotIdentity{SETTINGS.uiTheme, activeBookLayout()}))) {
+    return;
+  }
   if ((version != FOLIO_HOME_VERSION && !legacySnapshotCompatible) ||
-      key != snapshotKey(version == FOLIO_HOME_PREVIOUS_VERSION)) {
+      file.read(&key, sizeof(key)) != sizeof(key) ||
+      key != snapshotKey(version != FOLIO_HOME_PREVIOUS_VERSION)) {
     return;
   }
   uint32_t storedPageStart = 0;
+  uint32_t frameSelectorIndex = 0;
   if (file.read(&storedPageStart, sizeof(storedPageStart)) != sizeof(storedPageStart) ||
-      storedPageStart != currentPageStart || pageItems != currentPageItems ||
-      !HomeSnapshotPolicy::pageRangeMatches(selectorIndex, storedPageStart, pageItems, visibleBookCount)) {
+      (version == FOLIO_HOME_VERSION &&
+       file.read(&frameSelectorIndex, sizeof(frameSelectorIndex)) != sizeof(frameSelectorIndex))) {
     return;
   }
+  if (version != FOLIO_HOME_VERSION) frameSelectorIndex = selectorIndex;
+  const bool validFramePage = HomeSnapshotPolicy::pageRangeMatches(
+      frameSelectorIndex, storedPageStart, pageItems, visibleBookCount);
+  const bool sameActivePage = storedPageStart == currentPageStart && pageItems == currentPageItems;
+  if (!validFramePage || selectorIndex >= visibleBookCount ||
+      (version != FOLIO_HOME_VERSION && !sameActivePage)) return;
 
   const size_t selectorOffset = sizeof(magic) + sizeof(version) + sizeof(width) + sizeof(height) + sizeof(dataSize) +
-                                sizeof(pageItems) + sizeof(key) + sizeof(uint32_t);
+                                sizeof(pageItems) + (version == FOLIO_HOME_VERSION ? 2U : 0U) * sizeof(uint8_t) +
+                                sizeof(key) + (version == FOLIO_HOME_VERSION ? 2U : 1U) * sizeof(uint32_t);
   if (!file.seek(selectorOffset)) return;
   const uint32_t savedSelectorIndex = static_cast<uint32_t>(selectorIndex);
   const uint8_t savedTab = activeTab;
@@ -2476,19 +2577,23 @@ void RecentBooksActivity::onEnter() {
   snapshotRestored = restoreSnapshot();
   logRecentViewState(snapshotRestored ? "on_enter_snapshot_restored" : "on_enter_snapshot_invalidated");
   if (APP_STATE.selectFirstHomeBookAfterWake) {
-    selectorIndex = 0;
-    snapshotRestored = false;
-    snapshotFastPathUsed = false;
-    snapshotPageStart = SIZE_MAX;
-    snapshotPageItems = 0;
-    snapshotSelectorIndex = SIZE_MAX;
-    snapshotDynamicNeedsPatch = false;
-    lastFeaturedPath.clear();
-    lastFeaturedCoverPath.clear();
+    const bool wakeSelectionChanged = selectorIndex != 0;
+    if (wakeSelectionChanged) {
+      selectorIndex = 0;
+      snapshotRestored = false;
+      snapshotFastPathUsed = false;
+      snapshotPageStart = SIZE_MAX;
+      snapshotPageItems = 0;
+      snapshotSelectorIndex = SIZE_MAX;
+      snapshotDynamicNeedsPatch = false;
+      lastFeaturedPath.clear();
+      lastFeaturedCoverPath.clear();
+    }
     APP_STATE.selectFirstHomeBookAfterWake = false;
     APP_STATE.saveToFile();
-    LOG_INF("SHELF", "stage=wake_selection_reset selected=%u tab=%u",
-            static_cast<unsigned>(selectorIndex), static_cast<unsigned>(activeTab));
+    LOG_INF("SHELF", "stage=wake_selection_reset changed=%u selected=%u tab=%u snapshot=%u",
+            wakeSelectionChanged ? 1U : 0U, static_cast<unsigned>(selectorIndex), static_cast<unsigned>(activeTab),
+            snapshotRestored ? 1U : 0U);
   }
   if (!snapshotRestored) {
     snapshotPageStart = SIZE_MAX;
@@ -3391,6 +3496,52 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
   const bool noBackgroundWork = !retrievingBookCache && !manualSingleRefresh &&
                                 !carouselHqPreparationActive && !carouselHqCompletionPopupPending &&
                                 !spineShelfVisualsDirty;
+  size_t restoredPageStart = SIZE_MAX;
+  size_t restoredPageItems = 0;
+  const bool restoredPageKnown = currentSnapshotPageInfo(restoredPageStart, restoredPageItems);
+  const auto retainRenderedSnapshot = [this, restoredPageKnown, restoredPageStart, restoredPageItems] {
+    if (!usesPersistentHomeSnapshot() || visibleBookCount == 0 || !restoredPageKnown) {
+      snapshotRestored = false;
+      return;
+    }
+    snapshotPageStart = restoredPageStart;
+    snapshotPageItems = restoredPageItems;
+    snapshotSelectorIndex = selectorIndex;
+    snapshotPresentationKeyValue = snapshotPresentationKey();
+    snapshotDynamicNeedsPatch = false;
+    captureSnapshotVisualState(restoredPageStart, restoredPageItems);
+    snapshotRestored = true;
+    snapshotWritePending = true;
+    snapshotWriteRequestedMs = millis();
+  };
+  if (usesPersistentHomeSnapshot() && snapshotRestored && initialRenderPending && !snapshotFastPathUsed &&
+      noOverlay && noBackgroundWork && !snapshotDynamicNeedsPatch && !snapshotWritePending && visibleBookCount > 0 &&
+      restoredPageKnown && snapshotPageStart == restoredPageStart && snapshotPageItems == restoredPageItems) {
+    // The SD snapshot already contains the selected cover for carousel layouts.
+    // Grid and spine layouts save a clean base and need only the small focus
+    // marker before the panel refresh.
+    if (!usesCarouselLayout()) drawSnapshotSelectionOutline(displayLayout, selectorIndex, true);
+    displayLiteHomeFrame(0, 0, 0);
+    markStatsReturnFrameReady();
+    snapshotFastPathUsed = true;
+    initialRenderPending = false;
+    lastRenderedSelectorIndex = selectorIndex;
+    lastRenderedPageStart = restoredPageStart;
+    lastRenderedTab = activeTab;
+    lastRenderedLiteLayout = activeBookLayout();
+    lastRenderedLiteSpineLayout = liteSpineLayout;
+    lastRenderedLiteSpinePageStart = liteSpinePageStart;
+    if (visibleBookCount > 0) {
+      const RecentBook& selected = recentBooks[selectedRecentIndex()];
+      lastFeaturedPath = selected.path;
+      lastFeaturedCoverPath = selected.coverBmpPath;
+      lastFeaturedCoverVisible = SETTINGS.featuredShowCover != 0;
+    }
+    snapshotSelectorIndex = selectorIndex;
+    snapshotPresentationKeyValue = snapshotPresentationKey();
+    return true;
+  }
+
   const bool selectionChanged = selectorIndex != lastRenderedSelectorIndex;
   const bool detailsNeedPatch = selectionChanged || liteSelectedDetailsDirty;
   const bool sameLiteSpineFrame = previousLiteSpineFrameMatches && activeTab == lastRenderedTab &&
@@ -3458,7 +3609,7 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
     lastRenderedTab = activeTab;
     lastRenderedLiteLayout = activeBookLayout();
     liteSelectedDetailsDirty = false;
-    snapshotRestored = false;
+    retainRenderedSnapshot();
     return true;
   }
 
@@ -3781,7 +3932,7 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
   lastRenderedLiteSpinePageStart = liteSpineMode ? liteSpinePageStart : SIZE_MAX;
   spineShelfVisualsDirty = false;
   liteSelectedDetailsDirty = false;
-  snapshotRestored = false;
+  retainRenderedSnapshot();
   return true;
 }
 
@@ -4003,10 +4154,13 @@ void RecentBooksActivity::render(RenderLock&&) {
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const int gridPageItems = threeCoverGrid ? 3 : BOOKS_PER_PAGE;
+  const int gridPageItems = usesCarouselLayout() ? static_cast<int>(HomeSnapshotPolicy::CAROUSEL_PAGE_ITEMS)
+                          : threeCoverGrid ? static_cast<int>(HomeSnapshotPolicy::THREE_COVER_PAGE_ITEMS)
+                                           : static_cast<int>(HomeSnapshotPolicy::FOUR_BY_TWO_PAGE_ITEMS);
   size_t currentPageStart = (selectorIndex / gridPageItems) * gridPageItems;
   size_t currentPageItems = static_cast<size_t>(gridPageItems);
-  if ((spineLayout || twoRowSpineLayout) && !currentSnapshotPageInfo(currentPageStart, currentPageItems)) {
+  if ((usesCarouselLayout() || spineLayout || twoRowSpineLayout || usesThreeRowSpineLayout()) &&
+      !currentSnapshotPageInfo(currentPageStart, currentPageItems)) {
     currentPageStart = selectorIndex;
     currentPageItems = 0;
   }
