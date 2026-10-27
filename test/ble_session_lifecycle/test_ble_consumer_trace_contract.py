@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 INPUT_HEADER = (ROOT / "src/MappedInputManager.h").read_text(encoding="utf-8")
 INPUT_SOURCE = (ROOT / "src/MappedInputManager.cpp").read_text(encoding="utf-8")
 HOME = (ROOT / "src/activities/home/HomeActivity.cpp").read_text(encoding="utf-8")
+SHELF = (ROOT / "src/activities/home/RecentBooksActivity.cpp").read_text(encoding="utf-8")
 READER_UTILS = (ROOT / "src/activities/reader/ReaderUtils.h").read_text(encoding="utf-8")
 EPUB = (ROOT / "src/activities/reader/EpubReaderActivity.cpp").read_text(encoding="utf-8")
 XTC = (ROOT / "src/activities/reader/XtcReaderActivity.cpp").read_text(encoding="utf-8")
@@ -56,6 +57,21 @@ class BleConsumerTraceContract(unittest.TestCase):
         self.assertIn("bookPopupActive && mappedInput.bleWasNavigationPressed", HOME)
         self.assertIn('consumer=Home menu=main action=next', HOME)
         self.assertIn('consumer=Home menu=book_actions action=confirm', HOME)
+
+    def test_recent_shelf_logs_ble_actions_at_the_actual_selection_consumers(self):
+        for event in (
+            "consumer=RecentBooks action=open selection=%u",
+            "consumer=RecentBooks action=next selection=%u",
+            "consumer=RecentBooks action=previous selection=%u",
+            "consumer=RecentBooks action=next_repeat selection=%u",
+            "consumer=RecentBooks action=previous_repeat selection=%u",
+            "consumer=RecentBooks menu=main action=confirm",
+            "consumer=RecentBooks menu=book_actions action=confirm",
+        ):
+            self.assertIn(event, SHELF)
+        self.assertIn("mappedInput.bleWasNavigationReleased(MappedInputManager::Button::NavNext)", SHELF)
+        self.assertIn("mappedInput.bleWasNavigationReleased(MappedInputManager::Button::NavPrevious)", SHELF)
+        self.assertIn("#if NOOIR_BLE_DIAGNOSTICS", SHELF)
 
     def test_reader_page_diagnostic_tracks_ble_contribution_through_turn_policy(self):
         result = READER_UTILS.split("struct PageTurnResult", 1)[1].split("inline PageTurnResult detectPageTurn", 1)[0]

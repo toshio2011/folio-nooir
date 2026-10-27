@@ -2843,7 +2843,23 @@ void RecentBooksActivity::loop() {
   const bool bookPopupActive = bookActionsPopup.isActive();
   const bool bookPopupConfirm = bookPopupActive && mappedInput.wasPressed(MappedInputManager::Button::Confirm);
   const bool bookPopupBack = bookPopupActive && mappedInput.wasPressed(MappedInputManager::Button::Back);
+#if NOOIR_BLE_DIAGNOSTICS
+  const bool bookPopupBleNext =
+      bookPopupActive && mappedInput.bleWasNavigationPressed(MappedInputManager::Button::NavNext);
+  const bool bookPopupBlePrevious =
+      bookPopupActive && mappedInput.bleWasNavigationPressed(MappedInputManager::Button::NavPrevious);
+  const bool bookPopupBleConfirm = bookPopupActive && mappedInput.bleWasPressed(MappedInputManager::Button::Confirm);
+  const bool bookPopupBleBack = bookPopupActive && mappedInput.bleWasPressed(MappedInputManager::Button::Back);
+#endif
   if (bookActionsPopup.handleInput(mappedInput, [this] { requestUpdate(); })) {
+#if NOOIR_BLE_DIAGNOSTICS
+    if (bookPopupBleNext) bleinput::recordDiagnosticEvent("consumer=RecentBooks menu=book_actions action=next");
+    if (bookPopupBlePrevious)
+      bleinput::recordDiagnosticEvent("consumer=RecentBooks menu=book_actions action=previous");
+    if (bookPopupBleConfirm)
+      bleinput::recordDiagnosticEvent("consumer=RecentBooks menu=book_actions action=confirm");
+    if (bookPopupBleBack) bleinput::recordDiagnosticEvent("consumer=RecentBooks menu=book_actions action=back");
+#endif
     if (bookPopupConfirm) swallowBookConfirmRelease = true;
     if (bookPopupBack) swallowBookBackRelease = true;
     return;
@@ -2925,7 +2941,20 @@ void RecentBooksActivity::loop() {
   const bool menuWasActive = menuPopup.isActive();
   const bool menuBackPressed =
       menuWasActive && mappedInput.wasPressed(MappedInputManager::Button::Back);
+#if NOOIR_BLE_DIAGNOSTICS
+  const bool menuBleNext = menuWasActive && mappedInput.bleWasNavigationPressed(MappedInputManager::Button::NavNext);
+  const bool menuBlePrevious =
+      menuWasActive && mappedInput.bleWasNavigationPressed(MappedInputManager::Button::NavPrevious);
+  const bool menuBleConfirm = menuWasActive && mappedInput.bleWasPressed(MappedInputManager::Button::Confirm);
+  const bool menuBleBack = menuWasActive && mappedInput.bleWasPressed(MappedInputManager::Button::Back);
+#endif
   if (menuPopup.handleInput(mappedInput, [this] { requestUpdate(); })) {
+#if NOOIR_BLE_DIAGNOSTICS
+    if (menuBleNext) bleinput::recordDiagnosticEvent("consumer=RecentBooks menu=main action=next");
+    if (menuBlePrevious) bleinput::recordDiagnosticEvent("consumer=RecentBooks menu=main action=previous");
+    if (menuBleConfirm) bleinput::recordDiagnosticEvent("consumer=RecentBooks menu=main action=confirm");
+    if (menuBleBack) bleinput::recordDiagnosticEvent("consumer=RecentBooks menu=main action=back");
+#endif
     if (menuBackPressed) swallowMenuBackRelease = true;
     return;
   }
@@ -2946,6 +2975,12 @@ void RecentBooksActivity::loop() {
     }
     if (visibleBookCount > 0 && selectorIndex < visibleBookCount) {
       const RecentBook& selected = recentBooks[selectedRecentIndex()];
+#if NOOIR_BLE_DIAGNOSTICS
+      if (mappedInput.bleWasReleased(MappedInputManager::Button::Confirm)) {
+        bleinput::recordDiagnosticEvent("consumer=RecentBooks action=open selection=%u",
+                                        static_cast<unsigned>(selectorIndex));
+      }
+#endif
       LOG_DBG("RBA", "Selected recent book: %s", selected.path.c_str());
       logCbzPath("recent-book-selection", selected.path);
       onSelectBook(selected.path);
@@ -2956,12 +2991,22 @@ void RecentBooksActivity::loop() {
   const bool previousTab = mappedInput.wasReleased(MappedInputManager::Button::Left);
   const bool nextTab = mappedInput.wasReleased(MappedInputManager::Button::Right);
   if (previousTab) {
+#if NOOIR_BLE_DIAGNOSTICS
+    if (mappedInput.bleWasReleased(MappedInputManager::Button::Left)) {
+      bleinput::recordDiagnosticEvent("consumer=RecentBooks action=previous_tab");
+    }
+#endif
     // Third button: always return to the Library, regardless of whether the
     // current shelf is Recent or Finished.
     activityManager.goToFileBrowser("/");
     return;
   }
   if (nextTab) {
+#if NOOIR_BLE_DIAGNOSTICS
+    if (mappedInput.bleWasReleased(MappedInputManager::Button::Right)) {
+      bleinput::recordDiagnosticEvent("consumer=RecentBooks action=next_tab");
+    }
+#endif
     // Fourth button: switch directly between Recent and Finished.
     activeTab = activeTab == 2 ? 1 : 2;
     selectorIndex = 0;
@@ -3285,17 +3330,35 @@ void RecentBooksActivity::loop() {
   }
 
   buttonNavigator.onNextRelease([this, listSize] {
+#if NOOIR_BLE_DIAGNOSTICS
+    if (mappedInput.bleWasNavigationReleased(MappedInputManager::Button::NavNext)) {
+      bleinput::recordDiagnosticEvent("consumer=RecentBooks action=next selection=%u",
+                                      static_cast<unsigned>(selectorIndex));
+    }
+#endif
     selectorIndex = ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize);
     requestUpdate();
   });
 
   buttonNavigator.onPreviousRelease([this, listSize] {
+#if NOOIR_BLE_DIAGNOSTICS
+    if (mappedInput.bleWasNavigationReleased(MappedInputManager::Button::NavPrevious)) {
+      bleinput::recordDiagnosticEvent("consumer=RecentBooks action=previous selection=%u",
+                                      static_cast<unsigned>(selectorIndex));
+    }
+#endif
     selectorIndex = ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize);
     requestUpdate();
   });
 
   buttonNavigator.onNextContinuous([this, listSize, pageItems, carouselTheme, spineLayout, twoRowSpineLayout,
                                     threeRowSpineLayout] {
+#if NOOIR_BLE_DIAGNOSTICS
+    if (mappedInput.bleIsNavigationPressed(MappedInputManager::Button::NavNext)) {
+      bleinput::recordDiagnosticEvent("consumer=RecentBooks action=next_repeat selection=%u",
+                                      static_cast<unsigned>(selectorIndex));
+    }
+#endif
     // A held Spine control repeats the same logical selection step as a tap.
     // The normal page-window render moves to the next shelf when that step
     // crosses a page boundary; skipping directly to page starts loses books.
@@ -3307,6 +3370,12 @@ void RecentBooksActivity::loop() {
 
   buttonNavigator.onPreviousContinuous([this, listSize, pageItems, carouselTheme, spineLayout, twoRowSpineLayout,
                                         threeRowSpineLayout] {
+#if NOOIR_BLE_DIAGNOSTICS
+    if (mappedInput.bleIsNavigationPressed(MappedInputManager::Button::NavPrevious)) {
+      bleinput::recordDiagnosticEvent("consumer=RecentBooks action=previous_repeat selection=%u",
+                                      static_cast<unsigned>(selectorIndex));
+    }
+#endif
     selectorIndex = (carouselTheme || spineLayout || twoRowSpineLayout || threeRowSpineLayout)
                         ? ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize)
                         : ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
