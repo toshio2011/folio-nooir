@@ -25,6 +25,8 @@ def function_body(source: str, signature: str) -> str:
 class SleepPngDiagnosticsContract(unittest.TestCase):
     def test_sd_callbacks_retain_file_size_and_last_read_counts(self):
         open_callback = function_body(SOURCE, "void* overlayPngOpen(")
+        self.assertIn('Storage.openFileForRead("SLP", filename, *file)', open_callback)
+        self.assertNotIn("std::string(filename)", open_callback)
         self.assertIn("overlayPngIo.fileOpened = true", open_callback)
         self.assertIn("overlayPngIo.fileSizeKnown = true", open_callback)
         self.assertIn("overlayPngIo.fileSize = *size", open_callback)

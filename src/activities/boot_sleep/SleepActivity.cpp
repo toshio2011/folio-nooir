@@ -242,7 +242,7 @@ void* overlayPngOpen(const char* filename, int32_t* size) {
     overlayPngIo.openFailure = OverlayOpenFailure::Allocation;
     return nullptr;
   }
-  if (!Storage.openFileForRead("SLP", std::string(filename), *file)) {
+  if (!Storage.openFileForRead("SLP", filename, *file)) {
     overlayPngIo.openFailure = OverlayOpenFailure::Open;
     delete file;
     return nullptr;
