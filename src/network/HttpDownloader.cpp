@@ -84,12 +84,12 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
     http.setTimeout(HTTP_TIMEOUT_MS);
     http.setInsecure();
 #if NOOIR_KOSYNC_FONT_DIAGNOSTICS
-    fontNetworkDiagnostic("tls_begin", hop);
+    fontNetworkDiagnostic("tls_begin", 0, static_cast<size_t>(redirectsFollowed));
 #endif
     if (!http.begin(url)) {
       LOG_ERR("HTTP", "wolfSSL bad URL: %s", url.c_str());
 #if NOOIR_KOSYNC_FONT_DIAGNOSTICS
-      fontNetworkDiagnostic("tls_begin_fail", -1, hop);
+      fontNetworkDiagnostic("tls_begin_fail", -1, static_cast<size_t>(redirectsFollowed));
 #endif
       return HttpDownloader::HTTP_ERROR;
     }
@@ -105,7 +105,7 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
 
     LOG_DBG("HTTP", "wolfSSL GET: %s", url.c_str());
 #if NOOIR_KOSYNC_FONT_DIAGNOSTICS
-    fontNetworkDiagnostic("tls_get", hop);
+    fontNetworkDiagnostic("tls_get", 0, static_cast<size_t>(redirectsFollowed));
 #endif
     const int status = http.GET(
         [&http, &sink](const uint8_t* data, size_t len) {
