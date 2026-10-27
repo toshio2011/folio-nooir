@@ -41,6 +41,8 @@ TEST(BleMemoryPolicy, HomeReclaimOnlyRunsForNearFloorQuiescentHeap) {
   EXPECT_FALSE(bleinput::homeBleStartReclaimAllowed(true, false, true, false, false, 95 * 1024, 65524));
   EXPECT_FALSE(bleinput::homeBleStartReclaimAllowed(true, false, false, false, false,
                                                     95 * 1024, 20 * 1024));
+  EXPECT_FALSE(bleinput::homeBleStartReclaimAllowed(true, false, false, false, false,
+                                                    95 * 1024, 65524, true));
 }
 
 TEST(BleMemoryPolicy, OrdinaryHomeTransitionsKeepConnectedBleAlive) {

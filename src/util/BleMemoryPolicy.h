@@ -38,14 +38,15 @@ inline constexpr std::size_t kHomeBleReclaimMargin = 8 * 1024;
 constexpr bool homeBleStartReclaimAllowed(const bool bluetoothEnabled, const bool webExclusive,
                                           const bool wifiActive, const bool readerContext,
                                           const bool renderBusy, const std::size_t freeHeap,
-                                          const std::size_t largestBlock) {
+                                          const std::size_t largestBlock,
+                                          const bool reclaimAlreadyAttempted = false) {
   const bool belowFloor = freeHeap < kReaderBleStartMinFreeHeap ||
                           largestBlock < kReaderBleStartMinLargestBlock;
   const bool nearBothFloors =
       freeHeap >= kReaderBleStartMinFreeHeap - kHomeBleReclaimMargin &&
       largestBlock >= kReaderBleStartMinLargestBlock - kHomeBleReclaimMargin;
   return bluetoothEnabled && !webExclusive && !wifiActive && !readerContext && !renderBusy &&
-         belowFloor && nearBothFloors;
+         !reclaimAlreadyAttempted && belowFloor && nearBothFloors;
 }
 
 // Physical Reader traces show a small admission cliff around 97--98 KiB free

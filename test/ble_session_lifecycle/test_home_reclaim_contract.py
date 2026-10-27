@@ -37,6 +37,14 @@ class HomeBleReclaimContract(unittest.TestCase):
         self.assertIn("admitted = bleinput::connectionAdmissionAllowed();", MAIN)
         self.assertIn("bleinput::requestLifecycleReevaluation();", MAIN)
 
+    def test_no_gain_home_reclaim_is_attempted_once_per_home_session(self):
+        lifecycle = function_body(MAIN, "void updateBluetoothLifecycle()")
+        self.assertIn("static bool homeBleReclaimAttempted = false;", lifecycle)
+        self.assertIn("if (!homeActivity) homeBleReclaimAttempted = false;", lifecycle)
+        self.assertIn("if (!wanted) {\n    homeBleReclaimAttempted = false;", lifecycle)
+        self.assertIn("homeBleReclaimAttempted = true;\n      const auto reclaim", lifecycle)
+        self.assertIn("static_cast<size_t>(ESP.getMaxAllocHeap()), homeBleReclaimAttempted)", lifecycle)
+
     def test_render_notification_wakes_task_after_releasing_application_spinlock(self):
         body = function_body(ACTIVITY_MANAGER, "void ActivityManager::queueRenderNotification()")
         self.assertLess(body.index("taskEXIT_CRITICAL(&activityManagerSpinlock)"), body.index("xTaskNotify("))

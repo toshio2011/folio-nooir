@@ -582,16 +582,21 @@ void updateBluetoothLifecycle() {
   static bool resourceDeferReported = false;
   static bool bluetoothSettingsRenderDeferReported = false;
   static bool settingsBleReturnFloorDeferReported = false;
+  static bool homeBleReclaimAttempted = false;
   if (bleinput::webExclusiveActive()) {
     resourceDeferReported = false;
     bluetoothSettingsRenderDeferReported = false;
     settingsBleReturnFloorDeferReported = false;
+    homeBleReclaimAttempted = false;
     if (BleHid.isRunning()) {
       bleinput::stop();
       bleinput::recordDiagnosticEvent("ble_suspend reason=web_exclusive");
     }
     return;
   }
+  const char* activityName = activityManager.currentActivityName();
+  const bool homeActivity = strcmp(activityName, "Home") == 0 || strcmp(activityName, "RecentBooks") == 0;
+  if (!homeActivity) homeBleReclaimAttempted = false;
   const bool wanted =
       !deepSleepInProgress && bleinput::bluetoothEnabled() && activityManager.bluetoothShouldBeActive() &&
       WiFi.getMode() == WIFI_MODE_NULL;
@@ -609,6 +614,7 @@ void updateBluetoothLifecycle() {
   const bool blocked = resourceSensitive;
 
   if (!wanted) {
+    homeBleReclaimAttempted = false;
     // A Bluetooth control screen can remain open while Wi-Fi is active. Report
     // the admission outcome so its Preparing state cannot wait forever; the
     // screen's explicit Retry action will queue the next attempt.
@@ -701,16 +707,15 @@ void updateBluetoothLifecycle() {
   bool admitted = bleinput::connectionAdmissionAllowed();
 
   if (!admitted) {
-    const char* activityName = activityManager.currentActivityName();
-    const bool homeActivity = strcmp(activityName, "Home") == 0 || strcmp(activityName, "RecentBooks") == 0;
     const bool renderBusy = RenderLock::peek() || activityManager.hasPendingRenderWork();
     const bool reclaimAllowed =
         homeActivity && bleinput::homeBleStartReclaimAllowed(
                             bleinput::bluetoothEnabled(), bleinput::webExclusiveActive(),
                             WiFi.getMode() != WIFI_MODE_NULL, readerContext, renderBusy,
                             static_cast<size_t>(ESP.getFreeHeap()),
-                            static_cast<size_t>(ESP.getMaxAllocHeap()));
+                            static_cast<size_t>(ESP.getMaxAllocHeap()), homeBleReclaimAttempted);
     if (reclaimAllowed) {
+      homeBleReclaimAttempted = true;
       const auto reclaim = memorypressure::reclaimForHeadroom(
           bleinput::kReaderBleStartMinFreeHeap, bleinput::kReaderBleStartMinLargestBlock,
           "ble_home_cold_start", memorypressure::ReclaimLevel::Reconstructible);
