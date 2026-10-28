@@ -674,6 +674,20 @@ void ActivityManager::exitActivity(const RenderLock& lock) {
     const bool readingStatsActivity = currentActivity->name == "ReadingStats" || currentActivity->name == "ReadingCalendar";
     const bool epubReaderActivity = currentActivity->name == "EpubReader";
     const bool wifiSelectionActivity = currentActivity->name == "WifiSelection";
+#if FREEINK_CAP_BLE_HID_HOST
+    // Direct Home shortcuts can replace a stable Reader before the main BLE
+    // lifecycle gets another tick. If the host still owns heap, stop it once
+    // before synchronous progress persistence and cache teardown. The shared
+    // Home render gate controls any later cold reconnect.
+    if (readerActivity && BleHid.isRunning()) {
+      const uint32_t bleStopStartedUs = micros();
+      bleinput::clearReaderBleReturnPending();
+      bleinput::stop();
+      LOG_INF("BLEMEM", "stage=reader_exit_ble_stopped stop_us=%lu free=%u largest=%u",
+              static_cast<unsigned long>(micros() - bleStopStartedUs),
+              static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    }
+#endif
     currentActivity->onExit();
     transientNotificationBacking.reset();
     transientNotificationBackingSize = 0;
