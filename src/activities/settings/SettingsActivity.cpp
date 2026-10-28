@@ -217,6 +217,7 @@ void SettingsActivity::toggleAccordion() {
 
 SettingsActivity::SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
     : Activity("Settings", renderer, mappedInput) {
+  settingsUiThemeAtEntry = SETTINGS.uiTheme;
   tabItems.reserve(categoryCount);
   for (int index = 0; index < categoryCount; ++index)
     tabItems.push_back({I18N.get(categoryNames[index]), false});
@@ -650,7 +651,12 @@ void SettingsActivity::onExit() {
 
   logSettingsExitHeapCheckpoint("onExit_before_theme_reload", currentGroupSettings.size(),
                                 currentGroupSettings.capacity());
-  UITheme::getInstance().reload();  // Re-apply theme in case it was changed
+  if (SETTINGS.uiTheme != settingsUiThemeAtEntry) {
+    UITheme::getInstance().reload();
+    LOG_INF("SETDIAG", "stage=theme_reload reason=visual_setting_changed");
+  } else {
+    LOG_INF("SETDIAG", "stage=theme_reload skipped=unchanged");
+  }
   logSettingsExitHeapCheckpoint("onExit_after_theme_reload", currentGroupSettings.size(),
                                 currentGroupSettings.capacity());
   logSettingsDiagnostic("onExit_end");

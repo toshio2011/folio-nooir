@@ -128,7 +128,6 @@ void ActivityManager::renderTaskLoop() {
       renderer.setUiScaleTextEnabled(true);
       const bool modalOverlayBeforeRender = currentActivity->hasModalOverlay();
       const bool modalOverlayClosed = modalOverlayWasDisplayed && !modalOverlayBeforeRender;
-      if (modalOverlayClosed) renderer.requestNextRefreshMode(HalDisplay::FULL_REFRESH);
       const uint32_t displayUpdateSequenceBeforeRender = renderer.getDisplayUpdateSequence();
       currentActivity->render(std::move(lock));
 #if NOOIR_SD_FONT_DIAGNOSTICS
@@ -281,12 +280,9 @@ void ActivityManager::renderTaskLoop() {
         LOG_INF("NOTIFY", "stage=backdrop_refresh activity=%.20s", currentActivity->name.c_str());
       }
       if (modalOverlayClosed && renderer.getDisplayUpdateSequence() == displayUpdateSequenceBeforeRender) {
-        renderer.displayBuffer(HalDisplay::FULL_REFRESH);
-        LOG_INF("ACT", "stage=modal_close_refresh activity=%.20s", currentActivity->name.c_str());
+        renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+        LOG_INF("ACT", "stage=modal_close_refresh mode=fast activity=%.20s", currentActivity->name.c_str());
       }
-      // A render fast path may intentionally skip a panel update. Do not let a
-      // one-shot cleanup waveform leak into an unrelated later frame.
-      if (modalOverlayClosed) renderer.clearNextRefreshModeOverride();
     }
     // Notify any task blocked in requestUpdateAndWait() that the render is done.
     TaskHandle_t waiter = nullptr;

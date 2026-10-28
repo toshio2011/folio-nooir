@@ -15,6 +15,7 @@
 #include "components/themes/folio_nooir/CarouselTheme.h"
 #include "util/ButtonNavigator.h"
 #include "util/CoverStackGeometry.h"
+#include "util/HomeSnapshotPolicy.h"
 #include "util/SpineShelfPlanner.h"
 #include "util/ThumbnailMissMemo.h"
 #include "components/OptionPopup.h"
@@ -152,8 +153,12 @@ class RecentBooksActivity final : public Activity {
   // The gate clears only after the previous activity's input is released.
   bool ignoreEntryInputUntilNeutral = false;
   const char* renderDiagnosticReason = "queued";
+  const char* snapshotRestoreFailureReason = "not_attempted";
   uint64_t snapshotPresentationKeyValue = 0;
+  std::array<uint64_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> snapshotBookPathKeys{};
   std::array<uint64_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> snapshotBookVisualKeys{};
+  std::array<HomeSnapshotPolicy::SnapshotRect, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> snapshotBookRects{};
+  bool snapshotBookGeometryAvailable = false;
   bool snapshotDynamicNeedsPatch = false;
   bool snapshotRewriteAfterRestore = false;
   size_t snapshotPageStart = SIZE_MAX;
@@ -315,15 +320,20 @@ class RecentBooksActivity final : public Activity {
   void showMenu();
   void showBookActions();
   uint64_t snapshotKey(bool exactThemeKey = false) const;
+  HomeSnapshotPolicy::VisualSettingsSignature visualSettingsSignature() const;
   uint64_t snapshotPresentationKey() const;
   uint64_t bookDynamicKey(const RecentBook& book) const;
   uint64_t bookCoverVisualKey(const RecentBook& book) const;
   uint64_t snapshotDynamicKey();
   uint64_t featuredVisualKey() const;
   void captureSnapshotVisualState(size_t pageStart, size_t pageItems);
+  bool captureSnapshotRects(size_t pageStart, size_t pageItems,
+                            std::array<HomeSnapshotPolicy::SnapshotRect,
+                                       SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY>& rects);
   void drawSnapshotSelectionOutline(const FolioShelfLayout& layout, size_t index, bool selected);
   bool currentSnapshotPageInfo(size_t& pageStart, size_t& pageItems);
   bool restoreSnapshot();
+  bool restoreSnapshotAfterOverlayDismissal();
   void writeSnapshot();
   void writeSnapshotNavigationState();
   uint8_t activeBookLayout() const;

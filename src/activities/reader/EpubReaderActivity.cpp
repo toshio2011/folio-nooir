@@ -455,6 +455,7 @@ void EpubReaderActivity::onEnter() {
   readerSurvivalBackoffDurationMs = 0;
   readerSurvivalLastStopMs = 0;
   readerSurvivalRecentStopCount = 0;
+  readerSurvivalSafeRenderCount = 0;
   readerSurvivalBackoffRetryBlocked = false;
   cachedRenderObservedPeakBytes = 0;
   cachedRenderLargestRequestThisRender = 0;
@@ -686,6 +687,7 @@ void EpubReaderActivity::onExit() {
   readerSurvivalBackoffDurationMs = 0;
   readerSurvivalLastStopMs = 0;
   readerSurvivalRecentStopCount = 0;
+  readerSurvivalSafeRenderCount = 0;
   readerSurvivalBackoffRetryBlocked = false;
   readerIdleFontCachesReleased = false;
   readerBleReturnCleanupAttempted = false;
@@ -884,6 +886,38 @@ void EpubReaderActivity::updateReaderMemoryPressure(const bool successfulRender)
     readerRenderMinFreeBytes = 0;
   }
 
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+  if (readerSurvivalRecentStopCount > 0) {
+    const bool safeRender = successfulRender &&
+                            bleinput::readerBleCachedRenderHeadroomSafe(observation.freeBytes,
+                                                                         observation.largestBlock) &&
+                            observation.recentMinFreeBytes >= bleinput::kReaderBleRenderMinFreeHeap;
+    if (safeRender) {
+      if (readerSurvivalSafeRenderCount < UINT8_MAX) ++readerSurvivalSafeRenderCount;
+    } else {
+      readerSurvivalSafeRenderCount = 0;
+    }
+    if (bleinput::readerBleSafeRenderResetsSurvivalBackoff(
+            readerSurvivalSafeRenderCount, observation.freeBytes, observation.largestBlock,
+            observation.recentMinFreeBytes)) {
+      readerSurvivalRecentStopCount = 0;
+      readerSurvivalLastStopMs = 0;
+      readerSurvivalSafeRenderCount = 0;
+      readerSurvivalBackoffDurationMs.store(0, std::memory_order_release);
+      const bool retryWasBlocked = readerSurvivalBackoffRetryBlocked.exchange(false, std::memory_order_acq_rel);
+      if (retryWasBlocked && !BleHid.isRunning() && bleinput::readerBleReturnPending()) {
+        bleinput::allowReaderBleReturnRetry();
+        bleinput::signalReaderBleReturnLifecycleEvent("safe_headroom_reset");
+      }
+      LOG_INF("BLEMEM", "stage=reader_survival_backoff_reset reason=safe_headroom free=%u largest=%u render_min=%u",
+              static_cast<unsigned>(observation.freeBytes), static_cast<unsigned>(observation.largestBlock),
+              static_cast<unsigned>(observation.recentMinFreeBytes));
+    }
+  } else {
+    readerSurvivalSafeRenderCount = 0;
+  }
+#endif
+
   if (!readerCacheBudgetInitialized || readerMemoryPressureTier != previousTier) {
     const auto budget = reader_memory::cacheBudgetFor(readerMemoryPressureTier);
     if (auto* fontCache = renderer.getFontCacheManager()) {
@@ -974,6 +1008,7 @@ void EpubReaderActivity::requestReaderSurvivalStop(const char* reason, const boo
     if (readerSurvivalRecentStopCount < bleinput::kReaderBleSurvivalBackoffMaxStops) {
       ++readerSurvivalRecentStopCount;
     }
+    readerSurvivalSafeRenderCount = 0;
     readerSurvivalBackoffStartedMs.store(now, std::memory_order_relaxed);
     readerSurvivalBackoffDurationMs.store(
         bleinput::readerBleSurvivalBackoffMs(readerSurvivalRecentStopCount, sincePreviousStop),

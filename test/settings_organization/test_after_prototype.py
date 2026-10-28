@@ -95,10 +95,11 @@ class SettingsGroupPrototypeTest(unittest.TestCase):
         self.assertIn("if (hasActiveHomeInput(mappedInput)) return;", self.home_cpp)
         self.assertNotIn("HOME_ENTRY_INPUT_GATE_MAX_MS", self.home_cpp)
         self.assertIn("isFolioShelfTheme(SETTINGS.uiTheme)", self.home_cpp)
-        self.assertIn("FOLIO_HOME_PREVIOUS_VERSION = 9", self.home_cpp)
-        self.assertIn("FOLIO_HOME_LEGACY_VERSION = 8", self.home_cpp)
+        self.assertIn("FOLIO_HOME_PREVIOUS_VERSION = 10", self.home_cpp)
+        self.assertIn("FOLIO_HOME_LEGACY_VERSION = 9", self.home_cpp)
+        self.assertIn("FOLIO_HOME_OLDEST_VERSION = 8", self.home_cpp)
         self.assertIn("APP_STATE.selectFirstHomeBookAfterWake", self.home_cpp)
-        self.assertIn("FOLIO_HOME_VERSION = 10", self.home_cpp)
+        self.assertIn("FOLIO_HOME_VERSION = 11", self.home_cpp)
         self.assertIn("selectFirstHomeBookAfterWake", (ROOT / "src" / "CrossPointState.cpp").read_text(encoding="utf-8"))
 
     def test_accordion_transitions_and_quick_actions_move_are_explicit(self):

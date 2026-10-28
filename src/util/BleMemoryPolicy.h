@@ -78,6 +78,7 @@ inline constexpr uint32_t kReaderBleSurvivalBackoffInitialMs = 15'000;
 inline constexpr uint32_t kReaderBleSurvivalBackoffMaxMs = 120'000;
 inline constexpr uint32_t kReaderBleSurvivalBackoffResetMs = 60'000;
 inline constexpr uint8_t kReaderBleSurvivalBackoffMaxStops = 4;
+inline constexpr uint8_t kReaderBleSurvivalBackoffSafeRenderResetCount = 3;
 
 constexpr uint32_t readerBleSurvivalBackoffMs(const uint8_t recentStopCount,
                                               const uint32_t sincePreviousStopMs) {
@@ -104,6 +105,15 @@ constexpr bool readerBleCachedRenderNeedsReclaim(const bool bleEnabled, const bo
 
 constexpr bool readerBleCachedRenderHeadroomSafe(const std::size_t freeHeap, const std::size_t largestBlock) {
   return freeHeap >= kReaderBleRenderMinFreeHeap && largestBlock >= kReaderBleRenderMinLargestBlock;
+}
+
+constexpr bool readerBleSafeRenderResetsSurvivalBackoff(const uint8_t consecutiveSafeRenders,
+                                                        const std::size_t currentFreeHeap,
+                                                        const std::size_t largestBlock,
+                                                        const std::size_t recentRenderMinFreeHeap) {
+  return consecutiveSafeRenders >= kReaderBleSurvivalBackoffSafeRenderResetCount &&
+         readerBleCachedRenderHeadroomSafe(currentFreeHeap, largestBlock) &&
+         recentRenderMinFreeHeap >= kReaderBleRenderMinFreeHeap;
 }
 
 constexpr bool readerBleStartMemoryAdmitted(const std::size_t freeHeap, const std::size_t largestBlock) {

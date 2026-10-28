@@ -85,6 +85,81 @@ TEST(HomeSnapshotPolicy, PatchesLiteThreeRowChangesOnlyWhenOccupiedSlotCountMatc
   EXPECT_FALSE(HomeSnapshotPolicy::canPatchLiteThreeRowVisibleSlots(true, 0, 0));
   EXPECT_TRUE(HomeSnapshotPolicy::canPatchLiteThreeRowVisibleSlot(true, 21, 21, true));
   EXPECT_FALSE(HomeSnapshotPolicy::canPatchLiteThreeRowVisibleSlot(true, 21, 21, false));
+  EXPECT_TRUE(HomeSnapshotPolicy::canPatchLiteThreeRowPage(true, true, 21, 20));
+  EXPECT_FALSE(HomeSnapshotPolicy::canPatchLiteThreeRowPage(true, false, 21, 21));
+  EXPECT_FALSE(HomeSnapshotPolicy::canPatchLiteThreeRowPage(false, true, 21, 21));
+}
+
+TEST(HomeSnapshotPolicy, PatchesChangedAndReorderedSlotsWhenGeometryIsSaved) {
+  using HomeSnapshotPolicy::SnapshotRect;
+  constexpr SnapshotRect oldRect{10, 20, 30, 40};
+  constexpr SnapshotRect movedRect{44, 20, 30, 40};
+  EXPECT_FALSE(HomeSnapshotPolicy::slotNeedsPatch(101, 101, 201, 201, oldRect, oldRect));
+  EXPECT_TRUE(HomeSnapshotPolicy::slotNeedsPatch(101, 102, 201, 201, oldRect, oldRect));
+  EXPECT_TRUE(HomeSnapshotPolicy::slotNeedsPatch(101, 101, 201, 202, oldRect, oldRect));
+  EXPECT_TRUE(HomeSnapshotPolicy::slotNeedsPatch(101, 101, 201, 201, oldRect, movedRect));
+  // A Recent front-move changes several position-to-book mappings; each moved
+  // face and any slot removed by a Finished filter is independently patched.
+  constexpr std::array<uint64_t, 3> savedPaths{11, 22, 33};
+  constexpr std::array<uint64_t, 3> currentPaths{99, 11, 22};
+  EXPECT_TRUE(HomeSnapshotPolicy::slotNeedsPatch(savedPaths[0], currentPaths[0], 1, 1, oldRect, oldRect));
+  EXPECT_TRUE(HomeSnapshotPolicy::slotNeedsPatch(savedPaths[1], currentPaths[1], 2, 2, oldRect, oldRect));
+  EXPECT_TRUE(HomeSnapshotPolicy::slotNeedsPatch(savedPaths[2], currentPaths[2], 3, 3, oldRect, oldRect));
+  EXPECT_TRUE(HomeSnapshotPolicy::slotNeedsPatch(savedPaths[2], 0, 3, 0, oldRect, SnapshotRect{}));
+}
+
+TEST(HomeSnapshotPolicy, SeparatesVisualSettingsAndIgnoresUnrepresentedSystemPreferences) {
+  HomeSnapshotPolicy::VisualSettingsSignature saved{};
+  auto same = saved;
+  EXPECT_TRUE(HomeSnapshotPolicy::visualSettingsMatch(saved, same));
+  auto visualChange = saved;
+  visualChange[0] = 1;
+  EXPECT_FALSE(HomeSnapshotPolicy::visualSettingsMatch(saved, visualChange));
+  auto nonVisualPreferenceChange = saved;
+  EXPECT_TRUE(HomeSnapshotPolicy::visualSettingsMatch(saved, nonVisualPreferenceChange));
+}
+
+TEST(HomeSnapshotPolicy, ClassifiesSnapshotInvalidationCauses) {
+  using HomeSnapshotPolicy::SnapshotInvalidationReason;
+  EXPECT_EQ(HomeSnapshotPolicy::classifySnapshotInvalidation(false, true, false, true, true),
+            SnapshotInvalidationReason::VisualOrStructuralKeyMismatch);
+  EXPECT_EQ(HomeSnapshotPolicy::classifySnapshotInvalidation(true, false, false, true, true),
+            SnapshotInvalidationReason::VisiblePageNotPatchable);
+  EXPECT_EQ(HomeSnapshotPolicy::classifySnapshotInvalidation(true, true, true, false, true),
+            SnapshotInvalidationReason::SlotGeometryUnavailable);
+  EXPECT_EQ(HomeSnapshotPolicy::classifySnapshotInvalidation(true, true, false, true, false),
+            SnapshotInvalidationReason::SavedSelectionOutOfRange);
+  EXPECT_EQ(HomeSnapshotPolicy::classifySnapshotInvalidation(true, true, false, true, true),
+            SnapshotInvalidationReason::None);
+  EXPECT_STREQ(HomeSnapshotPolicy::snapshotInvalidationReasonName(
+                   SnapshotInvalidationReason::CurrentPageGeometryMismatch),
+               "current_page_geometry_mismatch");
+}
+
+TEST(HomeSnapshotPolicy, ChoosesFastHomeRefreshAndSchedulesGhostCleanup) {
+  using HomeSnapshotPolicy::RefreshReason;
+  using HomeSnapshotPolicy::RefreshWaveform;
+  HomeSnapshotPolicy::RefreshState state{};
+  EXPECT_EQ(HomeSnapshotPolicy::refreshIntervalForFrequency(0), 1);
+  EXPECT_EQ(HomeSnapshotPolicy::refreshIntervalForFrequency(1), 5);
+  EXPECT_EQ(HomeSnapshotPolicy::refreshIntervalForFrequency(2), 10);
+  EXPECT_EQ(HomeSnapshotPolicy::refreshIntervalForFrequency(3), 15);
+  EXPECT_EQ(HomeSnapshotPolicy::refreshIntervalForFrequency(4), 30);
+  for (int i = 0; i < 14; ++i) {
+    const auto decision = HomeSnapshotPolicy::chooseRefresh(state, 15);
+    EXPECT_EQ(decision.waveform, RefreshWaveform::Fast);
+    EXPECT_EQ(decision.reason, RefreshReason::Ordinary);
+    HomeSnapshotPolicy::recordRefresh(state, decision);
+  }
+  EXPECT_EQ(state.completedFastUpdates, 14);
+  const auto cleanup = HomeSnapshotPolicy::chooseRefresh(state, 15);
+  EXPECT_EQ(cleanup.waveform, RefreshWaveform::Full);
+  EXPECT_EQ(cleanup.reason, RefreshReason::PeriodicGhostCleanup);
+  HomeSnapshotPolicy::recordRefresh(state, cleanup);
+  EXPECT_EQ(state.completedFastUpdates, 0);
+  const auto orientation = HomeSnapshotPolicy::chooseRefresh(state, 15, true);
+  EXPECT_EQ(orientation.waveform, RefreshWaveform::Full);
+  EXPECT_EQ(orientation.reason, RefreshReason::OrientationResync);
 }
 
 TEST(HomeSnapshotPolicy, ReusesStableShelfPixelsWhilePatchingDynamicDetails) {

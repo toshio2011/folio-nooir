@@ -52,6 +52,14 @@ class ReaderReturnCleanupContract(unittest.TestCase):
         self.assertIn("activityManager.hasPendingRenderWork()", admission_body)
         self.assertIn("exitHomeRequestedAtMs", READER_H)
 
+    def test_survival_backoff_resets_after_measured_safe_renders_and_reader_exit(self):
+        pressure = function_body(READER, "void EpubReaderActivity::updateReaderMemoryPressure(")
+        exit_body = function_body(READER, "void EpubReaderActivity::onExit()")
+        self.assertIn("observation.recentMinFreeBytes >= bleinput::kReaderBleRenderMinFreeHeap", pressure)
+        self.assertIn("readerBleSafeRenderResetsSurvivalBackoff", pressure)
+        self.assertIn('signalReaderBleReturnLifecycleEvent("safe_headroom_reset")', pressure)
+        self.assertIn("readerSurvivalSafeRenderCount = 0", exit_body)
+
 
 if __name__ == "__main__":
     unittest.main()

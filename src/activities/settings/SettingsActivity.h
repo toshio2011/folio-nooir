@@ -189,6 +189,7 @@ class SettingsActivity final : public Activity {
   int loadedTabIndex = -1;
   bool sectionExpanded = false;
   bool hasFavoriteSleepImage = false;
+  uint8_t settingsUiThemeAtEntry = 0;
 
   // Only the selected group's children are materialized; switching groups
   // clears and reuses this single descriptor vector.

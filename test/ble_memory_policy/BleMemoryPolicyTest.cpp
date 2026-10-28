@@ -153,6 +153,20 @@ TEST(BleMemoryPolicy, SurvivalStopReadmissionBackoffIsBoundedAndResetsAfterStabl
   EXPECT_EQ(bleinput::readerBleSurvivalBackoffMs(4, bleinput::kReaderBleSurvivalBackoffResetMs), 15'000u);
 }
 
+TEST(BleMemoryPolicy, SurvivalBackoffResetsOnlyAfterConsecutiveSafeReaderRenders) {
+  constexpr auto safeFree = bleinput::kReaderBleRenderMinFreeHeap;
+  constexpr auto safeLargest = bleinput::kReaderBleRenderMinLargestBlock;
+  EXPECT_FALSE(bleinput::readerBleSafeRenderResetsSurvivalBackoff(2, safeFree, safeLargest, safeFree));
+  EXPECT_FALSE(bleinput::readerBleSafeRenderResetsSurvivalBackoff(
+      3, safeFree - 1, safeLargest, safeFree));
+  EXPECT_FALSE(bleinput::readerBleSafeRenderResetsSurvivalBackoff(
+      3, safeFree, safeLargest, safeFree - 1));
+  EXPECT_FALSE(bleinput::readerBleSafeRenderResetsSurvivalBackoff(
+      3, safeFree, safeLargest - 1, safeFree));
+  EXPECT_TRUE(bleinput::readerBleSafeRenderResetsSurvivalBackoff(
+      bleinput::kReaderBleSurvivalBackoffSafeRenderResetCount, safeFree, safeLargest, safeFree));
+}
+
 TEST(ReaderRenderBudget, LargeRequestIsConstrainedWithHeadroomAndHeavyWhenBleConsumesIt) {
   const reader_memory::PressureObservation healthy{
       100 * 1024, 72 * 1024, 80 * 1024, 32635, false, false, false};

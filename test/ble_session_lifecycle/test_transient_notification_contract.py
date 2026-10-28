@@ -41,11 +41,12 @@ class TransientNotificationContract(unittest.TestCase):
         self.assertIn("getDisplayUpdateSequence() == displayUpdateSequenceBeforeRender", body)
         self.assertIn("kMaxTransientNotificationBackingBytes = 8 * 1024", body)
 
-    def test_modal_close_uses_one_full_cleanup_refresh_and_dismissal_keeps_input_forwarding(self):
+    def test_modal_close_uses_fast_refresh_and_dismissal_keeps_input_forwarding(self):
         render = function_body(MANAGER, "void ActivityManager::renderTaskLoop()")
         self.assertIn("modalOverlayClosed", render)
-        self.assertIn("requestNextRefreshMode(HalDisplay::FULL_REFRESH)", render)
         self.assertIn("stage=modal_close_refresh", render)
+        self.assertIn("stage=modal_close_refresh mode=fast", render)
+        self.assertNotIn("requestNextRefreshMode(HalDisplay::FULL_REFRESH)", render)
         loop = function_body(MANAGER, "void ActivityManager::loop()")
         self.assertLess(loop.index("if (dismissed) requestUpdate();"), loop.index("currentActivity->loop();"))
 
