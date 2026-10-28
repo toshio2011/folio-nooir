@@ -431,6 +431,10 @@ bool connectionAdmissionAllowed() {
   // pressure policy above; an initialized host does not pay the cold-start
   // floor a second time merely because NimBLE itself consumed startup headroom.
   if (BleHid.isRunning()) return true;
+  const char* activityName = activityManager.currentActivityName();
+  const bool homeContext = strcmp(activityName, "Home") == 0 || strcmp(activityName, "RecentBooks") == 0;
+  const bool homeRenderWorkPending = homeContext && (RenderLock::peek() || activityManager.hasPendingRenderWork());
+  if (!homeBleColdStartRenderWorkSafe(homeContext, homeRenderWorkPending)) return false;
   // Every cold start still uses the strict global floors except a confirmed
   // idle EPUB return. This margin is unavailable to Reader entry, builds,
   // renders, image/grayscale work, other Reader formats, and Settings.

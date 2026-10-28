@@ -73,6 +73,14 @@ size_t FontCacheManager::releaseReaderPressureState() {
   scanFontLimit_ = MAX_SCAN_FONTS;
   scanTextByteLimit_ = MAX_SCAN_TEXT_BYTES;
   scanMode_ = ScanMode::None;
+  const size_t releasedScanCapacity = releaseReaderScanStorage();
+
+  if (fontDecompressor_) fontDecompressor_->setPageGlyphLimit(FontDecompressor::MAX_PAGE_GLYPHS);
+  return releasedScanCapacity;
+}
+
+size_t FontCacheManager::releaseReaderScanStorage() {
+  if (scanMode_ != ScanMode::None) return 0;
   scanEntryCount_ = 0;
   clearAdmissionHook();
 
@@ -85,7 +93,6 @@ size_t FontCacheManager::releaseReaderPressureState() {
     memset(entry.styleCounts, 0, sizeof(entry.styleCounts));
   }
 
-  if (fontDecompressor_) fontDecompressor_->setPageGlyphLimit(FontDecompressor::MAX_PAGE_GLYPHS);
   return releasedScanCapacity;
 }
 

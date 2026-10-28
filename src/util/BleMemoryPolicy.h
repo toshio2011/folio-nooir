@@ -102,6 +102,12 @@ constexpr bool readerBleAdmissionRenderWorkSafe(const bool readerContext, const 
   return !readerContext || !renderWorkPending;
 }
 
+// A cold host start waits until the first Home frame after a Reader
+// transition. Existing connections are handled before this cold-start gate.
+constexpr bool homeBleColdStartRenderWorkSafe(const bool homeContext, const bool renderWorkPending) {
+  return !homeContext || !renderWorkPending;
+}
+
 // `quiescentEpubReturn` must come from the activity/lifecycle gate: the current
 // activity is EpubReader, its pending Reader return is enabled, rendering is
 // idle, and no build or resource-sensitive work is active. Entry, settings,

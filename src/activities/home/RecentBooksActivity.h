@@ -2,6 +2,7 @@
 #include <I18n.h>
 
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -19,6 +20,17 @@
 #include "components/OptionPopup.h"
 
 struct FolioShelfLayout;
+
+struct ThreeRowShelfRenderProfile {
+  uint32_t furnitureUs = 0;
+  uint32_t resolveUs = 0;
+  uint32_t sourceOpenUs = 0;
+  uint32_t headerParseUs = 0;
+  uint32_t bitmapDrawUs = 0;
+  uint32_t slotUs = 0;
+  uint16_t slots = 0;
+  uint16_t sourceCacheHits = 0;
+};
 
 class RecentBooksActivity final : public Activity {
  private:
@@ -77,7 +89,10 @@ class RecentBooksActivity final : public Activity {
   };
   struct CarouselSourceTiming {
     bool reused = false;
+    uint32_t openUs = 0;
+    uint32_t headerUs = 0;
   };
+  ThreeRowShelfRenderProfile* activeThreeRowShelfProfile = nullptr;
   static constexpr size_t CAROUSEL_FRAME_SLOT_COUNT = 5;
   static constexpr size_t CAROUSEL_FRAME_MAX_PROTECTED_PATHS = 6;
   struct CarouselSourceFrame {

@@ -51,6 +51,10 @@ constexpr bool pageRangeMatches(const size_t selectorIndex, const size_t pageSta
          selectorIndex - pageStart < pageItems;
 }
 
+constexpr bool threeRowProgressIsDynamic(const bool liteTheme, const bool threeRowLayout) {
+  return liteTheme && threeRowLayout;
+}
+
 // Snapshot pageItems records the layout's capacity. The final page may contain
 // fewer visible books, so clamp before validating or indexing its path keys.
 constexpr size_t visiblePageItemCount(const size_t pageStart, const size_t pageCapacity,

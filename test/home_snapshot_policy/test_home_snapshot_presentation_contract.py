@@ -43,7 +43,15 @@ class HomeSnapshotPresentationContract(unittest.TestCase):
         self.assertIn("drawLiteSelectedBookDetails", fast_path)
         self.assertIn("drawLiteShelfStats", fast_path)
         self.assertIn("drawSnapshotSelectionOutline", fast_path)
-        self.assertIn("Other Lite layouts", body)
+        self.assertIn("covers can update progress within their own slots", body)
+
+    def test_lite_three_row_progress_is_dynamic_and_patches_only_changed_cover_slots(self):
+        key_body = function_body(SOURCE, "uint64_t RecentBooksActivity::snapshotKey(const bool exactThemeKey) const")
+        render_body = function_body(SOURCE, "bool RecentBooksActivity::renderCarousel(const bool threeCover)")
+        self.assertIn("threeRowProgressIsDynamic", key_body)
+        self.assertIn("bookCoverVisualKey(recentBooks[recentIndex])", render_body)
+        self.assertIn("drawSpineBook(renderer, spineWindow.books[localIndex]", render_body)
+        self.assertIn("threeRowCoverProgressPatched", render_body)
 
     def test_spine_geometry_uses_one_active_layout_cache(self):
         header = (ROOT / "src/activities/home/RecentBooksActivity.h").read_text(encoding="utf-8")

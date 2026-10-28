@@ -13,6 +13,7 @@ constexpr const char* kSettingsPath = "/.crosspoint/settings.json";
 constexpr const char* kBackupPath = "/.crosspoint/settings.json.bak";
 constexpr const char* kTempPath = "/.crosspoint/settings.json.tmp";
 constexpr const char* kRecentPath = "/.crosspoint/recent.json";
+constexpr const char* kBookStatePath = "/.crosspoint/book-state.json";
 
 JsonDocument settingsDocument(const uint8_t theme) {
   JsonDocument doc;
@@ -398,6 +399,33 @@ TEST_F(SettingsPersistenceTest, RecentSaveChecksCompleteTemporaryBytesAndRetains
   EXPECT_EQ(Storage.files[std::string(kRecentPath) + ".bak"], original.c_str());
   EXPECT_FALSE(Storage.files.contains(std::string(kRecentPath) + ".tmp"));
   EXPECT_FALSE(Storage.files.contains(std::string(kRecentPath) + ".previous-0"));
+}
+
+TEST_F(SettingsPersistenceTest, GenericReaderStateSavePromotesValidatedTempAndRemovesOldBackup) {
+  Storage.files[kBookStatePath] = R"({"progress":3})";
+  Storage.files[std::string(kBookStatePath) + ".bak"] = R"({"progress":2})";
+  JsonDocument replacement;
+  replacement["progress"] = 9;
+
+  ASSERT_TRUE(PersistableStoreBase::writeDocToFile(kBookStatePath, replacement));
+  EXPECT_EQ(Storage.files[kBookStatePath], R"({"progress":9})");
+  EXPECT_FALSE(Storage.exists((std::string(kBookStatePath) + ".bak").c_str()));
+  EXPECT_FALSE(Storage.exists((std::string(kBookStatePath) + ".previous-0").c_str()));
+  EXPECT_FALSE(Storage.exists((std::string(kBookStatePath) + ".tmp").c_str()));
+}
+
+TEST_F(SettingsPersistenceTest, FailedGenericTempPromotionRestoresThePreviousReaderState) {
+  const std::string original = R"({"progress":3})";
+  Storage.files[kBookStatePath] = original;
+  Storage.files[std::string(kBookStatePath) + ".bak"] = R"({"progress":2})";
+  Storage.failRenameFrom[std::string(kBookStatePath) + ".tmp"] = true;
+  JsonDocument replacement;
+  replacement["progress"] = 9;
+
+  EXPECT_FALSE(PersistableStoreBase::writeDocToFile(kBookStatePath, replacement));
+  EXPECT_EQ(Storage.files[kBookStatePath], original);
+  EXPECT_TRUE(Storage.files.contains(std::string(kBookStatePath) + ".tmp"));
+  EXPECT_EQ(Storage.files[std::string(kBookStatePath) + ".bak"], R"({"progress":2})");
 }
 
 TEST_F(SettingsPersistenceTest, LargeRecentSaveStreamsAndValidatesWithoutReplacingThePriorGeneration) {

@@ -72,6 +72,12 @@ TEST(HomeSnapshotPolicy, SeparatesStructuralRebuildFromDynamicPatch) {
   }
 }
 
+TEST(HomeSnapshotPolicy, OnlyLiteThreeRowProgressIsDynamic) {
+  EXPECT_TRUE(HomeSnapshotPolicy::threeRowProgressIsDynamic(true, true));
+  EXPECT_FALSE(HomeSnapshotPolicy::threeRowProgressIsDynamic(true, false));
+  EXPECT_FALSE(HomeSnapshotPolicy::threeRowProgressIsDynamic(false, true));
+}
+
 TEST(HomeSnapshotPolicy, ReusesStableShelfPixelsWhilePatchingDynamicDetails) {
   using HomeSnapshotPolicy::RestoreAction;
   EXPECT_TRUE(HomeSnapshotPolicy::canUseRestoredSnapshotFastPath(RestoreAction::Restore, true, false, false, false));

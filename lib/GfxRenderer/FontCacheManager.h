@@ -31,6 +31,9 @@ class FontCacheManager {
   // Runtime pressure only changes rebuildable per-page font caches. Both
   // Arabic/primary scan slots remain available at every tier.
   void setReaderCacheBudget(uint16_t pageGlyphLimit, size_t scanTextBytesPerFont);
+  // Free retained scan-string capacity after a completed prewarm at a
+  // quiescent Reader boundary. This preserves the current pressure budget.
+  size_t releaseReaderScanStorage();
   // Restore the process-wide prewarm limits and free scan strings retained by
   // the Reader's last prewarm scope. Call at the Reader exit boundary.
   size_t releaseReaderPressureState();

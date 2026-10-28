@@ -63,6 +63,7 @@ class EpubReaderActivity final : public Activity {
   // statistics/cache cleanup, then ignore repeated exit presses until the
   // activity transition is queued.
   bool exitHomePending = false;
+  uint32_t exitHomeRequestedAtMs = 0;
   bool exitPopupShown = false;
   HomeMenuItem exitHomeItem = HomeMenuItem::NONE;
   // Consecutive page-load failures. Each failure drops the section and rebuilds on the next render,

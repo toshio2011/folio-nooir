@@ -13,6 +13,21 @@
 
 namespace {
 
+struct PersistableSaveProfile {
+  uint32_t encodeUs = 0;
+  uint32_t probeUs = 0;
+  uint32_t openUs = 0;
+  uint32_t fileWriteUs = 0;
+  uint32_t storageFlushUs = 0;
+  uint32_t closeUs = 0;
+  uint32_t validationUs = 0;
+  uint32_t backupPrepareUs = 0;
+  uint32_t primaryRenameUs = 0;
+  uint32_t tempRenameUs = 0;
+  uint32_t cleanupUs = 0;
+  uint32_t totalUs = 0;
+};
+
 constexpr const char* SETTINGS_PATH = "/.crosspoint/settings.json";
 constexpr const char* SETTINGS_RECOVERY_MARKER = "/.crosspoint/settings.recovery-in-progress";
 constexpr const char* RECENT_BOOKS_PATH = "/.crosspoint/recent.json";
@@ -25,38 +40,10 @@ bool isRecentBooksPath(const char* path) {
   return path && strcmp(path, RECENT_BOOKS_PATH) == 0;
 }
 
-// Compare the temporary file to the serializer output in small chunks. A
-// second JSON DOM would duplicate the complete Recent document on the heap,
-// which can be unsafe on X3/X4 after BLE has claimed its buffers.
-bool temporaryFileMatches(const char* path, const String& expected) {
-  HalFile file;
-  if (!Storage.openFileForRead("PERSIST", path, file)) return false;
-  const size_t expectedSize = expected.length();
-  if (file.fileSize64() != expectedSize) {
-    file.close();
-    return false;
-  }
-
-  std::array<uint8_t, 256> buffer{};
-  size_t offset = 0;
-  bool matches = true;
-  while (offset < expectedSize) {
-    const size_t request = std::min(buffer.size(), expectedSize - offset);
-    const int count = file.read(buffer.data(), request);
-    if (count <= 0 || static_cast<size_t>(count) > request ||
-        memcmp(buffer.data(), expected.c_str() + offset, static_cast<size_t>(count)) != 0) {
-      matches = false;
-      break;
-    }
-    offset += static_cast<size_t>(count);
-  }
-  const bool closed = file.close();
-  return matches && closed && offset == expectedSize;
-}
-
 class JsonDocumentFileWriter {
  public:
-  explicit JsonDocumentFileWriter(HalFile& file) : file(file) {}
+  explicit JsonDocumentFileWriter(HalFile& file, PersistableSaveProfile* profile = nullptr)
+      : file(file), profile(profile) {}
 
   size_t write(const uint8_t byte) { return write(&byte, 1); }
 
@@ -80,7 +67,9 @@ class JsonDocumentFileWriter {
  private:
   bool flushBuffer() {
     if (!ok || buffered == 0) return ok;
+    const uint32_t startedUs = profile ? micros() : 0;
     const size_t written = file.write(buffer.data(), buffered);
+    if (profile) profile->fileWriteUs += micros() - startedUs;
     bytesWritten += written;
     if (written != buffered) ok = false;
     buffered = 0;
@@ -88,6 +77,7 @@ class JsonDocumentFileWriter {
   }
 
   HalFile& file;
+  PersistableSaveProfile* profile = nullptr;
   std::array<uint8_t, 256> buffer{};
   size_t buffered = 0;
   size_t bytesWritten = 0;
@@ -146,17 +136,26 @@ class JsonDocumentFileCompareWriter {
 };
 
 bool writeJsonDocumentToFile(const char* path, const JsonDocument& doc, const size_t expectedBytes,
-                             size_t& serializedBytes, size_t& outputBytes, bool& opened) {
+                             size_t& serializedBytes, size_t& outputBytes, bool& opened,
+                             PersistableSaveProfile* profile = nullptr) {
   opened = false;
   HalFile file;
+  const uint32_t openStartedUs = profile ? micros() : 0;
   if (!Storage.openFileForWrite("PERSIST", path, file)) return false;
+  if (profile) profile->openUs += micros() - openStartedUs;
   opened = true;
-  JsonDocumentFileWriter writer(file);
+  JsonDocumentFileWriter writer(file, profile);
+  const uint32_t encodeStartedUs = profile ? micros() : 0;
   serializedBytes = serializeJson(doc, writer);
+  if (profile) profile->encodeUs += micros() - encodeStartedUs;
   const bool flushed = writer.flush();
   outputBytes = writer.fileBytesWritten();
+  const uint32_t storageFlushStartedUs = profile ? micros() : 0;
   file.flush();
+  if (profile) profile->storageFlushUs += micros() - storageFlushStartedUs;
+  const uint32_t closeStartedUs = profile ? micros() : 0;
   const bool closed = file.close();
+  if (profile) profile->closeUs += micros() - closeStartedUs;
   return flushed && closed && persistable::serializedDocumentIsComplete(
                                   doc.overflowed(), expectedBytes, serializedBytes, outputBytes);
 }
@@ -307,6 +306,8 @@ bool PersistableStoreBase::isSemanticallyValidSettingsDocument(JsonVariantConst 
 static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
                                    const bool useCachedSettingsValidation,
                                    const bool preserveRecoveredRecentBooks) {
+  PersistableSaveProfile profile;
+  const uint32_t saveStartedUs = micros();
   const bool settingsPath = isSettingsPath(path);
   const bool recentPath = isRecentBooksPath(path);
   String json;
@@ -314,13 +315,15 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
   size_t writtenBytes = 0;
   size_t outputBytes = 0;
   bool documentComplete = false;
-  if (recentPath) {
-    // Recent history can be larger than the remaining contiguous heap after
-    // BLE and reader allocations. Keep its JSON DOM as the only full copy and
-    // stream into the atomic temporary file below.
+  if (!settingsPath) {
+    // Reader state and Recent history are streamed from the JSON document to
+    // the staged file. This avoids a second full serialized string on the
+    // constrained heap while keeping byte-for-byte readback validation.
     documentComplete = !doc.overflowed() && expectedBytes > 0;
   } else {
+    const uint32_t encodeStartedUs = micros();
     writtenBytes = serializeJson(doc, json);
+    profile.encodeUs = micros() - encodeStartedUs;
     outputBytes = json.length();
     documentComplete = persistable::serializedDocumentIsComplete(
         doc.overflowed(), expectedBytes, writtenBytes, outputBytes);
@@ -435,7 +438,13 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
   }
 
   std::string preservedRecentTemp;
-  if (!fastSettingsWrite && Storage.exists(tmpPath.c_str())) {
+  bool temporaryExists = false;
+  if (!fastSettingsWrite) {
+    const uint32_t tempProbeStartedUs = micros();
+    temporaryExists = Storage.exists(tmpPath.c_str());
+    profile.probeUs += micros() - tempProbeStartedUs;
+  }
+  if (!fastSettingsWrite && temporaryExists) {
     if (recentPath) {
       // A leftover Recent temp may be the only complete candidate after an
       // interrupted save. Keep it under a unique sibling name before using
@@ -451,7 +460,7 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
   }
   if (recentPath) {
     bool opened = false;
-    if (!writeJsonDocumentToFile(tmpPath.c_str(), doc, expectedBytes, writtenBytes, outputBytes, opened)) {
+    if (!writeJsonDocumentToFile(tmpPath.c_str(), doc, expectedBytes, writtenBytes, outputBytes, opened, &profile)) {
       if (!opened) {
         LOG_ERR("RBS", "save_result=temp_open_failed path=%s", tmpPath.c_str());
       } else {
@@ -461,9 +470,26 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
       }
       return false;
     }
-  } else if (!Storage.writeFile(tmpPath.c_str(), json)) {
-    LOG_ERR("PERSIST", "Failed to write temporary document %s", tmpPath.c_str());
-    return false;
+  } else if (settingsPath) {
+    const uint32_t writeStartedUs = micros();
+    const bool written = Storage.writeFile(tmpPath.c_str(), json);
+    profile.fileWriteUs = micros() - writeStartedUs;
+    if (!written) {
+      LOG_ERR("PERSIST", "Failed to write temporary document %s", tmpPath.c_str());
+      return false;
+    }
+  } else {
+    bool opened = false;
+    if (!writeJsonDocumentToFile(tmpPath.c_str(), doc, expectedBytes, writtenBytes, outputBytes, opened, &profile)) {
+      LOG_ERR("PERSIST", "Failed to write temporary document %s", tmpPath.c_str());
+      return false;
+    }
+    if (!persistable::serializedDocumentIsComplete(doc.overflowed(), expectedBytes, writtenBytes, outputBytes)) {
+      LOG_ERR("PERSIST", "save_result=serialization_incomplete path=%s expected=%u wrote=%u output=%u overflow=%d",
+              path, static_cast<unsigned>(expectedBytes), static_cast<unsigned>(writtenBytes),
+              static_cast<unsigned>(outputBytes), doc.overflowed() ? 1 : 0);
+      return false;
+    }
   }
 
   // A successful write call is not enough to prove that the completed
@@ -471,6 +497,7 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
   // semantic readback validation below. Other JSON stores use a bounded
   // byte-for-byte stream comparison, avoiding a second full JSON allocation
   // while closing the truncation window before the last good file is rotated.
+  const uint32_t validationStartedUs = micros();
   if (isSettingsPath(path)) {
     String writtenTemp;
     const auto tempReadStatus = Storage.readFileChecked(tmpPath.c_str(), writtenTemp, 65536);
@@ -497,17 +524,22 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
       }
       return false;
     }
-  } else if (recentPath ? !temporaryFileMatches(tmpPath.c_str(), doc, expectedBytes)
-                        : !temporaryFileMatches(tmpPath.c_str(), json)) {
+  } else if (!temporaryFileMatches(tmpPath.c_str(), doc, expectedBytes)) {
     LOG_ERR("PERSIST", "save_result=temporary_validation_failed path=%s bytes=%u",
-            path, static_cast<unsigned>(recentPath ? expectedBytes : json.length()));
+            path, static_cast<unsigned>(expectedBytes));
     return false;
   }
+  profile.validationUs = micros() - validationStartedUs;
   if (recentPath) {
     LOG_INF("RBS", "save_phase=temp_validated bytes=%u", static_cast<unsigned>(expectedBytes));
   }
 
-  const bool hadOriginal = settingsPath ? mainState == SettingsFileState::Valid : Storage.exists(path);
+  bool hadOriginal = settingsPath && mainState == SettingsFileState::Valid;
+  if (!settingsPath) {
+    const uint32_t primaryProbeStartedUs = micros();
+    hadOriginal = Storage.exists(path);
+    profile.probeUs += micros() - primaryProbeStartedUs;
+  }
   std::string displacedBackup;
   std::string preservedRecentPrimary;
   if (hadOriginal) {
@@ -530,13 +562,16 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
         return false;
       }
     } else {
-      // Do not delete an existing backup before the primary has been moved
-      // safely. If that rename fails, both original files remain recoverable.
+      // Keep the old backup until the primary has been moved safely. If that
+      // rename fails, both original files remain recoverable.
+      const uint32_t backupPrepareStartedUs = micros();
       if ((settingsPath ? backupState != SettingsFileState::Missing : Storage.exists(backupPath.c_str())) &&
           !moveToUniqueSibling(backupPath.c_str(), ".previous-", displacedBackup)) {
         LOG_ERR("PERSIST", "Failed to preserve existing backup %s", backupPath.c_str());
         return false;
       }
+      profile.backupPrepareUs += micros() - backupPrepareStartedUs;
+      const uint32_t primaryRenameStartedUs = micros();
       if (!Storage.rename(path, backupPath.c_str())) {
         LOG_ERR("PERSIST", "Failed to preserve %s as %s", path, backupPath.c_str());
         if (!displacedBackup.empty() && !Storage.rename(displacedBackup.c_str(), backupPath.c_str())) {
@@ -544,9 +579,11 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
         }
         return false;
       }
+      profile.primaryRenameUs += micros() - primaryRenameStartedUs;
     }
   }
 
+  const uint32_t tempRenameStartedUs = micros();
   if (!Storage.rename(tmpPath.c_str(), path)) {
     LOG_ERR("PERSIST", "Failed to commit %s", path);
     // Keep the validated .tmp as a recovery candidate if promotion fails.
@@ -565,6 +602,7 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
     }
     return false;
   }
+  profile.tempRenameUs += micros() - tempRenameStartedUs;
 
   if (settingsPath && !fastSettingsWrite) {
     const SettingsFileState committedState = inspectSettingsFile(path);
@@ -611,10 +649,12 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
     // Recent history retains the prior committed primary as one recovery
     // generation. If the primary was missing, keep an existing .bak as the
     // only copy while the new main is promoted.
-    if (!recentPath && Storage.exists(backupPath.c_str()) && (!settingsPath || hadOriginal)) {
+    const uint32_t cleanupStartedUs = micros();
+    if (!recentPath && ((!settingsPath) || hadOriginal)) {
       Storage.remove(backupPath.c_str());
     }
     if (!recentPath && !displacedBackup.empty()) Storage.remove(displacedBackup.c_str());
+    profile.cleanupUs += micros() - cleanupStartedUs;
     if (recentRecoveryWrite) {
       LOG_INF("PERSIST", "recent_recovery_save=committed backup_preserved=1 primary_quarantined=%u temp_preserved=%u",
               preservedRecentPrimary.empty() ? 0U : 1U, preservedRecentTemp.empty() ? 0U : 1U);
@@ -622,6 +662,24 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
   }
   if (recentPath && !recentRecoveryWrite) {
     LOG_INF("RBS", "save_result=committed bytes=%u", static_cast<unsigned>(expectedBytes));
+  }
+  profile.totalUs = micros() - saveStartedUs;
+  const char* fileName = path ? strrchr(path, '/') : nullptr;
+  fileName = fileName ? fileName + 1 : (path ? path : "?");
+  if (!settingsPath) {
+    // encode_us includes the serializer's buffered writes; write_call_us is
+    // nested time spent inside HalFile::write. Do not add those two fields.
+    LOG_INF(recentPath ? "RBS" : "PERSIST",
+            "save_profile file=%.24s bytes=%u encode_us=%lu probe_us=%lu open_us=%lu write_call_us=%lu "
+            "sync_flush_us=%lu close_us=%lu validation_us=%lu backup_us=%lu primary_rename_us=%lu "
+            "temp_rename_us=%lu cleanup_us=%lu total_us=%lu",
+            fileName, static_cast<unsigned>(expectedBytes), static_cast<unsigned long>(profile.encodeUs),
+            static_cast<unsigned long>(profile.probeUs), static_cast<unsigned long>(profile.openUs),
+            static_cast<unsigned long>(profile.fileWriteUs), static_cast<unsigned long>(profile.storageFlushUs),
+            static_cast<unsigned long>(profile.closeUs), static_cast<unsigned long>(profile.validationUs),
+            static_cast<unsigned long>(profile.backupPrepareUs), static_cast<unsigned long>(profile.primaryRenameUs),
+            static_cast<unsigned long>(profile.tempRenameUs), static_cast<unsigned long>(profile.cleanupUs),
+            static_cast<unsigned long>(profile.totalUs));
   }
   return true;
 }

@@ -484,7 +484,10 @@ void drawSpineRectStroke(const GfxRenderer& renderer, const int x, const int y, 
 void drawSpineBook(const GfxRenderer& renderer, const SpineShelfPlanner::Book& book,
                    const SpineShelfPlanner::Rect& rect, const bool selected, const bool coverFace,
                    bool& thumbnailUnavailable, void* resolverContext,
-                   const SpineThumbnailResolver resolveThumbnail, const bool fillCoverFaces = false) {
+                   const SpineThumbnailResolver resolveThumbnail, const bool fillCoverFaces = false,
+                   ThreeRowShelfRenderProfile* profile = nullptr) {
+  const uint32_t slotStartedUs = profile ? micros() : 0;
+  if (profile) ++profile->slots;
   if (coverFace) {
     // Shelf furniture is drawn before cover faces, and bitmap drawing leaves
     // white source pixels untouched. Clear this face so the shelf cannot show
@@ -494,10 +497,12 @@ void drawSpineBook(const GfxRenderer& renderer, const SpineShelfPlanner::Book& b
     if (!thumbnailUnavailable && book.coverBmpPath != nullptr && *book.coverBmpPath != '\0') {
       // Spine shelves reuse the bounded parsed-source cache and never generate
       // thumbnails or touch source books while navigating.
-      Bitmap* bitmap = spineThumbnailPathMisses.contains(book.coverBmpPath)
-                           ? nullptr
-                           : (resolveThumbnail != nullptr ? resolveThumbnail(resolverContext, book.coverBmpPath)
-                                                          : nullptr);
+      Bitmap* bitmap = nullptr;
+      if (!spineThumbnailPathMisses.contains(book.coverBmpPath) && resolveThumbnail != nullptr) {
+        const uint32_t resolveStartedUs = profile ? micros() : 0;
+        bitmap = resolveThumbnail(resolverContext, book.coverBmpPath);
+        if (profile) profile->resolveUs += micros() - resolveStartedUs;
+      }
       if (bitmap != nullptr && bitmap->getWidth() > 0 && bitmap->getHeight() > 0) {
         const int inset = fillCoverFaces ? 2 : 3;
         const int innerWidth = std::max(1, rect.width - inset * 2);
@@ -507,14 +512,18 @@ void drawSpineBook(const GfxRenderer& renderer, const SpineShelfPlanner::Book& b
           const float targetAspect = static_cast<float>(innerWidth) / innerHeight;
           const float cropX = sourceAspect > targetAspect ? 1.0f - targetAspect / sourceAspect : 0.0f;
           const float cropY = sourceAspect < targetAspect ? 1.0f - sourceAspect / targetAspect : 0.0f;
+          const uint32_t bitmapStartedUs = profile ? micros() : 0;
           renderer.drawBitmap(*bitmap, rect.x + inset, rect.y + inset, innerWidth, innerHeight, cropX, cropY);
+          if (profile) profile->bitmapDrawUs += micros() - bitmapStartedUs;
         } else {
           const float scale = std::min(static_cast<float>(innerWidth) / bitmap->getWidth(),
                                        static_cast<float>(innerHeight) / bitmap->getHeight());
           const int drawWidth = std::max(1, static_cast<int>(bitmap->getWidth() * scale));
           const int drawHeight = std::max(1, static_cast<int>(bitmap->getHeight() * scale));
+          const uint32_t bitmapStartedUs = profile ? micros() : 0;
           renderer.drawBitmap(*bitmap, rect.x + (rect.width - drawWidth) / 2,
                               rect.y + (rect.height - drawHeight) / 2, drawWidth, drawHeight);
+          if (profile) profile->bitmapDrawUs += micros() - bitmapStartedUs;
         }
         drewCover = true;
       } else {
@@ -546,6 +555,7 @@ void drawSpineBook(const GfxRenderer& renderer, const SpineShelfPlanner::Book& b
       const int progressWidth = std::max(2, (rect.width - 8) * book.progressPercent / 100);
       renderer.fillRect(rect.x + 4, rect.y + rect.height - 5, progressWidth, 2, true);
     }
+    if (profile) profile->slotUs += micros() - slotStartedUs;
     return;
   }
 
@@ -617,6 +627,7 @@ void drawSpineBook(const GfxRenderer& renderer, const SpineShelfPlanner::Book& b
     renderer.drawTextRotated90CW(titleFontId, rect.x + rect.width / 2, titleY, titleRenderText,
                                  blackDetailsAndText, EpdFontFamily::BOLD);
   }
+  if (profile) profile->slotUs += micros() - slotStartedUs;
 }
 
 void drawSpineShelfFurniture(const GfxRenderer& renderer, const SpineShelfPlanner::Rect& shelf,
@@ -800,13 +811,16 @@ void drawTwoRowSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::
 void drawThreeRowSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner::ThreeRowPage& page,
                             const SpineShelfPlanner::Book* books, const SpineShelfPlanner::Rect& bounds,
                             bool* thumbnailUnavailable, void* resolverContext,
-                            const SpineThumbnailResolver resolveThumbnail, const bool fillCoverFaces) {
+                            const SpineThumbnailResolver resolveThumbnail, const bool fillCoverFaces,
+                            ThreeRowShelfRenderProfile* profile = nullptr) {
   if (books == nullptr) return;
   for (size_t row = 0; row < 3; ++row) {
     const auto shelf = SpineShelfPlanner::threeRowShelfRect(page, bounds, row);
     if (shelf.width <= 0 || shelf.height <= 0) continue;
+    const uint32_t furnitureStartedUs = profile ? micros() : 0;
     drawSpineShelfFurniture(renderer, shelf, bounds, false);
     if (page.plants[row].visible) drawSpinePlant(renderer, page.plants[row].rect, page.plants[row].visualSeed);
+    if (profile) profile->furnitureUs += micros() - furnitureStartedUs;
   }
   for (size_t slotIndex = 0; slotIndex < page.itemCount; ++slotIndex) {
     const auto& slot = page.slots[slotIndex];
@@ -814,7 +828,7 @@ void drawThreeRowSpineShelf(const GfxRenderer& renderer, const SpineShelfPlanner
         slot.itemIndex - page.firstIndex >= SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY) continue;
     const size_t localIndex = slot.itemIndex - page.firstIndex;
     drawSpineBook(renderer, books[localIndex], slot.rect, false, slot.cover,
-                  thumbnailUnavailable[localIndex], resolverContext, resolveThumbnail, fillCoverFaces);
+                  thumbnailUnavailable[localIndex], resolverContext, resolveThumbnail, fillCoverFaces, profile);
   }
 }
 }  // namespace
@@ -927,14 +941,18 @@ RecentBooksActivity::CarouselSourceCacheEntry* RecentBooksActivity::getCarouselS
   replacement->valid = false;
   replacement->lastUsed = 0;
 
+  const uint32_t openStartedUs = activeThreeRowShelfProfile != nullptr ? micros() : 0;
   const bool opened = Storage.openFileForRead("SHELF", path, replacement->file);
+  if (activeThreeRowShelfProfile != nullptr) timing.openUs = micros() - openStartedUs;
   if (!opened) {
     replacement->file = HalFile{};
     return nullptr;
   }
 
   std::unique_ptr<Bitmap> bitmap(new Bitmap(replacement->file));
+  const uint32_t headerStartedUs = activeThreeRowShelfProfile != nullptr ? micros() : 0;
   const BmpReaderError headerResult = bitmap->parseHeaders();
+  if (activeThreeRowShelfProfile != nullptr) timing.headerUs = micros() - headerStartedUs;
   const bool valid = headerResult == BmpReaderError::Ok && bitmap->getWidth() > 0 && bitmap->getHeight() > 0;
   if (valid) replacement->path = path;
   if (!valid) {
@@ -954,6 +972,13 @@ Bitmap* RecentBooksActivity::getSpineThumbnail(const char* sourcePath) {
   const std::string thumbPath = UITheme::getCoverThumbPath(sourcePath, FolioNooirTheme::COVER_HEIGHT);
   CarouselSourceTiming timing;
   CarouselSourceCacheEntry* source = getCarouselSource(thumbPath, timing);
+  if (activeThreeRowShelfProfile != nullptr) {
+    activeThreeRowShelfProfile->sourceOpenUs += timing.openUs;
+    activeThreeRowShelfProfile->headerParseUs += timing.headerUs;
+    if (timing.reused && activeThreeRowShelfProfile->sourceCacheHits < UINT16_MAX) {
+      ++activeThreeRowShelfProfile->sourceCacheHits;
+    }
+  }
   if (source == nullptr || source->bitmap == nullptr) return nullptr;
   if (source->bitmap->rewindToData() != BmpReaderError::Ok) {
     invalidateCarouselSourceLocked(thumbPath);
@@ -1502,7 +1527,9 @@ uint64_t RecentBooksActivity::snapshotKey(const bool exactThemeKey) const {
     const uint64_t synopsisHash = hashText(book.synopsis);
     hashBytes(hash, &authorHash, sizeof(authorHash));
     hashBytes(hash, &synopsisHash, sizeof(synopsisHash));
-    if (spineSnapshot) {
+    const bool liteThreeRowProgressIsDynamic = HomeSnapshotPolicy::threeRowProgressIsDynamic(
+        isFolioNooirLiteTheme(SETTINGS.uiTheme), usesThreeRowSpineLayout());
+    if (spineSnapshot && !liteThreeRowProgressIsDynamic) {
       // The saved shelf pixels contain book faces, title/author labels, and
       // progress bars. The featured panel and stats strip are redrawn after
       // restore, so reading-time/session counters do not invalidate the whole
@@ -3606,10 +3633,8 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
                                                              : HomeSnapshotPolicy::RestoreAction::Restore;
   const bool restoredPageMatches = restoredPageKnown && snapshotPageStart == restoredPageStart &&
                                    snapshotPageItems == restoredPageItems;
-  // Lite Spine progress/status is part of the structural shelf key, so a
-  // dynamic-only snapshot difference is limited to the featured panel and
-  // stats. Other Lite layouts can have progress bars or selected covers in
-  // the saved pixels and must repaint those instead of reusing stale shelf art.
+  // Lite three-row covers can update progress within their own slots; other
+  // layouts keep their progress/status in the structural key.
   if (usesPersistentHomeSnapshot() && initialRenderPending && !snapshotFastPathUsed && visibleBookCount > 0 &&
       HomeSnapshotPolicy::canUseRestoredSnapshotFastPath(restoreAction, restoredPageMatches, snapshotWritePending,
                                                           !noOverlay || !noBackgroundWork, liteSpineMode)) {
@@ -3617,11 +3642,41 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
     // Grid and spine layouts save a clean base and need only the small focus
     // marker before the panel refresh.
     const uint32_t shelfStartedUs = micros();
+    ThreeRowShelfRenderProfile threeRowProfile;
+    bool profiledThreeRowShelf = false;
     if (!usesCarouselLayout()) drawSnapshotSelectionOutline(displayLayout, selectorIndex, true);
-    const uint32_t shelfUs = micros() - shelfStartedUs;
+    uint32_t shelfUs = micros() - shelfStartedUs;
     uint32_t detailsUs = 0;
     uint32_t statsUs = 0;
     if (snapshotDynamicNeedsPatch) {
+      bool threeRowCoverProgressPatched = false;
+      const uint32_t coverPatchStartedUs = micros();
+      if (liteSpineMode && usesThreeRowSpineLayout() &&
+          HomeSnapshotPolicy::threeRowProgressIsDynamic(isFolioNooirLiteTheme(SETTINGS.uiTheme), true)) {
+        const auto bounds = threeRowSpineBounds(pageWidth, displayLayout);
+        const auto& spineWindow = threeRowSpinePageForSelection(bounds);
+        for (size_t slotIndex = 0; slotIndex < spineWindow.page.itemCount; ++slotIndex) {
+          const auto& slot = spineWindow.page.slots[slotIndex];
+          if (slot.itemIndex < spineWindow.page.firstIndex) continue;
+          const size_t localIndex = slot.itemIndex - spineWindow.page.firstIndex;
+          if (localIndex >= snapshotBookVisualKeys.size() || localIndex >= spineWindow.books.size()) continue;
+          const size_t recentIndex = recentIndexForVisibleIndex(slot.itemIndex);
+          if (recentIndex == SIZE_MAX) continue;
+          const uint64_t visualKey = bookCoverVisualKey(recentBooks[recentIndex]);
+          if (snapshotBookVisualKeys[localIndex] == visualKey) continue;
+          drawSpineBook(renderer, spineWindow.books[localIndex], slot.rect, false, true,
+                        spineWindow.thumbnailUnavailable[localIndex], this,
+                        &RecentBooksActivity::spineThumbnailResolver, true);
+          snapshotBookVisualKeys[localIndex] = visualKey;
+          threeRowCoverProgressPatched = true;
+        }
+      }
+      if (threeRowCoverProgressPatched) {
+        // A selected cover redraw replaces its focus marker; restore the
+        // small marker after all changed faces have been patched.
+        drawSnapshotSelectionOutline(displayLayout, selectorIndex, true);
+      }
+      shelfUs += micros() - coverPatchStartedUs;
       const uint32_t detailsStartedUs = micros();
       drawLiteSelectedBookDetails(renderer, folioPresentation, carouselLayout,
                                   recentBooks[selectedRecentIndex()], true);
@@ -3630,6 +3685,10 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
       drawLiteShelfStats();
       statsUs = micros() - statsStartedUs;
       snapshotDynamicNeedsPatch = false;
+      if (threeRowCoverProgressPatched) {
+        snapshotWritePending = true;
+        snapshotWriteRequestedMs = millis();
+      }
     }
     displayLiteHomeFrame(detailsUs, shelfUs, statsUs);
     markStatsReturnFrameReady();
@@ -3788,8 +3847,12 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
       const auto bounds = threeRowSpineBounds(pageWidth, displayLayout);
       const auto& spineWindow = threeRowSpinePageForSelection(bounds);
       markUnavailableThumbnails(spineWindow);
+      profiledThreeRowShelf = true;
+      activeThreeRowShelfProfile = &threeRowProfile;
       drawThreeRowSpineShelf(renderer, spineWindow.page, spineWindow.books.data(), bounds,
-                             spineWindow.thumbnailUnavailable.data(), this, &RecentBooksActivity::spineThumbnailResolver, true);
+                             spineWindow.thumbnailUnavailable.data(), this, &RecentBooksActivity::spineThumbnailResolver,
+                             true, &threeRowProfile);
+      activeThreeRowShelfProfile = nullptr;
       rememberUnavailableThumbnails(spineWindow);
       drawThreeRowSpinePageSelectionMarker(renderer, spineWindow.page, selectorIndex, true, renderedSpineFocus);
       drawLitePageIndicator(renderer, carouselLayout, spineWindow.pageNumber, spineWindow.pageCount);
@@ -3953,6 +4016,21 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
       }
     }
     shelfDurationUs = micros() - shelfStartedUs;
+    if (profiledThreeRowShelf && shelfDurationUs >= 100000) {
+      LOG_INF("SHELFPERF",
+              "theme=Lite layout=%u reason=%s shelf_us=%lu details_us=%lu furniture_us=%lu "
+              "resolve_us=%lu sd_open_us=%lu bmp_header_us=%lu bitmap_draw_us=%lu slot_us=%lu "
+              "slots=%u source_cache_hits=%u",
+              static_cast<unsigned>(activeBookLayout()), renderDiagnosticReason ? renderDiagnosticReason : "unknown",
+              static_cast<unsigned long>(shelfDurationUs), static_cast<unsigned long>(detailsDurationUs),
+              static_cast<unsigned long>(threeRowProfile.furnitureUs),
+              static_cast<unsigned long>(threeRowProfile.resolveUs),
+              static_cast<unsigned long>(threeRowProfile.sourceOpenUs),
+              static_cast<unsigned long>(threeRowProfile.headerParseUs),
+              static_cast<unsigned long>(threeRowProfile.bitmapDrawUs),
+              static_cast<unsigned long>(threeRowProfile.slotUs), static_cast<unsigned>(threeRowProfile.slots),
+              static_cast<unsigned>(threeRowProfile.sourceCacheHits));
+    }
   }
 
   const uint32_t statsStartedUs = micros();

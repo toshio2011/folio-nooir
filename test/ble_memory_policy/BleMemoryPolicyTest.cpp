@@ -132,6 +132,12 @@ TEST(BleMemoryPolicy, HealthyConnectedRenderLeavesCachesUntouched) {
   EXPECT_TRUE(bleinput::readerBleCachedRenderHeadroomSafe(36 * 1024, 20 * 1024));
 }
 
+TEST(BleMemoryPolicy, ColdBleStartWaitsForPendingHomeRenderButNotOtherContexts) {
+  EXPECT_FALSE(bleinput::homeBleColdStartRenderWorkSafe(true, true));
+  EXPECT_TRUE(bleinput::homeBleColdStartRenderWorkSafe(true, false));
+  EXPECT_TRUE(bleinput::homeBleColdStartRenderWorkSafe(false, true));
+}
+
 TEST(BleMemoryPolicy, MarginalConnectedRenderRequestsBoundedReclaim) {
   EXPECT_TRUE(bleinput::readerBleCachedRenderNeedsReclaim(true, true, 32 * 1024, 26 * 1024));
   EXPECT_TRUE(bleinput::readerBleCachedRenderNeedsReclaim(true, true, 40 * 1024, 18 * 1024));

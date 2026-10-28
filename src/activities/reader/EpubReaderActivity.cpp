@@ -475,10 +475,9 @@ void EpubReaderActivity::onEnter() {
   // NOTE: This affects layout math and must be applied before any render calls.
   ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
 
-  // Reserve the tiled grayscale strip while reader entry has already stopped
-  // BLE for heavy setup. Cached-page turns can then reuse this smaller block
-  // without competing with NimBLE for a fresh contiguous allocation.
-  if (renderer.supportsStripGrayscale()) {
+  // Reserve the tiled grayscale strip up front only when text AA needs it.
+  // Image pages still allocate lazily after the normal Reader BLE preflight.
+  if (renderer.supportsStripGrayscale() && SETTINGS.textAntiAliasing != 0) {
     const size_t scratchBytes =
         static_cast<size_t>(renderer.getDisplayWidthBytes()) * READER_GRAYSCALE_STRIP_ROWS;
     if (!renderer.reserveGrayscaleStripScratch(scratchBytes)) {
@@ -648,12 +647,18 @@ void EpubReaderActivity::requestExitToHome(const HomeMenuItem item) {
   if (exitHomePending) return;
   pendingPageTurns.clear();
   exitHomePending = true;
+  exitHomeRequestedAtMs = millis();
   exitPopupShown = false;
   exitHomeItem = item;
+  // Let the main lifecycle stop an already-running host before Home starts
+  // drawing. Cold BLE readmission is gated on the completed Home frame.
+  bleinput::requestLifecycleReevaluation();
   requestUpdate(true);
 }
 
 void EpubReaderActivity::onExit() {
+  const uint32_t onExitStartedUs = micros();
+  const uint32_t requestToExitMs = exitHomeRequestedAtMs == 0 ? 0 : millis() - exitHomeRequestedAtMs;
 #if NOOIR_EPUB_DIAGNOSTICS
   EpubDiagnostics::phaseRecord("reader_exit_begin");
 #endif
@@ -692,6 +697,8 @@ void EpubReaderActivity::onExit() {
   mappedInput.setReaderMappingMode(false);
   renderer.setDarkMode(false);
 
+  uint32_t persistenceUs = 0;
+  uint32_t persistenceStartedUs = micros();
   if (epub) {
     const ScreenshotInfo info = getScreenshotInfo();
     const bool completed = pendingReadFolderMove ||
@@ -702,6 +709,7 @@ void EpubReaderActivity::onExit() {
     BOOK_STATES.recordReading(epub->getPath(), finalProgress, elapsedSeconds, sessionPagesTurned);
     READING_STATS.recordSession(halClock.getDateKey(), elapsedSeconds, sessionPagesTurned);
   }
+  persistenceUs += micros() - persistenceStartedUs;
 
   ReaderUtils::clearGhostingOnExit(renderer);
 
@@ -715,6 +723,7 @@ void EpubReaderActivity::onExit() {
   // Normal reader launches already have a zero crash-recovery counter. Avoid
   // rewriting the whole state JSON on every exit; only persist when boot
   // recovery had incremented the counter and it must be cleared.
+  persistenceStartedUs = micros();
   if (APP_STATE.readerActivityLoadCount != 0) {
     APP_STATE.readerActivityLoadCount = 0;
     APP_STATE.saveToFile();
@@ -727,7 +736,15 @@ void EpubReaderActivity::onExit() {
     saveProgress(origin.spineIndex, origin.pageNumber, 0);
   }
 
+  persistenceUs += micros() - persistenceStartedUs;
+  const uint32_t cleanupStartedUs = micros();
+  uint32_t sectionReleaseUs = 0;
+  uint32_t epubReleaseUs = 0;
+  uint32_t finishedBookMoveUs = 0;
+  uint32_t cacheReleaseUs = 0;
+  uint32_t releaseStartedUs = micros();
   section.reset();
+  sectionReleaseUs = micros() - releaseStartedUs;
 #if FREEINK_CAP_BLE_HID_HOST
   logExitHeap("after_section_release");
 #endif
@@ -735,10 +752,16 @@ void EpubReaderActivity::onExit() {
     const std::string srcPath = epub->getPath();
     const std::string oldCachePath = epub->getCachePath();
     const std::string dstPath = buildReadFolderDestination(srcPath);
+    releaseStartedUs = micros();
     epub.reset();  // release the Epub (and any open handles) before renaming on the SD card
+    epubReleaseUs = micros() - releaseStartedUs;
+    releaseStartedUs = micros();
     moveFinishedBookToReadFolder(srcPath, dstPath, oldCachePath);
+    finishedBookMoveUs = micros() - releaseStartedUs;
   } else {
+    releaseStartedUs = micros();
     epub.reset();
+    epubReleaseUs = micros() - releaseStartedUs;
   }
 #if FREEINK_CAP_BLE_HID_HOST
   logExitHeap("after_epub_release");
@@ -772,6 +795,7 @@ void EpubReaderActivity::onExit() {
   logExitHeap("after_reader_shared_cache_release");
 #endif
   auto* fontCache = renderer.getFontCacheManager();
+  releaseStartedUs = micros();
   const size_t scanCapacityBeforeRelease = fontCache ? fontCache->releaseReaderPressureState() : 0;
   readerMemoryPressureTier = reader_memory::PressureTier::Normal;
   readerCacheBudgetInitialized = false;
@@ -782,9 +806,17 @@ void EpubReaderActivity::onExit() {
   readerLastRenderAllocationFailed = false;
   readerRenderWindowPressure = false;
   readerRenderImageOrGrayWork = false;
+  cacheReleaseUs = micros() - releaseStartedUs;
   LOG_INF("MEM", "reader_exit stage=pressure_state_reset scan_capacity=%u free=%u largest=%u",
           static_cast<unsigned>(scanCapacityBeforeRelease), static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  LOG_INF("ERS", "reader_exit_profile request_to_on_exit_ms=%u save_us=%lu section_us=%lu epub_us=%lu "
+                  "folder_move_us=%lu cache_reset_us=%lu cleanup_us=%lu total_us=%lu",
+          static_cast<unsigned>(requestToExitMs), static_cast<unsigned long>(persistenceUs),
+          static_cast<unsigned long>(sectionReleaseUs), static_cast<unsigned long>(epubReleaseUs),
+          static_cast<unsigned long>(finishedBookMoveUs), static_cast<unsigned long>(cacheReleaseUs),
+          static_cast<unsigned long>(micros() - cleanupStartedUs),
+          static_cast<unsigned long>(micros() - onExitStartedUs));
 #if NOOIR_EPUB_DIAGNOSTICS
   EpubDiagnostics::phaseRecord("reader_exit_cleanup_complete");
 #endif
@@ -2884,6 +2916,27 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
                                     ? bookmarkAfterLargest - bookmarkBeforeLargest
                                     : 0));
   if (admitReaderBleIfReady(1, "empty_bookmark_capacity", bookmarkBeforeFree, bookmarkBeforeLargest)) return;
+
+  // endScanAndPrewarm() clears scan text but retains each std::string's
+  // capacity. This is rebuildable and no longer needed at this quiescent
+  // return boundary.
+  const size_t scanBeforeFree = ESP.getFreeHeap();
+  const size_t scanBeforeLargest = ESP.getMaxAllocHeap();
+  size_t scanCapacityReleased = 0;
+  {
+    RenderLock cleanupLock;
+    if (auto* fontCache = renderer.getFontCacheManager()) {
+      scanCapacityReleased = fontCache->releaseReaderScanStorage();
+    }
+  }
+  const size_t scanAfterFree = ESP.getFreeHeap();
+  const size_t scanAfterLargest = ESP.getMaxAllocHeap();
+  LOG_INF("BLEMEM", "stage=reader_ble_return_cleanup item=reader_scan_capacity released_bytes=%u freed=%u largest=%u->%u gain=%u",
+          static_cast<unsigned>(scanCapacityReleased),
+          static_cast<unsigned>(scanAfterFree > scanBeforeFree ? scanAfterFree - scanBeforeFree : 0),
+          static_cast<unsigned>(scanBeforeLargest), static_cast<unsigned>(scanAfterLargest),
+          static_cast<unsigned>(scanAfterLargest > scanBeforeLargest ? scanAfterLargest - scanBeforeLargest : 0));
+  if (admitReaderBleIfReady(1, "reader_scan_capacity", scanBeforeFree, scanBeforeLargest)) return;
 
   // Level 2 releases only the renderer-owned AA strip, and only after every
   // Level-1 release failed admission at this genuine render-idle boundary.
