@@ -37,6 +37,7 @@
 #include "images/MoonIcon.h"
 #include "images/NooirLogo360.h"
 #include "util/ClipFile.h"
+#include "util/HomeSnapshotPolicy.h"
 #include "util/SleepScreenMode.h"
 #include "util/EpubDiagnostics.h"
 #include "util/StatisticsCover.h"
@@ -448,19 +449,32 @@ void preconditionSleepRefresh(GfxRenderer& renderer) {
   renderer.clearScreen();
 }
 
-void refreshOverlayBase(GfxRenderer& renderer) {
+bool runDeferredHomeGhostCleanup(GfxRenderer& renderer, const bool safeBoundary) {
+  auto& refreshState = HomeSnapshotPolicy::sharedRefreshState();
+  const auto decision = HomeSnapshotPolicy::chooseMaintenanceRefresh(refreshState, safeBoundary);
+  if (decision.waveform != HomeSnapshotPolicy::RefreshWaveform::Full) return false;
+  LOG_INF("SLEEP", "refresh_policy mode=full cause=%s boundary=sleep_screen completed_fast=%u",
+          HomeSnapshotPolicy::refreshReasonName(decision.reason),
+          static_cast<unsigned>(refreshState.completedFastUpdates));
+  renderer.displayBuffer(HalDisplay::FULL_REFRESH, "periodic_ghost_cleanup_sleep_boundary");
+  HomeSnapshotPolicy::recordRefresh(refreshState, decision, 1);
+  return true;
+}
+
+void refreshOverlayBase(GfxRenderer& renderer, const bool safeBoundary) {
   // Standalone overlays are composited on top of the reader page. Refresh the
   // existing framebuffer in place; clearing it here would turn transparent
   // overlay pixels into a blank white background and hide the reader page.
   renderer.setRenderMode(GfxRenderer::BW);
+  if (runDeferredHomeGhostCleanup(renderer, safeBoundary)) return;
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }
 
-void displaySleepFrame(GfxRenderer& renderer, HalDisplay::RefreshMode mode) {
+void displaySleepFrame(GfxRenderer& renderer, HalDisplay::RefreshMode mode, const bool safeBoundary) {
   // Power down the analog driver after the sleep frame so gray/black pixels do
   // not slowly fade while the device is idle. Restore the user's normal value.
   renderer.setFadingFix(true);
-  renderer.displayBuffer(mode);
+  if (!runDeferredHomeGhostCleanup(renderer, safeBoundary)) renderer.displayBuffer(mode);
   renderer.setFadingFix(SETTINGS.fadingFix);
 }
 
@@ -471,7 +485,8 @@ bool isFullTwoBitStatisticsCover(const std::string& path) {
 }
 
 template <typename DrawFrame>
-void displayStatisticsSleepFrame(GfxRenderer& renderer, bool& hasTwoBitCover, DrawFrame&& drawFrame) {
+void displayStatisticsSleepFrame(GfxRenderer& renderer, bool& hasTwoBitCover, DrawFrame&& drawFrame,
+                                 const bool safeBoundary) {
   // Stats screens are normally rendered once in black and white. When the
   // already-validated XTCH full cover cache is selected, redraw the complete
   // bounded layout for both grayscale planes. This follows the normal sleep
@@ -480,7 +495,7 @@ void displayStatisticsSleepFrame(GfxRenderer& renderer, bool& hasTwoBitCover, Dr
   if (!drawFrame(0xFF)) return;
 
   if (!hasTwoBitCover) {
-    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH, safeBoundary);
     renderer.setRenderMode(GfxRenderer::BW);
     return;
   }
@@ -1341,7 +1356,7 @@ bool SleepActivity::renderOverlaySleepScreen() const {
     bool hasTransparency = false;
     if (renderOverlayPngPass(APP_STATE.favoriteSleepImagePath, GfxRenderer::BW, &hasTransparency, false) &&
         hasTransparency) {
-      refreshOverlayBase(renderer);
+      refreshOverlayBase(renderer, !preview);
       if (renderOverlayPng(APP_STATE.favoriteSleepImagePath, false)) {
         logSleepAsset("sleep_asset_selected", APP_STATE.favoriteSleepImagePath.c_str(), "favorite_overlay");
         LOG_DBG("SLP", "Rendering favorite page overlay: %s", APP_STATE.favoriteSleepImagePath.c_str());
@@ -1395,7 +1410,7 @@ bool SleepActivity::renderOverlaySleepScreen() const {
         LOG_DBG("SLP", "Skipping opaque page overlay PNG: %s", path.c_str());
         continue;
       }
-      refreshOverlayBase(renderer);
+      refreshOverlayBase(renderer, !preview);
       LOG_DBG("SLP", "Trying transparent page overlay PNG: %s", path.c_str());
       if (renderOverlayPng(path, false)) {
         logSleepAsset("sleep_asset_selected", path.c_str(), "transparent_overlay");
@@ -1653,7 +1668,7 @@ void SleepActivity::renderDefaultSleepScreen() const {
   preconditionSleepRefresh(renderer);
   drawSleepDefaultArtwork(renderer, effectiveSleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::LIGHT);
   drawPreviewControls();
-  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH, !preview);
 }
 
 void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap) const {
@@ -1697,7 +1712,7 @@ void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap) const {
     renderer.setRenderMode(GfxRenderer::BW);
   } else {
     drawPreviewControls();
-    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH, !preview);
   }
 }
 
@@ -1761,7 +1776,7 @@ void SleepActivity::renderBitmapSleepScreenWithOverlay(const Bitmap& bitmap, con
     return;
   }
   drawPreviewControls();
-  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH, !preview);
 
   // Follow the same bounded grayscale sequence as the normal sleep-cover
   // renderer. The displayed BW frame is the base, so there is no need to copy
@@ -1843,7 +1858,7 @@ void SleepActivity::renderBitmapSleepScreenWithBookProgress(const Bitmap& bitmap
     renderer.setRenderMode(GfxRenderer::BW);
   } else {
     drawPreviewControls();
-    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH, !preview);
     renderer.setRenderMode(GfxRenderer::BW);
   }
 }
@@ -1896,7 +1911,7 @@ void SleepActivity::renderBitmapSleepScreenWithClipping(const Bitmap& bitmap, co
     renderer.setRenderMode(GfxRenderer::BW);
   } else {
     drawPreviewControls();
-    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH, !preview);
     renderer.setRenderMode(GfxRenderer::BW);
   }
 }
@@ -2142,7 +2157,7 @@ void SleepActivity::renderReadingStatsSleepScreen() const {
     drawPreviewControls();
     return true;
   };
-  displayStatisticsSleepFrame(renderer, hasTwoBitCover, drawFrame);
+  displayStatisticsSleepFrame(renderer, hasTwoBitCover, drawFrame, !preview);
 }
 
 void SleepActivity::renderReadingCalendarSleepScreen() const {
@@ -2166,7 +2181,7 @@ void SleepActivity::renderReadingCalendarSleepScreen() const {
     renderer.drawCenteredText(UI_10_FONT_ID, 120, tr(STR_STATS_CLOCK_UNAVAILABLE), true, EpdFontFamily::BOLD);
     renderer.drawCenteredText(SMALL_FONT_ID, 158, tr(STR_STATS_NO_DATED_HISTORY));
     drawPreviewControls();
-    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+    displaySleepFrame(renderer, HalDisplay::HALF_REFRESH, !preview);
     return;
   }
 
@@ -2267,7 +2282,7 @@ void SleepActivity::renderReadingCalendarSleepScreen() const {
                     EpdFontFamily::REGULAR);
   }
   drawPreviewControls();
-  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH, !preview);
 }
 
 void SleepActivity::renderReadingSummarySleepScreen() const {
@@ -2400,7 +2415,7 @@ void SleepActivity::renderReadingSummarySleepScreen() const {
     drawPreviewControls();
     return true;
   };
-  displayStatisticsSleepFrame(renderer, hasTwoBitCover, drawFrame);
+  displayStatisticsSleepFrame(renderer, hasTwoBitCover, drawFrame, !preview);
 }
 
 void SleepActivity::renderMinimalStatsSleepScreen() const {
@@ -2486,7 +2501,7 @@ void SleepActivity::renderMinimalStatsSleepScreen() const {
     return true;
   };
   preconditionSleepRefresh(renderer);
-  displayStatisticsSleepFrame(renderer, hasTwoBitCover, drawFrame);
+  displayStatisticsSleepFrame(renderer, hasTwoBitCover, drawFrame, !preview);
 }
 
 void SleepActivity::renderClippingCoverSleepScreen() const {
@@ -2627,7 +2642,7 @@ void SleepActivity::renderToDoSleepScreen() const {
                       EpdFontFamily::BOLD);
   }
   drawPreviewControls();
-  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH, !preview);
 }
 
 void SleepActivity::renderFlexibleSleepScreen() const {
@@ -3210,7 +3225,7 @@ void SleepActivity::renderFlexibleSleepScreen() const {
 
   renderer.setRenderMode(GfxRenderer::BW);
   drawPreviewControls();
-  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH, !preview);
 }
 
 void SleepActivity::renderLastScreenSleepScreen() const {
@@ -3219,11 +3234,11 @@ void SleepActivity::renderLastScreenSleepScreen() const {
   // Quick Resume deliberately keeps the reader page; use only the driver
   // shutdown fix here, not the full pre-clear sequence.
   drawPreviewControls();
-  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH, !preview);
 }
 
 void SleepActivity::renderBlankSleepScreen() const {
   preconditionSleepRefresh(renderer);
   drawPreviewControls();
-  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH);
+  displaySleepFrame(renderer, HalDisplay::HALF_REFRESH, !preview);
 }

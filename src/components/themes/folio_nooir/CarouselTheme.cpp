@@ -18,9 +18,10 @@ CarouselLayout CarouselTheme::carouselLayout(const GfxRenderer& renderer, const 
   layout.centerHeight = lowerContentBottom > carouselTop
                              ? FolioLiteLayoutPolicy::carouselHeroHeight(lowerContentBottom, lineHeight)
                              : FolioLiteLayoutPolicy::LITE_CAROUSEL_PREFERRED_HERO_HEIGHT;
-  layout.titleRegion = Rect{20, 72, std::max(0, pageWidth - 40), 24};
-  layout.authorRegion = Rect{20, layout.titleRegion.y + layout.titleRegion.height,
-                             std::max(0, pageWidth - 40), 18};
+  layout.titleRegion = Rect{20, FolioLiteLayoutPolicy::LITE_BOOK_TITLE_TOP,
+                            std::max(0, pageWidth - 40), FolioLiteLayoutPolicy::LITE_BOOK_TITLE_HEIGHT};
+  layout.authorRegion = Rect{20, FolioLiteLayoutPolicy::liteBookAuthorTop(),
+                             std::max(0, pageWidth - 40), FolioLiteLayoutPolicy::LITE_BOOK_AUTHOR_HEIGHT};
   layout.carouselRegion = Rect{0, carouselTop, pageWidth, layout.centerHeight};
   // Both the hero and synopsis bounds depend on the reserved line count, not
   // on whether the selected book has a description.

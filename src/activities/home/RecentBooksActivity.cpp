@@ -276,14 +276,14 @@ void displayHomeFrame(GfxRenderer& renderer, const char* reason, const uint32_t 
     if (selectionSample) lastSelectionDiagnosticMs = nowMs;
   }
   // Keep ordinary Home restores, patches, and overlay closes on the fast
-  // waveform. Use the existing refresh setting for periodic ghost cleanup,
-  // and force a full waveform only when Home orientation changed.
-  static HomeSnapshotPolicy::RefreshState refreshState{};
+  // waveform. The existing refresh setting latches periodic ghost-clean debt
+  // for the next sleep-screen boundary; orientation still forces a full resync.
+  auto& refreshState = HomeSnapshotPolicy::sharedRefreshState();
   static bool haveHomeOrientation = false;
   static uint8_t previousHomeOrientation = 0;
   const bool orientationChanged = haveHomeOrientation && previousHomeOrientation != SETTINGS.orientation;
   const uint8_t interval = HomeSnapshotPolicy::refreshIntervalForFrequency(SETTINGS.refreshFrequency);
-  const auto decision = HomeSnapshotPolicy::chooseRefresh(refreshState, interval, orientationChanged);
+  const auto decision = HomeSnapshotPolicy::chooseRefresh(orientationChanged);
   const auto waveform = decision.waveform == HomeSnapshotPolicy::RefreshWaveform::Full
                             ? HalDisplay::FULL_REFRESH
                             : HalDisplay::FAST_REFRESH;
@@ -294,8 +294,14 @@ void displayHomeFrame(GfxRenderer& renderer, const char* reason, const uint32_t 
   }
   // Keep CPU rendering separate from the panel's blocking refresh time. The
   // display driver reports the latter after this call.
+  const bool cleanupWasPending = refreshState.periodicCleanupPending;
   renderer.displayBuffer(waveform, reason);
-  HomeSnapshotPolicy::recordRefresh(refreshState, decision);
+  HomeSnapshotPolicy::recordRefresh(refreshState, decision, interval);
+  if (!cleanupWasPending && refreshState.periodicCleanupPending) {
+    LOG_INF("SHELF", "refresh_policy mode=deferred cause=periodic_ghost_cleanup interval=%u completed_fast=%u "
+                     "boundary=sleep_screen",
+            static_cast<unsigned>(interval), static_cast<unsigned>(refreshState.completedFastUpdates));
+  }
   previousHomeOrientation = SETTINGS.orientation;
   haveHomeOrientation = true;
 }

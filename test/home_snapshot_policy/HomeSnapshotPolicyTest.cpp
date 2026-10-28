@@ -136,7 +136,7 @@ TEST(HomeSnapshotPolicy, ClassifiesSnapshotInvalidationCauses) {
                "current_page_geometry_mismatch");
 }
 
-TEST(HomeSnapshotPolicy, ChoosesFastHomeRefreshAndSchedulesGhostCleanup) {
+TEST(HomeSnapshotPolicy, DefersPeriodicGhostCleanupUntilSafeMaintenanceBoundary) {
   using HomeSnapshotPolicy::RefreshReason;
   using HomeSnapshotPolicy::RefreshWaveform;
   HomeSnapshotPolicy::RefreshState state{};
@@ -146,20 +146,77 @@ TEST(HomeSnapshotPolicy, ChoosesFastHomeRefreshAndSchedulesGhostCleanup) {
   EXPECT_EQ(HomeSnapshotPolicy::refreshIntervalForFrequency(3), 15);
   EXPECT_EQ(HomeSnapshotPolicy::refreshIntervalForFrequency(4), 30);
   for (int i = 0; i < 14; ++i) {
-    const auto decision = HomeSnapshotPolicy::chooseRefresh(state, 15);
+    const auto decision = HomeSnapshotPolicy::chooseRefresh();
     EXPECT_EQ(decision.waveform, RefreshWaveform::Fast);
     EXPECT_EQ(decision.reason, RefreshReason::Ordinary);
-    HomeSnapshotPolicy::recordRefresh(state, decision);
+    HomeSnapshotPolicy::recordRefresh(state, decision, 15);
   }
   EXPECT_EQ(state.completedFastUpdates, 14);
-  const auto cleanup = HomeSnapshotPolicy::chooseRefresh(state, 15);
+  EXPECT_FALSE(state.periodicCleanupPending);
+
+  // Reaching the configured cadence requests a cleanup but active Home
+  // selection updates continue to use the fast waveform.
+  const auto cadenceUpdate = HomeSnapshotPolicy::chooseRefresh();
+  EXPECT_EQ(cadenceUpdate.waveform, RefreshWaveform::Fast);
+  HomeSnapshotPolicy::recordRefresh(state, cadenceUpdate, 15);
+  EXPECT_TRUE(state.periodicCleanupPending);
+  const auto nextSelection = HomeSnapshotPolicy::chooseRefresh();
+  EXPECT_EQ(nextSelection.waveform, RefreshWaveform::Fast);
+  HomeSnapshotPolicy::recordRefresh(state, nextSelection, 15);
+  EXPECT_EQ(state.completedFastUpdates, 16);
+
+  // No cleanup occurs at a boundary that is not known to be safe.
+  const auto activeBoundary = HomeSnapshotPolicy::chooseMaintenanceRefresh(state, false);
+  EXPECT_EQ(activeBoundary.waveform, RefreshWaveform::Fast);
+  EXPECT_EQ(state.completedFastUpdates, 16);
+  EXPECT_TRUE(state.periodicCleanupPending);
+
+  // A real sleep-screen boundary consumes the accumulated cleanup exactly once.
+  const auto cleanup = HomeSnapshotPolicy::chooseMaintenanceRefresh(state, true);
   EXPECT_EQ(cleanup.waveform, RefreshWaveform::Full);
   EXPECT_EQ(cleanup.reason, RefreshReason::PeriodicGhostCleanup);
-  HomeSnapshotPolicy::recordRefresh(state, cleanup);
+  HomeSnapshotPolicy::recordRefresh(state, cleanup, 15);
   EXPECT_EQ(state.completedFastUpdates, 0);
-  const auto orientation = HomeSnapshotPolicy::chooseRefresh(state, 15, true);
+  EXPECT_FALSE(state.periodicCleanupPending);
+  EXPECT_EQ(HomeSnapshotPolicy::chooseMaintenanceRefresh(state, true).waveform, RefreshWaveform::Fast);
+
+  // Orientation is an explicit full-resync request and can satisfy pending
+  // ghost-clean debt immediately. It remains independent of the cadence.
+  HomeSnapshotPolicy::recordRefresh(state, cadenceUpdate, 15);
+  const auto orientation = HomeSnapshotPolicy::chooseRefresh(true);
   EXPECT_EQ(orientation.waveform, RefreshWaveform::Full);
   EXPECT_EQ(orientation.reason, RefreshReason::OrientationResync);
+  HomeSnapshotPolicy::recordRefresh(state, orientation, 15);
+  EXPECT_FALSE(state.periodicCleanupPending);
+  EXPECT_EQ(state.completedFastUpdates, 0);
+}
+
+TEST(HomeSnapshotPolicy, AccumulatesHomeUpdatesAndBoundsTheCounter) {
+  using HomeSnapshotPolicy::RefreshWaveform;
+  HomeSnapshotPolicy::RefreshState state{};
+  for (uint32_t i = 0; i < static_cast<uint32_t>(UINT16_MAX) + 20; ++i) {
+    const auto decision = HomeSnapshotPolicy::chooseRefresh();
+    EXPECT_EQ(decision.waveform, RefreshWaveform::Fast);
+    HomeSnapshotPolicy::recordRefresh(state, decision, 30);
+  }
+  EXPECT_EQ(state.completedFastUpdates, UINT16_MAX);
+  EXPECT_TRUE(state.periodicCleanupPending);
+}
+
+TEST(HomeSnapshotPolicy, EveryConfiguredFrequencyDefersUntilTheSameSafeBoundary) {
+  using HomeSnapshotPolicy::RefreshWaveform;
+  for (uint8_t frequency = 0; frequency <= 4; ++frequency) {
+    HomeSnapshotPolicy::RefreshState state{};
+    const uint8_t interval = HomeSnapshotPolicy::refreshIntervalForFrequency(frequency);
+    for (uint8_t update = 0; update < interval; ++update) {
+      const auto decision = HomeSnapshotPolicy::chooseRefresh();
+      EXPECT_EQ(decision.waveform, RefreshWaveform::Fast);
+      HomeSnapshotPolicy::recordRefresh(state, decision, interval);
+    }
+    EXPECT_TRUE(state.periodicCleanupPending);
+    EXPECT_EQ(HomeSnapshotPolicy::chooseMaintenanceRefresh(state, false).waveform, RefreshWaveform::Fast);
+    EXPECT_EQ(HomeSnapshotPolicy::chooseMaintenanceRefresh(state, true).waveform, RefreshWaveform::Full);
+  }
 }
 
 TEST(HomeSnapshotPolicy, ReusesStableShelfPixelsWhilePatchingDynamicDetails) {

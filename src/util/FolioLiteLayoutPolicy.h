@@ -21,6 +21,20 @@ constexpr uint8_t LITE_LAYOUT_THREE_ROW_SPINE = 4;
 constexpr uint8_t FOLIO_LAYOUT_THREE_ROW_SPINE = 6;  // Lite-only renderer sentinel.
 constexpr uint8_t LITE_CAROUSEL_SYNOPSIS_RESERVED_LINES = 5;
 
+// The Lite title/author header sits between the shelf tabs and the carousel
+// shelf. Keep the existing text boxes and fonts while adding a small breathing
+// gap between the two lines.
+constexpr int LITE_BOOK_TITLE_TOP = 72;
+constexpr int LITE_BOOK_TITLE_HEIGHT = 24;
+constexpr int LITE_BOOK_TITLE_AUTHOR_GAP = 3;
+constexpr int LITE_BOOK_AUTHOR_HEIGHT = 18;
+
+constexpr int liteBookAuthorTop() {
+  return LITE_BOOK_TITLE_TOP + LITE_BOOK_TITLE_HEIGHT + LITE_BOOK_TITLE_AUTHOR_GAP;
+}
+
+constexpr int liteBookHeaderBottom() { return liteBookAuthorTop() + LITE_BOOK_AUTHOR_HEIGHT; }
+
 // Lite's hero/synopsis/status block must end before the global statistics
 // strip. Keep the shelf height independent of synopsis text and shrink only
 // when the device viewport cannot fit the preferred height.
@@ -33,6 +47,8 @@ constexpr int LITE_CAROUSEL_PAGINATION_STATS_GAP = 4;
 constexpr int LITE_CAROUSEL_PREFERRED_HERO_HEIGHT = 424;
 constexpr int LITE_CAROUSEL_MIN_HERO_HEIGHT = 320;
 constexpr int LITE_CAROUSEL_MAX_HERO_HEIGHT = 466;
+
+constexpr int liteBookHeaderToShelfGap() { return LITE_CAROUSEL_TOP - liteBookHeaderBottom(); }
 
 struct AuthorTextUpdate {
   bool clearPrevious = false;

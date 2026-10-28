@@ -39,6 +39,16 @@ TEST(FolioLiteLayout, SynopsisSpaceIsReservedAtTheSameHeightForEveryBook) {
   EXPECT_EQ(FolioLiteLayoutPolicy::LITE_CAROUSEL_SYNOPSIS_RESERVED_LINES, 5);
 }
 
+TEST(FolioLiteLayout, LiteTitleAuthorHeaderAddsThreePixelsAndClearsTheShelfBoundary) {
+  EXPECT_EQ(FolioLiteLayoutPolicy::liteBookAuthorTop(),
+            FolioLiteLayoutPolicy::LITE_BOOK_TITLE_TOP + FolioLiteLayoutPolicy::LITE_BOOK_TITLE_HEIGHT + 3);
+  EXPECT_EQ(FolioLiteLayoutPolicy::liteBookHeaderBottom(), 117);
+  EXPECT_EQ(FolioLiteLayoutPolicy::liteBookHeaderToShelfGap(), 5);
+  EXPECT_LE(FolioLiteLayoutPolicy::liteBookHeaderBottom(), FolioLiteLayoutPolicy::LITE_CAROUSEL_TOP);
+  EXPECT_EQ(FolioLiteLayoutPolicy::LITE_BOOK_TITLE_HEIGHT, 24);
+  EXPECT_EQ(FolioLiteLayoutPolicy::LITE_BOOK_AUTHOR_HEIGHT, 18);
+}
+
 TEST(FolioLiteLayout, HeroSizeIsFixedForSynopsisAvailabilityAndStatusStaysAboveSummary) {
   constexpr int statsTop = 700;
   constexpr int lineHeight = 18;

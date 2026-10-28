@@ -46,6 +46,7 @@ enum class RefreshReason : uint8_t { Ordinary, PeriodicGhostCleanup, Orientation
 
 struct RefreshState {
   uint16_t completedFastUpdates = 0;
+  bool periodicCleanupPending = false;
 };
 
 struct RefreshDecision {
@@ -64,22 +65,32 @@ constexpr uint8_t refreshIntervalForFrequency(const uint8_t frequency) {
   }
 }
 
-constexpr RefreshDecision chooseRefresh(const RefreshState state, const uint8_t interval,
-                                        const bool orientationChanged = false) {
+constexpr RefreshDecision chooseRefresh(const bool orientationChanged = false) {
   if (orientationChanged) return {RefreshWaveform::Full, RefreshReason::OrientationResync};
-  const uint8_t boundedInterval = interval == 0 ? 1 : interval;
-  if (state.completedFastUpdates + 1 >= boundedInterval) {
+  return {RefreshWaveform::Fast, RefreshReason::Ordinary};
+}
+
+constexpr RefreshDecision chooseMaintenanceRefresh(const RefreshState& state, const bool safeBoundary) {
+  if (safeBoundary && state.periodicCleanupPending) {
     return {RefreshWaveform::Full, RefreshReason::PeriodicGhostCleanup};
   }
   return {RefreshWaveform::Fast, RefreshReason::Ordinary};
 }
 
-constexpr void recordRefresh(RefreshState& state, const RefreshDecision decision) {
+constexpr void recordRefresh(RefreshState& state, const RefreshDecision decision, const uint8_t interval) {
   if (decision.waveform == RefreshWaveform::Full) {
     state.completedFastUpdates = 0;
+    state.periodicCleanupPending = false;
   } else if (state.completedFastUpdates < UINT16_MAX) {
     ++state.completedFastUpdates;
+    const uint8_t boundedInterval = interval == 0 ? 1 : interval;
+    if (state.completedFastUpdates >= boundedInterval) state.periodicCleanupPending = true;
   }
+}
+
+inline RefreshState& sharedRefreshState() {
+  static RefreshState state{};
+  return state;
 }
 
 constexpr const char* refreshReasonName(const RefreshReason reason) {
