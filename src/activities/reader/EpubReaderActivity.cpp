@@ -451,6 +451,11 @@ void EpubReaderActivity::onEnter() {
   readerDeepCacheRescueReason = "reader_enter_reset";
   readerSurvivalStopRequested.store(false, std::memory_order_release);
   readerSurvivalReturnHeld.store(false, std::memory_order_release);
+  readerSurvivalBackoffStartedMs = 0;
+  readerSurvivalBackoffDurationMs = 0;
+  readerSurvivalLastStopMs = 0;
+  readerSurvivalRecentStopCount = 0;
+  readerSurvivalBackoffRetryBlocked = false;
   cachedRenderObservedPeakBytes = 0;
   cachedRenderLargestRequestThisRender = 0;
   cachedRenderHighlightBytes = 0;
@@ -677,6 +682,11 @@ void EpubReaderActivity::onExit() {
   readerRenderWaitingForBleStop = false;
   readerSurvivalStopRequested.store(false, std::memory_order_release);
   readerSurvivalReturnHeld.store(false, std::memory_order_release);
+  readerSurvivalBackoffStartedMs = 0;
+  readerSurvivalBackoffDurationMs = 0;
+  readerSurvivalLastStopMs = 0;
+  readerSurvivalRecentStopCount = 0;
+  readerSurvivalBackoffRetryBlocked = false;
   readerIdleFontCachesReleased = false;
   readerBleReturnCleanupAttempted = false;
   readerBleReturnCleanupGeneration = 0;
@@ -950,7 +960,31 @@ void EpubReaderActivity::requestReaderSurvivalStop(const char* reason, const boo
   // lifecycle performs NimBLE deinit. A survival stop is not an immediate
   // return-cleanup opportunity. A later genuine heavy boundary clears the hold.
   readerSurvivalReturnHeld.store(true, std::memory_order_release);
-  readerSurvivalStopRequested.store(true, std::memory_order_release);
+  // Stop requests are serialized on the render task. Publish the request only
+  // after its timer state so the main lifecycle cannot observe an old zero
+  // delay while handling this new stop.
+  const bool firstRequestForStop = !readerSurvivalStopRequested.load(std::memory_order_acquire);
+  if (firstRequestForStop) {
+    const uint32_t now = millis();
+    const uint32_t sincePreviousStop = now - readerSurvivalLastStopMs;
+    if (readerSurvivalRecentStopCount == 0 ||
+        sincePreviousStop >= bleinput::kReaderBleSurvivalBackoffResetMs) {
+      readerSurvivalRecentStopCount = 0;
+    }
+    if (readerSurvivalRecentStopCount < bleinput::kReaderBleSurvivalBackoffMaxStops) {
+      ++readerSurvivalRecentStopCount;
+    }
+    readerSurvivalBackoffStartedMs.store(now, std::memory_order_relaxed);
+    readerSurvivalBackoffDurationMs.store(
+        bleinput::readerBleSurvivalBackoffMs(readerSurvivalRecentStopCount, sincePreviousStop),
+        std::memory_order_relaxed);
+    readerSurvivalLastStopMs = now;
+    readerSurvivalBackoffRetryBlocked.store(false, std::memory_order_relaxed);
+    readerSurvivalStopRequested.store(true, std::memory_order_release);
+    LOG_INF("BLEMEM", "stage=reader_survival_backoff stops=%u delay_ms=%u",
+            static_cast<unsigned>(readerSurvivalRecentStopCount),
+            static_cast<unsigned>(readerSurvivalBackoffDurationMs.load(std::memory_order_relaxed)));
+  }
   // This stop is itself the heavy boundary for the replayed render. Preserve
   // a one-shot deep-rescue arm for the matching replay event; the cleanup path
   // still requires BLE pending, quiescence, all cheaper releases, and failed
@@ -1081,7 +1115,20 @@ void EpubReaderActivity::reportReaderQuiescent(const char* reason) {
     const char* eventReason = sectionLifecycleEvent ? "section_complete" :
                               heavyRenderLifecycleEvent ? "heavy_render_complete" :
                                                           "survival_stop_replay_complete";
-    bleinput::signalReaderBleReturnLifecycleEvent(eventReason);
+    const uint32_t backoffStartedMs = readerSurvivalBackoffStartedMs.load(std::memory_order_acquire);
+    const uint32_t backoffDurationMs = readerSurvivalBackoffDurationMs.load(std::memory_order_acquire);
+    const uint32_t backoffElapsedMs = millis() - backoffStartedMs;
+    if (backoffDurationMs > 0 && backoffElapsedMs < backoffDurationMs) {
+      if (!readerSurvivalBackoffRetryBlocked.exchange(true, std::memory_order_acq_rel)) {
+        bleinput::blockReaderBleReturnRetry();
+        LOG_INF("BLEMEM", "stage=reader_return_deferred reason=survival_backoff event=%.28s remaining_ms=%u",
+                eventReason, static_cast<unsigned>(backoffDurationMs - backoffElapsedMs));
+      }
+    } else {
+      readerSurvivalBackoffDurationMs.store(0, std::memory_order_release);
+      readerSurvivalBackoffRetryBlocked.store(false, std::memory_order_release);
+      bleinput::signalReaderBleReturnLifecycleEvent(eventReason);
+    }
   }
   if (sectionLifecycleEvent || heavyRenderLifecycleEvent) {
     sdFontSystem.signalReaderFontLifecycleBoundary();
@@ -1548,6 +1595,8 @@ void EpubReaderActivity::loop() {
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
   if (readerSurvivalStopRequested.load(std::memory_order_acquire) && !BleHid.isRunning()) {
     bleinput::blockReaderBleReturnRetry();
+    readerSurvivalBackoffRetryBlocked.store(
+        readerSurvivalBackoffDurationMs.load(std::memory_order_acquire) > 0, std::memory_order_release);
     readerSurvivalStopRequested.store(false, std::memory_order_release);
   }
   if (readerRenderWaitingForBleStop && !BleHid.isRunning()) {
@@ -2703,6 +2752,25 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
     return;
   }
   if (readerSurvivalReturnHeld.load(std::memory_order_acquire)) return;
+
+  const uint32_t backoffDurationMs = readerSurvivalBackoffDurationMs.load(std::memory_order_acquire);
+  if (backoffDurationMs > 0) {
+    const uint32_t elapsedMs = millis() - readerSurvivalBackoffStartedMs.load(std::memory_order_acquire);
+    if (elapsedMs < backoffDurationMs) {
+      if (!readerSurvivalBackoffRetryBlocked.exchange(true, std::memory_order_acq_rel)) {
+        bleinput::blockReaderBleReturnRetry();
+        LOG_INF("BLEMEM", "stage=reader_return_deferred reason=survival_backoff remaining_ms=%u",
+                static_cast<unsigned>(backoffDurationMs - elapsedMs));
+      }
+      return;
+    }
+    readerSurvivalBackoffDurationMs.store(0, std::memory_order_release);
+    readerSurvivalBackoffRetryBlocked.store(false, std::memory_order_release);
+    LOG_INF("BLEMEM", "stage=reader_survival_backoff_complete elapsed_ms=%u", static_cast<unsigned>(elapsedMs));
+    // Re-arm the existing lifecycle event once the bounded delay has elapsed.
+    // The Reader loop is already active, so this adds no queue or timer task.
+    bleinput::signalReaderBleReturnLifecycleEvent("survival_backoff_elapsed");
+  }
 
   const uint32_t returnGeneration = bleinput::readerBleReturnGeneration();
   if (returnGeneration != readerBleReturnCleanupGeneration) {

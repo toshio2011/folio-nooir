@@ -15,6 +15,7 @@
 #include "GfxRenderer.h"
 #include "MappedInputManager.h"
 #include "ActivityResult.h"
+#include "components/themes/BaseTheme.h"
 #include "util/ScreenshotInfo.h"
 
 class Activity;    // forward declaration
@@ -98,6 +99,15 @@ class ActivityManager {
   char visibleSettingsNotification[64] = {};
   bool settingsNotificationVisible = false;
   unsigned long settingsNotificationShownAt = 0;
+  // Global notifications briefly paint over the current framebuffer. Keep
+  // only that small region so the next activity render can restore its true
+  // underlay before a modal popup is composed.
+  std::unique_ptr<uint8_t[]> transientNotificationBacking;
+  size_t transientNotificationBackingSize = 0;
+  Rect transientNotificationBackingRect{};
+  Activity* transientNotificationBackingOwner = nullptr;
+  bool transientNotificationBackingValid = false;
+  bool modalOverlayWasDisplayed = false;
 #if FREEINK_CAP_BLE_HID_HOST
   char pendingBluetoothNotification[64] = {};
   bool hasBluetoothNotification = false;

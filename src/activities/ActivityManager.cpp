@@ -7,10 +7,12 @@
 
 #include <algorithm>
 #include <cstring>
+#include <new>
 
 #include "OpdsServerStore.h"
 #include "BleInput.h"
 #include "util/BleMemoryPolicy.h"
+#include "util/TransientNotificationPolicy.h"
 #include "InterfaceFontSelection.h"
 #include "SdCardFontSystem.h"
 #include "components/UITheme.h"
@@ -100,10 +102,34 @@ void ActivityManager::renderTaskLoop() {
     RenderLock lock;
     if (currentActivity) {
       HalPowerManager::Lock powerLock;  // Ensure we don't go into low-power mode while rendering
+      bool notificationBackdropRestored = false;
+      if (transientNotificationBackingValid) {
+        if (transientNotificationBackingOwner == currentActivity.get() && transientNotificationBacking &&
+            renderer.copyBufferToRegion(transientNotificationBackingRect.x, transientNotificationBackingRect.y,
+                                        transientNotificationBackingRect.width,
+                                        transientNotificationBackingRect.height,
+                                        transientNotificationBacking.get(), transientNotificationBackingSize)) {
+          notificationBackdropRestored = true;
+          LOG_INF("NOTIFY", "stage=backdrop_restored activity=%.20s bytes=%u",
+                  currentActivity->name.c_str(), static_cast<unsigned>(transientNotificationBackingSize));
+        } else if (transientNotificationBackingOwner != currentActivity.get()) {
+          // The new activity owns a different full-screen frame; its render
+          // will replace the old notification region. Never copy old pixels
+          // over that newer screen.
+          transientNotificationBacking.reset();
+          transientNotificationBackingSize = 0;
+        }
+        transientNotificationBackingValid = false;
+        transientNotificationBackingOwner = nullptr;
+      }
       // Each activity starts with UI text scaling enabled. The Folio shelf
       // activities explicitly disable it for their featured book and grid so
       // changing UI Scale cannot alter the bookshelf presentation.
       renderer.setUiScaleTextEnabled(true);
+      const bool modalOverlayBeforeRender = currentActivity->hasModalOverlay();
+      const bool modalOverlayClosed = modalOverlayWasDisplayed && !modalOverlayBeforeRender;
+      if (modalOverlayClosed) renderer.requestNextRefreshMode(HalDisplay::FULL_REFRESH);
+      const uint32_t displayUpdateSequenceBeforeRender = renderer.getDisplayUpdateSequence();
       currentActivity->render(std::move(lock));
 #if NOOIR_SD_FONT_DIAGNOSTICS
       if (currentActivity->isReaderActivity()) {
@@ -130,11 +156,14 @@ void ActivityManager::renderTaskLoop() {
         EpubDiagnostics::phaseRecord("lifecycle_first_usable", currentActivity->isReaderActivity() ? 2 : 1);
       }
 #endif
+      const bool modalOverlayActive = currentActivity->hasModalOverlay();
+      modalOverlayWasDisplayed = modalOverlayActive;
 #if FREEINK_CAP_BLE_HID_HOST
       char bluetoothNotification[sizeof(pendingBluetoothNotification)] = {};
       bool showBluetoothNotification = false;
       taskENTER_CRITICAL(&activityManagerSpinlock);
-      if (hasBluetoothNotification && !isReaderActivity()) {
+      if (hasBluetoothNotification &&
+          TransientNotificationPolicy::canPaint(isReaderActivity(), modalOverlayActive)) {
         strncpy(visibleBluetoothNotification, pendingBluetoothNotification,
                 sizeof(visibleBluetoothNotification) - 1);
         visibleBluetoothNotification[sizeof(visibleBluetoothNotification) - 1] = '\0';
@@ -143,7 +172,8 @@ void ActivityManager::renderTaskLoop() {
         bluetoothNotificationVisible = visibleBluetoothNotification[0] != '\0';
         bluetoothNotificationShownAt = millis();
       }
-      if (bluetoothNotificationVisible && !isReaderActivity()) {
+      if (bluetoothNotificationVisible &&
+          TransientNotificationPolicy::canPaint(isReaderActivity(), modalOverlayActive)) {
         if (millis() - bluetoothNotificationShownAt < BLUETOOTH_NOTIFICATION_DURATION_MS) {
           strncpy(bluetoothNotification, visibleBluetoothNotification, sizeof(bluetoothNotification) - 1);
           showBluetoothNotification = bluetoothNotification[0] != '\0';
@@ -153,12 +183,11 @@ void ActivityManager::renderTaskLoop() {
         }
       }
       taskEXIT_CRITICAL(&activityManagerSpinlock);
-      if (showBluetoothNotification) GUI.drawPopup(renderer, bluetoothNotification, true);
 #endif
       char settingsNotification[sizeof(pendingSettingsNotification)] = {};
       bool showSettingsNotification = false;
       taskENTER_CRITICAL(&activityManagerSpinlock);
-      if (hasSettingsNotification) {
+      if (hasSettingsNotification && TransientNotificationPolicy::canPaint(false, modalOverlayActive)) {
         strncpy(visibleSettingsNotification, pendingSettingsNotification, sizeof(visibleSettingsNotification) - 1);
         visibleSettingsNotification[sizeof(visibleSettingsNotification) - 1] = '\0';
         pendingSettingsNotification[0] = '\0';
@@ -166,7 +195,7 @@ void ActivityManager::renderTaskLoop() {
         settingsNotificationVisible = visibleSettingsNotification[0] != '\0';
         settingsNotificationShownAt = millis();
       }
-      if (settingsNotificationVisible) {
+      if (settingsNotificationVisible && TransientNotificationPolicy::canPaint(false, modalOverlayActive)) {
         if (millis() - settingsNotificationShownAt < SETTINGS_NOTIFICATION_DURATION_MS) {
           strncpy(settingsNotification, visibleSettingsNotification, sizeof(settingsNotification) - 1);
           showSettingsNotification = settingsNotification[0] != '\0';
@@ -176,7 +205,88 @@ void ActivityManager::renderTaskLoop() {
         }
       }
       taskEXIT_CRITICAL(&activityManagerSpinlock);
-      if (showSettingsNotification) GUI.drawPopup(renderer, settingsNotification, true);
+
+      bool showAnyNotification = showSettingsNotification;
+#if FREEINK_CAP_BLE_HID_HOST
+      showAnyNotification = showAnyNotification || showBluetoothNotification;
+#endif
+      if (showAnyNotification) {
+        constexpr size_t kMaxTransientNotificationBackingBytes = 8 * 1024;
+        Rect backingRect{};
+        bool hasBackingRect = false;
+        const auto includePopup = [&](const char* message) {
+          if (!message || message[0] == '\0') return;
+          const Rect bounds = GUI.popupPaintBounds(renderer, message);
+          if (bounds.width <= 0 || bounds.height <= 0) return;
+          if (!hasBackingRect) {
+            backingRect = bounds;
+            hasBackingRect = true;
+          } else {
+            const int left = std::min(backingRect.x, bounds.x);
+            const int top = std::min(backingRect.y, bounds.y);
+            const int right = std::max(backingRect.x + backingRect.width, bounds.x + bounds.width);
+            const int bottom = std::max(backingRect.y + backingRect.height, bounds.y + bounds.height);
+            backingRect = Rect{left, top, right - left, bottom - top};
+          }
+        };
+#if FREEINK_CAP_BLE_HID_HOST
+        if (showBluetoothNotification) includePopup(bluetoothNotification);
+#endif
+        if (showSettingsNotification) includePopup(settingsNotification);
+        const size_t needed = hasBackingRect
+                                  ? renderer.getRegionByteSize(backingRect.x, backingRect.y,
+                                                               backingRect.width, backingRect.height)
+                                  : 0;
+        bool backingReady = needed > 0 && needed <= kMaxTransientNotificationBackingBytes;
+        if (backingReady && transientNotificationBackingSize < needed) {
+          std::unique_ptr<uint8_t[]> replacement(new (std::nothrow) uint8_t[needed]);
+          if (replacement) {
+            transientNotificationBacking = std::move(replacement);
+            transientNotificationBackingSize = needed;
+          } else {
+            backingReady = false;
+          }
+        }
+        if (backingReady) {
+          backingReady = renderer.copyRegionToBuffer(backingRect.x, backingRect.y,
+                                                     backingRect.width, backingRect.height,
+                                                     transientNotificationBacking.get(), needed);
+        }
+        if (backingReady) {
+          transientNotificationBackingRect = backingRect;
+          transientNotificationBackingOwner = currentActivity.get();
+          transientNotificationBackingValid = true;
+#if FREEINK_CAP_BLE_HID_HOST
+          if (showBluetoothNotification) GUI.drawPopup(renderer, bluetoothNotification, true);
+#endif
+          if (showSettingsNotification) GUI.drawPopup(renderer, settingsNotification, true);
+        } else {
+          // Dropping a toast is safer than painting un-restorable text over a
+          // Home snapshot or modal frame when memory is unusually constrained.
+          LOG_INF("NOTIFY", "stage=backdrop_unavailable bytes=%u activity=%.20s",
+                  static_cast<unsigned>(needed), currentActivity->name.c_str());
+        }
+      } else {
+        transientNotificationBacking.reset();
+        transientNotificationBackingSize = 0;
+        transientNotificationBackingOwner = nullptr;
+        transientNotificationBackingValid = false;
+      }
+      // Some snapshot and queued-frame fast paths intentionally return without
+      // a panel update. If a toast underlay was restored, submit that corrected
+      // framebuffer once so the e-paper panel cannot keep the dismissed text.
+      if (notificationBackdropRestored &&
+          renderer.getDisplayUpdateSequence() == displayUpdateSequenceBeforeRender) {
+        renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+        LOG_INF("NOTIFY", "stage=backdrop_refresh activity=%.20s", currentActivity->name.c_str());
+      }
+      if (modalOverlayClosed && renderer.getDisplayUpdateSequence() == displayUpdateSequenceBeforeRender) {
+        renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+        LOG_INF("ACT", "stage=modal_close_refresh activity=%.20s", currentActivity->name.c_str());
+      }
+      // A render fast path may intentionally skip a panel update. Do not let a
+      // one-shot cleanup waveform leak into an unrelated later frame.
+      if (modalOverlayClosed) renderer.clearNextRefreshModeOverride();
     }
     // Notify any task blocked in requestUpdateAndWait() that the render is done.
     TaskHandle_t waiter = nullptr;
@@ -565,6 +675,10 @@ void ActivityManager::exitActivity(const RenderLock& lock) {
     const bool epubReaderActivity = currentActivity->name == "EpubReader";
     const bool wifiSelectionActivity = currentActivity->name == "WifiSelection";
     currentActivity->onExit();
+    transientNotificationBacking.reset();
+    transientNotificationBackingSize = 0;
+    transientNotificationBackingOwner = nullptr;
+    transientNotificationBackingValid = false;
     currentActivity.reset();
     if (readingStatsActivity) {
       LOG_INF("RSDIAG", "stage=child_destroyed free=%u largest=%u",

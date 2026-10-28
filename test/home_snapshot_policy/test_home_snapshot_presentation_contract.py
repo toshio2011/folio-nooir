@@ -53,6 +53,25 @@ class HomeSnapshotPresentationContract(unittest.TestCase):
         self.assertIn("drawSpineBook(renderer, spineWindow.books[localIndex]", render_body)
         self.assertIn("threeRowCoverProgressPatched", render_body)
 
+    def test_lite_three_row_recent_changes_are_checked_and_repaired_per_slot(self):
+        key_body = function_body(SOURCE, "uint64_t RecentBooksActivity::snapshotKey(const bool exactThemeKey) const")
+        restore_body = function_body(SOURCE, "bool RecentBooksActivity::restoreSnapshot()")
+        render_body = function_body(SOURCE, "bool RecentBooksActivity::renderCarousel(const bool threeCover)")
+        self.assertIn("if (!patchLiteThreeRowSlots)", key_body)
+        self.assertIn("canPatchLiteThreeRowVisibleSlots", restore_body)
+        self.assertIn("sameBookInSlot = bookPathKeys[slot] == hashText(book.path)", restore_body)
+        self.assertIn("snapshotBookVisualKeys[slot] = ~uint64_t{0}", restore_body)
+        self.assertIn("snapshotRewriteAfterRestore", render_body)
+        self.assertIn("snapshotWritePending = true", render_body)
+
+    def test_three_row_slot_visual_key_covers_face_fields_and_rejects_replaced_books(self):
+        visual_key = function_body(SOURCE, "uint64_t RecentBooksActivity::bookCoverVisualKey(")
+        restore = function_body(SOURCE, "bool RecentBooksActivity::restoreSnapshot()")
+        for field in ("book.title", "book.author", "book.coverBmpPath", "book.progressPercent"):
+            self.assertIn(field, visual_key)
+        self.assertIn("canPatchLiteThreeRowVisibleSlot", restore)
+        self.assertIn("sameBookInSlot", restore)
+
     def test_spine_geometry_uses_one_active_layout_cache(self):
         header = (ROOT / "src/activities/home/RecentBooksActivity.h").read_text(encoding="utf-8")
         self.assertIn("std::variant<std::monostate, SpinePageWindow, TwoRowSpinePageWindow, ThreeRowSpinePageWindow>",

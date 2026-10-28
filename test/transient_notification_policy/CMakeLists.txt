@@ -1,0 +1,8 @@
+add_executable(TransientNotificationPolicyTest TransientNotificationPolicyTest.cpp)
+
+target_link_libraries(TransientNotificationPolicyTest PRIVATE
+  crosspoint_test_common
+  GTest::gtest_main
+)
+
+gtest_discover_tests(TransientNotificationPolicyTest)

@@ -18,10 +18,20 @@ struct PersistableSaveProfile {
   uint32_t probeUs = 0;
   uint32_t openUs = 0;
   uint32_t fileWriteUs = 0;
+  uint32_t fileWriteBytes = 0;
+  uint16_t fileWriteCalls = 0;
+  uint16_t fileWriteMaxBytes = 0;
+  uint32_t fileReadBytes = 0;
+  uint16_t fileReadCalls = 0;
+  uint16_t fileReadMaxBytes = 0;
   uint32_t storageFlushUs = 0;
   uint32_t closeUs = 0;
   uint32_t validationUs = 0;
   uint32_t backupPrepareUs = 0;
+  uint32_t backupProbeUs = 0;
+  uint32_t backupRenameUs = 0;
+  uint16_t backupProbeCount = 0;
+  uint16_t backupCollisionCount = 0;
   uint32_t primaryRenameUs = 0;
   uint32_t tempRenameUs = 0;
   uint32_t cleanupUs = 0;
@@ -69,7 +79,13 @@ class JsonDocumentFileWriter {
     if (!ok || buffered == 0) return ok;
     const uint32_t startedUs = profile ? micros() : 0;
     const size_t written = file.write(buffer.data(), buffered);
-    if (profile) profile->fileWriteUs += micros() - startedUs;
+    if (profile) {
+      profile->fileWriteUs += micros() - startedUs;
+      ++profile->fileWriteCalls;
+      profile->fileWriteBytes += static_cast<uint32_t>(written);
+      profile->fileWriteMaxBytes = static_cast<uint16_t>(
+          std::max<size_t>(profile->fileWriteMaxBytes, std::min<size_t>(written, UINT16_MAX)));
+    }
     bytesWritten += written;
     if (written != buffered) ok = false;
     buffered = 0;
@@ -86,7 +102,8 @@ class JsonDocumentFileWriter {
 
 class JsonDocumentFileCompareWriter {
  public:
-  explicit JsonDocumentFileCompareWriter(HalFile& file) : file(file) {}
+  explicit JsonDocumentFileCompareWriter(HalFile& file, PersistableSaveProfile* profile = nullptr)
+      : file(file), profile(profile) {}
 
   size_t write(const uint8_t byte) { return write(&byte, 1); }
 
@@ -112,12 +129,23 @@ class JsonDocumentFileCompareWriter {
   bool finish(const size_t expectedBytes) {
     if (!ok || compared != expectedBytes || available != 0) return false;
     uint8_t trailingByte = 0;
-    return file.read(&trailingByte, 1) == 0;
+    const int trailingCount = file.read(&trailingByte, 1);
+    recordRead(static_cast<size_t>(std::max(0, trailingCount)));
+    return trailingCount == 0;
   }
 
  private:
+  void recordRead(const size_t count) {
+    if (!profile) return;
+    ++profile->fileReadCalls;
+    profile->fileReadBytes += static_cast<uint32_t>(count);
+    profile->fileReadMaxBytes = std::max<uint16_t>(
+        profile->fileReadMaxBytes, static_cast<uint16_t>(std::min<size_t>(count, UINT16_MAX)));
+  }
+
   bool readMore() {
     const int count = file.read(buffer.data(), buffer.size());
+    recordRead(static_cast<size_t>(std::max(0, count)));
     if (count <= 0 || static_cast<size_t>(count) > buffer.size()) {
       ok = false;
       return false;
@@ -133,6 +161,7 @@ class JsonDocumentFileCompareWriter {
   size_t available = 0;
   size_t compared = 0;
   bool ok = true;
+  PersistableSaveProfile* profile = nullptr;
 };
 
 bool writeJsonDocumentToFile(const char* path, const JsonDocument& doc, const size_t expectedBytes,
@@ -160,14 +189,15 @@ bool writeJsonDocumentToFile(const char* path, const JsonDocument& doc, const si
                                   doc.overflowed(), expectedBytes, serializedBytes, outputBytes);
 }
 
-bool temporaryFileMatches(const char* path, const JsonDocument& expected, const size_t expectedBytes) {
+bool temporaryFileMatches(const char* path, const JsonDocument& expected, const size_t expectedBytes,
+                          PersistableSaveProfile* profile = nullptr) {
   HalFile file;
   if (!Storage.openFileForRead("PERSIST", path, file)) return false;
   if (file.fileSize64() != expectedBytes) {
     file.close();
     return false;
   }
-  JsonDocumentFileCompareWriter writer(file);
+  JsonDocumentFileCompareWriter writer(file, profile);
   const size_t serializedBytes = serializeJson(expected, writer);
   const bool matches = serializedBytes == expectedBytes && writer.finish(expectedBytes);
   const bool closed = file.close();
@@ -209,6 +239,35 @@ bool moveToUniqueSibling(const char* source, const char* suffix, std::string& de
     const std::string candidate = std::string(source) + suffix + std::to_string(index);
     if (Storage.exists(candidate.c_str())) continue;
     if (!Storage.rename(source, candidate.c_str())) return false;
+    destination = candidate;
+    return true;
+  }
+  return false;
+}
+
+// Backup rotation previously searched .previous-0 through .previous-999.
+// Orphaned siblings from an interrupted save made every save pay for each
+// existing name on the SD card. Keep those files untouched, but use a boot
+// uptime nonce and a small bounded collision window for the new backup.
+bool moveBackupToUniqueSibling(const char* source, const char* suffix, std::string& destination,
+                               PersistableSaveProfile& profile) {
+  constexpr uint16_t kMaxBackupNameAttempts = 16;
+  const uint32_t nonce = micros();
+  for (uint16_t attempt = 0; attempt < kMaxBackupNameAttempts; ++attempt) {
+    const std::string candidate = std::string(source) + suffix + std::to_string(nonce) + "-" +
+                                  std::to_string(attempt);
+    const uint32_t probeStartedUs = micros();
+    const bool exists = Storage.exists(candidate.c_str());
+    profile.backupProbeUs += micros() - probeStartedUs;
+    ++profile.backupProbeCount;
+    if (exists) {
+      ++profile.backupCollisionCount;
+      continue;
+    }
+    const uint32_t renameStartedUs = micros();
+    const bool moved = Storage.rename(source, candidate.c_str());
+    profile.backupRenameUs += micros() - renameStartedUs;
+    if (!moved) return false;
     destination = candidate;
     return true;
   }
@@ -524,7 +583,7 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
       }
       return false;
     }
-  } else if (!temporaryFileMatches(tmpPath.c_str(), doc, expectedBytes)) {
+  } else if (!temporaryFileMatches(tmpPath.c_str(), doc, expectedBytes, &profile)) {
     LOG_ERR("PERSIST", "save_result=temporary_validation_failed path=%s bytes=%u",
             path, static_cast<unsigned>(expectedBytes));
     return false;
@@ -565,8 +624,14 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
       // Keep the old backup until the primary has been moved safely. If that
       // rename fails, both original files remain recoverable.
       const uint32_t backupPrepareStartedUs = micros();
-      if ((settingsPath ? backupState != SettingsFileState::Missing : Storage.exists(backupPath.c_str())) &&
-          !moveToUniqueSibling(backupPath.c_str(), ".previous-", displacedBackup)) {
+      bool backupExists = backupState != SettingsFileState::Missing;
+      if (!settingsPath) {
+        const uint32_t probeStartedUs = micros();
+        backupExists = Storage.exists(backupPath.c_str());
+        profile.backupProbeUs += micros() - probeStartedUs;
+        ++profile.backupProbeCount;
+      }
+      if (backupExists && !moveBackupToUniqueSibling(backupPath.c_str(), ".previous-", displacedBackup, profile)) {
         LOG_ERR("PERSIST", "Failed to preserve existing backup %s", backupPath.c_str());
         return false;
       }
@@ -680,6 +745,18 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
             static_cast<unsigned long>(profile.backupPrepareUs), static_cast<unsigned long>(profile.primaryRenameUs),
             static_cast<unsigned long>(profile.tempRenameUs), static_cast<unsigned long>(profile.cleanupUs),
             static_cast<unsigned long>(profile.totalUs));
+    if (recentPath) {
+      LOG_INF("RBS", "save_backup file=%.24s probes=%u collisions=%u probe_us=%lu rename_us=%lu",
+              fileName, static_cast<unsigned>(profile.backupProbeCount),
+              static_cast<unsigned>(profile.backupCollisionCount),
+              static_cast<unsigned long>(profile.backupProbeUs),
+              static_cast<unsigned long>(profile.backupRenameUs));
+      LOG_INF("RBS", "save_io file=%.24s write_calls=%u write_bytes=%u write_max=%u read_calls=%u read_bytes=%u read_max=%u",
+              fileName, static_cast<unsigned>(profile.fileWriteCalls),
+              static_cast<unsigned>(profile.fileWriteBytes), static_cast<unsigned>(profile.fileWriteMaxBytes),
+              static_cast<unsigned>(profile.fileReadCalls), static_cast<unsigned>(profile.fileReadBytes),
+              static_cast<unsigned>(profile.fileReadMaxBytes));
+    }
   }
   return true;
 }

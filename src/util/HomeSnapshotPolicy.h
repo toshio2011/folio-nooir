@@ -64,6 +64,23 @@ constexpr size_t visiblePageItemCount(const size_t pageStart, const size_t pageC
   return pageCapacity < remaining ? pageCapacity : remaining;
 }
 
+// Lite three-row spines can repair changed book faces one slot at a time.
+// Reuse is safe only when the saved and current frame contain the same number
+// of occupied slots, so no old face or separator is left in an empty position.
+constexpr bool canPatchLiteThreeRowVisibleSlots(const bool liteThreeRowLayout,
+                                                 const size_t savedVisibleSlots,
+                                                 const size_t currentVisibleSlots) {
+  return liteThreeRowLayout && savedVisibleSlots > 0 && savedVisibleSlots == currentVisibleSlots;
+}
+
+constexpr bool canPatchLiteThreeRowVisibleSlot(const bool liteThreeRowLayout,
+                                                const size_t savedVisibleSlots,
+                                                const size_t currentVisibleSlots,
+                                                const bool sameBookInSlot) {
+  return canPatchLiteThreeRowVisibleSlots(liteThreeRowLayout, savedVisibleSlots, currentVisibleSlots) &&
+         sameBookInSlot;
+}
+
 constexpr RestoreAction classifyRestore(const uint64_t savedStructuralKey, const uint64_t currentStructuralKey,
                                          const uint64_t savedDynamicKey, const uint64_t currentDynamicKey) {
   if (savedStructuralKey != currentStructuralKey) return RestoreAction::Rebuild;

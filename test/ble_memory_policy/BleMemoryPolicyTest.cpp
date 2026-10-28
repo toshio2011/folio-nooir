@@ -143,6 +143,16 @@ TEST(BleMemoryPolicy, MarginalConnectedRenderRequestsBoundedReclaim) {
   EXPECT_TRUE(bleinput::readerBleCachedRenderNeedsReclaim(true, true, 40 * 1024, 18 * 1024));
 }
 
+TEST(BleMemoryPolicy, SurvivalStopReadmissionBackoffIsBoundedAndResetsAfterStableTime) {
+  EXPECT_EQ(bleinput::readerBleSurvivalBackoffMs(0, 0), 15'000u);
+  EXPECT_EQ(bleinput::readerBleSurvivalBackoffMs(1, 10'000), 15'000u);
+  EXPECT_EQ(bleinput::readerBleSurvivalBackoffMs(2, 10'000), 30'000u);
+  EXPECT_EQ(bleinput::readerBleSurvivalBackoffMs(3, 10'000), 60'000u);
+  EXPECT_EQ(bleinput::readerBleSurvivalBackoffMs(4, 10'000), 120'000u);
+  EXPECT_EQ(bleinput::readerBleSurvivalBackoffMs(8, 10'000), 120'000u);
+  EXPECT_EQ(bleinput::readerBleSurvivalBackoffMs(4, bleinput::kReaderBleSurvivalBackoffResetMs), 15'000u);
+}
+
 TEST(ReaderRenderBudget, LargeRequestIsConstrainedWithHeadroomAndHeavyWhenBleConsumesIt) {
   const reader_memory::PressureObservation healthy{
       100 * 1024, 72 * 1024, 80 * 1024, 32635, false, false, false};

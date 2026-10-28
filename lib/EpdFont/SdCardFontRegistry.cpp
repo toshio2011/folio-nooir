@@ -240,7 +240,6 @@ void SdCardFontRegistry::scanRoot(const char* rootPath, std::vector<SdCardFontFa
 
 bool SdCardFontRegistry::discover() {
   families_.clear();
-  families_.reserve(MAX_SD_FAMILIES);
 
   // Hidden root is scanned first so it wins on name collisions, matching the
   // sleep-folder pattern (/.sleep preferred over /sleep).

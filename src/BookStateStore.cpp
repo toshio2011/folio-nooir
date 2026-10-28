@@ -61,7 +61,17 @@ const BookState* BookStateStore::find(const std::string& path) const {
 
 void BookStateStore::recordReading(const std::string& path, const uint8_t progress, const uint32_t elapsedSeconds,
                                    const uint32_t pagesTurned) {
+  const bool isNewBook = find(path) == nullptr;
   BookState& state = ensure(path);
+  const BookStatus oldStatus = state.status;
+  const uint8_t oldProgressPercent = state.progressPercent;
+  const uint32_t oldStartDate = state.startDate;
+  const uint32_t oldFinishDate = state.finishDate;
+  const uint32_t oldLastOpenedDate = state.lastOpenedDate;
+  const uint32_t oldReadingSeconds = state.readingSeconds;
+  const uint16_t oldReadingSessions = state.readingSessions;
+  const uint32_t oldPagesTurned = state.pagesTurned;
+  const uint8_t oldRating = state.rating;
   const uint32_t today = halClock.getDateKey();
   state.progressPercent = std::min<uint8_t>(progress, 100);
   state.lastOpenedDate = today;
@@ -78,7 +88,12 @@ void BookStateStore::recordReading(const std::string& path, const uint8_t progre
     if (state.readingSessions < UINT16_MAX) ++state.readingSessions;
   }
   state.pagesTurned += std::min<uint32_t>(pagesTurned, UINT32_MAX - state.pagesTurned);
-  if (!saveToFile()) LOG_ERR("BST", "Failed to save reading state");
+  const bool changed = isNewBook || oldStatus != state.status || oldProgressPercent != state.progressPercent ||
+                       oldStartDate != state.startDate || oldFinishDate != state.finishDate ||
+                       oldLastOpenedDate != state.lastOpenedDate || oldReadingSeconds != state.readingSeconds ||
+                       oldReadingSessions != state.readingSessions || oldPagesTurned != state.pagesTurned ||
+                       oldRating != state.rating;
+  if (changed && !saveToFile()) LOG_ERR("BST", "Failed to save reading state");
 }
 
 bool BookStateStore::updateEditable(const std::string& path, const BookStatus status, const uint8_t progress,

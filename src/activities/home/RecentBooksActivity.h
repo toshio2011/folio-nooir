@@ -155,6 +155,7 @@ class RecentBooksActivity final : public Activity {
   uint64_t snapshotPresentationKeyValue = 0;
   std::array<uint64_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> snapshotBookVisualKeys{};
   bool snapshotDynamicNeedsPatch = false;
+  bool snapshotRewriteAfterRestore = false;
   size_t snapshotPageStart = SIZE_MAX;
   size_t snapshotPageItems = 0;
   size_t snapshotSelectorIndex = SIZE_MAX;
@@ -362,6 +363,7 @@ class RecentBooksActivity final : public Activity {
   bool bluetoothResourceSensitive() const override {
     return statsTransientStateReleased || statsReturnAwaitingFirstRender;
   }
+  bool hasModalOverlay() const override { return menuPopup.isActive() || bookActionsPopup.isActive(); }
   void onEnter() override;
   void onExit() override;
   void loop() override;

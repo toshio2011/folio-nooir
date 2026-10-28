@@ -45,6 +45,10 @@ class Activity {
   virtual bool preventAutoSleep() { return false; }
   virtual bool isReaderActivity() const { return false; }
   virtual bool isHomeActivity() const { return false; }
+  // True when this screen currently owns a modal popup. Global transient
+  // notifications stay queued until the modal is closed so they cannot paint
+  // over menu content.
+  virtual bool hasModalOverlay() const { return false; }
   virtual bool keepsBluetoothAlive() const { return false; }
   // Global BLE input is allowed on ordinary navigable screens. Startup,
   // sleep, recovery, and update screens opt out explicitly.

@@ -215,6 +215,8 @@ class BaseTheme {
                               const std::function<UIIcon(int index)>& rowIcon) const;
   // Retrieval progress uses a light variant to reduce black-area ghosting on
   // e-ink. Existing callers keep the classic popup by default.
+  // Returns the complete painted bounds (including the frame) without drawing.
+  virtual Rect popupPaintBounds(const GfxRenderer& renderer, const char* message) const;
   virtual Rect drawPopup(const GfxRenderer& renderer, const char* message, bool lightBackground = false) const;
   virtual void drawOptionPopup(const GfxRenderer& renderer, const char* title, const std::vector<std::string>& options,
                                int selectedIndex, int firstVisibleIndex = 0, int visibleCount = -1) const;

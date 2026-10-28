@@ -2449,30 +2449,39 @@ void GfxRenderer::invertScreen() const {
 void GfxRenderer::beginDiagnosticFrame() const { diagnosticFrameStartMs = millis(); }
 
 void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode, const char* diagnosticReason) const {
+  const int refreshOverride = nextRefreshModeOverride.exchange(-1, std::memory_order_acq_rel);
+  const HalDisplay::RefreshMode effectiveRefreshMode =
+      refreshOverride >= 0 ? static_cast<HalDisplay::RefreshMode>(refreshOverride) : refreshMode;
   auto elapsed = millis() - start_ms;
   LOG_DBG("GFX", "Time = %lu ms from clearScreen to displayBuffer", elapsed);
   if (diagnosticReason != nullptr && homeRenderDiagnosticCount < 16) {
     const unsigned long drawMs = millis() - diagnosticFrameStartMs;
     if (drawMs >= 25) {
-      const char* mode = refreshMode == HalDisplay::FULL_REFRESH ? "full"
-                         : refreshMode == HalDisplay::HALF_REFRESH ? "half"
-                                                                  : "fast";
+      const char* mode = effectiveRefreshMode == HalDisplay::FULL_REFRESH ? "full"
+                         : effectiveRefreshMode == HalDisplay::HALF_REFRESH ? "half"
+                                                                            : "fast";
       LOG_INF("SHELF", "render_before_refresh reason=%s draw_ms=%lu mode=%s",
               diagnosticReason, drawMs, mode);
       ++homeRenderDiagnosticCount;
     }
   }
-  display.displayBuffer(refreshMode, fadingFix);
+  display.displayBuffer(effectiveRefreshMode, fadingFix);
+  displayUpdateSequence.fetch_add(1, std::memory_order_release);
 }
 
 void GfxRenderer::displayBufferAsync(const HalDisplay::RefreshMode refreshMode) const {
+  const int refreshOverride = nextRefreshModeOverride.exchange(-1, std::memory_order_acq_rel);
+  const HalDisplay::RefreshMode effectiveRefreshMode =
+      refreshOverride >= 0 ? static_cast<HalDisplay::RefreshMode>(refreshOverride) : refreshMode;
   // The async path has no turn-off-screen hook, which the sunlight fading fix
   // relies on; keep those users on the blocking path.
   if (fadingFix) {
-    display.displayBuffer(refreshMode, fadingFix);
+    display.displayBuffer(effectiveRefreshMode, fadingFix);
+    displayUpdateSequence.fetch_add(1, std::memory_order_release);
     return;
   }
-  display.displayBufferAsync(refreshMode);
+  display.displayBufferAsync(effectiveRefreshMode);
+  displayUpdateSequence.fetch_add(1, std::memory_order_release);
 }
 
 void GfxRenderer::waitRefreshComplete() const { display.waitRefreshComplete(); }

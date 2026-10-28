@@ -70,6 +70,32 @@ inline constexpr std::size_t kReaderBleQuiescentReturnMinLargestBlock =
 inline constexpr std::size_t kReaderBleRenderMinFreeHeap = 36 * 1024;
 inline constexpr std::size_t kReaderBleRenderMinLargestBlock = 20 * 1024;
 
+// A Reader render that has just forced a survival stop should not immediately
+// reconnect into the same measured pressure cycle. Delay only the automatic
+// quiescent return, grow the delay for repeated stops, and cap it so BLE can
+// recover without waiting for a book exit.
+inline constexpr uint32_t kReaderBleSurvivalBackoffInitialMs = 15'000;
+inline constexpr uint32_t kReaderBleSurvivalBackoffMaxMs = 120'000;
+inline constexpr uint32_t kReaderBleSurvivalBackoffResetMs = 60'000;
+inline constexpr uint8_t kReaderBleSurvivalBackoffMaxStops = 4;
+
+constexpr uint32_t readerBleSurvivalBackoffMs(const uint8_t recentStopCount,
+                                              const uint32_t sincePreviousStopMs) {
+  if (recentStopCount == 0 || sincePreviousStopMs >= kReaderBleSurvivalBackoffResetMs) {
+    return kReaderBleSurvivalBackoffInitialMs;
+  }
+  uint32_t delay = kReaderBleSurvivalBackoffInitialMs;
+  const uint8_t cappedCount = recentStopCount > kReaderBleSurvivalBackoffMaxStops
+                                  ? kReaderBleSurvivalBackoffMaxStops
+                                  : recentStopCount;
+  for (uint8_t stop = 1; stop < cappedCount; ++stop) {
+    delay = delay >= kReaderBleSurvivalBackoffMaxMs / 2
+                ? kReaderBleSurvivalBackoffMaxMs
+                : delay * 2;
+  }
+  return delay;
+}
+
 constexpr bool readerBleCachedRenderNeedsReclaim(const bool bleEnabled, const bool bleRunning,
                                                  const std::size_t freeHeap, const std::size_t largestBlock) {
   return bleEnabled && bleRunning &&

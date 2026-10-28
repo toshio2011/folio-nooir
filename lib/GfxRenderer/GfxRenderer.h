@@ -19,6 +19,7 @@ class SdCardFont;
 #include <map>
 #include <memory>
 #include <new>
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -47,6 +48,8 @@ class GfxRenderer {
   RenderMode renderMode;
   Orientation orientation;
   bool fadingFix;
+  mutable std::atomic<uint32_t> displayUpdateSequence{0};
+  mutable std::atomic<int> nextRefreshModeOverride{-1};
   // UI scale changes select the nearest built-in UI font size. Reader fonts
   // (Noto Serif/Sans 12–18 pt) remain controlled by the separate reader font
   // size setting.
@@ -312,6 +315,13 @@ class GfxRenderer {
   void beginDiagnosticFrame() const;
   void displayBuffer(HalDisplay::RefreshMode refreshMode = HalDisplay::FAST_REFRESH,
                      const char* diagnosticReason = nullptr) const;
+  void requestNextRefreshMode(HalDisplay::RefreshMode refreshMode) const {
+    nextRefreshModeOverride.store(static_cast<int>(refreshMode), std::memory_order_release);
+  }
+  void clearNextRefreshModeOverride() const { nextRefreshModeOverride.store(-1, std::memory_order_release); }
+  uint32_t getDisplayUpdateSequence() const {
+    return displayUpdateSequence.load(std::memory_order_acquire);
+  }
   // Non-blocking refresh: starts the waveform and returns so CPU work (e.g.
   // grayscale strip rendering) can overlap the panel's refresh time. The
   // framebuffer must stay untouched until waitRefreshComplete(). Falls back to

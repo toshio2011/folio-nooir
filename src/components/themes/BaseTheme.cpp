@@ -774,6 +774,48 @@ void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
   }
 }
 
+Rect BaseTheme::popupPaintBounds(const GfxRenderer& renderer, const char* message) const {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  // ActivityManager notifications use fixed 64-byte message buffers. Measure
+  // each line on the stack so a transient toast never adds a heap allocation
+  // to the low-memory render path.
+  constexpr size_t kNotificationLineCapacity = 64;
+  char line[kNotificationLineCapacity] = {};
+  int textWidth = 0;
+  const EpdFontFamily::Style popupFontFamily = metrics.popupTextBold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
+  size_t lineLength = 0;
+  size_t lineCount = 1;
+  bool lineTooLong = false;
+  for (const char* cursor = message; cursor && *cursor; ++cursor) {
+    if (*cursor == '\n') {
+      line[lineLength] = '\0';
+      textWidth = std::max(textWidth, renderer.getTextWidth(UI_12_FONT_ID, line, popupFontFamily));
+      lineLength = 0;
+      ++lineCount;
+    } else if (lineLength + 1 < kNotificationLineCapacity) {
+      line[lineLength++] = *cursor;
+    } else {
+      lineTooLong = true;
+    }
+  }
+  line[lineLength] = '\0';
+  textWidth = std::max(textWidth, renderer.getTextWidth(UI_12_FONT_ID, line, popupFontFamily));
+  if (lineTooLong) textWidth = renderer.getScreenWidth();
+  const int marginX = metrics.popupMarginX;
+  const int marginY = metrics.popupMarginY;
+  const int frameThickness = metrics.popupFrameThickness;
+  const int textHeight = renderer.getLineHeight(UI_12_FONT_ID) * static_cast<int>(lineCount);
+  const int x = (renderer.getScreenWidth() - (textWidth + marginX * 2)) / 2;
+  const int y = static_cast<int>(renderer.getScreenHeight() * metrics.popupTopOffsetRatio);
+  const int w = textWidth + marginX * 2;
+  const int h = textHeight + marginY * 2;
+  const int left = std::max(0, x - frameThickness);
+  const int top = std::max(0, y - frameThickness);
+  const int right = std::min(static_cast<int>(renderer.getScreenWidth()), x + w + frameThickness);
+  const int bottom = std::min(static_cast<int>(renderer.getScreenHeight()), y + h + frameThickness);
+  return Rect{left, top, std::max(0, right - left), std::max(0, bottom - top)};
+}
+
 Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message, const bool lightBackground) const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int marginX = metrics.popupMarginX;

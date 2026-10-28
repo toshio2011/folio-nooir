@@ -164,6 +164,11 @@ class EpubReaderActivity final : public Activity {
   bool readerRenderWaitingForBleStop = false;
   std::atomic<bool> readerSurvivalStopRequested{false};
   std::atomic<bool> readerSurvivalReturnHeld{false};
+  std::atomic<uint32_t> readerSurvivalBackoffStartedMs{0};
+  std::atomic<uint32_t> readerSurvivalBackoffDurationMs{0};
+  uint32_t readerSurvivalLastStopMs = 0;
+  uint8_t readerSurvivalRecentStopCount = 0;
+  std::atomic<bool> readerSurvivalBackoffRetryBlocked{false};
   size_t cachedRenderObservedPeakBytes = 0;
   size_t cachedRenderLargestRequestThisRender = 0;
   size_t cachedRenderHighlightBytes = 0;

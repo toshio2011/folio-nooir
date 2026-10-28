@@ -78,6 +78,15 @@ TEST(HomeSnapshotPolicy, OnlyLiteThreeRowProgressIsDynamic) {
   EXPECT_FALSE(HomeSnapshotPolicy::threeRowProgressIsDynamic(false, true));
 }
 
+TEST(HomeSnapshotPolicy, PatchesLiteThreeRowChangesOnlyWhenOccupiedSlotCountMatches) {
+  EXPECT_TRUE(HomeSnapshotPolicy::canPatchLiteThreeRowVisibleSlots(true, 21, 21));
+  EXPECT_FALSE(HomeSnapshotPolicy::canPatchLiteThreeRowVisibleSlots(false, 21, 21));
+  EXPECT_FALSE(HomeSnapshotPolicy::canPatchLiteThreeRowVisibleSlots(true, 21, 20));
+  EXPECT_FALSE(HomeSnapshotPolicy::canPatchLiteThreeRowVisibleSlots(true, 0, 0));
+  EXPECT_TRUE(HomeSnapshotPolicy::canPatchLiteThreeRowVisibleSlot(true, 21, 21, true));
+  EXPECT_FALSE(HomeSnapshotPolicy::canPatchLiteThreeRowVisibleSlot(true, 21, 21, false));
+}
+
 TEST(HomeSnapshotPolicy, ReusesStableShelfPixelsWhilePatchingDynamicDetails) {
   using HomeSnapshotPolicy::RestoreAction;
   EXPECT_TRUE(HomeSnapshotPolicy::canUseRestoredSnapshotFastPath(RestoreAction::Restore, true, false, false, false));

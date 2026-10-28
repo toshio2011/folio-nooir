@@ -276,7 +276,7 @@ bool RecentBooksStore::rejectUnsafeMutation(const char* operation) const {
 void RecentBooksStore::addBook(const std::string& path, const std::string& title, const std::string& author,
                                const std::string& coverBmpPath, const std::string& synopsis,
                                const std::string& series, const bool xtcMetadataChecked) {
-  std::lock_guard<std::mutex> lock(storeMutex);
+  std::unique_lock<std::mutex> lock(storeMutex);
   if (rejectUnsafeMutation("add_book")) return;
   // Remove existing entry if present
   auto it =
@@ -325,11 +325,29 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
   // Add to front
   recentBooks.insert(recentBooks.begin(), std::move(entry));
 
-  if (!saveToFileLocked()) {
+  const auto rollbackMutation = [&] {
     recentBooks.erase(recentBooks.begin());
     if (hadOldEntry) {
       recentBooks.insert(recentBooks.begin() + static_cast<std::ptrdiff_t>(oldIndex), std::move(oldEntry));
     }
+  };
+  bool saved = false;
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND) || defined(_MSC_VER)
+  try {
+    saved = saveToFileLocked();
+  } catch (...) {
+    // Host storage tests model sudden power loss by throwing after an atomic
+    // rename. Restore the in-memory transaction and release the store lock
+    // before the caller simulates reboot and reloads the durable candidates.
+    rollbackMutation();
+    lock.unlock();
+    throw;
+  }
+#else
+  saved = saveToFileLocked();
+#endif
+  if (!saved) {
+    rollbackMutation();
     LOG_ERR("RBS", "add_book rolled back after persistence failure: %s", path.c_str());
   }
 }

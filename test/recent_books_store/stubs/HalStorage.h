@@ -63,7 +63,10 @@ class TestStorage {
 
   bool ready() const { return sdReady; }
   bool mkdir(const char*) { return true; }
-  bool exists(const char* path) const { return files.find(path ? path : "") != files.end(); }
+  bool exists(const char* path) const {
+    ++existsCount;
+    return files.find(path ? path : "") != files.end();
+  }
   bool remove(const char* path) { return files.erase(path ? path : "") != 0; }
   bool rename(const char* from, const char* to) {
     const std::string source = from ? from : "";
@@ -121,6 +124,7 @@ class TestStorage {
     failWrite = false;
     writeCount = 0;
     readCount = 0;
+    existsCount = 0;
     crashPoint = CrashPoint::None;
     renameCount = 0;
   }
@@ -136,6 +140,7 @@ class TestStorage {
   bool failWrite = false;
   size_t writeCount = 0;
   mutable size_t readCount = 0;
+  mutable size_t existsCount = 0;
 
  private:
   CrashPoint crashPoint = CrashPoint::None;

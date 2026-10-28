@@ -14,7 +14,7 @@ class ReaderExitSaveProfileContract(unittest.TestCase):
         body = STORE.split("static bool writeDocToFileInternal", 1)[1]
         self.assertIn("if (!settingsPath)", body)
         self.assertIn("writeJsonDocumentToFile(tmpPath.c_str(), doc, expectedBytes", body)
-        self.assertIn("temporaryFileMatches(tmpPath.c_str(), doc, expectedBytes)", body)
+        self.assertIn("temporaryFileMatches(tmpPath.c_str(), doc, expectedBytes, &profile)", body)
         self.assertIn("Storage.rename(tmpPath.c_str(), path)", body)
 
     def test_profile_reports_write_validation_and_each_promotion_phase(self):

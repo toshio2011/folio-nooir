@@ -370,7 +370,6 @@ TEST(RecentBooksStore, RecoversPreviousHistoryAfterPowerLossMovingPrimaryToBacku
   Storage.armCrash(TestStorage::CrashPoint::AfterFirstRename);
   EXPECT_THROW(store.addBook("/manga/Added.xtch", "Added title", "Added author", "", "", "", true),
                SimulatedPowerLoss);
-
   ASSERT_FALSE(Storage.files.contains(kPrimary));
   ASSERT_EQ(Storage.files[kBackup], original);
   ASSERT_TRUE(Storage.files.contains(kTemporary));
@@ -423,6 +422,37 @@ TEST(RecentBooksStore, LoadsCommittedHistoryAfterPowerLossPromotingStagedTempora
   ASSERT_TRUE(store.getBookAt(1, originalAfterCommit));
   expectOriginalBookData(originalAfterCommit);
   EXPECT_EQ(Storage.files[kBackup], original);
+}
+
+TEST(RecentBooksStore, BackupRotationDoesNotScanLegacyOrphanSiblingNames) {
+  Storage.reset();
+  RecentBooksStore& store = RECENT_BOOKS;
+  const std::string original = makeDurableHistory();
+  Storage.files[kPrimary] = original;
+  Storage.files[kBackup] = "{\"books\":[]}";
+  for (size_t index = 0; index < 1000; ++index) {
+    Storage.files[std::string(kBackup) + ".previous-" + std::to_string(index)] = "preserved";
+  }
+
+  ASSERT_TRUE(store.loadFromFile());
+  ASSERT_EQ(store.getLoadResult(), RecentBooksLoadResult::Valid);
+  const size_t existsBeforeSave = Storage.existsCount;
+  store.addBook("/manga/Added.xtch", "Added title", "Added author", "", "", "", true);
+
+  // The old linear allocator made up to 1,000 exists() calls as orphaned
+  // .previous-N files accumulated. Rotation now probes only its nonce name.
+  EXPECT_LT(Storage.existsCount - existsBeforeSave, 10u);
+  EXPECT_EQ(Storage.files[kBackup], original);
+  EXPECT_EQ(Storage.files[std::string(kBackup) + ".previous-999"], "preserved");
+  bool foundPriorBackup = false;
+  for (const auto& [path, contents] : Storage.files) {
+    if (path.find(std::string(kBackup) + ".previous-") == 0 && contents == "{\"books\":[]}") {
+      foundPriorBackup = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(foundPriorBackup);
+  EXPECT_EQ(Storage.files.size(), 1003u);
 }
 
 const BookMetadataOverride* BookMetadataOverridesStore::find(const std::string&) const { return nullptr; }
