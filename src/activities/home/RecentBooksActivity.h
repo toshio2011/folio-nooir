@@ -74,7 +74,7 @@ class RecentBooksActivity final : public Activity {
   };
   std::array<CarouselHqProbe, 10> carouselHqProbes{};
   ThumbnailMissMemo normalThumbnailMisses;
-  CarouselLayout liteCarouselLayoutCache{};
+  CarouselLayout liteCarouselLayoutCache;
   bool liteCarouselLayoutCacheValid = false;
   int liteCarouselLayoutCacheWidth = -1;
   int liteCarouselLayoutCacheHeight = -1;

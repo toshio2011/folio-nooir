@@ -3110,7 +3110,7 @@ void RecentBooksActivity::loop() {
   const bool snapshotLayout = usesPersistentHomeSnapshot();
   const bool threeCoverGrid = usesThreeCoverGrid();
   FolioShelfLayout layout{};
-  CarouselLayout liteCarouselLayout{};
+  CarouselLayout liteCarouselLayout;
   if (liteTheme) {
     static const FolioNooirTheme folioPresentation;
     static const CarouselTheme carouselPresentation;
