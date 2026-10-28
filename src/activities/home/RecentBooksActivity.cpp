@@ -2225,7 +2225,7 @@ void RecentBooksActivity::writeSnapshot() {
   if (HomeSnapshotPolicy::threeRowProgressIsDynamic(isFolioNooirLiteTheme(SETTINGS.uiTheme),
                                                      usesThreeRowSpineLayout()) &&
       !snapshotBookGeometryAvailable) {
-    LOG_WRN("SHELF", "stage=snapshot_write_skipped reason=slot_geometry_unavailable");
+    LOG_INF("SHELF", "stage=snapshot_write_skipped reason=slot_geometry_unavailable");
     return;
   }
   Storage.ensureDirectoryExists("/.crosspoint");
