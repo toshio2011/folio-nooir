@@ -28,6 +28,14 @@ class ThreeRowShelfProfileContract(unittest.TestCase):
         self.assertIn("activeThreeRowShelfProfile->headerParseUs += timing.headerUs", SOURCE)
         self.assertIn("ThreeRowShelfRenderProfile* activeThreeRowShelfProfile", HEADER)
 
+    def test_profile_state_is_declared_in_the_full_redraw_scope(self):
+        render_body = SOURCE.split("bool RecentBooksActivity::renderCarousel(const bool threeCover)", 1)[1]
+        full_redraw = render_body.split("// Keep the existing full-frame path", 1)[1]
+        self.assertLess(
+            full_redraw.index("ThreeRowShelfRenderProfile threeRowProfile;"),
+            full_redraw.index("if (usesThreeRowSpineLayout())"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3642,8 +3642,6 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
     // Grid and spine layouts save a clean base and need only the small focus
     // marker before the panel refresh.
     const uint32_t shelfStartedUs = micros();
-    ThreeRowShelfRenderProfile threeRowProfile;
-    bool profiledThreeRowShelf = false;
     if (!usesCarouselLayout()) drawSnapshotSelectionOutline(displayLayout, selectorIndex, true);
     uint32_t shelfUs = micros() - shelfStartedUs;
     uint32_t detailsUs = 0;
@@ -3791,6 +3789,8 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
   folioPresentation.drawShelfTabs(renderer, folioLayout, activeTab);
   folioPresentation.drawShelfBattery(renderer, folioLayout, metrics);
 
+  ThreeRowShelfRenderProfile threeRowProfile;
+  bool profiledThreeRowShelf = false;
   uint32_t detailsDurationUs = 0;
   uint32_t shelfDurationUs = 0;
   if (visibleBookCount == 0) {
