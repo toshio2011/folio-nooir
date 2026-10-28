@@ -169,6 +169,8 @@ class EpubReaderActivity final : public Activity {
   uint32_t readerSurvivalLastStopMs = 0;
   uint8_t readerSurvivalRecentStopCount = 0;
   uint8_t readerSurvivalSafeRenderCount = 0;
+  std::atomic<uint8_t> readerSurvivalBookStopCount{0};
+  std::atomic<bool> readerSurvivalBookAdmissionBlocked{false};
   std::atomic<bool> readerSurvivalBackoffRetryBlocked{false};
   size_t cachedRenderObservedPeakBytes = 0;
   size_t cachedRenderLargestRequestThisRender = 0;
@@ -359,6 +361,7 @@ class EpubReaderActivity final : public Activity {
       return true;
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
     if (readerSurvivalStopRequested.load(std::memory_order_acquire)) return true;
+    if (readerSurvivalBookAdmissionBlocked.load(std::memory_order_acquire)) return true;
     if (readerRenderWaitingForBleStop) return true;
     if (section && section->isPartial() && !partialRebuildStartFailed &&
         section->currentPage + PARTIAL_REBUILD_START_MARGIN >= static_cast<int>(section->pageCount)) return true;

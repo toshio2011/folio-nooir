@@ -153,6 +153,28 @@ TEST(BleMemoryPolicy, SurvivalStopReadmissionBackoffIsBoundedAndResetsAfterStabl
   EXPECT_EQ(bleinput::readerBleSurvivalBackoffMs(4, bleinput::kReaderBleSurvivalBackoffResetMs), 15'000u);
 }
 
+TEST(BleMemoryPolicy, RepeatedSurvivalStopsBlockReadmissionForCurrentBookUntilExit) {
+  uint8_t bookStops = 0;
+  EXPECT_FALSE(bleinput::readerBleBookSurvivalReadmissionBlocked(bookStops));
+  bookStops = bleinput::nextReaderBleBookSurvivalStopCount(bookStops);
+  EXPECT_FALSE(bleinput::readerBleBookSurvivalReadmissionBlocked(bookStops));
+  bookStops = bleinput::nextReaderBleBookSurvivalStopCount(bookStops);
+  EXPECT_FALSE(bleinput::readerBleBookSurvivalReadmissionBlocked(bookStops));
+  bookStops = bleinput::nextReaderBleBookSurvivalStopCount(bookStops);
+  EXPECT_TRUE(bleinput::readerBleBookSurvivalReadmissionBlocked(bookStops));
+
+  // Expiring the bounded retry delay does not erase book-lifetime evidence.
+  EXPECT_EQ(bleinput::readerBleSurvivalBackoffMs(3, bleinput::kReaderBleSurvivalBackoffResetMs),
+            bleinput::kReaderBleSurvivalBackoffInitialMs);
+  EXPECT_TRUE(bleinput::readerBleBookSurvivalReadmissionBlocked(bookStops));
+  EXPECT_EQ(bleinput::nextReaderBleBookSurvivalStopCount(bookStops),
+            bleinput::kReaderBleBookSurvivalStopLimit);
+
+  // A new Reader Activity represents an exited/opened book and starts clean.
+  bookStops = 0;
+  EXPECT_FALSE(bleinput::readerBleBookSurvivalReadmissionBlocked(bookStops));
+}
+
 TEST(BleMemoryPolicy, SurvivalBackoffResetsOnlyAfterConsecutiveSafeReaderRenders) {
   constexpr auto safeFree = bleinput::kReaderBleRenderMinFreeHeap;
   constexpr auto safeLargest = bleinput::kReaderBleRenderMinLargestBlock;

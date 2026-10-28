@@ -456,6 +456,8 @@ void EpubReaderActivity::onEnter() {
   readerSurvivalLastStopMs = 0;
   readerSurvivalRecentStopCount = 0;
   readerSurvivalSafeRenderCount = 0;
+  readerSurvivalBookStopCount.store(0, std::memory_order_release);
+  readerSurvivalBookAdmissionBlocked.store(false, std::memory_order_release);
   readerSurvivalBackoffRetryBlocked = false;
   cachedRenderObservedPeakBytes = 0;
   cachedRenderLargestRequestThisRender = 0;
@@ -688,6 +690,8 @@ void EpubReaderActivity::onExit() {
   readerSurvivalLastStopMs = 0;
   readerSurvivalRecentStopCount = 0;
   readerSurvivalSafeRenderCount = 0;
+  readerSurvivalBookStopCount.store(0, std::memory_order_release);
+  readerSurvivalBookAdmissionBlocked.store(false, std::memory_order_release);
   readerSurvivalBackoffRetryBlocked = false;
   readerIdleFontCachesReleased = false;
   readerBleReturnCleanupAttempted = false;
@@ -999,6 +1003,18 @@ void EpubReaderActivity::requestReaderSurvivalStop(const char* reason, const boo
   // delay while handling this new stop.
   const bool firstRequestForStop = !readerSurvivalStopRequested.load(std::memory_order_acquire);
   if (firstRequestForStop) {
+    const uint8_t bookStopCount = bleinput::nextReaderBleBookSurvivalStopCount(
+        readerSurvivalBookStopCount.load(std::memory_order_relaxed));
+    readerSurvivalBookStopCount.store(bookStopCount, std::memory_order_release);
+    if (bleinput::readerBleBookSurvivalReadmissionBlocked(bookStopCount)) {
+      readerSurvivalBookAdmissionBlocked.store(true, std::memory_order_release);
+      const size_t recentPageMinFree = readerRenderMinFreeBytes > 0 ? readerRenderMinFreeBytes : readerRecentMinFreeBytes;
+      LOG_INF("BLEMEM", "stage=reader_book_readmission_latched stops=%u tier=%u peak=%u largest_request=%u "
+                        "page_min_free=%u reset=book_exit",
+              static_cast<unsigned>(bookStopCount), static_cast<unsigned>(readerMemoryPressureTier),
+              static_cast<unsigned>(cachedRenderObservedPeakBytes),
+              static_cast<unsigned>(readerLargestRenderRequestBytes), static_cast<unsigned>(recentPageMinFree));
+    }
     const uint32_t now = millis();
     const uint32_t sincePreviousStop = now - readerSurvivalLastStopMs;
     if (readerSurvivalRecentStopCount == 0 ||
@@ -2786,6 +2802,9 @@ void EpubReaderActivity::runBleReturnCleanupIfNeeded() {
     readerDeepCacheRescueReason = "pending_cleared";
     return;
   }
+  // The bounded cooldown still governs early stops. After repeated actual
+  // render-survival stops, this book keeps BLE deferred until its Activity exits.
+  if (readerSurvivalBookAdmissionBlocked.load(std::memory_order_acquire)) return;
   if (readerSurvivalReturnHeld.load(std::memory_order_acquire)) return;
 
   const uint32_t backoffDurationMs = readerSurvivalBackoffDurationMs.load(std::memory_order_acquire);

@@ -60,6 +60,21 @@ class ReaderReturnCleanupContract(unittest.TestCase):
         self.assertIn('signalReaderBleReturnLifecycleEvent("safe_headroom_reset")', pressure)
         self.assertIn("readerSurvivalSafeRenderCount = 0", exit_body)
 
+    def test_repeated_survival_stops_latch_ble_until_reader_activity_exit(self):
+        enter_body = function_body(READER, "void EpubReaderActivity::onEnter()")
+        exit_body = function_body(READER, "void EpubReaderActivity::onExit()")
+        pressure = function_body(READER, "void EpubReaderActivity::updateReaderMemoryPressure(")
+        stop = function_body(READER, "void EpubReaderActivity::requestReaderSurvivalStop(")
+        cleanup = function_body(READER, "void EpubReaderActivity::runBleReturnCleanupIfNeeded()")
+        self.assertIn("readerSurvivalBookAdmissionBlocked.load(std::memory_order_acquire)", READER_H)
+        self.assertIn("readerSurvivalBookStopCount.store(0", enter_body)
+        self.assertIn("readerSurvivalBookStopCount.store(0", exit_body)
+        self.assertNotIn("readerSurvivalBookStopCount.store(0", pressure)
+        self.assertIn("nextReaderBleBookSurvivalStopCount", stop)
+        self.assertIn("readerBleBookSurvivalReadmissionBlocked", stop)
+        self.assertIn("readerSurvivalBookAdmissionBlocked.store(true", stop)
+        self.assertIn("readerSurvivalBookAdmissionBlocked.load(std::memory_order_acquire)", cleanup)
+
 
 if __name__ == "__main__":
     unittest.main()

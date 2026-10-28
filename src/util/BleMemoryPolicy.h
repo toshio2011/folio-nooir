@@ -80,6 +80,19 @@ inline constexpr uint32_t kReaderBleSurvivalBackoffResetMs = 60'000;
 inline constexpr uint8_t kReaderBleSurvivalBackoffMaxStops = 4;
 inline constexpr uint8_t kReaderBleSurvivalBackoffSafeRenderResetCount = 3;
 
+// Keep a separate book-lifetime history so a sequence of real render-survival
+// stops cannot be erased by the bounded cooldown or a few easy pages.
+inline constexpr uint8_t kReaderBleBookSurvivalStopLimit = 3;
+
+constexpr uint8_t nextReaderBleBookSurvivalStopCount(const uint8_t currentStopCount) {
+  return currentStopCount < kReaderBleBookSurvivalStopLimit ? currentStopCount + 1
+                                                            : kReaderBleBookSurvivalStopLimit;
+}
+
+constexpr bool readerBleBookSurvivalReadmissionBlocked(const uint8_t bookStopCount) {
+  return bookStopCount >= kReaderBleBookSurvivalStopLimit;
+}
+
 constexpr uint32_t readerBleSurvivalBackoffMs(const uint8_t recentStopCount,
                                               const uint32_t sincePreviousStopMs) {
   if (recentStopCount == 0 || sincePreviousStopMs >= kReaderBleSurvivalBackoffResetMs) {
