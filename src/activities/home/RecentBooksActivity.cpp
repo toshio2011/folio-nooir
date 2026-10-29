@@ -18,6 +18,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <optional>
 
 #include "MappedInputManager.h"
 #include "CrossPointState.h"
