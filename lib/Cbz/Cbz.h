@@ -91,6 +91,9 @@ class Cbz {
   std::string getAuthor() const;
   std::string getSynopsis() const;
   const Metadata& getMetadata() const { return metadata; }
+  bool hasCoverSource() const { return metadataLoaded && !metadata.coverEntry.empty(); }
+  bool supportsThumbnailSource() const;
+  size_t getCoverImageSize() const;
   std::string getThumbBmpPath() const { return cachePath + "/thumb_[HEIGHT].bmp"; }
   std::string getThumbBmpPath(int height) const { return cachePath + "/thumb_" + std::to_string(height) + ".bmp"; }
   bool generateThumbBmp(int height) const;

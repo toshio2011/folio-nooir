@@ -526,7 +526,7 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
     InflateStream inflate;
     const uint32_t freeBeforeInflate = static_cast<uint32_t>(ESP.getFreeHeap());
     const uint32_t largestBeforeInflate = static_cast<uint32_t>(ESP.getMaxAllocHeap());
-    if (!inflate.init(true)) {
+    if (!inflate.init(true, largestBeforeInflate)) {
       LOG_ERR("ZIP", "Failed to init inflate stream entry=%s mode=streaming failure=%s free=%u largest=%u chunk=%u compressed=%u output=%u",
               filename, inflate.initFailureName(), static_cast<unsigned>(freeBeforeInflate),
               static_cast<unsigned>(largestBeforeInflate), static_cast<unsigned>(chunkSize),

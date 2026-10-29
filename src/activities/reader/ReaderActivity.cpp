@@ -4,6 +4,7 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Memory.h>
+#include <GfxRenderer.h>
 
 #include <optional>
 
@@ -21,7 +22,10 @@
 #include "activities/util/BmpViewerActivity.h"
 #include "activities/util/FullScreenMessageActivity.h"
 #include "components/UITheme.h"
+#include "components/themes/folio_nooir/FolioNooirTheme.h"
+#include "util/BookCacheUtils.h"
 #include "util/CbzDiagnostics.h"
+#include "util/LibraryBookPreparationPolicy.h"
 
 namespace {
 
@@ -74,6 +78,8 @@ std::unique_ptr<Epub> ReaderActivity::loadEpub(const std::string& path) {
   // indexing popup so it isn't a silent wait on the home screen. The cachePath/hash is known at
   // construction, so this check is valid before load(); a cached open loads in a blink -> no popup.
   const bool uncached = !Storage.exists((epub->getCachePath() + "/book.bin").c_str());
+  const std::string thumbnail = epub->getThumbBmpPath(FolioNooirTheme::COVER_HEIGHT);
+  const bool thumbnailCached = isValidBookThumbnail(thumbnail);
   if (uncached) {
     GUI.drawPopup(renderer, tr(STR_INDEXING));
   }
@@ -82,9 +88,17 @@ std::unique_ptr<Epub> ReaderActivity::loadEpub(const std::string& path) {
     // Lend the framebuffer's 48 KB to the container parse (expat + spine/TOC
     // build). The popup just displayed stays on the panel; whichever reader
     // activity follows redraws the full screen anyway.
-    std::optional<GfxRenderer::FrameBufferLoan> loan;
-    if (uncached) loan.emplace(renderer);
+    GfxRenderer::FrameBufferLoan loan(renderer);
     loaded = epub->load(true, SETTINGS.embeddedStyle == 0);
+    if (loaded && !thumbnailCached && epub->supportsThumbnailSource()) {
+      const size_t sourceBytes = epub->getCoverImageSize();
+      if (sourceBytes > library_book_preparation::MAX_COVER_SOURCE_BYTES) {
+        LOG_DBG("READER", "Skipping oversized first-open EPUB cover (%lu bytes): %s",
+                static_cast<unsigned long>(sourceBytes), path.c_str());
+      } else if (sourceBytes > 0 && !epub->generateThumbBmp(FolioNooirTheme::COVER_HEIGHT)) {
+        LOG_DBG("READER", "First-open EPUB cover preparation failed; reader will continue: %s", path.c_str());
+      }
+    }
   }
   if (loaded) {
     return epub;
@@ -105,8 +119,18 @@ std::unique_ptr<Xtc> ReaderActivity::loadXtc(const std::string& path) {
     LOG_ERR("READER", "Failed to allocate XTC object");
     return nullptr;
   }
-  if (xtc->load()) {
-    return xtc;
+  const std::string thumbnail = xtc->getThumbBmpPath(FolioNooirTheme::COVER_HEIGHT);
+  const bool thumbnailCached = isValidBookThumbnail(thumbnail);
+  {
+    std::optional<GfxRenderer::FrameBufferLoan> loan;
+    if (!thumbnailCached) loan.emplace(renderer);
+    if (xtc->load()) {
+      if (!thumbnailCached && xtc->getPageCount() > 0 &&
+          !xtc->generateThumbBmp(FolioNooirTheme::COVER_HEIGHT)) {
+        LOG_DBG("READER", "First-open XTC cover preparation failed; reader will continue: %s", path.c_str());
+      }
+      return xtc;
+    }
   }
 
   LOG_ERR("READER", "Failed to load XTC");
@@ -144,7 +168,26 @@ std::unique_ptr<Cbz> ReaderActivity::loadCbz(const std::string& path) {
     LOG_ERR("READER", "Failed to allocate CBZ object");
     return nullptr;
   }
-  if (cbz->load()) return cbz;
+  const std::string thumbnail = cbz->getThumbBmpPath(FolioNooirTheme::COVER_HEIGHT);
+  const bool thumbnailCached = isValidBookThumbnail(thumbnail);
+  {
+    // ComicInfo and cover reads use ZIP inflation. Borrow the existing frame
+    // while the opening feedback remains visible, then restore it before the
+    // concrete reader allocates its page buffers.
+    GfxRenderer::FrameBufferLoan loan(renderer);
+    if (cbz->load()) {
+      if (!thumbnailCached && cbz->supportsThumbnailSource()) {
+        const size_t sourceBytes = cbz->getCoverImageSize();
+        if (sourceBytes > library_book_preparation::MAX_COVER_SOURCE_BYTES) {
+          LOG_DBG("READER", "Skipping oversized first-open CBZ cover (%lu bytes): %s",
+                  static_cast<unsigned long>(sourceBytes), path.c_str());
+        } else if (sourceBytes > 0 && !cbz->generateThumbBmp(FolioNooirTheme::COVER_HEIGHT)) {
+          LOG_DBG("READER", "First-open CBZ cover preparation failed; reader will continue: %s", path.c_str());
+        }
+      }
+      return cbz;
+    }
+  }
 
   if (cbz->pageIndexTooLarge()) {
     LOG_ERR("READER", "CBZ archive too large for this device: %s", path.c_str());

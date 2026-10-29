@@ -67,6 +67,8 @@ class Epub {
   // Size of the source cover item, when metadata has identified one. Used by
   // lightweight shelf retrieval to avoid decoding pathological giant covers.
   size_t getCoverImageSize() const;
+  bool hasCoverImageReference() const;
+  bool supportsThumbnailSource() const;
   bool generateCoverBmp(bool cropped = false) const;
   std::string getThumbBmpPath() const;
   std::string getThumbBmpPath(int height) const;

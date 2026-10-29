@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 // Forward declaration keeps miniz out of consumer translation units; the
 // decompressor state is heap-allocated in the .cpp where the type is complete.
@@ -57,7 +58,10 @@ class InflateStream {
   // Allocate decompressor state (and the 32KB window when streaming) and reset
   // stream state. Reuses existing allocations on repeated calls. Returns false
   // on OOM.
-  bool init(bool streaming);
+  // largestBlockHint is used only to avoid a guaranteed-futile window malloc.
+  // A live BuildScratch loan is checked first and can satisfy the request even
+  // when the current heap's largest block is smaller than the 32 KiB window.
+  bool init(bool streaming, size_t largestBlockHint = std::numeric_limits<size_t>::max());
 
   InitFailure initFailure() const { return initFailureReason; }
   const char* initFailureName() const {

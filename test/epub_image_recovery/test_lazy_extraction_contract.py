@@ -66,7 +66,9 @@ class EpubImageRecoveryContract(unittest.TestCase):
 
     def test_inflater_failure_log_identifies_entry_and_heap_shape(self):
         streaming = ZIP[
-            ZIP.index("if (!inflate.init(true))") : ZIP.index("inflate.setFill(zipFillCallback", ZIP.index("if (!inflate.init(true))"))
+            ZIP.index("if (!inflate.init(true, largestBeforeInflate))") : ZIP.index(
+                "inflate.setFill(zipFillCallback", ZIP.index("if (!inflate.init(true, largestBeforeInflate))")
+            )
         ]
         self.assertIn("entry=%s", streaming)
         self.assertIn("free=%u", streaming)

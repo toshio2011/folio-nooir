@@ -5,6 +5,7 @@
 #include <JpegToBmpConverter.h>
 #include <Logging.h>
 #include <PngToBmpConverter.h>
+#include <Bitmap.h>
 #include <Utf8.h>
 #include <ZipFile.h>
 
@@ -695,6 +696,17 @@ size_t Epub::getCoverImageSize() const {
   return getItemSize(metadata->coverItemHref, &size) ? size : 0;
 }
 
+bool Epub::hasCoverImageReference() const {
+  const auto* metadata = activeMetadata();
+  return metadata && !metadata->coverItemHref.empty();
+}
+
+bool Epub::supportsThumbnailSource() const {
+  const auto* metadata = activeMetadata();
+  if (!metadata || metadata->coverItemHref.empty()) return false;
+  return FsHelpers::hasJpgExtension(metadata->coverItemHref) || FsHelpers::hasPngExtension(metadata->coverItemHref);
+}
+
 bool Epub::generateCoverBmp(bool cropped) const {
   // Already generated, return true
   if (Storage.exists(getCoverBmpPath(cropped).c_str())) {
@@ -789,10 +801,22 @@ std::string Epub::getThumbBmpPath() const { return cachePath + "/thumb_[HEIGHT].
 std::string Epub::getThumbBmpPath(int height) const { return cachePath + "/thumb_" + std::to_string(height) + ".bmp"; }
 
 bool Epub::generateThumbBmp(int height) const {
-  // Already generated, return true
-  if (Storage.exists(getThumbBmpPath(height).c_str())) {
-    return true;
-  }
+  const std::string outputPath = getThumbBmpPath(height);
+  auto validThumbnail = [](const std::string& path) {
+    HalFile file;
+    if (!Storage.openFileForRead("EBP", path, file)) return false;
+    Bitmap bitmap(file);
+    const bool parsed = bitmap.parseHeaders() == BmpReaderError::Ok;
+    const uint64_t dataEnd = static_cast<uint64_t>(file.position()) +
+                             static_cast<uint64_t>(bitmap.getRowBytes()) * bitmap.getHeight();
+    const bool valid = parsed && bitmap.getWidth() > 0 && bitmap.getHeight() > 0 && file.fileSize64() >= dataEnd;
+    file.close();
+    return valid;
+  };
+  // Do not let a zero-byte or interrupted earlier attempt suppress retries.
+  // A valid cache remains untouched, including during a failed replacement.
+  if (validThumbnail(outputPath)) return true;
+  if (Storage.exists(outputPath.c_str())) Storage.remove(outputPath.c_str());
 
   const auto* metadata = activeMetadata();
   if (!metadata) {
@@ -803,7 +827,9 @@ bool Epub::generateThumbBmp(int height) const {
   const auto coverImageHref = metadata->coverItemHref;
   if (coverImageHref.empty()) {
     LOG_DBG("EBP", "No known cover image for thumbnail");
-  } else if (FsHelpers::hasJpgExtension(coverImageHref)) {
+    return false;
+  }
+  if (FsHelpers::hasJpgExtension(coverImageHref)) {
     LOG_DBG("EBP", "Generating thumb BMP from JPG cover image");
     const auto coverJpgTempPath = getCachePath() + "/.cover.jpg";
 
@@ -811,9 +837,13 @@ bool Epub::generateThumbBmp(int height) const {
     if (!Storage.openFileForWrite("EBP", coverJpgTempPath, coverJpg)) {
       return false;
     }
-    readItemContentsToStream(coverImageHref, coverJpg, 1024);
+    const bool extracted = readItemContentsToStream(coverImageHref, coverJpg, 1024);
     // Explicitly close() file before reopening for reading
     coverJpg.close();
+    if (!extracted) {
+      Storage.remove(coverJpgTempPath.c_str());
+      return false;
+    }
 
     if (!Storage.openFileForRead("EBP", coverJpgTempPath, coverJpg)) {
       return false;
@@ -827,13 +857,14 @@ bool Epub::generateThumbBmp(int height) const {
     // Generate 1-bit BMP for fast home screen rendering (no gray passes needed)
     int THUMB_TARGET_WIDTH = height * 0.6;
     int THUMB_TARGET_HEIGHT = height;
-    const bool success = JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(coverJpg, thumbBmp, THUMB_TARGET_WIDTH,
-                                                                             THUMB_TARGET_HEIGHT);
+    const bool converted = JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(coverJpg, thumbBmp, THUMB_TARGET_WIDTH,
+                                                                               THUMB_TARGET_HEIGHT);
     // Explicitly close() files before calling Storage.remove()
     coverJpg.close();
-    thumbBmp.close();
+    const bool closed = thumbBmp.close();
     Storage.remove(coverJpgTempPath.c_str());
 
+    const bool success = converted && closed && validThumbnail(outputPath);
     if (!success) {
       LOG_ERR("EBP", "Failed to generate thumb BMP from JPG cover image");
       Storage.remove(getThumbBmpPath(height).c_str());
@@ -848,9 +879,13 @@ bool Epub::generateThumbBmp(int height) const {
     if (!Storage.openFileForWrite("EBP", coverPngTempPath, coverPng)) {
       return false;
     }
-    readItemContentsToStream(coverImageHref, coverPng, 1024);
+    const bool extracted = readItemContentsToStream(coverImageHref, coverPng, 1024);
     // Explicitly close() file before reopening for reading
     coverPng.close();
+    if (!extracted) {
+      Storage.remove(coverPngTempPath.c_str());
+      return false;
+    }
 
     if (!Storage.openFileForRead("EBP", coverPngTempPath, coverPng)) {
       return false;
@@ -862,13 +897,14 @@ bool Epub::generateThumbBmp(int height) const {
     }
     int THUMB_TARGET_WIDTH = height * 0.6;
     int THUMB_TARGET_HEIGHT = height;
-    const bool success =
+    const bool converted =
         PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(coverPng, thumbBmp, THUMB_TARGET_WIDTH, THUMB_TARGET_HEIGHT);
     // Explicitly close() files before calling Storage.remove()
     coverPng.close();
-    thumbBmp.close();
+    const bool closed = thumbBmp.close();
     Storage.remove(coverPngTempPath.c_str());
 
+    const bool success = converted && closed && validThumbnail(outputPath);
     if (!success) {
       LOG_ERR("EBP", "Failed to generate thumb BMP from PNG cover image");
       Storage.remove(getThumbBmpPath(height).c_str());
@@ -877,11 +913,8 @@ bool Epub::generateThumbBmp(int height) const {
     return success;
   } else {
     LOG_ERR("EBP", "Cover image is not a supported format, skipping thumbnail");
+    return false;
   }
-
-  // Write an empty bmp file to avoid generation attempts in the future
-  HalFile thumbBmp;
-  Storage.openFileForWrite("EBP", getThumbBmpPath(height), thumbBmp);
   return false;
 }
 

@@ -16,7 +16,7 @@ constexpr size_t STATE_ALIGNED = (sizeof(tinfl_decompressor) + 7) & ~size_t{7};
 
 InflateStream::~InflateStream() { deinit(); }
 
-bool InflateStream::init(const bool streaming) {
+bool InflateStream::init(const bool streaming, const size_t largestBlockHint) {
   // Every consumer constructs a fresh stream per operation, so acquire storage
   // from scratch each init (releasing any prior backing first).
   deinit();
@@ -31,6 +31,14 @@ bool InflateStream::init(const bool streaming) {
     state = reinterpret_cast<tinfl_decompressor*>(arenaBase);
     window = streaming ? arenaBase + STATE_ALIGNED : nullptr;
   } else {
+    // Avoid allocating the inflater state when the measured largest block is
+    // already 12 bytes (or more) short of the exact 32 KiB ring request.
+    // Callers with a framebuffer loan still succeed above without touching
+    // the fragmented heap.
+    if (streaming && largestBlockHint < WINDOW_SIZE) {
+      initFailureReason = InitFailure::WindowAllocation;
+      return false;
+    }
     // Raw malloc (not makeUniqueNoThrow): the header keeps tinfl_decompressor
     // an incomplete type so consumers never include miniz; both blocks are
     // freed in deinit()/the destructor.

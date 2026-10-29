@@ -7,6 +7,7 @@
 #include <ZipFile.h>
 #include <JpegToBmpConverter.h>
 #include <PngToBmpConverter.h>
+#include <Bitmap.h>
 
 #include <algorithm>
 #include <cctype>
@@ -125,10 +126,11 @@ std::string fallbackTitleForPath(const std::string& path) {
 bool isUsableThumbnail(const std::string& path) {
   HalFile file;
   if (!Storage.openFileForRead("CBZ", path, file)) return false;
-  const bool largeEnough = file.size() > 62;
-  uint8_t signature[2]{};
-  const bool header = largeEnough && file.read(signature, sizeof(signature)) == sizeof(signature) &&
-                      signature[0] == 'B' && signature[1] == 'M';
+  Bitmap bitmap(file);
+  const bool parsed = bitmap.parseHeaders() == BmpReaderError::Ok;
+  const uint64_t dataEnd = static_cast<uint64_t>(file.position()) +
+                           static_cast<uint64_t>(bitmap.getRowBytes()) * bitmap.getHeight();
+  const bool header = parsed && bitmap.getWidth() > 0 && bitmap.getHeight() > 0 && file.fileSize64() >= dataEnd;
   file.close();
   return header;
 }
@@ -555,6 +557,18 @@ std::string Cbz::getAuthor() const {
 }
 
 std::string Cbz::getSynopsis() const { return metadataLoaded ? metadata.summary : std::string(); }
+
+bool Cbz::supportsThumbnailSource() const {
+  if (!metadataLoaded || metadata.coverEntry.empty()) return false;
+  return FsHelpers::hasJpgExtension(metadata.coverEntry) || FsHelpers::hasPngExtension(metadata.coverEntry);
+}
+
+size_t Cbz::getCoverImageSize() const {
+  if (!metadataLoaded || metadata.coverEntry.empty()) return 0;
+  ZipFile zip(filepath);
+  size_t size = 0;
+  return zip.getInflatedFileSize(metadata.coverEntry.c_str(), &size) ? size : 0;
+}
 
 bool Cbz::generateThumbBmp(const int height) const {
   if (!metadataLoaded || height <= 0) return false;

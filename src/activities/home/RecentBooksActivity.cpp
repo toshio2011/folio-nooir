@@ -39,6 +39,7 @@
 #include "util/FolioLiteLayoutPolicy.h"
 #include "util/StatisticsDate.h"
 #include "util/RecentBooksViewPolicy.h"
+#include "util/LibraryBookPreparationPolicy.h"
 #include "util/SynopsisPreview.h"
 #include "util/EpubDiagnostics.h"
 #include "components/UITheme.h"
@@ -62,13 +63,6 @@ constexpr uint16_t FOLIO_HOME_OLDEST_VERSION = 8;
 constexpr size_t FOLIO_HOME_LEGACY_PAGE_CAPACITY = SpineShelfPlanner::TWO_ROW_SLOT_CAPACITY;
 static_assert(HomeSnapshotPolicy::SPINE_THREE_ROW_MAX_PAGE_ITEMS == SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY,
               "Home snapshot capacity must match the three-row planner bound");
-// Manual cover refresh is the only path that may decode a source image. Keep
-// it bounded for X3/X4, but allow normal high-quality covers (the old 512 KiB
-// limit rejected many perfectly usable 2 MiB JPEGs before the converter could
-// apply its own dimension and heap guards). Ordinary Recent bootstrap never
-// enters this path and remains thumbnail-free.
-constexpr size_t MAX_MANUAL_THUMBNAIL_SOURCE_BYTES = 3u * 1024u * 1024u;
-
 bool isFolioNooirLiteTheme(const uint8_t theme) {
   return theme == CrossPointSettings::UI_THEME::FOLIO_NOOIR_LITE;
 }
@@ -2379,6 +2373,11 @@ void RecentBooksActivity::generateNextCover() {
   // metadata and thumbnails without a background migration queue.
   const bool forceRebuild = coverGenerationRequested;
   const bool metadataOnly = forceRebuild;
+  // The Refresh Book Cache popup has already rendered. Keep that frame on the
+  // panel and reuse its 48 KiB for bounded ZIP inflation during this explicit
+  // one-book operation.
+  std::optional<GfxRenderer::FrameBufferLoan> framebufferLoan;
+  if (forceRebuild) framebufferLoan.emplace(renderer);
   const size_t recentBookCount = recentBooks.size();
   // Metadata extraction and thumbnail work may perform SD reads and update the
   // store. Release the long-lived Home read view and copy only the one record
@@ -2430,7 +2429,7 @@ void RecentBooksActivity::generateNextCover() {
           const std::string thumb = UITheme::getCoverThumbPath(book.coverBmpPath, BOOKSHELF_COVER_HEIGHT);
           if (!isValidBookThumbnail(thumb)) {
             const size_t coverBytes = epub.getCoverImageSize();
-            if (coverBytes > MAX_MANUAL_THUMBNAIL_SOURCE_BYTES) {
+            if (coverBytes > library_book_preparation::MAX_COVER_SOURCE_BYTES) {
               LOG_DBG("SHELF", "Skipping oversized manual thumbnail source (%lu bytes): %s",
                       static_cast<unsigned long>(coverBytes), book.path.c_str());
             } else if (coverBytes == 0) {
@@ -2593,7 +2592,7 @@ bool RecentBooksActivity::generateCarouselHqThumbnail(const RecentBook& book, co
       const size_t coverBytes = epub.getCoverImageSize();
       if (coverBytes == 0) {
         LOG_DBG("SHELF", "No usable EPUB cover for Carousel HQ: %s", book.path.c_str());
-      } else if (coverBytes > MAX_MANUAL_THUMBNAIL_SOURCE_BYTES) {
+      } else if (coverBytes > library_book_preparation::MAX_COVER_SOURCE_BYTES) {
         LOG_DBG("SHELF", "Skipping oversized Carousel HQ source (%lu bytes): %s",
                 static_cast<unsigned long>(coverBytes), book.path.c_str());
       } else {

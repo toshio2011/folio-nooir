@@ -1,0 +1,5 @@
+add_executable(library_book_preparation_test LibraryBookPreparationTest.cpp)
+target_link_libraries(library_book_preparation_test PRIVATE GTest::gtest_main crosspoint_test_common)
+
+include(GoogleTest)
+gtest_discover_tests(library_book_preparation_test)

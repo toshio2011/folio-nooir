@@ -13,6 +13,7 @@
 #include "components/OptionPopup.h"
 #include "components/themes/folio_nooir/FolioNooirTheme.h"
 #include "util/ButtonNavigator.h"
+#include "util/LibraryBookPreparationPolicy.h"
 
 class FolioLibraryActivity final : public Activity {
  private:
@@ -38,6 +39,9 @@ class FolioLibraryActivity final : public Activity {
   struct RetrieveCacheStatus {
     bool metadataValid = false;
     bool thumbnailValid = false;
+    bool sourceKnownToHaveNoCover = false;
+    bool thumbnailSourceSupported = false;
+    size_t thumbnailSourceBytes = 0;
     std::string title;
     std::string author;
     std::string synopsis;
@@ -109,6 +113,7 @@ class FolioLibraryActivity final : public Activity {
   uint32_t retrieveAllMetadataCacheMisses = 0;
   uint32_t retrieveAllThumbnailCacheHits = 0;
   uint32_t retrieveAllThumbnailCacheMisses = 0;
+  library_book_preparation::RetrieveAllSummary retrieveAllSummary;
   std::atomic<bool> retrieveAllProcessingBook{false};
   std::string retrieveAllStatusMessage;
   size_t selectorIndex = 0;
