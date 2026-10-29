@@ -324,6 +324,7 @@ XtcParser::XtcParser()
       m_hasChapters(false),
       m_chaptersLoaded(false),
       m_extendedMetadataLoaded(false),
+      m_extendedMetadataState(ExtendedMetadataState::NotChecked),
       m_lastError(XtcError::OK) {
   memset(&m_header, 0, sizeof(m_header));
 }
@@ -414,6 +415,7 @@ void XtcParser::close() {
   m_hasChapters = false;
   memset(&m_header, 0, sizeof(m_header));
   m_extendedMetadataLoaded = false;
+  m_extendedMetadataState = ExtendedMetadataState::NotChecked;
 }
 
 bool XtcParser::ensureFileOpen() {
@@ -519,6 +521,7 @@ void XtcParser::loadExtendedMetadata() {
   const uint64_t fileSize = m_file.fileSize64();
   if (fileSize < footerSize) {
     m_extendedMetadataLoaded = true;
+    m_extendedMetadataState = ExtendedMetadataState::NotPresent;
     return;
   }
   if (!m_file.seek64(fileSize - footerSize)) return;
@@ -526,7 +529,9 @@ void XtcParser::loadExtendedMetadata() {
   uint8_t footer[footerSize];
   if (m_file.read(footer, sizeof(footer)) != sizeof(footer)) return;
   m_extendedMetadataLoaded = true;
+  m_extendedMetadataState = ExtendedMetadataState::NotPresent;
   if (std::memcmp(footer, kNooirMetadataMagic, sizeof(kNooirMetadataMagic)) != 0) return;
+  m_extendedMetadataState = ExtendedMetadataState::Unsupported;
   const size_t lengthOffset = sizeof(kNooirMetadataMagic);
   const uint32_t payloadLength = static_cast<uint32_t>(footer[lengthOffset]) |
                                 (static_cast<uint32_t>(footer[lengthOffset + 1u]) << 8u) |
@@ -547,10 +552,12 @@ void XtcParser::loadExtendedMetadata() {
   const uint64_t lastEntryOffset = m_header.pageTableOffset + lastEntryIndex;
   if (!m_file.seek64(lastEntryOffset)) {
     m_extendedMetadataLoaded = false;
+    m_extendedMetadataState = ExtendedMetadataState::NotChecked;
     return;
   }
   if (m_file.read(reinterpret_cast<uint8_t*>(&lastPage), sizeof(lastPage)) != sizeof(lastPage)) {
     m_extendedMetadataLoaded = false;
+    m_extendedMetadataState = ExtendedMetadataState::NotChecked;
     return;
   }
   if (lastPage.dataOffset < pageTableEnd || lastPage.dataOffset > fileSize ||
@@ -559,12 +566,14 @@ void XtcParser::loadExtendedMetadata() {
   if (payloadOffset != pageDataEnd) return;
   if (!m_file.seek64(payloadOffset)) {
     m_extendedMetadataLoaded = false;
+    m_extendedMetadataState = ExtendedMetadataState::NotChecked;
     return;
   }
 
   char* payload = static_cast<char*>(malloc(payloadLength));
   if (!payload) {
     m_extendedMetadataLoaded = false;
+    m_extendedMetadataState = ExtendedMetadataState::NotChecked;
     return;
   }
   const bool readComplete = m_file.read(reinterpret_cast<uint8_t*>(payload), payloadLength) == payloadLength;
@@ -575,9 +584,11 @@ void XtcParser::loadExtendedMetadata() {
     if (parser.parse(description, series)) {
       m_description = std::move(description);
       m_series = std::move(series);
+      m_extendedMetadataState = ExtendedMetadataState::Parsed;
     }
   } else {
     m_extendedMetadataLoaded = false;
+    m_extendedMetadataState = ExtendedMetadataState::NotChecked;
   }
   free(payload);
 }

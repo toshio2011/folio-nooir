@@ -18,6 +18,8 @@
 
 namespace xtc {
 
+enum class ExtendedMetadataState : uint8_t { NotChecked = 0, NotPresent = 1, Parsed = 2, Unsupported = 3 };
+
 /**
  * XTC File Parser
  *
@@ -80,6 +82,7 @@ class XtcParser {
   // True after the trailer was read or ruled absent/invalid. Transient storage
   // and allocation failures leave this false so callers can retry later.
   bool hasLoadedExtendedMetadata() const { return m_extendedMetadataLoaded; }
+  ExtendedMetadataState getExtendedMetadataState() const { return m_extendedMetadataState; }
 
   bool hasChapters() const { return m_hasChapters; }
   const std::vector<ChapterInfo>& getChapters();
@@ -106,6 +109,7 @@ class XtcParser {
   bool m_hasChapters;
   bool m_chaptersLoaded;
   bool m_extendedMetadataLoaded;
+  ExtendedMetadataState m_extendedMetadataState;
   XtcError m_lastError;
 
   // Internal helper functions

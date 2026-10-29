@@ -1,5 +1,6 @@
 add_executable(XtcMetadataTest
   XtcMetadataTest.cpp
+  ${REPO_ROOT}/lib/Xtc/XtcMetadataCache.cpp
   ${REPO_ROOT}/lib/Xtc/Xtc/XtcParser.cpp
 )
 target_include_directories(XtcMetadataTest BEFORE PRIVATE

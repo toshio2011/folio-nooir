@@ -14,6 +14,7 @@
 
 #include "Xtc/XtcParser.h"
 #include "Xtc/XtcTypes.h"
+#include "XtcMetadataCache.h"
 
 /**
  * XTC Ebook Handler
@@ -26,6 +27,14 @@ class Xtc {
   std::string cachePath;
   std::unique_ptr<xtc::XtcParser> parser;
   bool loaded;
+  mutable xtc_metadata_cache::Record metadataCache;
+  mutable xtc_metadata_cache::SourceFingerprint sourceFingerprint;
+  mutable bool metadataCacheLoaded = false;
+  mutable bool metadataCacheWriteAttempted = false;
+  mutable bool sourceFingerprintLoaded = false;
+  mutable xtc_metadata_cache::CoverState pendingCoverState = xtc_metadata_cache::CoverState::Unknown;
+  bool loadMetadataCache();
+  void persistMetadataCache() const;
   bool generateXthThumbBmpStreaming(uint16_t sourceWidth, uint16_t sourceHeight, uint16_t thumbWidth,
                                    uint16_t thumbHeight, uint32_t inverseScaleFp) const;
   bool generateXtgThumbBmpStreaming(uint16_t sourceWidth, uint16_t sourceHeight, uint16_t thumbWidth,
@@ -61,6 +70,7 @@ class Xtc {
 
   // Path accessors
   const std::string& getCachePath() const { return cachePath; }
+  std::string getMetadataCachePath() const { return cachePath + "/metadata.bin"; }
   const std::string& getPath() const { return filepath; }
 
   // Metadata
@@ -69,6 +79,8 @@ class Xtc {
   const std::string& getDescription() const;
   const std::string& getSeries() const;
   bool hasLoadedExtendedMetadata() const;
+  xtc_metadata_cache::ExtendedMetadataState getExtendedMetadataState() const;
+  void noteCoverCacheState(xtc_metadata_cache::CoverState state) const;
   bool hasChapters() const;
   const std::vector<xtc::ChapterInfo>& getChapters();
 

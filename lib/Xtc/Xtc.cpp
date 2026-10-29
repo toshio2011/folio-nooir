@@ -123,10 +123,41 @@ struct XtcThumbnailBuffers {
     return xAxis && yAxis && firstPlaneSums && output && secondPlaneColumnSums;
   }
 };
+
+struct XtcWorkspaceTrace {
+  const char* kind;
+  size_t requestedBytes;
+  size_t freeBefore;
+  size_t largestBefore;
+  bool allocated = false;
+
+  void noteAllocated() {
+    allocated = true;
+    LOG_INF("XTCMEM", "stage=workspace_allocated kind=%s bytes=%lu free=%lu largest=%lu", kind,
+            static_cast<unsigned long>(requestedBytes),
+            static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+            static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+  }
+
+  ~XtcWorkspaceTrace() {
+    LOG_INF("XTCMEM", "stage=workspace_released kind=%s bytes=%lu allocated=%d before=%lu/%lu after=%lu/%lu", kind,
+            static_cast<unsigned long>(requestedBytes), allocated ? 1 : 0,
+            static_cast<unsigned long>(freeBefore), static_cast<unsigned long>(largestBefore),
+            static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+            static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+  }
+};
 }  // namespace
 
 bool Xtc::load() {
   LOG_DBG("XTC", "Loading XTC: %s", filepath.c_str());
+
+  metadataCache = {};
+  sourceFingerprint = {};
+  metadataCacheLoaded = false;
+  metadataCacheWriteAttempted = false;
+  sourceFingerprintLoaded = false;
+  pendingCoverState = xtc_metadata_cache::CoverState::Unknown;
 
   // Initialize parser
   parser.reset(new xtc::XtcParser());
@@ -140,8 +171,56 @@ bool Xtc::load() {
   }
 
   loaded = true;
+  loadMetadataCache();
   LOG_DBG("XTC", "Loaded XTC: %s (%lu pages)", filepath.c_str(), parser->getPageCount());
   return true;
+}
+
+bool Xtc::loadMetadataCache() {
+  sourceFingerprintLoaded = xtc_metadata_cache::readSourceFingerprint(filepath, sourceFingerprint);
+  if (!sourceFingerprintLoaded) return false;
+
+  const auto result = xtc_metadata_cache::load(getMetadataCachePath(), sourceFingerprint, metadataCache);
+  metadataCacheLoaded = result == xtc_metadata_cache::LoadResult::Hit;
+  if (metadataCacheLoaded) {
+    pendingCoverState = metadataCache.cover;
+    metadataCacheWriteAttempted = true;
+  }
+  return metadataCacheLoaded;
+}
+
+void Xtc::persistMetadataCache() const {
+  if (!loaded || !parser || metadataCacheWriteAttempted) return;
+  const auto parserState = parser->getExtendedMetadataState();
+  if (parserState == xtc::ExtendedMetadataState::NotChecked) return;
+
+  xtc_metadata_cache::Record record;
+  record.title = parser->getTitle();
+  if (record.title.empty()) {
+    const size_t slash = filepath.find_last_of('/');
+    const size_t titleStart = slash == std::string::npos ? 0 : slash + 1;
+    const size_t dot = filepath.find_last_of('.');
+    record.title = (dot == std::string::npos || dot <= titleStart) ? filepath.substr(titleStart)
+                                                                   : filepath.substr(titleStart, dot - titleStart);
+  }
+  record.author = parser->getAuthor();
+  record.synopsis = parser->getDescription();
+  record.series = parser->getSeries();
+  record.extendedMetadata = static_cast<xtc_metadata_cache::ExtendedMetadataState>(parserState);
+  record.cover = pendingCoverState;
+
+  if (!sourceFingerprintLoaded) {
+    sourceFingerprintLoaded = xtc_metadata_cache::readSourceFingerprint(filepath, sourceFingerprint);
+  }
+  if (!sourceFingerprintLoaded) return;
+
+  metadataCacheWriteAttempted = true;
+  setupCacheDir();
+  if (xtc_metadata_cache::store(getMetadataCachePath(), sourceFingerprint, record)) {
+    metadataCache = std::move(record);
+    metadataCacheLoaded = true;
+    pendingCoverState = metadataCache.cover;
+  }
 }
 
 bool Xtc::clearCache() const {
@@ -228,6 +307,7 @@ void Xtc::setupCacheDir() const {
 }
 
 std::string Xtc::getTitle() const {
+  if (metadataCacheLoaded) return metadataCache.title;
   if (!loaded || !parser) {
     return "";
   }
@@ -256,6 +336,7 @@ std::string Xtc::getTitle() const {
 }
 
 std::string Xtc::getAuthor() const {
+  if (metadataCacheLoaded) return metadataCache.author;
   if (!loaded || !parser) {
     return "";
   }
@@ -269,7 +350,10 @@ const std::string& Xtc::getDescription() const {
   if (!loaded || !parser) {
     return kEmpty;
   }
-  return parser->getDescription();
+  if (metadataCacheLoaded) return metadataCache.synopsis;
+  const std::string& description = parser->getDescription();
+  persistMetadataCache();
+  return description;
 }
 
 const std::string& Xtc::getSeries() const {
@@ -277,11 +361,38 @@ const std::string& Xtc::getSeries() const {
   if (!loaded || !parser) {
     return kEmpty;
   }
-  return parser->getSeries();
+  if (metadataCacheLoaded) return metadataCache.series;
+  const std::string& series = parser->getSeries();
+  persistMetadataCache();
+  return series;
 }
 
 bool Xtc::hasLoadedExtendedMetadata() const {
-  return loaded && parser && parser->hasLoadedExtendedMetadata();
+  return loaded && parser && (metadataCacheLoaded || parser->hasLoadedExtendedMetadata());
+}
+
+xtc_metadata_cache::ExtendedMetadataState Xtc::getExtendedMetadataState() const {
+  if (metadataCacheLoaded) return metadataCache.extendedMetadata;
+  if (!loaded || !parser) return xtc_metadata_cache::ExtendedMetadataState::NotChecked;
+  return static_cast<xtc_metadata_cache::ExtendedMetadataState>(parser->getExtendedMetadataState());
+}
+
+void Xtc::noteCoverCacheState(const xtc_metadata_cache::CoverState state) const {
+  pendingCoverState = state;
+  if (metadataCacheLoaded) {
+    if (metadataCache.cover == state) return;
+    if (!sourceFingerprintLoaded) {
+      sourceFingerprintLoaded = xtc_metadata_cache::readSourceFingerprint(filepath, sourceFingerprint);
+    }
+    if (!sourceFingerprintLoaded) return;
+    auto updated = metadataCache;
+    updated.cover = state;
+    setupCacheDir();
+    if (xtc_metadata_cache::store(getMetadataCachePath(), sourceFingerprint, updated)) metadataCache = std::move(updated);
+    return;
+  }
+  metadataCacheWriteAttempted = false;
+  persistMetadataCache();
 }
 
 bool Xtc::hasChapters() const {
@@ -487,6 +598,7 @@ bool Xtc::generateXtgThumbBmpStreaming(const uint16_t sourceWidth, const uint16_
                                               inverseScaleFp, layout)) {
     LOG_DBG("XTC", "Skipping XTC thumbnail outside bounded workspace (%ux%u -> %ux%u)", sourceWidth,
             sourceHeight, thumbWidth, thumbHeight);
+    noteCoverCacheState(xtc_metadata_cache::CoverState::Unsupported);
     return false;
   }
 
@@ -499,12 +611,17 @@ bool Xtc::generateXtgThumbBmpStreaming(const uint16_t sourceWidth, const uint16_
     return false;
   }
 
+  LOG_INF("XTCMEM", "stage=workspace_preflight kind=xtg bytes=%lu free=%lu largest=%lu",
+          static_cast<unsigned long>(layout.totalBytes), static_cast<unsigned long>(freeBytes),
+          static_cast<unsigned long>(largestBlock));
+  XtcWorkspaceTrace trace{"xtg", layout.totalBytes, freeBytes, largestBlock};
   XtcOnePlaneThumbnailBuffers buffers;
   if (!buffers.allocate(layout)) {
     LOG_DBG("XTC", "Could not allocate bounded XTC thumbnail workspace (%lu bytes)",
             static_cast<unsigned long>(layout.totalBytes));
     return false;
   }
+  trace.noteAllocated();
   xtc_thumb::OnePlaneReducer reducer(sourceWidth, sourceHeight, thumbWidth, thumbHeight, inverseScaleFp, layout,
                                      buffers.xMap, buffers.yMap, buffers.xCounts, buffers.yCounts,
                                      buffers.whiteSums, buffers.outputRow);
@@ -564,6 +681,7 @@ bool Xtc::generateXthThumbBmpStreaming(const uint16_t sourceWidth, const uint16_
   if (!xtc_thumb::makeWorkspaceLayout(sourceWidth, sourceHeight, thumbWidth, thumbHeight, inverseScaleFp, layout)) {
     LOG_DBG("XTC", "Skipping XTCH thumbnail outside bounded workspace (%ux%u -> %ux%u)", sourceWidth,
             sourceHeight, thumbWidth, thumbHeight);
+    noteCoverCacheState(xtc_metadata_cache::CoverState::Unsupported);
     return false;
   }
 
@@ -576,12 +694,17 @@ bool Xtc::generateXthThumbBmpStreaming(const uint16_t sourceWidth, const uint16_
     return false;
   }
 
+  LOG_INF("XTCMEM", "stage=workspace_preflight kind=xtch bytes=%lu free=%lu largest=%lu",
+          static_cast<unsigned long>(layout.totalBytes), static_cast<unsigned long>(freeBytes),
+          static_cast<unsigned long>(largestBlock));
+  XtcWorkspaceTrace trace{"xtch", layout.totalBytes, freeBytes, largestBlock};
   XtcThumbnailBuffers buffers;
   if (!buffers.allocate(layout)) {
     LOG_DBG("XTC", "Could not allocate bounded XTCH thumbnail workspace (%lu bytes)",
             static_cast<unsigned long>(layout.totalBytes));
     return false;
   }
+  trace.noteAllocated();
   xtc_thumb::TwoPlaneReducer reducer(sourceWidth, sourceHeight, thumbWidth, thumbHeight, inverseScaleFp, layout,
                                      buffers.xAxis, buffers.yAxis, buffers.firstPlaneSums, buffers.output,
                                      buffers.secondPlaneColumnSums);
@@ -650,7 +773,10 @@ bool Xtc::generateThumbBmp(int height) const {
   if (height <= 0) return false;
   // A complete cached image remains reusable; a short/incomplete file is not a cache hit.
   const std::string cachedThumbPath = getThumbBmpPath(height);
-  if (isCompleteThumbnail(cachedThumbPath)) return true;
+  if (isCompleteThumbnail(cachedThumbPath)) {
+    noteCoverCacheState(xtc_metadata_cache::CoverState::Available);
+    return true;
+  }
 
   if (!loaded || !parser) {
     LOG_ERR("XTC", "Cannot generate thumb BMP, file not loaded");
@@ -659,6 +785,7 @@ bool Xtc::generateThumbBmp(int height) const {
 
   if (parser->getPageCount() == 0) {
     LOG_ERR("XTC", "No pages in XTC file");
+    noteCoverCacheState(xtc_metadata_cache::CoverState::NoCover);
     return false;
   }
 
@@ -681,6 +808,7 @@ bool Xtc::generateThumbBmp(int height) const {
 
   if (pageInfo.width == 0 || pageInfo.height == 0) {
     LOG_DBG("XTC", "Skipping invalid thumbnail source dimensions (%ux%u)", pageInfo.width, pageInfo.height);
+    noteCoverCacheState(xtc_metadata_cache::CoverState::Unsupported);
     return false;
   }
 
@@ -715,6 +843,7 @@ bool Xtc::generateThumbBmp(int height) const {
         Storage.remove(temporaryPath.c_str());
         return false;
       }
+      noteCoverCacheState(xtc_metadata_cache::CoverState::Available);
       LOG_DBG("XTC", "Copied cover to thumbnail without scaling");
       return true;
     }
@@ -723,7 +852,10 @@ bool Xtc::generateThumbBmp(int height) const {
 
   uint16_t thumbWidth = static_cast<uint16_t>(pageInfo.width * scale);
   uint16_t thumbHeight = static_cast<uint16_t>(pageInfo.height * scale);
-  if (thumbWidth == 0 || thumbHeight == 0) return false;
+  if (thumbWidth == 0 || thumbHeight == 0) {
+    noteCoverCacheState(xtc_metadata_cache::CoverState::Unsupported);
+    return false;
+  }
 
   LOG_DBG("XTC", "Generating thumb BMP: %dx%d -> %dx%d (scale: %.3f)", pageInfo.width, pageInfo.height, thumbWidth,
           thumbHeight, scale);
@@ -732,12 +864,21 @@ bool Xtc::generateThumbBmp(int height) const {
   // while XTCH keeps the existing bounded two-plane grayscale reducer.
   if (bitDepth == 2) {
     const uint32_t inverseScaleFp = static_cast<uint32_t>(65536.0f / scale);
-    return generateXthThumbBmpStreaming(pageInfo.width, pageInfo.height, thumbWidth, thumbHeight, inverseScaleFp);
+    const bool generated =
+        generateXthThumbBmpStreaming(pageInfo.width, pageInfo.height, thumbWidth, thumbHeight, inverseScaleFp);
+    if (generated) noteCoverCacheState(xtc_metadata_cache::CoverState::Available);
+    return generated;
   }
-  if (bitDepth != 1) return false;
+  if (bitDepth != 1) {
+    noteCoverCacheState(xtc_metadata_cache::CoverState::Unsupported);
+    return false;
+  }
 
   const uint32_t inverseScaleFp = static_cast<uint32_t>(65536.0f / scale);
-  return generateXtgThumbBmpStreaming(pageInfo.width, pageInfo.height, thumbWidth, thumbHeight, inverseScaleFp, height);
+  const bool generated =
+      generateXtgThumbBmpStreaming(pageInfo.width, pageInfo.height, thumbWidth, thumbHeight, inverseScaleFp, height);
+  if (generated) noteCoverCacheState(xtc_metadata_cache::CoverState::Available);
+  return generated;
 }
 
 uint32_t Xtc::getPageCount() const {

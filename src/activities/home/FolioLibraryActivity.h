@@ -40,11 +40,13 @@ class FolioLibraryActivity final : public Activity {
     bool metadataValid = false;
     bool thumbnailValid = false;
     bool sourceKnownToHaveNoCover = false;
+    bool sourceThumbnailUnsupported = false;
     bool thumbnailSourceSupported = false;
     size_t thumbnailSourceBytes = 0;
     std::string title;
     std::string author;
     std::string synopsis;
+    std::string series;
     std::string thumbnailPath;
   };
 
@@ -74,6 +76,8 @@ class FolioLibraryActivity final : public Activity {
   unsigned long recursiveSearchNoResultsUntilMs = 0;
   std::vector<std::string> allFiles;
   std::vector<std::string> files;
+  size_t allFilesStringCapacityBytes = 0;
+  size_t filesStringCapacityBytes = 0;
   LibraryFilter libraryFilter = LibraryFilter::All;
   std::unique_ptr<char[]> fileNameBuffer;
   std::array<Preview, PAGE_SIZE> previews;
@@ -143,6 +147,7 @@ class FolioLibraryActivity final : public Activity {
   void resetPreviews();
   void loadNextPreview();
   static RetrieveCacheStatus inspectRetrieveCache(const std::string& path);
+  void logPreparationMemory(const char* stage, const std::string& path) const;
   void refreshSelectedPreviewFromCache(const std::string& path, const RetrieveCacheStatus* status = nullptr);
   void loadSelectedMetadata();
   bool matchesLibraryFilter(const std::string& name) const;

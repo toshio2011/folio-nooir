@@ -11,12 +11,15 @@
 #include <Memory.h>
 #include <GfxRenderer.h>
 #include <Xtc.h>
+#include <XtcMetadataCache.h>
+#include <esp_heap_caps.h>
 
 #include <algorithm>
 #include <cctype>
 #include <iterator>
 
 #include "CrossPointSettings.h"
+#include "BleInput.h"
 #include "BookStateStore.h"
 #include "BookMetadataOverridesStore.h"
 #include "RecentBooksStore.h"
@@ -166,6 +169,8 @@ LibraryBookState getLibraryBookState(const std::string& path) {
 
 void FolioLibraryActivity::loadFiles() {
   allFiles.clear();
+  allFilesStringCapacityBytes = 0;
+  filesStringCapacityBytes = 0;
   allFiles.reserve(64);
   HalFile root = Storage.open(basepath.c_str());
   if (!root || !root.isDirectory() || !fileNameBuffer) return;
@@ -215,9 +220,15 @@ bool FolioLibraryActivity::matchesLibraryFilter(const std::string& name) const {
 
 void FolioLibraryActivity::applyLibraryFilter() {
   files.clear();
+  allFilesStringCapacityBytes = 0;
+  filesStringCapacityBytes = 0;
   files.reserve(allFiles.size());
   for (const auto& name : allFiles) {
-    if (matchesLibraryFilter(name)) files.push_back(name);
+    allFilesStringCapacityBytes += name.capacity();
+    if (matchesLibraryFilter(name)) {
+      files.push_back(name);
+      filesStringCapacityBytes += files.back().capacity();
+    }
   }
   selectorIndex = 0;
   observedSelectorIndex = SIZE_MAX;
@@ -347,19 +358,22 @@ FolioLibraryActivity::RetrieveCacheStatus FolioLibraryActivity::inspectRetrieveC
     status.thumbnailPath = xtc.getThumbBmpPath();
     status.thumbnailValid =
         isValidBookThumbnail(UITheme::getCoverThumbPath(status.thumbnailPath, FolioNooirTheme::COVER_HEIGHT));
-    const auto& recent = RECENT_BOOKS.getBooks();
-    const auto it = std::find_if(recent.begin(), recent.end(), [&](const RecentBook& book) {
-      return book.path == path;
-    });
-    // XTC presentation metadata lives with its Recent entry. A thumbnail by
-    // itself is not proof that title/author/synopsis were retrieved.
-    status.metadataValid = it != recent.end();
-    if (it != recent.end()) {
-      status.title = it->title;
-      status.author = it->author;
-      status.synopsis = it->synopsis;
+    xtc_metadata_cache::SourceFingerprint fingerprint;
+    xtc_metadata_cache::Record cached;
+    const bool sourceFingerprintValid = xtc_metadata_cache::readSourceFingerprint(path, fingerprint);
+    const auto cacheResult = sourceFingerprintValid
+                                 ? xtc_metadata_cache::load(xtc.getMetadataCachePath(), fingerprint, cached)
+                                 : xtc_metadata_cache::LoadResult::SourceUnavailable;
+    status.metadataValid = cacheResult == xtc_metadata_cache::LoadResult::Hit;
+    if (status.metadataValid) {
+      status.title = cached.title;
+      status.author = cached.author;
+      status.synopsis = cached.synopsis;
+      status.series = cached.series;
+      status.sourceKnownToHaveNoCover = cached.cover == xtc_metadata_cache::CoverState::NoCover;
+      status.sourceThumbnailUnsupported = cached.cover == xtc_metadata_cache::CoverState::Unsupported;
     }
-    status.thumbnailSourceSupported = true;
+    status.thumbnailSourceSupported = !status.sourceKnownToHaveNoCover && !status.sourceThumbnailUnsupported;
     return status;
   }
   if (FsHelpers::hasCbzExtension(path)) {
@@ -386,6 +400,31 @@ FolioLibraryActivity::RetrieveCacheStatus FolioLibraryActivity::inspectRetrieveC
   return status;
 }
 
+void FolioLibraryActivity::logPreparationMemory(const char* stage, const std::string& path) const {
+  size_t previewStringCapacity = 0;
+  for (const Preview& preview : previews) {
+    previewStringCapacity += preview.title.capacity() + preview.author.capacity() + preview.synopsis.capacity() +
+                             preview.series.capacity() + preview.coverBmpPath.capacity();
+  }
+  const size_t vectorBytes =
+      (allFiles.capacity() + files.capacity() + retrieveDirectories.capacity()) * sizeof(std::string);
+  LOG_INF("LIBMEM",
+          "stage=%s ms=%lu path=%s free=%lu largest=%lu catalog=%u/%u vector_bytes=%lu path_capacity=%lu "
+          "preview_capacity=%lu dirs=%u/%u queues=%d/%d/%d file_name_buffer=%u framebuffer=%d/%u active=%d/%d",
+          stage ? stage : "unknown", static_cast<unsigned long>(millis()), path.c_str(),
+          static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+          static_cast<unsigned long>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+          static_cast<unsigned>(allFiles.size()), static_cast<unsigned>(files.size()),
+          static_cast<unsigned long>(vectorBytes),
+          static_cast<unsigned long>(allFilesStringCapacityBytes + filesStringCapacityBytes),
+          static_cast<unsigned long>(previewStringCapacity), static_cast<unsigned>(retrieveDirectories.size()),
+          static_cast<unsigned>(retrieveDirectories.capacity()), retrieveQueueOpen ? 1 : 0,
+          retrieveThumbnailQueueWriting || retrieveThumbnailQueueReading ? 1 : 0, retrieveScanDirectoryOpen ? 1 : 0,
+          fileNameBuffer ? static_cast<unsigned>(NAME_BUFFER_SIZE) : 0u, renderer.hasFrameBuffer() ? 1 : 0,
+          static_cast<unsigned>(renderer.getBufferSize()), retrievingMetadata ? 1 : 0,
+          retrieveAllProcessingBook.load() ? 1 : 0);
+}
+
 void FolioLibraryActivity::refreshSelectedPreviewFromCache(const std::string& path,
                                                             const RetrieveCacheStatus* status) {
   // Retrieve All processes books that may not be in RecentBooksStore yet.
@@ -403,7 +442,8 @@ void FolioLibraryActivity::refreshSelectedPreviewFromCache(const std::string& pa
       if (!status->synopsis.empty()) preview.synopsis = status->synopsis;
       preview.coverBmpPath = status->thumbnailPath;
       preview.metadataAttempted = library_book_preparation::cacheIsComplete(
-          status->metadataValid, status->thumbnailValid, status->sourceKnownToHaveNoCover);
+          status->metadataValid, status->thumbnailValid, status->sourceKnownToHaveNoCover,
+          status->sourceThumbnailUnsupported);
     } else {
       Epub epub(path, "/.crosspoint");
       if (epub.loadCachedMetadataOnly()) {
@@ -424,6 +464,7 @@ void FolioLibraryActivity::refreshSelectedPreviewFromCache(const std::string& pa
         if (!status->title.empty()) preview.title = status->title;
         if (!status->author.empty()) preview.author = status->author;
         if (!status->synopsis.empty()) preview.synopsis = status->synopsis;
+        if (!status->series.empty()) preview.series = status->series;
       }
     } else {
       Xtc xtc(path, "/.crosspoint");
@@ -436,7 +477,8 @@ void FolioLibraryActivity::refreshSelectedPreviewFromCache(const std::string& pa
     }
     if (status) {
       preview.metadataAttempted = library_book_preparation::cacheIsComplete(
-          status->metadataValid, status->thumbnailValid, status->sourceKnownToHaveNoCover);
+          status->metadataValid, status->thumbnailValid, status->sourceKnownToHaveNoCover,
+          status->sourceThumbnailUnsupported);
     }
   } else if (FsHelpers::hasCbzExtension(path)) {
     Cbz cbz(path, "/.crosspoint");
@@ -514,6 +556,7 @@ void FolioLibraryActivity::startRetrieveAllBooks() {
   retrievingAllBooksPopupRendered = false;
   retrieveAllComplete = false;
   retrieveAllCompleteUntilMs = 0;
+  logPreparationMemory("retrieve_all_start", retrieveAllSelectedPath);
   LOG_DBG("PERF", "RetrieveAll start");
   requestUpdate(true);
 }
@@ -674,7 +717,8 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
       // still added to the small second-phase queue.
       if (cache.metadataValid) {
         if (library_book_preparation::shouldQueueThumbnail(cache.thumbnailValid, cache.sourceKnownToHaveNoCover,
-                                                            cache.thumbnailSourceSupported) &&
+                                                            cache.thumbnailSourceSupported,
+                                                            cache.sourceThumbnailUnsupported) &&
             cache.thumbnailSourceBytes <= library_book_preparation::MAX_COVER_SOURCE_BYTES) {
           if (!retrieveThumbnailQueueWriting ||
               !writeRetrieveQueuePath(retrieveThumbnailQueueFile, retrieveAllCurrentPath)) {
@@ -740,6 +784,7 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
           processedCache.thumbnailPath = xtc.getThumbBmpPath();
           processedCache.thumbnailSourceSupported = xtc.getPageCount() > 0;
           sourceKnownToHaveNoCover = xtc.getPageCount() == 0;
+          processedCache.sourceKnownToHaveNoCover = sourceKnownToHaveNoCover;
           thumbnailSourceSupported = processedCache.thumbnailSourceSupported;
           processedCacheValid = true;
           RECENT_BOOKS.refreshXtcMetadata(path, processedCache.title, processedCache.author,
@@ -880,6 +925,7 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
           } else if (xtc.getPageCount() == 0) {
             outcome = library_book_preparation::ThumbnailOutcome::SkippedNoSource;
             outcomeLabel = "no_source";
+            xtc.noteCoverCacheState(xtc_metadata_cache::CoverState::NoCover);
           } else if (xtc.generateThumbBmp(FolioNooirTheme::COVER_HEIGHT) && isValidBookThumbnail(thumb)) {
             outcome = library_book_preparation::ThumbnailOutcome::CacheHit;
             outcomeLabel = "generated";
@@ -940,6 +986,7 @@ void FolioLibraryActivity::processRetrieveAllBooks() {
 }
 
 void FolioLibraryActivity::finishRetrieveAllBooks(const char* message, const bool showCompletion) {
+  const bool finishedActiveRun = retrieveAllStartedMs != 0;
   std::string completionText = message ? message : "";
   if (showCompletion && completionText == RETRIEVE_ALL_BOOKS_DONE_MESSAGE) {
     completionText = retrieveAllSummary.completionMessage();
@@ -995,6 +1042,10 @@ void FolioLibraryActivity::finishRetrieveAllBooks(const char* message, const boo
   retrieveAllLastHalfRefreshProcessed = 0;
   retrieveAllCurrentStartedMs = 0;
   retrieveAllStartedMs = 0;
+  if (finishedActiveRun) {
+    logPreparationMemory("retrieve_all_complete", "");
+    bleinput::requestLifecycleReevaluation();
+  }
   requestUpdate(true);
 }
 
@@ -1327,6 +1378,7 @@ void FolioLibraryActivity::loadSelectedMetadata() {
       if (!cache.title.empty()) preview.title = cache.title;
       if (!cache.author.empty()) preview.author = cache.author;
       if (!cache.synopsis.empty()) preview.synopsis = cache.synopsis;
+      if (!cache.series.empty()) preview.series = cache.series;
       preview.coverBmpPath = cache.thumbnailPath;
     }
     if (cache.thumbnailValid && !cache.thumbnailPath.empty()) preview.coverBmpPath = cache.thumbnailPath;
@@ -1346,7 +1398,8 @@ void FolioLibraryActivity::loadSelectedMetadata() {
       preview.synopsis = overrideData->synopsis;
     }
     if (library_book_preparation::cacheIsComplete(cache.metadataValid, cache.thumbnailValid,
-                                                   cache.sourceKnownToHaveNoCover)) {
+                                                   cache.sourceKnownToHaveNoCover,
+                                                   cache.sourceThumbnailUnsupported)) {
       preview.metadataAttempted = true;
       requestUpdate();
       return;
@@ -1369,6 +1422,7 @@ void FolioLibraryActivity::loadSelectedMetadata() {
   retrievingMetadataProgress = 35;
   requestUpdateAndWait();
   const unsigned long retrievalWorkStartedMs = millis();
+  logPreparationMemory("hover_before_loan", path);
   retrievingMetadata = false;
   retrievingPopupRendered = false;
   forceMetadataRefresh = false;
@@ -1424,7 +1478,9 @@ void FolioLibraryActivity::loadSelectedMetadata() {
         parsedCoverPath = xtc.getThumbBmpPath();
         const std::string thumb = UITheme::getCoverThumbPath(parsedCoverPath, FolioNooirTheme::COVER_HEIGHT);
         thumbnailReady = isValidBookThumbnail(thumb);
+        if (thumbnailReady) xtc.noteCoverCacheState(xtc_metadata_cache::CoverState::Available);
         if (!thumbnailReady) {
+          if (xtc.getPageCount() == 0) xtc.noteCoverCacheState(xtc_metadata_cache::CoverState::NoCover);
           thumbnailReady = xtc.generateThumbBmp(FolioNooirTheme::COVER_HEIGHT) && isValidBookThumbnail(thumb);
         }
       }
@@ -1452,7 +1508,9 @@ void FolioLibraryActivity::loadSelectedMetadata() {
         }
       }
     }
+    logPreparationMemory("hover_inside_loan", path);
   }
+  logPreparationMemory("hover_after_loan", path);
 
   if (metadataReady) {
     if (!parsedTitle.empty()) preview.title = parsedTitle;
@@ -1478,6 +1536,8 @@ void FolioLibraryActivity::loadSelectedMetadata() {
           static_cast<unsigned long>(millis() - retrievalWorkStartedMs));
   LOG_INF("FLIB", "Hover retrieval path=%s metadata=%s thumbnail=%s no_cover=%s", path.c_str(),
           metadataReady ? "ready" : "failed", thumbnailReady ? "ready" : "missing", knownNoCover ? "yes" : "no");
+  bleinput::requestLifecycleReevaluation();
+  logPreparationMemory("hover_complete", path);
   retrievingMetadataProgress = 100;
   requestUpdate(true);
 }

@@ -129,6 +129,12 @@ std::unique_ptr<Xtc> ReaderActivity::loadXtc(const std::string& path) {
           !xtc->generateThumbBmp(FolioNooirTheme::COVER_HEIGHT)) {
         LOG_DBG("READER", "First-open XTC cover preparation failed; reader will continue: %s", path.c_str());
       }
+      if (thumbnailCached) xtc->noteCoverCacheState(xtc_metadata_cache::CoverState::Available);
+      else if (xtc->getPageCount() == 0) xtc->noteCoverCacheState(xtc_metadata_cache::CoverState::NoCover);
+      // Persist the optional XTC synopsis and series on first open, even when
+      // this book has never been added to RecentBooksStore.
+      (void)xtc->getDescription();
+      (void)xtc->getSeries();
       return xtc;
     }
   }

@@ -12,8 +12,9 @@ namespace library_book_preparation {
 inline constexpr size_t MAX_COVER_SOURCE_BYTES = 3u * 1024u * 1024u;
 
 constexpr bool cacheIsComplete(const bool metadataValid, const bool thumbnailValid,
-                               const bool sourceKnownToHaveNoCover) {
-  return metadataValid && (thumbnailValid || sourceKnownToHaveNoCover);
+                               const bool sourceKnownToHaveNoCover,
+                               const bool sourceThumbnailUnsupported = false) {
+  return metadataValid && (thumbnailValid || sourceKnownToHaveNoCover || sourceThumbnailUnsupported);
 }
 
 constexpr bool shouldStartHoverWork(const bool attemptedThisActivity, const bool supportedBook,
@@ -22,8 +23,8 @@ constexpr bool shouldStartHoverWork(const bool attemptedThisActivity, const bool
 }
 
 constexpr bool shouldQueueThumbnail(const bool thumbnailValid, const bool sourceKnownToHaveNoCover,
-                                    const bool sourceSupported) {
-  return !thumbnailValid && !sourceKnownToHaveNoCover && sourceSupported;
+                                    const bool sourceSupported, const bool sourceThumbnailUnsupported = false) {
+  return !thumbnailValid && !sourceKnownToHaveNoCover && !sourceThumbnailUnsupported && sourceSupported;
 }
 
 enum class ThumbnailOutcome : uint8_t {

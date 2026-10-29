@@ -9,6 +9,7 @@ TEST(LibraryBookPreparation, MetadataCacheWithMissingThumbnailRemainsIncomplete)
   EXPECT_FALSE(library_book_preparation::cacheIsComplete(true, false, false));
   EXPECT_TRUE(library_book_preparation::cacheIsComplete(true, true, false));
   EXPECT_TRUE(library_book_preparation::cacheIsComplete(true, false, true));
+  EXPECT_TRUE(library_book_preparation::cacheIsComplete(true, false, false, true));
   EXPECT_FALSE(library_book_preparation::cacheIsComplete(false, true, false));
 }
 
@@ -24,6 +25,7 @@ TEST(LibraryBookPreparation, CoverQueueSeparatesValidNoCoverAndUnsupportedSource
   EXPECT_FALSE(shouldQueueThumbnail(true, false, true));
   EXPECT_FALSE(shouldQueueThumbnail(false, true, true));
   EXPECT_FALSE(shouldQueueThumbnail(false, false, false));
+  EXPECT_FALSE(shouldQueueThumbnail(false, false, true, true));
   EXPECT_TRUE(shouldQueueThumbnail(false, false, true));
 }
 

@@ -9,6 +9,8 @@ LIBRARY = (ROOT / "src/activities/home/FolioLibraryActivity.cpp").read_text(enco
 READER = (ROOT / "src/activities/reader/ReaderActivity.cpp").read_text(encoding="utf-8")
 RECENT = (ROOT / "src/activities/home/RecentBooksActivity.cpp").read_text(encoding="utf-8")
 EPUB = (ROOT / "lib/Epub/Epub.cpp").read_text(encoding="utf-8")
+XTC = (ROOT / "lib/Xtc/Xtc.cpp").read_text(encoding="utf-8")
+XTC_CACHE = (ROOT / "lib/Xtc/XtcMetadataCache.cpp").read_text(encoding="utf-8")
 INFLATE = (ROOT / "lib/miniz/src/InflateStream.cpp").read_text(encoding="utf-8")
 ZIP = (ROOT / "lib/ZipFile/ZipFile.cpp").read_text(encoding="utf-8")
 
@@ -37,6 +39,33 @@ class LibraryBookPreparationContract(unittest.TestCase):
         self.assertIn("FrameBufferLoan loan(renderer)", hover)
         self.assertIn("supportsThumbnailSource()", hover)
 
+    def test_xtc_completion_is_persisted_and_thumbnail_is_validated_separately(self):
+        inspect = function_body(LIBRARY, "FolioLibraryActivity::RetrieveCacheStatus FolioLibraryActivity::inspectRetrieveCache(")
+        self.assertIn("readSourceFingerprint(path, fingerprint)", inspect)
+        self.assertIn("xtc_metadata_cache::load(xtc.getMetadataCachePath(), fingerprint, cached)", inspect)
+        self.assertIn("isValidBookThumbnail", inspect)
+        self.assertNotIn("RECENT_BOOKS", inspect)
+        self.assertIn("metadataCache = std::move(record)", XTC)
+        self.assertIn("getDescription()", XTC)
+        self.assertIn("getSeries()", XTC)
+        self.assertIn("ModifiedDateOffset", XTC_CACHE)
+        self.assertIn("ModifiedTimeOffset", XTC_CACHE)
+        self.assertIn("ChecksumOffset", XTC_CACHE)
+        self.assertIn("sourceThumbnailUnsupported", inspect)
+        self.assertIn("sourceThumbnailUnsupported", LIBRARY)
+
+    def test_library_retrieval_logs_owned_memory_and_requests_one_lifecycle_recheck(self):
+        hover = function_body(LIBRARY, "void FolioLibraryActivity::loadSelectedMetadata()")
+        finish = function_body(LIBRARY, "void FolioLibraryActivity::finishRetrieveAllBooks(")
+        memory = function_body(LIBRARY, "void FolioLibraryActivity::logPreparationMemory(")
+        self.assertIn("logPreparationMemory(\"hover_before_loan\"", hover)
+        self.assertIn("logPreparationMemory(\"hover_after_loan\"", hover)
+        self.assertIn("bleinput::requestLifecycleReevaluation()", hover)
+        self.assertIn("bleinput::requestLifecycleReevaluation()", finish)
+        self.assertIn("renderer.hasFrameBuffer()", memory)
+        self.assertIn("allFilesStringCapacityBytes", memory)
+        self.assertIn("retrieveAllProcessingBook.load()", memory)
+
     def test_first_open_prepares_supported_covers_before_reader_handoff(self):
         epub = function_body(READER, "std::unique_ptr<Epub> ReaderActivity::loadEpub(")
         xtc = function_body(READER, "std::unique_ptr<Xtc> ReaderActivity::loadXtc(")
@@ -45,6 +74,9 @@ class LibraryBookPreparationContract(unittest.TestCase):
             self.assertIn("isValidBookThumbnail", body)
             self.assertIn("generateThumbBmp", body)
             self.assertIn("FrameBufferLoan", body)
+        self.assertIn("getDescription()", xtc)
+        self.assertIn("getSeries()", xtc)
+        self.assertIn("noteCoverCacheState", xtc)
         self.assertIn("MAX_COVER_SOURCE_BYTES", epub)
         self.assertIn("MAX_COVER_SOURCE_BYTES", cbz)
 

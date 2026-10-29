@@ -7,6 +7,7 @@
 
 #include "Xtc/XtcParser.h"
 #include "Xtc/XtcTypes.h"
+#include "XtcMetadataCache.h"
 
 namespace {
 constexpr const char* kFixturePath = "/manga/fixture.xtc";
@@ -115,12 +116,14 @@ TEST(XtcMetadata, RetriesAfterTransientTrailerReadFailure) {
 
   EXPECT_TRUE(parser.getDescription().empty());
   EXPECT_FALSE(parser.hasLoadedExtendedMetadata());
+  EXPECT_EQ(parser.getExtendedMetadataState(), xtc::ExtendedMetadataState::NotChecked);
   EXPECT_EQ(XtcMetadataTestStorage::openCalls, 2u);
   EXPECT_EQ(XtcMetadataTestStorage::openHandles, 0u);
 
   EXPECT_EQ(parser.getDescription(), "retry synopsis");
   EXPECT_EQ(parser.getSeries(), "Retry Series");
   EXPECT_TRUE(parser.hasLoadedExtendedMetadata());
+  EXPECT_EQ(parser.getExtendedMetadataState(), xtc::ExtendedMetadataState::Parsed);
   EXPECT_EQ(XtcMetadataTestStorage::openCalls, 3u);
   EXPECT_EQ(XtcMetadataTestStorage::openHandles, 0u);
 }
@@ -130,6 +133,7 @@ TEST(XtcMetadata, MissingOrWrongMarkerIsIgnoredOnce) {
   auto parser = openFixture(makeFixture(&json, "NOOIRX01"));
   EXPECT_TRUE(parser.getDescription().empty());
   EXPECT_TRUE(parser.getSeries().empty());
+  EXPECT_EQ(parser.getExtendedMetadataState(), xtc::ExtendedMetadataState::NotPresent);
   EXPECT_EQ(XtcMetadataTestStorage::openCalls, 2u);
   EXPECT_EQ(XtcMetadataTestStorage::openHandles, 0u);
 
@@ -144,6 +148,7 @@ TEST(XtcMetadata, RejectsInvalidFooterLengthsAndPayloadBounds) {
   const std::string json = R"json({"series":"invalid length"})json";
   auto mismatch = openFixture(makeFixture(&json, "NOOIRM01", static_cast<uint32_t>(json.size() - 1u)));
   EXPECT_TRUE(mismatch.getSeries().empty());
+  EXPECT_EQ(mismatch.getExtendedMetadataState(), xtc::ExtendedMetadataState::Unsupported);
 
   auto tooLarge = openFixture(makeFixture(&json, "NOOIRM01", 4097));
   EXPECT_TRUE(tooLarge.getSeries().empty());
@@ -224,5 +229,74 @@ TEST(XtcMetadata, BoundsChapterAllocationForCorruptOffsets) {
   auto parser = openFixture(std::move(bytes));
   const auto& chapters = parser.getChapters();
   EXPECT_EQ(chapters.size(), maxChapterRecords);
+  EXPECT_EQ(XtcMetadataTestStorage::openHandles, 0u);
+}
+
+TEST(XtcMetadataCache, PersistsCompleteMetadataWithoutDependingOnRecentBooks) {
+  XtcMetadataTestStorage::reset();
+  constexpr const char* sourcePath = "/manga/cache-test.xtc";
+  constexpr const char* cachePath = "/.crosspoint/xtc-test/metadata.bin";
+  Storage.addFile(sourcePath, {0x58, 0x54, 0x43, 0x01});
+
+  xtc_metadata_cache::SourceFingerprint fingerprint;
+  ASSERT_TRUE(xtc_metadata_cache::readSourceFingerprint(sourcePath, fingerprint));
+  xtc_metadata_cache::Record original;
+  original.title = "Synthetic Title";
+  original.author = "Synthetic Artist";
+  original.synopsis = "A synopsis stored outside RecentBooksStore.";
+  original.series = "Synthetic Series";
+  original.extendedMetadata = xtc_metadata_cache::ExtendedMetadataState::Parsed;
+  original.cover = xtc_metadata_cache::CoverState::Unknown;
+
+  ASSERT_TRUE(xtc_metadata_cache::store(cachePath, fingerprint, original));
+  xtc_metadata_cache::Record loaded;
+  EXPECT_EQ(xtc_metadata_cache::load(cachePath, fingerprint, loaded), xtc_metadata_cache::LoadResult::Hit);
+  EXPECT_EQ(loaded.title, original.title);
+  EXPECT_EQ(loaded.author, original.author);
+  EXPECT_EQ(loaded.synopsis, original.synopsis);
+  EXPECT_EQ(loaded.series, original.series);
+  EXPECT_EQ(loaded.extendedMetadata, xtc_metadata_cache::ExtendedMetadataState::Parsed);
+  EXPECT_EQ(loaded.cover, xtc_metadata_cache::CoverState::Unknown);
+  original.cover = xtc_metadata_cache::CoverState::Unsupported;
+  ASSERT_TRUE(xtc_metadata_cache::store(cachePath, fingerprint, original));
+  EXPECT_EQ(xtc_metadata_cache::load(cachePath, fingerprint, loaded), xtc_metadata_cache::LoadResult::Hit);
+  EXPECT_EQ(loaded.cover, xtc_metadata_cache::CoverState::Unsupported);
+  EXPECT_EQ(XtcMetadataTestStorage::openHandles, 0u);
+}
+
+TEST(XtcMetadataCache, RejectsReplacementAndCorruptRecords) {
+  XtcMetadataTestStorage::reset();
+  constexpr const char* sourcePath = "/manga/cache-test.xtc";
+  constexpr const char* cachePath = "/.crosspoint/xtc-test/metadata.bin";
+  Storage.addFile(sourcePath, {0x58, 0x54, 0x43, 0x01});
+
+  xtc_metadata_cache::SourceFingerprint fingerprint;
+  ASSERT_TRUE(xtc_metadata_cache::readSourceFingerprint(sourcePath, fingerprint));
+  xtc_metadata_cache::Record original;
+  original.title = "Replacement Test";
+  original.extendedMetadata = xtc_metadata_cache::ExtendedMetadataState::NotPresent;
+  original.cover = xtc_metadata_cache::CoverState::NoCover;
+  ASSERT_TRUE(xtc_metadata_cache::store(cachePath, fingerprint, original));
+  xtc_metadata_cache::Record noCover;
+  EXPECT_EQ(xtc_metadata_cache::load(cachePath, fingerprint, noCover), xtc_metadata_cache::LoadResult::Hit);
+  EXPECT_EQ(noCover.cover, xtc_metadata_cache::CoverState::NoCover);
+
+  XtcMetadataTestStorage::files[sourcePath].push_back(0x02);
+  xtc_metadata_cache::SourceFingerprint replacedSize;
+  ASSERT_TRUE(xtc_metadata_cache::readSourceFingerprint(sourcePath, replacedSize));
+  xtc_metadata_cache::Record ignored;
+  EXPECT_EQ(xtc_metadata_cache::load(cachePath, replacedSize, ignored), xtc_metadata_cache::LoadResult::Stale);
+
+  XtcMetadataTestStorage::files[sourcePath].pop_back();
+  ++XtcMetadataTestStorage::modifiedTime;
+  xtc_metadata_cache::SourceFingerprint replacedTimestamp;
+  ASSERT_TRUE(xtc_metadata_cache::readSourceFingerprint(sourcePath, replacedTimestamp));
+  EXPECT_EQ(xtc_metadata_cache::load(cachePath, replacedTimestamp, ignored), xtc_metadata_cache::LoadResult::Stale);
+
+  --XtcMetadataTestStorage::modifiedTime;
+  XtcMetadataTestStorage::files[cachePath].back() ^= 0x01u;
+  EXPECT_EQ(xtc_metadata_cache::load(cachePath, fingerprint, ignored), xtc_metadata_cache::LoadResult::Invalid);
+  EXPECT_EQ(xtc_metadata_cache::load("/missing/metadata.bin", fingerprint, ignored),
+            xtc_metadata_cache::LoadResult::Missing);
   EXPECT_EQ(XtcMetadataTestStorage::openHandles, 0u);
 }
