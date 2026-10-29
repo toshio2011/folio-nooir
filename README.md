@@ -2,7 +2,7 @@
 
 **A bookshelf-first, reading-focused custom firmware for XTEINK X3/X4 devices.**
 
-[**Download v1.6.6**](https://github.com/toshio2011/folio-nooir/releases/tag/1.6.6) · [Releases](https://github.com/toshio2011/folio-nooir/releases) · [Installation](#installation) · [Full features](#complete-feature-list) · [Simulator](#native-simulator)
+[**Download v1.6.6**](https://github.com/toshio2011/folio-nooir/releases/tag/1.6.6) · [Releases](https://github.com/toshio2011/folio-nooir/releases) · [Installation](#installation) · [Full features](#complete-feature-list) · [Simulator](#native-simulator)· [[MihonNooir]](https://github.com/toshio2011/mihon-nooir)
 
 **Latest release: v1.6.6 — 29 October 2026.**
 
