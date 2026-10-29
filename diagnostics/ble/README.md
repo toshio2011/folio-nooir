@@ -6,12 +6,22 @@ stop, link close, client deletion, connection-worker deletion, and NimBLE
 deinitialization/retry. Each line includes whether NimBLE still reports itself
 initialized and the deinit return value where applicable.
 
+`ble-connect-timing.patch` is an add-on to that patch. With the existing
+`FREEINK_BLE_HID_LIFECYCLE_DIAGNOSTICS` flag in `gh_release`, it timestamps scan
+start, first HID advertiser, a known target advertisement, link start/link
+completion, HID service discovery, security, input subscription, and terminal
+connection failure. The callback emits only the first HID candidate and first
+matching target per scan, so advertisement traffic does not become serial-log
+spam. App-side `BLEMEM` records timestamp the queued request and no-device
+timeout as well.
+
 The patch does not change BLE admission floors, retry policy, memory ownership,
 or teardown order. Apply it at the repository root before building the
 `gh_release` environment:
 
 ```powershell
 git apply diagnostics/ble/ble-host-teardown-heap.patch
+git apply diagnostics/ble/ble-connect-timing.patch
 pio run -e gh_release
 ```
 

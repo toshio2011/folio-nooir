@@ -1,0 +1,90 @@
+diff --git a/freeink-sdk/libs/network/BleKeyboardHost/src/BleKeyboardHost.cpp b/freeink-sdk/libs/network/BleKeyboardHost/src/BleKeyboardHost.cpp
+index 0000000..0000000 100644
+--- a/freeink-sdk/libs/network/BleKeyboardHost/src/BleKeyboardHost.cpp
++++ b/freeink-sdk/libs/network/BleKeyboardHost/src/BleKeyboardHost.cpp
+@@ -77,6 +77,8 @@
+                  std::strcmp(stage, "link_connected") != 0 &&
+                  std::strcmp(stage, "hid_service_found") != 0 && std::strcmp(stage, "security_ready") != 0 &&
+                  std::strcmp(stage, "hid_input_ready") != 0 && std::strcmp(stage, "scan_start") != 0 &&
++                 std::strcmp(stage, "scan_start_pre") != 0 && std::strcmp(stage, "first_hid_advert") != 0 &&
++                 std::strcmp(stage, "target_advert") != 0 && std::strcmp(stage, "connect_failure") != 0 &&
+                  std::strcmp(stage, "host_end_pre") != 0 && std::strcmp(stage, "host_end_scan_stopped") != 0 &&
+                  std::strcmp(stage, "host_end_links_closed") != 0 &&
+                  std::strcmp(stage, "host_end_clients_deleted") != 0 &&
+@@ -87,7 +89,8 @@
+                  std::strcmp(stage, "host_end_retry_post") != 0 &&
+                  std::strcmp(stage, "host_end_post") != 0))
+     return;
+-  Serial.printf("[BLEMEM] stage=%s initialized=%u result=%d free=%lu largest=%lu\n", stage,
++  Serial.printf("[BLEMEM] ms=%lu stage=%s initialized=%u result=%d free=%lu largest=%lu\n",
++                static_cast<unsigned long>(millis()), stage,
+                 NimBLEDevice::isInitialized() ? 1u : 0u, result,
+                 static_cast<unsigned long>(ESP.getFreeHeap()),
+                 static_cast<unsigned long>(ESP.getMaxAllocHeap()));
+@@ -112,6 +115,8 @@
+ char g_targetAddr[18] = {0};
+ uint8_t g_targetType = 0;
+ bool g_targetTryAltType = false;
++bool g_firstHidAdvertisementLogged = false;
++bool g_targetAdvertisementLogged = false;
+-
++
+ uint32_t g_lastReconnectMs = 0;
+ uint8_t g_reconnectIdx = 0;
+@@ -923,6 +928,8 @@
+   }
+   portENTER_CRITICAL(&g_mux);
+   deviceCount_ = 0;
++  g_firstHidAdvertisementLogged = false;
++  g_targetAdvertisementLogged = false;
+   portEXIT_CRITICAL(&g_mux);
+   NimBLEScan* scan = NimBLEDevice::getScan();
+   scan->clearResults();
+@@ -930,6 +937,7 @@
+   Serial.printf("[BleHid] scan start: active, continuous, %lu ms wasScanning=%d\n", static_cast<unsigned long>(ms),
+                 scan->isScanning() ? 1 : 0);
+ #endif
++  lifecycleStage("scan_start_pre");
+   const bool started = scan->start(ms, false, true);
+   scanning_ = scan->isScanning();
+   lifecycleStage("scan_start");
+@@ -999,6 +1007,7 @@
+   }
+   strncpy(g_targetAddr, addr, sizeof(g_targetAddr) - 1);
+   g_targetAddr[sizeof(g_targetAddr) - 1] = '\0';
++  g_targetAdvertisementLogged = false;
+   g_targetType = type;
+   g_targetTryAltType = !knownType;
+   g_targetAutoReconnect = g_autoReconnectRequest;
+@@ -1496,6 +1505,21 @@
+     return;
+   }
+ #endif
++  bool firstHidAdvertisement = false;
++  bool targetAdvertisement = false;
++  portENTER_CRITICAL(&g_mux);
++  if (hid && connectable && !g_firstHidAdvertisementLogged) {
++    g_firstHidAdvertisementLogged = true;
++    firstHidAdvertisement = true;
++  }
++  if (!g_targetAdvertisementLogged && g_targetAddr[0] != '\0' && strcmp(addr, g_targetAddr) == 0) {
++    g_targetAdvertisementLogged = true;
++    targetAdvertisement = true;
++  }
++  portEXIT_CRITICAL(&g_mux);
++  if (firstHidAdvertisement) lifecycleStage("first_hid_advert", rssi);
++  if (targetAdvertisement) lifecycleStage("target_advert", rssi);
++
+   portENTER_CRITICAL(&g_mux);
+-
++
+   // Upsert by address.
+@@ -1655,6 +1679,7 @@
+ }
+-
++
+ void BleKeyboardHost::onConnectFailed(const char* reason) {
++  lifecycleStage("connect_failure", 0);
+   connected_ = false;
+   connecting_ = false;
+   portENTER_CRITICAL(&g_mux);

@@ -244,7 +244,8 @@ void updateNoDeviceWindow(const bool running, const bool connected) {
   resetNoDeviceWindow();
   stop();
   requestLifecycleReevaluation();
-  LOG_INF("BLEMEM", "stage=no_device_timeout stopped=1 saved=%d", SETTINGS.bluetoothEnabled ? 1 : 0);
+  LOG_INF("BLEMEM", "stage=no_device_timeout ms=%lu stopped=1 saved=%d",
+          static_cast<unsigned long>(millis()), SETTINGS.bluetoothEnabled ? 1 : 0);
   queueNotification(I18N.get(StrId::STR_BT_TURNED_OFF_NO_DEVICE));
 }
 
@@ -564,7 +565,8 @@ bool ensureStarted() {
     const auto& bond = BleHid.paired(0);
     const bool queued = BleHid.connect(bond.addr);
 #if FREEINK_CAP_BLE_HID_HOST
-    LOG_INF("BLEMEM", "stage=connection_request result=%s free=%u largest=%u", queued ? "queued" : "rejected",
+    LOG_INF("BLEMEM", "stage=connection_request ms=%lu activity=%.20s result=%s free=%u largest=%u",
+            static_cast<unsigned long>(millis()), activityManager.currentActivityName(), queued ? "queued" : "rejected",
             ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 #endif
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_DIAGNOSTICS
@@ -738,6 +740,10 @@ void pollLifecycle() {
 #else
   (void)connectFailure;
 #endif
+  if (hasConnectFailure) {
+    LOG_INF("BLEMEM", "stage=connect_failure ms=%lu activity=%.20s reason=%.36s",
+            static_cast<unsigned long>(millis()), activityManager.currentActivityName(), connectFailure);
+  }
   g_lastDeviceCount = deviceCount;
   updateNoDeviceWindow(running, connected);
   if (!changed && !hasConnectFailure && !deviceListChanged) return;
