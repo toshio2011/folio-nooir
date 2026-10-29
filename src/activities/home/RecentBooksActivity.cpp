@@ -113,10 +113,8 @@ void drawLiteSelectedBookDetails(GfxRenderer& renderer, const FolioNooirTheme& f
                                  const bool clearPreviousDetails) {
   const int synopsisLineHeight = std::max(1, renderer.getLineHeight(SMALL_FONT_ID));
   if (clearPreviousDetails) {
-    renderer.fillRect(carouselLayout.titleRegion.x, carouselLayout.titleRegion.y,
-                      carouselLayout.titleRegion.width, carouselLayout.titleRegion.height, false);
-    renderer.fillRect(carouselLayout.authorRegion.x, carouselLayout.authorRegion.y,
-                      carouselLayout.authorRegion.width, carouselLayout.authorRegion.height, false);
+    renderer.fillRect(carouselLayout.headerRegion.x, carouselLayout.headerRegion.y,
+                      carouselLayout.headerRegion.width, carouselLayout.headerRegion.height, false);
     renderer.fillRect(carouselLayout.synopsisRegion.x, carouselLayout.synopsisRegion.y,
                       carouselLayout.synopsisRegion.width,
                       carouselLayout.synopsisRegion.height + carouselLayout.statusRegion.height + 6, false);
@@ -2010,12 +2008,32 @@ bool RecentBooksActivity::restoreSnapshot() {
   size_t currentPageStart = SIZE_MAX;
   size_t currentPageItems = 0;
   std::array<HomeSnapshotPolicy::SnapshotRect, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> currentRects{};
+  std::array<uint64_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> currentPathKeys{};
   const bool currentPageKnown = currentSnapshotPageInfo(currentPageStart, currentPageItems);
   const bool currentGeometryAvailable = liteThreeRowLayout && currentPageKnown &&
                                         captureSnapshotRects(currentPageStart, currentPageItems, currentRects);
+  if (liteThreeRowLayout && currentPageKnown) {
+    size_t index = 0;
+    for (const auto& book : recentBooks) {
+      if (!isVisibleRecentBook(book)) continue;
+      if (index >= currentPageStart && index - currentPageStart < currentPageItems) {
+        currentPathKeys[index - currentPageStart] = hashText(book.path);
+      }
+      ++index;
+    }
+  }
   const bool canPatchMovedThreeRowPage = HomeSnapshotPolicy::canPatchLiteThreeRowPage(
       liteThreeRowLayout && version == FOLIO_HOME_VERSION, savedGeometryValid, savedVisiblePageItems,
       currentPageItems) && currentGeometryAvailable;
+  const bool sameThreeRowPageStructure = HomeSnapshotPolicy::threeRowPageStructureMatches(
+      liteThreeRowLayout && version == FOLIO_HOME_VERSION, currentPageKnown && currentPageStart == pageStart,
+      savedVisiblePageItems, currentPageItems, bookPathKeys, currentPathKeys, bookRects, currentRects);
+  if (canPatchMovedThreeRowPage && !sameThreeRowPageStructure) {
+    // Changed book identities, page occupancy, or packed slot geometry also
+    // moves row furniture and plant positions. Let the ordinary full Lite
+    // renderer clear and rebuild this frame instead of patching faces alone.
+    return invalidate("lite_three_row_structure_changed");
+  }
   bool sameVisiblePage = restoredVisibleBookCount == visibleBookCount && pageWithinSavedRange;
   if (liteThreeRowLayout && version == FOLIO_HOME_PREVIOUS_VERSION) {
     sameVisiblePage = sameVisiblePage && currentPageKnown && currentPageStart == pageStart &&
@@ -2068,7 +2086,6 @@ bool RecentBooksActivity::restoreSnapshot() {
   // selector left by the previous activity instance.
   const auto restoreAction = HomeSnapshotPolicy::classifyRestore(
       key, snapshotKey(version != FOLIO_HOME_LEGACY_VERSION), dynamicKey, snapshotDynamicKey());
-  std::array<uint64_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> currentPathKeys{};
   std::array<uint64_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> currentVisualKeys{};
   bool anyVisibleSlotChanged = false;
   if (liteThreeRowLayout && currentPageKnown) {
@@ -2077,7 +2094,6 @@ bool RecentBooksActivity::restoreSnapshot() {
       if (!isVisibleRecentBook(book)) continue;
       if (index >= currentPageStart && index - currentPageStart < currentPageItems) {
         const size_t slot = index - currentPageStart;
-        currentPathKeys[slot] = hashText(book.path);
         currentVisualKeys[slot] = bookCoverVisualKey(book);
         if (slot >= bookPathKeys.size() || bookPathKeys[slot] != currentPathKeys[slot] ||
             bookVisualKeys[slot] != currentVisualKeys[slot]) {
@@ -3926,8 +3942,8 @@ bool RecentBooksActivity::renderCarousel(const bool threeCover) {
                                                              : HomeSnapshotPolicy::RestoreAction::Restore;
   const bool restoredPageMatches = restoredPageKnown && snapshotPageStart == restoredPageStart &&
                                    snapshotPageItems == restoredPageItems;
-  // Lite three-row faces can patch progress, status, and moved identities by
-  // the saved slot rectangles; other layouts keep those fields structural.
+  // Lite three-row faces can patch progress and status when saved identities
+  // and packed geometry still match; a structural move rebuilds the shelf.
   if (usesPersistentHomeSnapshot() && initialRenderPending && !snapshotFastPathUsed && visibleBookCount > 0 &&
       HomeSnapshotPolicy::canUseRestoredSnapshotFastPath(restoreAction, restoredPageMatches, snapshotWritePending,
                                                           !noOverlay || !noBackgroundWork, liteSpineMode)) {

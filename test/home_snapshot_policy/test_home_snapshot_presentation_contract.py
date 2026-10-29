@@ -53,9 +53,10 @@ class HomeSnapshotPresentationContract(unittest.TestCase):
         self.assertIn("drawLiteSelectedBookDetails", fast_path)
         self.assertIn("drawLiteShelfStats", fast_path)
         self.assertIn("drawSnapshotSelectionOutline", fast_path)
-        self.assertIn("faces can patch progress, status, and moved identities", body)
+        self.assertIn("faces can patch progress and status when saved identities", body)
 
-    def test_lite_three_row_patches_changed_book_identities_and_geometry(self):
+    def test_lite_three_row_reorder_rebuilds_when_identity_or_geometry_changes(self):
+        restore_body = function_body(SOURCE, "bool RecentBooksActivity::restoreSnapshot()")
         render_body = function_body(SOURCE, "bool RecentBooksActivity::renderCarousel(const bool threeCover)")
         self.assertIn("bookCoverVisualKey(recentBooks[recentIndex])", render_body)
         self.assertIn("HomeSnapshotPolicy::slotNeedsPatch", render_body)
@@ -63,8 +64,10 @@ class HomeSnapshotPresentationContract(unittest.TestCase):
         self.assertIn("snapshotBookRects", render_body)
         self.assertIn("drawSpineBook(renderer, spineWindow.books[localIndex]", render_body)
         self.assertIn("renderer.fillRect(oldRect.x, oldRect.y, oldRect.width, oldRect.height, false)", render_body)
+        self.assertIn("HomeSnapshotPolicy::threeRowPageStructureMatches", restore_body)
+        self.assertIn('invalidate("lite_three_row_structure_changed")', restore_body)
 
-    def test_lite_three_row_reorders_and_finished_filter_changes_use_geometry_snapshots(self):
+    def test_lite_three_row_reorders_with_changed_structure_invalidate_the_saved_frame(self):
         key_body = function_body(SOURCE, "uint64_t RecentBooksActivity::snapshotKey(const bool exactThemeKey) const")
         restore_body = function_body(SOURCE, "bool RecentBooksActivity::restoreSnapshot()")
         render_body = function_body(SOURCE, "bool RecentBooksActivity::renderCarousel(const bool threeCover)")
@@ -73,7 +76,8 @@ class HomeSnapshotPresentationContract(unittest.TestCase):
         self.assertIn("canPatchMovedThreeRowPage", restore_body)
         self.assertIn("savedGeometryValid", restore_body)
         self.assertIn("captureSnapshotRects(currentPageStart, currentPageItems, currentRects)", restore_body)
-        self.assertIn("currentPageStart != pageStart", restore_body)
+        self.assertIn("currentPageStart == pageStart", restore_body)
+        self.assertIn('invalidate("lite_three_row_structure_changed")', restore_body)
         self.assertIn("snapshotRewriteAfterRestore", render_body)
         self.assertIn("snapshotWritePending = true", render_body)
 
@@ -114,7 +118,7 @@ class HomeSnapshotPresentationContract(unittest.TestCase):
         self.assertIn("UITheme::getInstance().reload()", body)
         self.assertIn("skipped=unchanged", body)
 
-    def test_three_row_slot_visual_key_covers_face_fields_and_allows_identity_patching(self):
+    def test_three_row_slot_visual_key_covers_face_fields_for_stable_slot_patching(self):
         visual_key = function_body(SOURCE, "uint64_t RecentBooksActivity::bookCoverVisualKey(")
         restore = function_body(SOURCE, "bool RecentBooksActivity::restoreSnapshot()")
         render = function_body(SOURCE, "bool RecentBooksActivity::renderCarousel(const bool threeCover)")
@@ -122,6 +126,31 @@ class HomeSnapshotPresentationContract(unittest.TestCase):
             self.assertIn(field, visual_key)
         self.assertIn("savedSelectedPathKey == hashText(book.path)", restore)
         self.assertIn("HomeSnapshotPolicy::slotNeedsPatch", render)
+
+    def test_all_lite_shelf_layouts_share_bounded_header_detail_rendering(self):
+        render = function_body(SOURCE, "bool RecentBooksActivity::renderCarousel(const bool threeCover)")
+        details = render.index("drawLiteSelectedBookDetails(renderer, folioPresentation, carouselLayout, selected, false)")
+        layout_start = render.index("const uint32_t shelfStartedUs = micros();", details)
+        layout_branches = render[layout_start:]
+        self.assertIn("if (usesSpineLayout())", layout_branches)
+        self.assertIn("else if (usesTwoRowSpineLayout())", layout_branches)
+        self.assertIn("else if (usesThreeRowSpineLayout())", layout_branches)
+        self.assertIn("authorTextUpdate(clearPreviousDetails, !selected.author.empty())", SOURCE)
+        self.assertIn("renderer.truncatedText(UI_10_FONT_ID, selected.author.c_str()", SOURCE)
+        self.assertIn("renderer.getTextWidth(UI_10_FONT_ID, author.c_str())", SOURCE)
+        self.assertIn("renderer.getLineHeight(SMALL_FONT_ID)", SOURCE)
+
+    def test_lite_header_repaints_a_bounded_full_band_on_selection_changes(self):
+        details = SOURCE.split("void drawLiteSelectedBookDetails", 1)[1].split("\n}", 1)[0]
+        layout = (ROOT / "src/components/themes/folio_nooir/CarouselTheme.cpp").read_text(encoding="utf-8")
+        policy = (ROOT / "src/util/FolioLiteLayoutPolicy.h").read_text(encoding="utf-8")
+        self.assertIn("carouselLayout.headerRegion", details)
+        self.assertIn("clearPreviousDetails", details)
+        self.assertIn("renderer.truncatedText(UI_12_FONT_ID, selected.title.c_str()", details)
+        self.assertIn("renderer.truncatedText(UI_10_FONT_ID, selected.author.c_str()", details)
+        self.assertIn("featuredFormatBadgeWidth", details)
+        self.assertIn("layout.headerRegion = Rect{0, FolioLiteLayoutPolicy::LITE_BOOK_HEADER_CLEAR_TOP", layout)
+        self.assertIn("LITE_BOOK_HEADER_CLEAR_HEIGHT = LITE_CAROUSEL_TOP - LITE_BOOK_HEADER_CLEAR_TOP", policy)
 
     def test_spine_geometry_uses_one_active_layout_cache(self):
         header = (ROOT / "src/activities/home/RecentBooksActivity.h").read_text(encoding="utf-8")

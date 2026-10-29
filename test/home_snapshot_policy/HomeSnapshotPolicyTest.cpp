@@ -98,14 +98,49 @@ TEST(HomeSnapshotPolicy, PatchesChangedAndReorderedSlotsWhenGeometryIsSaved) {
   EXPECT_TRUE(HomeSnapshotPolicy::slotNeedsPatch(101, 102, 201, 201, oldRect, oldRect));
   EXPECT_TRUE(HomeSnapshotPolicy::slotNeedsPatch(101, 101, 201, 202, oldRect, oldRect));
   EXPECT_TRUE(HomeSnapshotPolicy::slotNeedsPatch(101, 101, 201, 201, oldRect, movedRect));
-  // A Recent front-move changes several position-to-book mappings; each moved
-  // face and any slot removed by a Finished filter is independently patched.
+  // The face-level detector identifies every changed identity and every slot
+  // removed by a Finished filter. Restore policy separately decides whether
+  // the complete shelf structure can still be reused.
   constexpr std::array<uint64_t, 3> savedPaths{11, 22, 33};
   constexpr std::array<uint64_t, 3> currentPaths{99, 11, 22};
   EXPECT_TRUE(HomeSnapshotPolicy::slotNeedsPatch(savedPaths[0], currentPaths[0], 1, 1, oldRect, oldRect));
   EXPECT_TRUE(HomeSnapshotPolicy::slotNeedsPatch(savedPaths[1], currentPaths[1], 2, 2, oldRect, oldRect));
   EXPECT_TRUE(HomeSnapshotPolicy::slotNeedsPatch(savedPaths[2], currentPaths[2], 3, 3, oldRect, oldRect));
   EXPECT_TRUE(HomeSnapshotPolicy::slotNeedsPatch(savedPaths[2], 0, 3, 0, oldRect, SnapshotRect{}));
+}
+
+TEST(HomeSnapshotPolicy, RequiresFullThreeRowRebuildWhenShelfStructureChanges) {
+  using HomeSnapshotPolicy::SnapshotRect;
+  std::array<uint64_t, 22> savedPaths{};
+  std::array<uint64_t, 22> currentPaths{};
+  std::array<SnapshotRect, 22> savedRects{};
+  std::array<SnapshotRect, 22> currentRects{};
+  for (size_t slot = 0; slot < savedPaths.size(); ++slot) {
+    savedPaths[slot] = slot + 1;
+    currentPaths[slot] = slot + 1;
+    savedRects[slot] = SnapshotRect{static_cast<int16_t>(slot * 34),
+                                    static_cast<int16_t>(120 + slot % 3 * 60), 32, 54};
+    currentRects[slot] = savedRects[slot];
+  }
+  EXPECT_TRUE(HomeSnapshotPolicy::threeRowPageStructureMatches(
+      true, true, savedPaths.size(), currentPaths.size(), savedPaths, currentPaths, savedRects, currentRects));
+
+  // Reproduce a selected book moving from slot 15 to Recent position 1.
+  currentPaths[0] = savedPaths[15];
+  for (size_t slot = 1; slot <= 15; ++slot) currentPaths[slot] = savedPaths[slot - 1];
+  EXPECT_FALSE(HomeSnapshotPolicy::threeRowPageStructureMatches(
+      true, true, savedPaths.size(), currentPaths.size(), savedPaths, currentPaths, savedRects, currentRects));
+
+  // Same identities with a centered row shifted by changed book widths also
+  // requires a clear of the old row furniture before drawing the new shelf.
+  currentPaths = savedPaths;
+  currentRects[0].x += 8;
+  EXPECT_FALSE(HomeSnapshotPolicy::threeRowPageStructureMatches(
+      true, true, savedPaths.size(), currentPaths.size(), savedPaths, currentPaths, savedRects, currentRects));
+  EXPECT_FALSE(HomeSnapshotPolicy::threeRowPageStructureMatches(
+      false, true, savedPaths.size(), currentPaths.size(), savedPaths, currentPaths, savedRects, currentRects));
+  EXPECT_FALSE(HomeSnapshotPolicy::threeRowPageStructureMatches(
+      true, false, savedPaths.size(), currentPaths.size(), savedPaths, currentPaths, savedRects, currentRects));
 }
 
 TEST(HomeSnapshotPolicy, SeparatesVisualSettingsAndIgnoresUnrepresentedSystemPreferences) {

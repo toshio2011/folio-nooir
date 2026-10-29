@@ -49,6 +49,20 @@ TEST(FolioLiteLayout, LiteTitleAuthorHeaderAddsThreePixelsAndClearsTheShelfBound
   EXPECT_EQ(FolioLiteLayoutPolicy::LITE_BOOK_AUTHOR_HEIGHT, 18);
 }
 
+TEST(FolioLiteLayout, HeaderClearCoversTextAndFormatBadgeWithoutTouchingShelf) {
+  constexpr int clearTop = FolioLiteLayoutPolicy::LITE_BOOK_HEADER_CLEAR_TOP;
+  constexpr int clearBottom = clearTop + FolioLiteLayoutPolicy::LITE_BOOK_HEADER_CLEAR_HEIGHT;
+  constexpr int badgeTop = FolioLiteLayoutPolicy::LITE_BOOK_TITLE_TOP - 1;
+  EXPECT_LE(clearTop, badgeTop);
+  EXPECT_LE(clearTop, FolioLiteLayoutPolicy::LITE_BOOK_TITLE_TOP);
+  EXPECT_LE(clearTop, FolioLiteLayoutPolicy::liteBookAuthorTop());
+  EXPECT_GE(clearBottom, FolioLiteLayoutPolicy::liteBookAuthorTop() +
+                             FolioLiteLayoutPolicy::LITE_BOOK_AUTHOR_HEIGHT);
+  EXPECT_EQ(clearBottom, FolioLiteLayoutPolicy::LITE_CAROUSEL_TOP);
+  EXPECT_EQ(clearTop, 66);
+  EXPECT_EQ(clearBottom, 122);
+}
+
 TEST(FolioLiteLayout, HeroSizeIsFixedForSynopsisAvailabilityAndStatusStaysAboveSummary) {
   constexpr int statsTop = 700;
   constexpr int lineHeight = 18;

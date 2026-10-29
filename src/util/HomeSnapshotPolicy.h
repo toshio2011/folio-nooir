@@ -204,6 +204,30 @@ constexpr bool canPatchLiteThreeRowPage(const bool liteThreeRowLayout, const boo
          currentSlots <= SPINE_THREE_ROW_MAX_PAGE_ITEMS;
 }
 
+// Face-only updates are safe only when the packed page structure is unchanged.
+// A moved identity, page start, slot count, or rectangle can also move centered
+// row groups and shelf furniture, which requires a full framebuffer rebuild.
+template <size_t Capacity>
+constexpr bool threeRowPageStructureMatches(
+    const bool liteThreeRowLayout, const bool samePageStart, const size_t savedSlots,
+    const size_t currentSlots, const std::array<uint64_t, Capacity>& savedPathKeys,
+    const std::array<uint64_t, Capacity>& currentPathKeys,
+    const std::array<SnapshotRect, Capacity>& savedRects,
+    const std::array<SnapshotRect, Capacity>& currentRects) {
+  if (!liteThreeRowLayout || !samePageStart || savedSlots == 0 || savedSlots != currentSlots ||
+      currentSlots > Capacity) {
+    return false;
+  }
+  for (size_t slot = 0; slot < currentSlots; ++slot) {
+    if (savedPathKeys[slot] == 0 || savedPathKeys[slot] != currentPathKeys[slot] ||
+        !savedRects[slot].valid() || !currentRects[slot].valid() ||
+        !rectMatches(savedRects[slot], currentRects[slot])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 constexpr bool slotNeedsPatch(const uint64_t savedPath, const uint64_t currentPath,
                               const uint64_t savedVisual, const uint64_t currentVisual,
                               const SnapshotRect& savedRect, const SnapshotRect& currentRect) {

@@ -28,6 +28,9 @@ constexpr int LITE_BOOK_TITLE_TOP = 72;
 constexpr int LITE_BOOK_TITLE_HEIGHT = 24;
 constexpr int LITE_BOOK_TITLE_AUTHOR_GAP = 3;
 constexpr int LITE_BOOK_AUTHOR_HEIGHT = 18;
+// Clear from just below the shelf-tab divider through the top edge of the
+// shelf. This includes the format badge's one-pixel rise and font overhangs.
+constexpr int LITE_BOOK_HEADER_CLEAR_TOP = 66;
 
 constexpr int liteBookAuthorTop() {
   return LITE_BOOK_TITLE_TOP + LITE_BOOK_TITLE_HEIGHT + LITE_BOOK_TITLE_AUTHOR_GAP;
@@ -39,6 +42,7 @@ constexpr int liteBookHeaderBottom() { return liteBookAuthorTop() + LITE_BOOK_AU
 // strip. Keep the shelf height independent of synopsis text and shrink only
 // when the device viewport cannot fit the preferred height.
 constexpr int LITE_CAROUSEL_TOP = 122;
+constexpr int LITE_BOOK_HEADER_CLEAR_HEIGHT = LITE_CAROUSEL_TOP - LITE_BOOK_HEADER_CLEAR_TOP;
 constexpr int LITE_CAROUSEL_SYNOPSIS_GAP = 10;
 constexpr int LITE_CAROUSEL_STATUS_TOP_INSET = 6;
 constexpr int LITE_CAROUSEL_STATUS_PAGINATION_GAP = 6;

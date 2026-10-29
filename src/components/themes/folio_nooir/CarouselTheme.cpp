@@ -18,6 +18,8 @@ CarouselLayout CarouselTheme::carouselLayout(const GfxRenderer& renderer, const 
   layout.centerHeight = lowerContentBottom > carouselTop
                              ? FolioLiteLayoutPolicy::carouselHeroHeight(lowerContentBottom, lineHeight)
                              : FolioLiteLayoutPolicy::LITE_CAROUSEL_PREFERRED_HERO_HEIGHT;
+  layout.headerRegion = Rect{0, FolioLiteLayoutPolicy::LITE_BOOK_HEADER_CLEAR_TOP, pageWidth,
+                             FolioLiteLayoutPolicy::LITE_BOOK_HEADER_CLEAR_HEIGHT};
   layout.titleRegion = Rect{20, FolioLiteLayoutPolicy::LITE_BOOK_TITLE_TOP,
                             std::max(0, pageWidth - 40), FolioLiteLayoutPolicy::LITE_BOOK_TITLE_HEIGHT};
   layout.authorRegion = Rect{20, FolioLiteLayoutPolicy::liteBookAuthorTop(),

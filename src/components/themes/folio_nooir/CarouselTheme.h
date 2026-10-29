@@ -3,6 +3,7 @@
 #include "components/themes/lyra/LyraTheme.h"
 
 struct CarouselLayout {
+  Rect headerRegion;
   Rect titleRegion;
   Rect authorRegion;
   Rect carouselRegion;

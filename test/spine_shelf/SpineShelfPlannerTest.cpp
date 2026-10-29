@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cstdlib>
 
+#include "src/util/HomeSnapshotPolicy.h"
 #include "src/util/SpineShelfPlanner.h"
 
 namespace {
@@ -30,6 +31,81 @@ std::array<Book, 10> books() {
 }
 
 }  // namespace
+
+namespace {
+
+template <size_t Count>
+void captureThreeRowSnapshot(const std::array<Book, Count>& books,
+                             const SpineShelfPlanner::ThreeRowPage& page,
+                             std::array<uint64_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY>& pathKeys,
+                             std::array<HomeSnapshotPolicy::SnapshotRect,
+                                        SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY>& rects) {
+  pathKeys.fill(0);
+  rects.fill({});
+  for (size_t slot = 0; slot < page.itemCount; ++slot) {
+    const auto& planned = page.slots[slot];
+    const size_t localIndex = planned.itemIndex - page.firstIndex;
+    pathKeys[localIndex] = books[planned.itemIndex].visualSeed + 1;
+    rects[localIndex] = {static_cast<int16_t>(planned.rect.x), static_cast<int16_t>(planned.rect.y),
+                         static_cast<int16_t>(planned.rect.width), static_cast<int16_t>(planned.rect.height)};
+  }
+}
+
+}  // namespace
+
+TEST(SpineShelfPlanner, TwentyTwoVariedWidthBooksRepackAfterBookFifteenMovesToRecentFront) {
+  constexpr size_t bookCount = 22;
+  std::array<std::array<char, 16>, bookCount> keys{};
+  std::array<Book, bookCount> booksInRecentOrder{};
+  for (size_t index = 0; index < bookCount; ++index) {
+    std::snprintf(keys[index].data(), keys[index].size(), "varied-%02u", static_cast<unsigned>(index));
+    booksInRecentOrder[index].key = keys[index].data();
+    booksInRecentOrder[index].title = "Mixed width";
+    booksInRecentOrder[index].visualSeed = static_cast<uint32_t>(index * 17 + 3);
+  }
+
+  constexpr Rect bounds{6, 220, 788, 160};
+  const auto beforeMove = SpineShelfPlanner::threeRowPageForSelection(
+      booksInRecentOrder.data(), bookCount, 15, bounds);
+  ASSERT_EQ(beforeMove.firstIndex, 0u);
+  ASSERT_EQ(beforeMove.itemCount, bookCount);
+  std::array<uint64_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> savedPaths{};
+  std::array<uint64_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> currentPaths{};
+  std::array<HomeSnapshotPolicy::SnapshotRect, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> savedRects{};
+  std::array<HomeSnapshotPolicy::SnapshotRect, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> currentRects{};
+  captureThreeRowSnapshot(booksInRecentOrder, beforeMove, savedPaths, savedRects);
+
+  const Book selected = booksInRecentOrder[15];
+  for (size_t index = 15; index > 0; --index) booksInRecentOrder[index] = booksInRecentOrder[index - 1];
+  booksInRecentOrder[0] = selected;
+  const auto afterMove = SpineShelfPlanner::threeRowPageForSelection(
+      booksInRecentOrder.data(), bookCount, 0, bounds);
+  ASSERT_EQ(afterMove.firstIndex, 0u);
+  ASSERT_EQ(afterMove.itemCount, bookCount);
+  captureThreeRowSnapshot(booksInRecentOrder, afterMove, currentPaths, currentRects);
+
+  EXPECT_FALSE(HomeSnapshotPolicy::threeRowPageStructureMatches(
+      true, beforeMove.firstIndex == afterMove.firstIndex, beforeMove.itemCount, afterMove.itemCount,
+      savedPaths, currentPaths, savedRects, currentRects));
+  bool rowCenteringChanged = false;
+  for (size_t slot = 0; slot < bookCount; ++slot) {
+    rowCenteringChanged = rowCenteringChanged || savedRects[slot].x != currentRects[slot].x;
+  }
+  EXPECT_TRUE(rowCenteringChanged);
+
+  // A rebuilt snapshot can be reused on subsequent reopen/return cycles while
+  // the selected book remains first and the row geometry is unchanged.
+  const auto rebuiltPaths = currentPaths;
+  const auto rebuiltRects = currentRects;
+  for (int cycle = 0; cycle < 2; ++cycle) {
+    const auto reopened = SpineShelfPlanner::threeRowPageForSelection(
+        booksInRecentOrder.data(), bookCount, 0, bounds);
+    captureThreeRowSnapshot(booksInRecentOrder, reopened, currentPaths, currentRects);
+    EXPECT_TRUE(HomeSnapshotPolicy::threeRowPageStructureMatches(
+        true, afterMove.firstIndex == reopened.firstIndex, afterMove.itemCount, reopened.itemCount,
+        rebuiltPaths, currentPaths, rebuiltRects, currentRects));
+  }
+}
 
 TEST(SpineShelfPlanner, DimensionsAreDeterministicAndBottomAligned) {
   const auto input = books();
