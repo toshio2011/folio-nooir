@@ -7,6 +7,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 STORE = (ROOT / "lib/Serialization/PersistableStore.cpp").read_text(encoding="utf-8")
 READER = (ROOT / "src/activities/reader/EpubReaderActivity.cpp").read_text(encoding="utf-8")
+PROGRESS = (ROOT / "src/activities/reader/ProgressFile.h").read_text(encoding="utf-8")
+EPUB_PROGRESS = (ROOT / "src/activities/reader/EpubReaderUtils.h").read_text(encoding="utf-8")
 
 
 class ReaderExitSaveProfileContract(unittest.TestCase):
@@ -35,6 +37,19 @@ class ReaderExitSaveProfileContract(unittest.TestCase):
     def test_exit_summary_separates_request_wait_save_and_cleanup(self):
         for field in ("request_to_on_exit_ms", "save_us", "cleanup_us", "total_us"):
             self.assertIn(field, READER)
+
+    def test_reader_exit_times_each_distinct_persistent_store(self):
+        for operation in ("recent", "book_state", "reading_stats", "app_recovery_state", "footnote_progress"):
+            self.assertIn(f"reader_exit_save kind={operation}", READER)
+
+    def test_epub_progress_save_profiles_atomic_sd_phases_without_changing_order(self):
+        self.assertIn("writeAtomic(epub.getCachePath(), data, sizeof(data), true)", EPUB_PROGRESS)
+        self.assertIn("save_profile file=progress.bin", PROGRESS)
+        self.assertIn("backup_rename_us", PROGRESS)
+        self.assertIn("publish_rename_us", PROGRESS)
+        self.assertLess(PROGRESS.index("Storage.rename(finalPath.c_str(), backup.c_str())"),
+                        PROGRESS.index("Storage.rename(tmpPath.c_str(), finalPath.c_str())"))
+        self.assertIn("rollback_us", PROGRESS)
 
 
 if __name__ == "__main__":

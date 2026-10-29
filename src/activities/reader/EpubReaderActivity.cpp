@@ -721,9 +721,15 @@ void EpubReaderActivity::onExit() {
                            (currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount());
     const uint8_t finalProgress = completed ? 100 : static_cast<uint8_t>(info.progressPercent);
     const uint32_t elapsedSeconds = (millis() - readingSessionStartedMs) / 1000UL;
+    uint32_t saveStartedUs = micros();
     RECENT_BOOKS.recordReading(epub->getPath(), finalProgress, elapsedSeconds, sessionPagesTurned);
+    LOG_INF("ERS", "reader_exit_save kind=recent us=%lu", static_cast<unsigned long>(micros() - saveStartedUs));
+    saveStartedUs = micros();
     BOOK_STATES.recordReading(epub->getPath(), finalProgress, elapsedSeconds, sessionPagesTurned);
+    LOG_INF("ERS", "reader_exit_save kind=book_state us=%lu", static_cast<unsigned long>(micros() - saveStartedUs));
+    saveStartedUs = micros();
     READING_STATS.recordSession(halClock.getDateKey(), elapsedSeconds, sessionPagesTurned);
+    LOG_INF("ERS", "reader_exit_save kind=reading_stats us=%lu", static_cast<unsigned long>(micros() - saveStartedUs));
   }
   persistenceUs += micros() - persistenceStartedUs;
 
@@ -742,14 +748,20 @@ void EpubReaderActivity::onExit() {
   persistenceStartedUs = micros();
   if (APP_STATE.readerActivityLoadCount != 0) {
     APP_STATE.readerActivityLoadCount = 0;
+    persistenceStartedUs = micros();
     APP_STATE.saveToFile();
+    LOG_INF("ERS", "reader_exit_save kind=app_recovery_state us=%lu",
+            static_cast<unsigned long>(micros() - persistenceStartedUs));
   }
 
   // Leaving mid-footnote loses the in-RAM return stack on deep sleep; persist the
   // pre-footnote position so the book reopens at the link origin, not the footnote.
   if (footnoteDepth > 0 && epub) {
     const SavedPosition& origin = savedPositions[0];
-    saveProgress(origin.spineIndex, origin.pageNumber, 0);
+    persistenceStartedUs = micros();
+    const bool progressSaved = saveProgress(origin.spineIndex, origin.pageNumber, 0);
+    LOG_INF("ERS", "reader_exit_save kind=footnote_progress us=%lu result=%d",
+            static_cast<unsigned long>(micros() - persistenceStartedUs), progressSaved ? 1 : 0);
   }
 
   persistenceUs += micros() - persistenceStartedUs;

@@ -30,7 +30,7 @@ void successfulWritePublishesAndCleansBackup() {
   Storage.files["/cache/progress.bin"] = "old";
   const uint8_t next[] = {'n', 'e', 'w'};
 
-  expect(ProgressFile::writeAtomic("/cache", next, sizeof(next)), "successful write returns true");
+  expect(ProgressFile::writeAtomic("/cache", next, sizeof(next), true), "profiled successful write returns true");
   expect(Storage.files["/cache/progress.bin"] == "new", "new progress becomes canonical");
   expect(!Storage.exists("/cache/progress.bin.bak"), "successful write removes backup");
 }
