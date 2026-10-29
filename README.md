@@ -2,13 +2,19 @@
 
 **A bookshelf-first, reading-focused custom firmware for XTEINK X3/X4 devices.**
 
-[**Download v1.6.6**](https://github.com/toshio2011/folio-nooir/releases/tag/1.6.6) · [Releases](https://github.com/toshio2011/folio-nooir/releases) · [Installation](#installation) · [Full features](#complete-feature-list) · [Simulator](#native-simulator)· [MihonNooir](https://github.com/toshio2011/mihon-nooir)
+[**Download v1.6.6**](https://github.com/toshio2011/folio-nooir/releases/tag/1.6.6) · [Releases](https://github.com/toshio2011/folio-nooir/releases) · [Installation](#installation) · [Full features](#complete-feature-list) · [Simulator](#native-simulator) · [MihonNooir](https://github.com/toshio2011/mihon-nooir)(https://github.com/toshio2011/mihon-nooir)
 
 **Latest release: v1.6.6 — 29 October 2026.**
 
 Folio Nooir is a personal, experimental fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader). It retains its reader and wireless foundations while adding a Folio-style bookshelf, more reading tools, comics, statistics, sleep screens, and optional Bluetooth page turners.
 
 > **Nooir should stay snappy. New features should not make reading slower just because they exist.**
+
+## 📱 Companion app: MihonNooir
+
+[**MihonNooir**](https://github.com/toshio2011/mihon-nooir) is a separate, optional **Android app built on Mihon** for preparing manga and other reading material. Select chapters, export **EPUB 2/3, XTC, XTCH or CBZ**, use **Panel by Panel** or **Row by Row** layouts, and send compatible books to XTEINK readers over Wi-Fi. It also has web and PDF-to-EPUB tools.
+
+[**Get MihonNooir for Android — v1.0.16**](https://github.com/toshio2011/mihon-nooir/releases/tag/v1.0.16) · The Windows version is still in development. Folio Nooir works independently.
 
 ## Screenshots
 
