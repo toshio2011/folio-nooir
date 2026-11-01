@@ -1,5 +1,9 @@
 # Folio Nooir Handoff
 
+## 2026-11-01 — 1.6.7 heap/snappiness deep audit (documentation only)
+
+Read **[docs/NOOIR_1.6.7_PERFORMANCE_MEMORY_AUDIT_2026-11-01.md](docs/NOOIR_1.6.7_PERFORMANCE_MEMORY_AUDIT_2026-11-01.md)** before proposing further memory work. It separates implemented optimizations (font-buffer reuse, mini-kerning, BLE latch/backoff, Reader exit cleanup, fast Home/Lite snapshots and durable progress saves) from measured-work candidates (advance-table allocation peaks, SD prewarm budget checks, BLE readmission, snapshot I/O). **No firmware code was changed, tested or flashed for this audit.**
+
 ## Combined X4 stabilization pass — 2026-10-09
 
 Implemented and build-checked in the shared worktree:
