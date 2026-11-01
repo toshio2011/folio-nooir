@@ -11,6 +11,19 @@
 
 **Status:** documentation/planning only; no firmware code, tests, device flash, merge or release performed by this update. This is the single active work order; the source audit below is retained as historical evidence. Target: **fast, reliable reading on original X4 ESP32-C3**, with no loss of 1.6.6 features, original X3 support, or Main/Nooir Lite rendering improvements.
 
+### Licorice cross-check — lessons retained, not a new workstream
+
+**Evidence boundaries:** The [X4 Pro emulator Licorice notes](https://github.com/kycube/x4pro-emu/blob/main/docs/stock-licorice.md) are reverse engineering and observed emulator/device behavior for the **X4 Pro (ESP32-S3)**, not original X4 ESP32-C3 source or transferable heap measurements. The related [reading-fonts report](https://github.com/kycube/x4pro-emu/blob/main/docs/reading-fonts.md) primarily examines **earlier 7.x stock `xteink_app` firmware**, not a confirmed Licorice allocator/font-cache design. The original proprietary Licorice source was not found; do not treat binary strings or emulator behavior as implementation proof.
+
+| What was observed | Safe takeaway for Nooir | Action in existing phases |
+| --- | --- | --- |
+| Licorice Home appears on the emulator's first screen refresh | First usable **visible** frame matters more than internal CPU-only timing; **not proof** that Licorice boots faster than Nooir on matching hardware | P1: measure button/wake/Settings -> first correct usable Home frame, excluding unnecessary pre-display SD work when safe |
+| Licorice 26102901 wakes to Recent with the latest book on top; 261013 instead resumed the last book | Wake destination is a UX choice, **not a proven performance trick**; preserve Nooir's intended wake/reading-position behavior | P1: verify wake fast path and correct selection without changing semantics merely to match Licorice |
+| Strings refer to `.xic` page caches/covers, without verified allocation sizes or lifetime policy | Do not infer a portable full-page cache, XIC format advantage, or memory-saving algorithm from strings alone | P2: keep Nooir's EPUB/XTC/CBZ caches, measure hit rate/heap/latency before changing ownership |
+| Licorice X4 Pro hardware and platform differ | No basis to copy framebuffer, font, SD, BLE or radio memory budgets to original X4 | P2: use X4 ESP32-C3 allocation/contiguous-heap traces and preserve X3 limitations |
+
+**Decision:** retain these as performance/UX evaluation criteria within P1/P2; **no Licorice-specific implementation task** or new cache. Do not port reverse-engineered proprietary code or assume feature strings prove runtime speed. Revisit only if new verifiable device or allocation evidence emerges.
+
 ### Version baseline and what actually changed
 
 | Area | 1.6.3–1.6.5 | 1.6.6 | Committed 1.6.7 branch / local physical candidate |
