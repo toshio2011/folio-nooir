@@ -10,6 +10,10 @@
 #include <Bitmap.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
+#include <memory>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -18,6 +22,138 @@ void yieldDuringThumbnail(uint8_t& rowsSinceYield) {
   if (++rowsSinceYield < 8) return;
   rowsSinceYield = 0;
   vTaskDelay(1);
+}
+
+/**
+ * Convert XTCH page zero into a small 1-bit shelf thumbnail WITHOUT loading
+ * its two full 48KB bitplanes into one 96KB contiguous allocation.
+ *
+ * The on-disk XTCH bitplanes are reversed-column-major; output BMP is
+ * row-major. Nearest-neighbour sampling uses two separate thumbnail-size
+ * bitplanes (12KB each for a 240x400 X4 thumbnail), plus tiny coordinate
+ * lookups and the parser's 1KB streaming buffer. Original grayscale/reader
+ * pages and book metadata remain untouched. The existing area-average
+ * thumbnail implementation remains the fallback for non-XTCH books.
+ */
+bool generateXtchThumbStreaming(const Xtc& book, const xtc::PageInfo& page,
+                                const uint16_t dstWidth, const uint16_t dstHeight,
+                                const float scale, const int requestedHeight) {
+  if (page.width == 0 || page.height == 0 || dstWidth == 0 || dstHeight == 0 || scale <= 0.0f)
+    return false;
+  const size_t pixels = static_cast<size_t>(page.width) * page.height;
+  const size_t sourcePlaneBytes = (pixels + 7u) / 8u;
+  const size_t sourceBytes = sourcePlaneBytes * 2u;
+  constexpr size_t MAX_SOURCE_BYTES = 128u * 1024u;
+  constexpr size_t MAX_THUMB_PLANE_BYTES = 64u * 1024u;
+  if (sourceBytes > MAX_SOURCE_BYTES) {
+    LOG_DBG("XTC", "XTCH streaming thumbnail: invalid/oversized page (%ux%u)",
+            page.width, page.height);
+    return false;
+  }
+
+  const size_t stride = ((static_cast<size_t>(dstWidth) + 31u) / 32u) * 4u;
+  const size_t destBytes = stride * dstHeight;
+  if (destBytes == 0 || destBytes > MAX_THUMB_PLANE_BYTES) return false;
+
+  using Bytes = std::unique_ptr<uint8_t, decltype(&std::free)>;
+  using Lookup = std::unique_ptr<int16_t, decltype(&std::free)>;
+  Bytes first(static_cast<uint8_t*>(std::malloc(destBytes)), &std::free);
+  Bytes second(static_cast<uint8_t*>(std::malloc(destBytes)), &std::free);
+  Lookup xToDst(static_cast<int16_t*>(std::malloc(static_cast<size_t>(page.width) * sizeof(int16_t))),
+                &std::free);
+  Lookup yToDst(static_cast<int16_t*>(std::malloc(static_cast<size_t>(page.height) * sizeof(int16_t))),
+                &std::free);
+  if (!first || !second || !xToDst || !yToDst) {
+    LOG_DBG("XTC", "XTCH streaming thumb allocation failed (two %lu-byte planes)",
+            static_cast<unsigned long>(destBytes));
+    return false;
+  }
+  std::memset(first.get(), 0, destBytes);
+  std::memset(second.get(), 0, destBytes);
+  std::memset(xToDst.get(), 0xFF, static_cast<size_t>(page.width) * sizeof(int16_t));
+  std::memset(yToDst.get(), 0xFF, static_cast<size_t>(page.height) * sizeof(int16_t));
+
+  const uint32_t inverseScale = static_cast<uint32_t>(65536.0f / scale);
+  for (uint16_t x = 0; x < dstWidth; ++x) {
+    const size_t src = (static_cast<uint64_t>(x) * inverseScale) >> 16;
+    xToDst.get()[std::min(src, static_cast<size_t>(page.width - 1))] = static_cast<int16_t>(x);
+  }
+  for (uint16_t y = 0; y < dstHeight; ++y) {
+    const size_t src = (static_cast<uint64_t>(y) * inverseScale) >> 16;
+    yToDst.get()[std::min(src, static_cast<size_t>(page.height - 1))] = static_cast<int16_t>(y);
+  }
+
+  const size_t bytesPerColumn = (static_cast<size_t>(page.height) + 7u) / 8u;
+  const xtc::XtcError streamError = book.loadPageStreaming(
+      0,
+      [&](const uint8_t* data, const size_t length, const size_t offset) {
+        for (size_t i = 0; i < length; ++i) {
+          const size_t absolute = offset + i;
+          if (absolute >= sourceBytes) break;
+          const bool isSecondPlane = absolute >= sourcePlaneBytes;
+          const size_t sourceIndex = isSecondPlane ? absolute - sourcePlaneBytes : absolute;
+          const size_t column = sourceIndex / bytesPerColumn;
+          if (column >= page.width) continue;
+          const int16_t x = xToDst.get()[page.width - 1u - column];
+          if (x < 0) continue;
+          const size_t sourceRowBase = (sourceIndex % bytesPerColumn) * 8u;
+          uint8_t* plane = isSecondPlane ? second.get() : first.get();
+          const uint8_t sourceBits = data[i];
+          for (size_t bit = 0; bit < 8u; ++bit) {
+            const size_t sourceY = sourceRowBase + bit;
+            if (sourceY >= page.height) break;
+            const int16_t y = yToDst.get()[sourceY];
+            if (y < 0 || (sourceBits & (0x80u >> bit)) == 0) continue;
+            const size_t destByte = static_cast<size_t>(y) * stride + static_cast<size_t>(x) / 8u;
+            plane[destByte] |= static_cast<uint8_t>(0x80u >> (x % 8));
+          }
+        }
+      },
+      1024u);
+  if (streamError != xtc::XtcError::OK) {
+    LOG_DBG("XTC", "XTCH streaming thumbnail read failed: %s", xtc::errorToString(streamError));
+    return false;
+  }
+
+  // Quantize both sampled grayscale planes into the first buffer in place.
+  // Each pixel's bits are read before only that same output bit is replaced.
+  uint8_t rowsSinceYield = 0;
+  for (uint16_t y = 0; y < dstHeight; ++y) {
+    for (uint16_t x = 0; x < dstWidth; ++x) {
+      const size_t index = static_cast<size_t>(y) * stride + (x / 8u);
+      const uint8_t mask = static_cast<uint8_t>(0x80u >> (x % 8u));
+      const uint8_t value = static_cast<uint8_t>(
+          ((first.get()[index] & mask) ? 2 : 0) + ((second.get()[index] & mask) ? 1 : 0));
+      const uint8_t gray = static_cast<uint8_t>((3 - value) * 85);
+      uint32_t hash = static_cast<uint32_t>(x) * 374761393u + static_cast<uint32_t>(y) * 668265263u;
+      hash = (hash ^ (hash >> 13)) * 1274126177u;
+      const int noise = static_cast<int>(hash >> 24);
+      const int threshold = 128 + ((noise - 128) / 2);
+      if (gray >= threshold) first.get()[index] |= mask;
+      else first.get()[index] &= static_cast<uint8_t>(~mask);
+    }
+    yieldDuringThumbnail(rowsSinceYield);
+  }
+  // The source is only opened for streaming, then closed by XtcParser's
+  // existing on-demand implementation; no 96KB buffer is retained.
+  const std::string destination = book.getThumbBmpPath(requestedHeight);
+  HalFile output;
+  if (!Storage.openFileForWrite("XTC", destination, output)) return false;
+  BmpHeader header;
+  createBmpHeader(&header, dstWidth, dstHeight, BmpRowOrder::TopDown);
+  bool written = output.write(reinterpret_cast<const uint8_t*>(&header), sizeof(header)) == sizeof(header);
+  for (uint16_t y = 0; written && y < dstHeight; ++y) {
+    written = output.write(first.get() + static_cast<size_t>(y) * stride, stride) == stride;
+    yieldDuringThumbnail(rowsSinceYield);
+  }
+  output.close();
+  if (!written) {
+    Storage.remove(destination.c_str());
+    return false;
+  }
+  LOG_DBG("XTC", "XTCH streaming thumb complete (%ux%u, two %lu-byte thumbnail planes): %s",
+          dstWidth, dstHeight, static_cast<unsigned long>(destBytes), destination.c_str());
+  return true;
 }
 }  // namespace
 
@@ -342,6 +478,14 @@ bool Xtc::generateThumbBmp(int height) const {
 
   LOG_DBG("XTC", "Generating thumb BMP: %dx%d -> %dx%d (scale: %.3f)", pageInfo.width, pageInfo.height, thumbWidth,
           thumbHeight, scale);
+
+  // ESP32-C3 can struggle to find one contiguous 96KB XTCH page buffer when
+  // the library/cover caches have fragmented RAM. The book reader already
+  // renders grayscale from an SD stream; use the same low-memory approach
+  // when generating XTCH shelf thumbnails. XTC thumbnails are unchanged.
+  if (bitDepth == 2) {
+    return generateXtchThumbStreaming(*this, pageInfo, thumbWidth, thumbHeight, scale, height);
+  }
 
   // Allocate buffer for page data. Keep the multiplication bounded before it
   // happens: XTC dimensions are 16-bit and a malformed file could otherwise
