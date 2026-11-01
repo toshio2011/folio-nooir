@@ -14,6 +14,8 @@
 
 **P3 — acceptance:** focused tests per change, then full C++ host tests/Python contracts, clean `gh_release` build and source/binary provenance (previous candidate SHA appeared unchanged despite reported fixes), then approval-gated original-X4 physical validation. Cover EPUB warm/cold, CSS-heavy/mixed text+images, Arabic/RTL/CJK, XTC, XTCH, CBZ, BLE on/off, Main/Lite, multiple Reader exits, Settings and sleep/wake; X3 compatibility where feasible. Record button-to-visible latency, write phases, free+largest heap, cache/SD cost, e-paper refresh and BLE stop/replay. No release, merge or flash without explicit approval.
 
+**Licorice lesson incorporated (2026-11-01):** X4 Pro emulator notes demonstrate a first-refresh Home and 26102901 wake to Recent, but provide **no transferable original-X4 heap/latency measurements** or verified `.xic` cache allocation policy. The separate `reading-fonts.md` is chiefly older stock 7.x research, not a Licorice cache blueprint. Use those results only to guide **P1 visible first frame/wake UX** and **P2 evidence-first cache decisions**; no new Licorice subproject, no page-cache rewrite or second framebuffer. Full evidence limits and links are in the updated [performance audit](docs/NOOIR_1.6.7_PERFORMANCE_MEMORY_AUDIT_2026-11-01.md).
+
 **Status of this entry:** documentation-only plan update; remote committed files are not evidence that all local uncommitted fixes were included. No firmware edits, tests, build, flash or release are claimed here.
 
 ---
