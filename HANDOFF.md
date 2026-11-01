@@ -1,5 +1,23 @@
 # Folio Nooir Handoff
 
+## CURRENT — 2026-11-01: Folio Nooir 1.6.7 focused refinement roadmap
+
+**This is the authoritative current work order.** Read the updated [1.6.7 performance/memory audit and roadmap](docs/NOOIR_1.6.7_PERFORMANCE_MEMORY_AUDIT_2026-11-01.md) for evidence, historical version comparisons, concrete tests and release gates. The older 2026-11-01 audit order (advance allocations first) is superseded. Historical notes below remain intact for provenance, not as concurrent work orders.
+
+**Goal:** restore the everyday responsiveness of 1.6.3–1.6.5 while preserving the complete 1.6.6 feature set, stronger crash/data recovery, and proven 1.6.7 Main/Lite/stack/BLE improvements. No new features, speculative caches, broad renderer rewrites, or new persistence subsystem.
+
+**P0 — Reader exit, first:** baseline exact local worktree + physical firmware SHA; compare 1.6.3/1.6.5 simple staged writer against 1.6.6 and local 1.6.7. The three synchronous Recent, BookState and ReadingStats saves already existed in 1.6.3, but the newer writer adds readback validation, backup preservation/probes and rename work. Previous X4 1.6.7 BLE-enabled logs: ~5.55–6.87 s saving, versus ~5.52–5.54 s on tested 1.6.6. Isolate expensive SD phases, prove crash/rename recovery, make one minimal safe normal-path improvement, and measure **Exit button -> visibly usable Home** (including refresh). Do not revert wholesale to 1.6.3 or remove validation/backups.
+
+**P1 — Home + Settings/wake:** preserve existing in-RAM frame reuse, deferred ~500-ms snapshots, Main/Lite dynamic/three-row patching and verified stack fix. Diagnose `framebuffer_read_failed` and intermittent `/.crosspoint/folio_home.bin` open/write failures using directory result, file length, bytes read/written and storage status. Measure whether full SD snapshot reread on popup dismissal beats targeted redraw. Consider temp-and-promote snapshot only if justified; no second framebuffer or validation bypass. Assess Settings return, wake and navigation latency.
+
+**P2 — measured heap safety/BLE:** 1.6.3–1.6.5 already had reusable SD-font buffers and freed retained mini arenas under low heap/underuse; 1.6.6 intentionally retains caches until explicit lifecycle release, adds input-sized advance workspace, adaptive built-in cache tiers and BLE survival budgeting. Do not blindly restore per-page purge. In old X4 BLE-enabled traces, free heap fell ~28 -> ~19 -> ~3.6–5.6 KiB across page load/font prewarm; the survival stop worked but caused BLE disconnections/replay. Instrument simultaneous SD-font prewarm/advance allocation demand and *largest contiguous block*, then fix only proven gaps. The theoretical ~80-KiB advance-workspace overlap is **not** measured X4 consumption. Reading takes priority over optional BLE.
+
+**P3 — acceptance:** focused tests per change, then full C++ host tests/Python contracts, clean `gh_release` build and source/binary provenance (previous candidate SHA appeared unchanged despite reported fixes), then approval-gated original-X4 physical validation. Cover EPUB warm/cold, CSS-heavy/mixed text+images, Arabic/RTL/CJK, XTC, XTCH, CBZ, BLE on/off, Main/Lite, multiple Reader exits, Settings and sleep/wake; X3 compatibility where feasible. Record button-to-visible latency, write phases, free+largest heap, cache/SD cost, e-paper refresh and BLE stop/replay. No release, merge or flash without explicit approval.
+
+**Status of this entry:** documentation-only plan update; remote committed files are not evidence that all local uncommitted fixes were included. No firmware edits, tests, build, flash or release are claimed here.
+
+---
+
 ## 2026-11-01 — 1.6.7 heap/snappiness deep audit (documentation only)
 
 Read **[docs/NOOIR_1.6.7_PERFORMANCE_MEMORY_AUDIT_2026-11-01.md](docs/NOOIR_1.6.7_PERFORMANCE_MEMORY_AUDIT_2026-11-01.md)** before proposing further memory work. It separates implemented optimizations (font-buffer reuse, mini-kerning, BLE latch/backoff, Reader exit cleanup, fast Home/Lite snapshots and durable progress saves) from measured-work candidates (advance-table allocation peaks, SD prewarm budget checks, BLE readmission, snapshot I/O). **No firmware code was changed, tested or flashed for this audit.**
