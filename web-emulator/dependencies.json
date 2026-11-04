@@ -1,0 +1,19 @@
+{
+  "name": "Folio Nooir Browser Emulator",
+  "applicationBaseline": "1.6.6",
+  "applicationRevision": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
+  "sharedFirmware": {
+    "releaseTag": "1.6.6",
+    "filename": "firmware.bin",
+    "size": 6082160,
+    "sha256": "badcd6fb6cb4b5323f92714e893f9c488e887aa8f7b5d8e28cd0e6639aeae108",
+    "devices": ["x3", "x4"]
+  },
+  "engine": "https://github.com/serialx/eink-qemu.git",
+  "engineRevision": "d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc",
+  "initialDevice": "x4",
+  "verifiedNooirDevices": ["x3", "x4"],
+  "unverifiedDevices": ["x4pro", "x4classic"],
+  "firmwareDistribution": "excluded; the user selects a local file",
+  "pagesDeployment": "prepared but disabled"
+}

@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f3ed">
+  <meta name="description" content="Run Folio Nooir v1.6.6 firmware in a browser-based XTEINK X3 or X4 emulator.">
+  <title>Folio Nooir Emulator</title>
+  <link rel="stylesheet" href="./style.css">
+  <script>
+    if (window.crossOriginIsolated === false && window.isSecureContext && "serviceWorker" in navigator) {
+      const isolationWorker = document.createElement("script");
+      isolationWorker.src = new URL("./coi-serviceworker.js", document.baseURI).href;
+      document.head.appendChild(isolationWorker);
+    }
+  </script>
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#emulator" aria-label="Folio Nooir Emulator home">
+      <span class="brand-mark" aria-hidden="true">N</span>
+      <span><strong>Folio Nooir</strong><small>Browser Emulator</small></span>
+    </a>
+    <div class="top-actions">
+      <span class="local-badge"><i></i> Runs in your browser</span>
+      <button class="nav-button active" id="nav-emulator" type="button" aria-pressed="true">Emulator</button>
+      <button class="nav-button" id="nav-about" type="button" aria-pressed="false">About &amp; Credits</button>
+    </div>
+  </header>
+
+  <main id="emulator-view">
+    <section class="control-bar" aria-label="Firmware and device selection">
+      <div class="firmware-card">
+        <div class="card-title-row">
+          <div><span class="eyebrow">Firmware</span><h1>Latest stable Nooir</h1></div>
+          <button id="refresh-release" class="quiet-button" type="button">Check again</button>
+        </div>
+        <div class="release-row">
+          <span id="release-version" class="release-pill">Checking GitHub Releases…</span>
+          <a id="release-link" class="text-link" href="https://github.com/toshio2011/folio-nooir/releases" target="_blank" rel="noreferrer">Release page</a>
+        </div>
+        <p id="firmware-status" class="status-line" role="status" aria-live="polite">Looking up the latest stable release. Download the official file and select it here; firmware is never bundled or uploaded.</p>
+      </div>
+      <div class="device-card">
+        <label for="device-model" class="eyebrow">Emulated device</label>
+        <select id="device-model" aria-describedby="device-note">
+          <option value="x4" selected>Original X4 · ESP32-C3</option>
+          <option value="x3">X3 · ESP32-C3</option>
+          <option value="x4pro" disabled>X4 Pro · validation pending</option>
+          <option value="x4classic" disabled>X4 Classic · unsupported by this emulator model</option>
+        </select>
+        <p id="device-note" class="status-line">X3 and original X4 are validated with the shared v1.6.6 firmware. Pro and Classic remain disabled.</p>
+      </div>
+      <div class="custom-card">
+        <span class="eyebrow">Bring your own firmware</span>
+        <label class="upload-button" for="custom-bin">Choose a local .bin</label>
+        <input id="custom-bin" type="file" accept=".bin,application/octet-stream">
+        <p id="upload-note" class="status-line">A selected file is read by the emulator in your browser; it is not sent to a server.</p>
+      </div>
+    </section>
+
+    <div class="engine-frame-wrap">
+      <iframe id="emulator-engine" title="Folio Nooir running in the eink-qemu browser emulator" allow="cross-origin-isolated" loading="eager"></iframe>
+    </div>
+    <footer class="page-foot">
+      <span id="runtime-note">Starting local emulator…</span>
+      <span>Virtual SD card and settings are stored in this browser by eink-qemu.</span>
+    </footer>
+  </main>
+
+  <main id="about-view" hidden>
+    <section class="about-hero">
+      <span class="eyebrow">Folio Nooir · v1.6.6 port work</span>
+      <h1>A real firmware emulator, with Nooir’s reading experience.</h1>
+      <p>This page wraps the pinned eink-qemu WebAssembly engine. It runs the selected firmware image in your browser and provides the virtual screen, device controls, serial console, and FAT32 SD-card tools.</p>
+      <p class="local-callout"><strong>Local by design.</strong> Firmware files and custom .bin selections stay in your browser. This project does not upload firmware to the public eink-qemu demo or to a Nooir server.</p>
+    </section>
+    <section class="credits-grid" aria-label="Credits and licenses">
+      <article class="credit-card primary-credit">
+        <span class="eyebrow">Emulation engine</span>
+        <h2>eink-qemu</h2>
+        <p>Built from serialx/eink-qemu at <code>d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc</code>. QEMU 11.1.2 and its ESP32 models are GPL-2.0; the upstream tree also includes file-specific LGPL and MIT components. Its notices and source are required in any packaged distribution.</p>
+        <p><a href="https://github.com/serialx/eink-qemu/tree/d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc" target="_blank" rel="noreferrer">Pinned source and contributors</a> · <a href="./sources/eink-qemu-d1b24a5f-corresponding-source.tar.gz" download>Corresponding-source bundle</a> · <a href="https://github.com/serialx/eink-qemu/blob/d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc/COPYING" target="_blank" rel="noreferrer">GPL-2.0</a> · <a href="./licenses/eink-qemu/COPYING" data-license-file>Packaged COPYING</a></p>
+        <p class="fine-print">Upstream origins include QEMU, Espressif’s QEMU fork, prokrypt/x4prosim, Kohei Tokunaga’s qemu-wasm, the PICSimLab Wi-Fi model contributors, and the contributors named in the pinned source tree.</p>
+      </article>
+      <article class="credit-card">
+        <span class="eyebrow">Application source</span>
+        <h2>CrossPoint Reader</h2>
+        <p>Folio Nooir v1.6.6 is based on the official release source. Existing application copyright headers and notices are retained.</p>
+        <a href="https://github.com/crosspoint-reader/crosspoint-reader" target="_blank" rel="noreferrer">CrossPoint Reader repository</a>
+      </article>
+      <article class="credit-card">
+        <span class="eyebrow">Emulator support assets</span>
+        <h2>Espressif and Emscripten</h2>
+        <p>The C3 ROM support image is converted from Espressif's Apache-2.0 ESP32-C3 rev3 ROM ELF. Emscripten 6.0.12 compiles the engine and supplies its SDL2 browser port.</p>
+        <p><a href="https://github.com/espressif/esp-rom-elfs/releases/tag/20260528" target="_blank" rel="noreferrer">Espressif ROM ELF release</a> · <a href="https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/COPYRIGHT.html" target="_blank" rel="noreferrer">ROM third-party notices</a> · <a href="https://github.com/emscripten-core/emscripten" target="_blank" rel="noreferrer">Emscripten</a></p>
+        <p><a href="./licenses/ESP32C3-ROM-NOTICES.md">ROM provenance and notices</a> · <a href="./licenses/esp32c3-rom/esp-rom-elfs-README.md">Packaged Espressif license basis</a> · <a href="./licenses/esp32c3-rom/Apache-2.0.txt">Apache-2.0 text</a> · <a href="./licenses/esp32c3-rom/esp-idf-COPYRIGHT.rst">ROM component notices</a> · <a href="./licenses/esp32c3-rom/Newlib-COPYING.NEWLIB">Newlib terms</a> · <a href="./licenses/esp32c3-rom/BSD-3-Clause.txt">BSD-3-Clause terms</a></p>
+      </article>
+      <article class="credit-card">
+        <span class="eyebrow">Hardware and design references</span>
+        <h2>Community projects</h2>
+        <ul>
+          <li><a href="https://github.com/uxjulia/CrossInk" target="_blank" rel="noreferrer">CrossInk</a> — upstream-derived reader and hardware patterns.</li>
+          <li><a href="https://github.com/crosspoint-reader/crosspoint-simulator" target="_blank" rel="noreferrer">CrossPoint Simulator</a> — desktop board profiles and simulator framework.</li>
+          <li><a href="https://github.com/PewPewzxc/reader-simulator" target="_blank" rel="noreferrer">Reader Simulator</a> — browser simulator feasibility reference.</li>
+          <li><a href="https://github.com/Free-Ink/freeink-sdk" target="_blank" rel="noreferrer">FreeInk SDK</a> — XTEINK board support and hardware interfaces.</li>
+        </ul>
+        <p class="fine-print">These are credited as source/design references. This Nooir wrapper does not claim that their code is vendored here.</p>
+      </article>
+      <article class="credit-card">
+        <span class="eyebrow">Nooir implementation</span>
+        <h2>Folio Nooir browser shell</h2>
+        <p>The Nooir-branded page, stable-release lookup, local firmware handoff, and this Credits/About view are project-side work. The original public v1.6.6 release and its firmware assets remain unchanged.</p>
+        <a href="https://github.com/toshio2011/folio-nooir" target="_blank" rel="noreferrer">Folio Nooir source repository</a>
+      </article>
+    </section>
+    <section class="license-note">
+      <h2>Distribution status</h2>
+      <p>This experimental emulator supports verified X3 and original X4 profiles. It includes no reader firmware; firmware selection stays in your browser. The package carries the pinned engine's corresponding source, license notices, and reviewed emulator support assets.</p>
+      <a href="./licenses/eink-qemu/COPYING.LIB" data-license-file>Packaged COPYING.LIB</a>
+      <a href="./licenses/EINK-QEMU-WEB-BUNDLE.md">Bundle component and source inventory</a>
+      <a href="./licenses/CORRESPONDING-SOURCE.md">Corresponding-source index</a>
+    </section>
+  </main>
+</body>
+</html>

@@ -140,6 +140,9 @@ partition layout:
 Diagnostic-only build profiles and internal memory traces are not enabled in
 the normal release build and are not ordinary reader features.
 
+## Browser Emulator
+
+The isolated Folio Nooir v1.6.6 web-emulator workstream wraps the pinned [eink-qemu](https://github.com/serialx/eink-qemu) WebAssembly engine and runs real firmware in the browser. The unchanged shared X3/X4 v1.6.6 image has been validated locally in both machine profiles. X4 Pro and X4 Classic are disabled. The source and review package contain no reader firmware; stable firmware is downloaded from the official Nooir release and selected locally because the redirected release bytes cannot be fetched by a static browser page. See the [browser emulator guide](web-emulator/README.md) and [public-release readiness report](docs/web-emulator-readiness.md).
 ## Features
 
 ### CrossPoint functions retained
@@ -656,8 +659,10 @@ For a release build, use the `gh_release` environment:
 .\.venv\Scripts\pio.exe run -e gh_release
 ```
 
-## Credits and license
+## Acknowledgements
 
-Folio Nooir is built on [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), with display and reader foundations from the CrossPoint contributors. It also acknowledges the open-source [CrossInk](https://github.com/uxjulia/CrossInk) project as a reference for compatible Xteink display, sleep-screen, and reader improvements.
+Folio Nooir is based on [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), whose reader and firmware foundations remain in the application. The browser engine is [eink-qemu](https://github.com/serialx/eink-qemu), maintained by serialx and its contributors; this package pins `d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc`. The Nooir browser shell and package integration are project-side work.
 
-Licensed under the MIT License.
+[CrossInk](https://github.com/uxjulia/CrossInk), [CrossPoint Simulator](https://github.com/crosspoint-reader/crosspoint-simulator), [Reader Simulator](https://github.com/PewPewzxc/reader-simulator), and the [FreeInk SDK](https://github.com/Free-Ink/freeink-sdk) are acknowledged as references. Their code and artwork are not bundled in the browser shell. The pinned eink-qemu license and component notices are preserved in the generated package; the full source inventory and remaining review gates are recorded in [`LICENSES/REFERENCE-PROJECTS.md`](LICENSES/REFERENCE-PROJECTS.md) and [`LICENSES/EINK-QEMU-WEB-BUNDLE.md`](LICENSES/EINK-QEMU-WEB-BUNDLE.md).
+
+The repository remains licensed under the MIT License. Each upstream component retains its own copyright and license terms.

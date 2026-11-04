@@ -1116,3 +1116,27 @@ table confirms NimBLE and BleKeyboardHost. Offline GTests were unavailable
 (no CMake/CTest or host C++ compiler); Settings JS syntax and `git diff --check`
 passed. The build was not flashed; no stage/commit/push was performed. Do not
 call this release-ready until the physical X4 checklist passes.
+
+## Browser emulator beta — local web-only branch (2026-11-04)
+
+A clean local worktree `C:\Users\fatiha\Documents\side\work\folio-nooir-web-beta` was created on branch `codex/nooir-web-emulator-beta` from official Folio Nooir v1.6.6 commit `b6d428a3187afc25d434fcb475e9ab436099c1ba`. It contains only browser-emulator changes, documentation, license inventory, and the build-only Pages workflow. The Pro/Classic port remains in its original worktree. This branch has not been committed or pushed; no PR or deployment exists.
+
+The packaged wrapper was verified locally with the unchanged official v1.6.6 image (6,082,160 bytes; SHA-256 `badcd6fb6cb4b5323f92714e893f9c488e887aa8f7b5d8e28cd0e6639aeae108`). X4 booted at 480×800 and X3 at 528×792; both reported matching device detection, SD detection, and `render_ready`. The virtual SD accepted `test/epubs/test_text_decorations.epub`. On both profiles, Left entered Library, Confirm opened the EPUB, Right advanced pages, and Back exited Reader. X4 resumed at page 2/3 (67%) after a full browser reload of the wrapper origin; the SD and reading records persisted. The browser must select the local firmware file again after reload.
+
+GitHub latest-release metadata lookup succeeded, but the browser's fetch of the redirected `firmware.bin` asset failed with `TypeError: Failed to fetch`. The user downloads from the official release and selects the file locally; firmware is neither mirrored nor included in the package. The package audit allows only seven identified emulator-support `.bin` assets and excludes reader firmware. Exact support-file hashes are in `LICENSES/EINK-QEMU-WEB-BUNDLE.md`.
+
+Public release remains blocked by the file-level GPL/LGPL and corresponding-source review, confirmation of ROM/NVS/Picco support-asset terms, the static-host limitation if automatic firmware byte loading is required, and a successful GitHub build-only workflow. The workflow's deployment job remains hard-disabled. No hardware was flashed; physical validation is pending.
+
+## Browser emulator beta — license and package remediation (2026-11-04)
+
+This update supersedes the preliminary blocker summary immediately above. The active web-only checkout is `C:\Users\fatiha\Documents\side\work\folio-nooir-web-beta-standalone`, on `codex/nooir-web-emulator-beta`, based on official Folio Nooir v1.6.6 commit `b6d428a3187afc25d434fcb475e9ab436099c1ba`. The other linked worktree and its external parent repository were not changed.
+
+The linked worktree metadata was inspected and found valid. I made no metadata repair because none was needed; no reset, clean, prune, or global Git configuration change was made. Before isolating Git operations, the full original worktree snapshot was copied to `C:\Users\fatiha\Documents\side\_backups\folio-nooir-web-beta-pre-git-repair-20261104-104009`: 1,031 worktree files and six Git metadata files were hash-checked with zero mismatches, and the Git bundle verified.
+
+License/source work now replaces the pinned eink-qemu C3 ROM blob with the hash-verified ESP32-C3 rev3 ROM derived from Espressif's Apache-2.0 ELF release `20260528`. The source tree also contains hash-pinned copies of Espressif's ROM ELF README/license, the ESP-IDF ROM copyright notices and complete Newlib notice, plus BSD-3-Clause and CC0 license texts. The package audit allows only four exact support `.bin` files, verifies these pinned notice files, rejects reader firmware and unknown binary/key files, checks text for common secret formats, restricts package root contents, and requires the resolved Meson source subprojects in the corresponding-source archive. Upstream ROM blobs without explicit redistribution permission are excluded.
+
+Local prior browser validation proved X3/X4 behavior with the earlier emulator ROM. The new licensed-ROM browser smoke has not run yet. The local synthetic package audit was intentionally not treated as a pass: its fixture omitted the resolved Meson source checkout, and the audit correctly reported absent subproject license files. A fresh Ubuntu engine build and complete package/source audit are still required.
+
+The pinned Node suite passed 115 tests on Windows after omitting two POSIX host-tool-dependent test files; the workflow installs the required Linux FAT tools and runs all tests. The web-emulator Python contract suite passed 8/8 after the notice-file pinning changes. The fresh GitHub build workflow still needs to run. Historical Nooir regression evidence from this v1.6.6 workstream reports 148 Python tests and native CTest 585/585 passed.
+
+Current release gate: do not deploy Pages until the Ubuntu workflow boots the unchanged official X3/X4 firmware with the licensed ROM, builds and audits the actual package, and the resulting artifact is inspected. Automatic firmware-byte download is not a beta blocker; the browser requires manual local selection. X4 Pro/Classic remain disabled, no official firmware asset changed, and no physical device was flashed. See `docs/web-emulator-release-readiness-2026-11-04.md` for the current detailed report.
