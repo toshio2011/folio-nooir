@@ -19,6 +19,8 @@ MILESTONES = {
     "x4": re.compile(r"Wait complete:\s+(?:8179|8279x4)_DRF"),
 }
 GEOMETRY = {"x3": (528, 792), "x4": (480, 800)}
+GUEST_FAILURE_DRAIN_SECONDS = 2.0
+GUEST_FAILURE_MARKERS = ("Guru Meditation", "RuntimeError:", "Aborted(")
 
 
 def validate_firmware(path: Path) -> None:
@@ -56,6 +58,10 @@ def smoke_failure(machine: str, reason: str, log_path: Path) -> RuntimeError:
             f"{excerpt}"
         )
     return RuntimeError(f"{machine}: {reason}; no emulator output was captured")
+
+
+def is_guest_runtime_error(output: str) -> bool:
+    return any(marker in output for marker in GUEST_FAILURE_MARKERS)
 
 
 def boot_one(engine: Path, firmware: Path, machine: str, timeout: float) -> None:
@@ -97,6 +103,7 @@ def boot_one(engine: Path, firmware: Path, machine: str, timeout: float) -> None
         output = bytearray()
         milestones = 0
         screenshot_requested = False
+        guest_failure_started: float | None = None
         start = time.monotonic()
         try:
             with log_path.open("wb") as log:
@@ -111,8 +118,17 @@ def boot_one(engine: Path, firmware: Path, machine: str, timeout: float) -> None
                         if len(output) > 2 * 1024 * 1024:
                             del output[:1024 * 1024]
                     text = output.decode(errors="replace")
-                    if any(marker in text for marker in ("Guru Meditation", "RuntimeError:", "Aborted(")):
-                        raise smoke_failure(machine, "guest/runtime error", log_path)
+                    if guest_failure_started is None and is_guest_runtime_error(text):
+                        guest_failure_started = time.monotonic()
+                    if guest_failure_started is not None:
+                        if (
+                            process.poll() is not None
+                            or time.monotonic() - guest_failure_started >= GUEST_FAILURE_DRAIN_SECONDS
+                        ):
+                            raise smoke_failure(machine, "guest/runtime error", log_path)
+                        # Let the emulator finish printing the panic/backtrace
+                        # before terminating it in the finally block.
+                        continue
                     current = len(MILESTONES[machine].findall(text))
                     milestones = max(milestones, current)
                     if milestones >= 3 and "[MEM]" in text and not screenshot_requested:

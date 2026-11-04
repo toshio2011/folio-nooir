@@ -35,6 +35,13 @@ packager = (ROOT / "scripts" / "package_nooir_web_emulator.py").read_text(encodi
 
 
 class WebEmulatorContractTests(unittest.TestCase):
+    def test_guest_runtime_failure_is_detected_and_drained(self):
+        self.assertTrue(smoke_runner.is_guest_runtime_error("Guru Meditation Error: test"))
+        self.assertTrue(smoke_runner.is_guest_runtime_error("RuntimeError: test"))
+        self.assertTrue(smoke_runner.is_guest_runtime_error("Aborted()"))
+        self.assertFalse(smoke_runner.is_guest_runtime_error("normal boot output"))
+        self.assertEqual(smoke_runner.GUEST_FAILURE_DRAIN_SECONDS, 2.0)
+
     def test_failed_firmware_smoke_includes_a_bounded_log_tail(self):
         with tempfile.TemporaryDirectory() as temp_name:
             log = Path(temp_name) / "x3.log"
