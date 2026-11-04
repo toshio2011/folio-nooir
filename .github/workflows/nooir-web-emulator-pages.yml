@@ -68,6 +68,12 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           python3 test/python/test_web_emulator_contract.py
 
+      - name: Build pinned engine dependencies
+        working-directory: work/eink-qemu
+        env:
+          WIFI_ASSETS: none
+        run: eink-qemu/wasm/build-deps.sh
+
       - name: Build pinned engine without optional font downloads
         working-directory: work/eink-qemu
         env:
