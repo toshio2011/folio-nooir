@@ -32,6 +32,7 @@ smoke_runner = load_module(
 )
 rom_prep = (ROOT / "scripts" / "prepare_esp32c3_rom.py").read_text(encoding="utf-8")
 packager = (ROOT / "scripts" / "package_nooir_web_emulator.py").read_text(encoding="utf-8")
+web_workflow = (ROOT / ".github" / "workflows" / "nooir-web-emulator-pages.yml").read_text(encoding="utf-8")
 
 
 class WebEmulatorContractTests(unittest.TestCase):
@@ -41,6 +42,12 @@ class WebEmulatorContractTests(unittest.TestCase):
         self.assertTrue(smoke_runner.is_guest_runtime_error("Aborted()"))
         self.assertFalse(smoke_runner.is_guest_runtime_error("normal boot output"))
         self.assertEqual(smoke_runner.GUEST_FAILURE_DRAIN_SECONDS, 2.0)
+
+    def test_failed_smoke_uploads_only_a_bounded_text_diagnostic(self):
+        self.assertIn("tail -c 16384", web_workflow)
+        self.assertIn("name: nooir-emulator-smoke-diagnostics", web_workflow)
+        self.assertIn("smoke-failure-tail.txt", web_workflow)
+        self.assertIn("if-no-files-found: ignore", web_workflow)
 
     def test_failed_firmware_smoke_includes_a_bounded_log_tail(self):
         with tempfile.TemporaryDirectory() as temp_name:
