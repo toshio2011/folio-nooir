@@ -1,6 +1,7 @@
 const RELEASE_API = "https://api.github.com/repos/toshio2011/folio-nooir/releases/latest";
 const RELEASES_PAGE = "https://github.com/toshio2011/folio-nooir/releases";
 const RELEASE_DOWNLOAD_PREFIX = "https://github.com/toshio2011/folio-nooir/releases/download/";
+const UPSTREAM_EINK_QEMU = "https://serialx.github.io/eink-qemu/";
 const EXPECTED_DEV_RELEASE = Object.freeze({tag: "1.6.6", sha256: "badcd6fb6cb4b5323f92714e893f9c488e887aa8f7b5d8e28cd0e6639aeae108", size: 6082160});
 const DEVICE_LABELS = Object.freeze({x3: "XTEINK X3", x4: "original XTEINK X4"});
 const $ = (selector) => document.querySelector(selector);
@@ -14,6 +15,13 @@ const activeObjectUrls = [];
 
 function selectedDevice() { return $("#device-model").value; }
 function deviceLabel(device = selectedDevice()) { return DEVICE_LABELS[device] || device; }
+function updateUpstreamFallback() {
+  const target = new URL(UPSTREAM_EINK_QEMU);
+  target.searchParams.set("device", selectedDevice());
+  const link = $("#upstream-fallback");
+  link.href = target.href;
+  link.textContent = `Open ${deviceLabel()} profile`;
+}
 function engineBase() {
   return new URL("./engine/", document.baseURI).href;
 }
@@ -135,6 +143,7 @@ $("#custom-bin").addEventListener("change", event => {
   });
 });
 $("#device-model").addEventListener("change", () => {
+  updateUpstreamFallback();
   if (selectedFirmware && selectedFirmware.models.includes(selectedDevice())) {
     loadSelectedFirmware();
     return;
@@ -142,6 +151,7 @@ $("#device-model").addEventListener("change", () => {
   selectedFirmware = null;
   showNoCompatibleFirmware();
 });
+updateUpstreamFallback();
 function showView(view) {
   const isAbout = view === "about";
   $("#emulator-view").hidden = isAbout;

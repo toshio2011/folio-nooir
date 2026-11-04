@@ -167,3 +167,113 @@ no package artifact to inspect. Do not deploy Pages. No physical device was
 flashed. X4 Pro/Classic remain disabled; physical X3/X4 testing remains
 pending. The main firmware CI also remains blocked at the unchanged
 unavailable FreeInk SDK submodule commit.
+
+## Reader Simulator comparison and fallback (2026-11-04)
+
+The public [Reader Simulator catalog](https://github.com/PewPewzxc/reader-simulator/blob/main/web/site/emulator.json)
+lists Folio Nooir `1.6.6` on `X3`: `machine: x3`, size 6,082,160 bytes, and
+SHA-256 `badcd6fb6cb4b5323f92714e893f9c488e887aa8f7b5d8e28cd0e6639aeae108`.
+That is the same official image used on original X4; no distinct X3 Nooir
+firmware is indicated.
+
+The [catalog checker](https://github.com/PewPewzxc/reader-simulator/blob/main/emulator/check.py)
+hashes the file, reads ESP image chip ID `5` (C3), and runs
+`eink-qemu.exe run <firmware> --machine x3 --turbo --ready-timeout 120
+--timeout 20 --out <dir> ready shot:boot press:down wait-screen shot:down`.
+It accepts a nonblank boot screenshot as booted. The Nooir row records
+`keys: false`, so that result confirms boot but does not confirm that Down
+changed the screen. The checker takes an executable path from its caller; the
+checker and catalog do not pin the exact eink-qemu executable commit or ROM
+hash.
+
+The Reader Simulator web app opens the separate hosted eink-qemu page for
+catalog entries marked for that emulator. Its `emuLink` passes `device` and
+`flash` query parameters, and its Pages workflow copies catalog firmware to
+its own `/emu/` path because GitHub release redirects block direct reads.
+This project does not adopt that firmware mirror or URL handoff.
+
+Our comparison uses eink-qemu commit
+`d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc`. In
+[`hw/riscv/esp32c3.c`](https://github.com/serialx/eink-qemu/blob/d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc/hw/riscv/esp32c3.c),
+the C3 ROM is mapped at `0x40000000` with a `0x60000`-byte window and loaded
+there as one flat image. X3 and original X4 are C3 machine profiles. The
+Reader Simulator checker gives its `run` command `--machine x3` but no
+alternate ROM or flash-asset overrides. Its repository does not record the
+binary hashes of the executable it ran, ROM, bootloader, NVS seed or partition
+table, so those historical bytes cannot be compared exactly.
+
+Our pinned `mkflash.py --machine x3` checks chip ID 5 and composes a 16 MiB
+flash image. With the default table, the bootloader is at `0x0`, the partition
+table is at `0x8000`, NVS is at `0x9000`, OTA metadata at `0xe000`, app0/OTA_0
+at `0x10000` (size `0x640000`), and app1/OTA_1 at `0x650000`. Erased OTA
+metadata lets the second-stage bootloader use its default app slot. The app
+bytes are not modified. The emulator seeds the CrossPoint X3 NVS entry only
+if the app contains the CrossPoint marker strings. Our smoke then makes a
+64 MiB blank SD image and runs `wasm/run-node.sh` with `X4MACHINE=x3`, WASM32,
+and turbo enabled. The upstream check instead requests a Down press and two
+screenshots through the `eink-qemu.exe run` CLI.
+
+The exact support inputs allowed by our packager are the C3 bootloader (18,688
+bytes, SHA-256
+`46893df6619f0c7d7689fa309e76551e964e3d83d68c38ccb3e52ed8c3537226`),
+CrossPoint NVS seed (20,480 bytes, SHA-256
+`67c80ffb02df062522216e33553f0691a9ddea06be794404365a66c90bc8e94f`), and
+partition image (3,072 bytes, SHA-256
+`bd0f7954aca2ef7d925ee21aaa1f3dc8822d1d6ce5cbbd26a135e5886bfff6ce`). The
+bootloader and partition/NVS origins and license notices are recorded in
+[`LICENSES/ESP32C3-ROM-NOTICES.md`](../LICENSES/ESP32C3-ROM-NOTICES.md).
+Reader Simulator's checker has no switches for these assets; exact parity of
+the historical run is unproven. The ROM input is the only concrete setup
+difference identified so far that matches the new panic.
+
+The licensed candidate uses the official Espressif 20260528
+`esp32c3_rev3_rom.elf` (SHA-256
+`19ac22e08707df926fb0cf4c54795d4067b983fae8635f396ded173a6d78fc3c`) and
+`riscv64-unknown-elf-objcopy -O binary`. The output is 387,784 bytes (SHA-256
+`3336ae473a063be8dae6790bd45fee4506f2cf273aa36f3dfd9e0495ecb665cc`); the
+stock QEMU blob is 393,216 bytes (SHA-256
+`0de1e65020e803bea0d7443dca149d61895e01fca3bb9c82d073234eebd73f99`). The
+ELF load image contains zero bytes at ROM offset `0x59590` for `0xd8` bytes
+and at `0x59664` for 4 bytes; the stock image has initialization data in that
+region. There are 1,022 differing bytes overall. The diagnostic artifact
+maps the X3 panic to `spi_dummy_len_fix` (`PC=0x4004cc4e`, `MTVAL=0x1b`) and
+the null base to the ELF symbol `rom_spiflash_legacy_data` at `0x3fcdfff0`.
+This is consistent with missing SPI-ROM initialization state. Those nonzero
+values are not present in the Apache-licensed ELF: different `objcopy` flags
+cannot reconstruct them, and an ELF-aware loader can only place data already
+present in the ELF. No authoritative redistributable source or specification
+for the missing values was found. We will not copy them from the unlicensed
+QEMU ROM. A licensed ROM release containing the required state, or a
+redistributable initialization implementation verified against the C3 model,
+is needed before the self-hosted engine can pass.
+
+The page now offers a temporary external link to upstream eink-qemu. It opens
+the selected X3/X4 profile by adding only `device=x3|x4`; it attaches no
+`flash` parameter, firmware URL, or file. The user chooses the unchanged
+official v1.6.6 `firmware.bin` locally on that site. This is a handoff only;
+it does not make our self-hosted package functional or ready to publish.
+
+GitHub Actions run `41789041621` at branch head
+`417c8140083541a5f2cabd2b9b36b6128f5c2716` passed the pinned JS/browser tests,
+Python suites, engine dependency build, full WebAssembly build, ROM
+preparation, and official firmware SHA-256 check. X3 smoke failed in under a
+second before the second-stage bootloader. The old runner stopped there, so
+X4 was not attempted. Package, package audit and review artifact upload were
+skipped; no release-ready site package exists. The updated smoke runner now
+attempts X3 and X4 independently and still fails overall unless both pass.
+The external handoff has a local source-contract test. A manual browser check
+opened `https://serialx.github.io/eink-qemu/?device=x4`; the site displayed
+“Choose firmware to begin” and “No device running.” No firmware file or URL
+was attached, and no firmware was selected or sent. This verifies the X4
+model-only entry point and the manual file chooser; the X3 URL has not been
+opened in a browser. The local web-emulator contract suite passes 13/13 and
+`node --check web-emulator/app.js` passes. The local tests used a workspace
+temporary directory because this managed Windows session denies writes to its
+default temporary directory.
+
+**Status:** shared firmware compatibility is supported by the Reader
+Simulator catalog and previous local boots with eink-qemu's stock ROM. The
+Apache-licensed candidate is redistributable with required notices but is
+functionally incompatible in the pinned flat-ROM startup path. PR #3 remains
+draft; Pages deployment is disabled. Physical X3/X4 tests and the X3 external
+browser entry check remain pending.

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Prepare the licensed ESP32-C3 ROM image used by the browser emulator.
+"""Prepare the licensed ESP32-C3 ROM candidate for compatibility smoke tests.
 
 The pinned eink-qemu revision contains upstream ROM blobs without an explicit
 per-file redistribution license. This script instead takes Espressif's
 Apache-2.0 ESP32-C3 rev3 ROM ELF release, verifies both archive and ELF hashes,
-and converts it to the flat binary expected by eink-qemu.
+and converts it to the flat binary expected by eink-qemu. The pinned engine's
+flat-ROM startup currently fails with this candidate; the result is not cleared
+for packaging unless the unchanged X3/X4 smoke passes.
 """
 from __future__ import annotations
 

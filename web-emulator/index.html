@@ -50,7 +50,7 @@
           <option value="x4pro" disabled>X4 Pro · validation pending</option>
           <option value="x4classic" disabled>X4 Classic · unsupported by this emulator model</option>
         </select>
-        <p id="device-note" class="status-line">X3 and original X4 are validated with the shared v1.6.6 firmware. Pro and Classic remain disabled.</p>
+        <p id="device-note" class="status-line">The unchanged v1.6.6 image is cataloged for both X3 and original X4. The current self-hosted licensed ROM fails during X3 startup; the X4 check is pending. Pro and Classic remain disabled.</p>
       </div>
       <div class="custom-card">
         <span class="eyebrow">Bring your own firmware</span>
@@ -67,6 +67,15 @@
       <span id="runtime-note">Starting local emulator…</span>
       <span>Virtual SD card and settings are stored in this browser by eink-qemu.</span>
     </footer>
+    <aside class="fallback-card" aria-labelledby="fallback-title">
+      <div>
+        <span class="eyebrow">Temporary compatibility fallback</span>
+        <h2 id="fallback-title">Try the upstream eink-qemu site</h2>
+        <p>The self-hosted, licensed C3 ROM currently panics before Nooir reaches its bootloader on X3. The shared firmware previously booted on X3 and original X4 with eink-qemu’s stock ROM; the licensed-ROM X4 check is still pending.</p>
+        <p>This handoff opens the selected device profile only. It does not pass a firmware file or firmware URL. On eink-qemu, choose the unchanged official v1.6.6 <code>firmware.bin</code> from your device locally.</p>
+      </div>
+      <a id="upstream-fallback" class="fallback-button" href="https://serialx.github.io/eink-qemu/?device=x4" target="_blank" rel="noopener noreferrer">Open original X4 profile</a>
+    </aside>
   </main>
 
   <main id="about-view" hidden>
@@ -93,7 +102,7 @@
       <article class="credit-card">
         <span class="eyebrow">Emulator support assets</span>
         <h2>Espressif and Emscripten</h2>
-        <p>The C3 ROM support image is converted from Espressif's Apache-2.0 ESP32-C3 rev3 ROM ELF. Emscripten 6.0.12 compiles the engine and supplies its SDL2 browser port.</p>
+        <p>The candidate C3 ROM image is converted from Espressif's Apache-2.0 ESP32-C3 rev3 ROM ELF. In the pinned engine's flat-ROM loading path, this candidate currently panics before the unchanged Nooir image reaches its bootloader; it is not cleared for a public package. Emscripten 6.0.12 compiles the engine and supplies its SDL2 browser port.</p>
         <p><a href="https://github.com/espressif/esp-rom-elfs/releases/tag/20260528" target="_blank" rel="noreferrer">Espressif ROM ELF release</a> · <a href="https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/COPYRIGHT.html" target="_blank" rel="noreferrer">ROM third-party notices</a> · <a href="https://github.com/emscripten-core/emscripten" target="_blank" rel="noreferrer">Emscripten</a></p>
         <p><a href="./licenses/ESP32C3-ROM-NOTICES.md">ROM provenance and notices</a> · <a href="./licenses/esp32c3-rom/esp-rom-elfs-README.md">Packaged Espressif license basis</a> · <a href="./licenses/esp32c3-rom/Apache-2.0.txt">Apache-2.0 text</a> · <a href="./licenses/esp32c3-rom/esp-idf-COPYRIGHT.rst">ROM component notices</a> · <a href="./licenses/esp32c3-rom/Newlib-COPYING.NEWLIB">Newlib terms</a> · <a href="./licenses/esp32c3-rom/BSD-3-Clause.txt">BSD-3-Clause terms</a></p>
       </article>
@@ -117,7 +126,7 @@
     </section>
     <section class="license-note">
       <h2>Distribution status</h2>
-      <p>This experimental emulator supports verified X3 and original X4 profiles. It includes no reader firmware; firmware selection stays in your browser. The package carries the pinned engine's corresponding source, license notices, and reviewed emulator support assets.</p>
+      <p>This experimental emulator targets X3 and original X4 with the shared v1.6.6 image. The packaged licensed-ROM build has not passed its startup smoke test, so there is no release-ready site artifact. The source package includes no reader firmware; the temporary external handoff does not pass a firmware file or URL.</p>
       <a href="./licenses/eink-qemu/COPYING.LIB" data-license-file>Packaged COPYING.LIB</a>
       <a href="./licenses/EINK-QEMU-WEB-BUNDLE.md">Bundle component and source inventory</a>
       <a href="./licenses/CORRESPONDING-SOURCE.md">Corresponding-source index</a>

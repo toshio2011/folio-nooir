@@ -1231,3 +1231,68 @@ firmware would be unsupported. The build-only workflow continues to fail
 before package audit and artifact creation. Pages deployment remains hard
 disabled. X4 has not been retested with the licensed ROM in this run; X4 Pro
 and Classic remain disabled; physical X3/X4 validation remains pending.
+
+## Browser emulator beta — Reader Simulator ROM comparison (2026-11-04)
+
+The Reader Simulator catalog contains Folio Nooir 1.6.6 on X3 at
+`machine: x3`, 6,082,160 bytes, SHA-256
+`badcd6fb6cb4b5323f92714e893f9c488e887aa8f7b5d8e28cd0e6639aeae108`, the
+same official image used on original X4. Its checker
+(`PewPewzxc/reader-simulator/emulator/check.py`) checks chip ID 5 and runs
+`eink-qemu.exe run` with `--machine x3`, `ready`, a boot screenshot, a Down
+press and a second screenshot. The published row says `keys: false`, so this
+confirms boot only. The checker accepts an executable path; its repository
+does not pin the exact engine revision or ROM/boot asset hashes.
+
+The Reader Simulator page opens the external eink-qemu site for this entry
+and its own Pages workflow mirrors firmware under `/emu/` to work around
+GitHub release CORS. We do not use that mirror or pass a firmware URL. Our
+new fallback opens `https://serialx.github.io/eink-qemu/` with only
+`device=x3` or `device=x4`; the user chooses the official firmware locally.
+
+Our pinned engine is eink-qemu
+`d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc`. `hw/riscv/esp32c3.c` maps the
+C3 ROM at `0x40000000` for `0x60000` bytes and loads a flat image there. X3
+and X4 are both C3 profiles. The default flash layout puts the bootloader at
+`0x0`, the partition table at `0x8000`, NVS at `0x9000`, OTA data at `0xe000`,
+app0/OTA_0 at `0x10000` (`0x640000` bytes), and app1/OTA_1 at `0x650000`.
+`mkflash.py --machine x3` validates chip ID 5, composes a 16 MiB image and
+uses the CrossPoint X3 NVS seed only when CrossPoint marker strings exist in
+the app. Our smoke uses that same pinned helper, a blank 64 MiB SD image,
+`X4MACHINE=x3` and `wasm/run-node.sh`. The upstream checker does not override
+ROM, bootloader, partition, NVS or app offsets; its historical binary hashes
+are unavailable, so exact asset parity cannot be asserted.
+
+The Apache-licensed candidate comes from Espressif release 20260528
+`esp32c3_rev3_rom.elf`, SHA-256
+`19ac22e08707df926fb0cf4c54795d4067b983fae8635f396ded173a6d78fc3c`, converted
+with `riscv64-unknown-elf-objcopy -O binary` into 387,784 bytes, SHA-256
+`3336ae473a063be8dae6790bd45fee4506f2cf273aa36f3dfd9e0495ecb665cc`. The
+stock QEMU C3 ROM is 393,216 bytes, SHA-256
+`0de1e65020e803bea0d7443dca149d61895e01fca3bb9c82d073234eebd73f99`. The
+ELF load image has zero data at `0x59590` for `0xd8` bytes and `0x59664` for
+4 bytes, while the stock ROM contains initialization data there; 1,022 bytes
+differ overall. The X3 panic maps to `spi_dummy_len_fix` (`PC=0x4004cc4e`,
+`MTVAL=0x1b`) dereferencing a null base; symbol `rom_spiflash_legacy_data`
+is at `0x3fcdfff0`. These required bytes are absent from the licensed ELF.
+Neither different flat `objcopy` flags nor an ELF-aware loader can reconstruct
+data not in the input. We will not copy unlicensed ROM bytes. A licensed
+complete ROM or independently sourced, licensed initialization logic proven
+against the C3 machine is required for self-hosted X3/X4 boot.
+
+The X3 smoke failure is a ROM/startup regression, not a distinct X3 firmware
+requirement. Workflow run `41789041621` passed JS/browser tests, Python tests, pinned
+dependency and WASM builds, licensed ROM preparation, and the official
+firmware hash check; X3 failed before the second-stage bootloader, and the old
+runner stopped without testing X4. The updated script attempts both profiles
+independently but still blocks packaging if either fails. The external link
+has a source-contract test. The X4 model-only URL
+`https://serialx.github.io/eink-qemu/?device=x4` was opened in a browser; it
+showed “Choose firmware to begin” and “No device running.” No firmware file
+or URL was attached, and no file was selected or sent. The X3 URL is not yet
+browser-checked. Local validation of these changes passed the 13-test web
+emulator contract suite (the test temp directory was redirected into the
+workspace because the managed Windows temp directory denies writes), and
+`node --check web-emulator/app.js`. No package artifact was made. PR #3 remains
+draft and Pages deployment disabled.
+No v1.6.7 source, release firmware, or physical device was changed.

@@ -77,6 +77,34 @@ class WebEmulatorContractTests(unittest.TestCase):
         self.assertIn('value="x4pro" disabled', HTML)
         self.assertIn('value="x4classic" disabled', HTML)
 
+    def test_upstream_fallback_passes_only_the_selected_device(self):
+        self.assertIn('id="upstream-fallback"', HTML)
+        self.assertIn('href="https://serialx.github.io/eink-qemu/?device=x4"', HTML)
+        self.assertIn('rel="noopener noreferrer"', HTML)
+        self.assertIn("does not pass a firmware file or firmware URL", HTML)
+        self.assertIn('target.searchParams.set("device", selectedDevice())', APP)
+        fallback = APP.split("function updateUpstreamFallback()", 1)[1].split("function engineBase()", 1)[0]
+        self.assertNotIn("flash", fallback.lower())
+
+    def test_smoke_runner_checks_x4_even_if_x3_fails(self):
+        import contextlib
+        import io
+        from unittest.mock import patch
+
+        engine = Path("mock-engine")
+        firmware = Path("mock-firmware.bin")
+        error_output = io.StringIO()
+        with patch.object(Path, "resolve", autospec=True, side_effect=lambda path, *args, **kwargs: path), \
+                patch.object(smoke_runner, "validate_firmware"), \
+                patch.object(smoke_runner, "boot_one", side_effect=[RuntimeError("X3 ROM panic"), None]) as boot_one, \
+                patch("sys.argv", ["smoke_nooir_shared_firmware.py", "--engine-source", str(engine), "--firmware", str(firmware)]), \
+                contextlib.redirect_stderr(error_output):
+            result = smoke_runner.main()
+
+        self.assertEqual(result, 1)
+        self.assertEqual([call.args[2] for call in boot_one.call_args_list], ["x3", "x4"])
+        self.assertIn("x3: FAIL; X3 ROM panic", error_output.getvalue())
+
     def test_custom_firmware_is_local_and_same_origin(self):
         self.assertIn("URL.createObjectURL(file)", APP)
         self.assertIn("target.origin !== location.origin", APP)
@@ -122,9 +150,7 @@ class WebEmulatorContractTests(unittest.TestCase):
         self.assertIn("value=\"x4classic\" disabled", HTML)
 
     def test_package_audit_rejects_unreviewed_binary_and_checks_support_hashes(self):
-        temporary_root = ROOT / "build" / "web-emulator-test-tmp"
-        temporary_root.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=temporary_root) as temporary:
+        with tempfile.TemporaryDirectory(prefix="nooir-web-package-audit-") as temporary:
             package = Path(temporary)
             for relative in package_audit.REQUIRED:
                 target = package / relative

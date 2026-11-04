@@ -170,8 +170,20 @@ def main() -> int:
     engine = args.engine_source.resolve(strict=True)
     firmware = args.firmware.resolve(strict=True)
     validate_firmware(firmware)
+    failures: list[tuple[str, Exception]] = []
     for machine in ("x3", "x4"):
-        boot_one(engine, firmware, machine, args.timeout)
+        try:
+            boot_one(engine, firmware, machine, args.timeout)
+        except Exception as exc:
+            failures.append((machine, exc))
+            print(f"{machine}: FAIL; {exc}", file=sys.stderr)
+    if failures:
+        print(
+            "FAIL: licensed-ROM smoke did not pass both shared-firmware profiles; "
+            "the package step must remain blocked.",
+            file=sys.stderr,
+        )
+        return 1
     print(f"PASS: unchanged v1.6.6 shared firmware SHA-256 {FIRMWARE_SHA256} on X3 and X4")
     return 0
 

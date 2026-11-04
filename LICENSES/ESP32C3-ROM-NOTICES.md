@@ -1,13 +1,15 @@
 # ESP32-C3 emulator ROM notices
 
-The browser package includes one emulator support image: `engine/esp32c3-rom.bin`.
-It is **not reader firmware**. It is generated from Espressif's
+The porting branch has one licensed C3 ROM **candidate**:
+`engine/esp32c3-rom.bin`. It is **not reader firmware**. It is generated from Espressif's
 `esp32c3_rev3_rom.elf` in the official
 [esp-rom-elfs](https://github.com/espressif/esp-rom-elfs) release `20260528`.
 Espressif states that the ROM ELF files may be used under Apache License 2.0,
-while the mask-ROM implementation itself is not open source. The project keeps
-that distinction: this package redistributes a licensed ELF-derived object;
-it does not claim to publish ROM source code.
+while the mask-ROM implementation itself is not open source. The ELF-derived
+object is redistributable with the listed notices, but its current flat-image
+conversion fails the pinned eink-qemu startup smoke and is **not approved for
+public packaging**. This branch does not include or redistribute the
+unlicensed upstream ROM image or bytes copied from it.
 
 ## Exact source and conversion
 
@@ -20,12 +22,12 @@ it does not claim to publish ROM source code.
 The build runs `riscv64-unknown-elf-objcopy -O binary` on the verified ELF.
 [`scripts/prepare_esp32c3_rom.py`](../scripts/prepare_esp32c3_rom.py) pins the
 release archive, input ELF and expected output hashes, and refuses to overwrite
-an existing destination. This binary is distributed under the Apache-2.0
-object-form permission stated by Espressif. The package preserves the exact
+an existing destination. The output may be redistributed under the Apache-2.0
+object-form permission stated by Espressif. Any later package must preserve the exact
 Espressif license and the ROM-related third-party notices listed below; it does
 not redistribute the unlicensed upstream eink-qemu ROM blobs.
 
-The generated site carries these offline notice files under
+Any generated site that redistributes this candidate must carry these offline notice files under
 `licenses/esp32c3-rom/`:
 
 | File | Pinned upstream source | Upstream Git blob SHA-1 |
