@@ -1296,3 +1296,20 @@ workspace because the managed Windows temp directory denies writes), and
 `node --check web-emulator/app.js`. No package artifact was made. PR #3 remains
 draft and Pages deployment disabled.
 No v1.6.7 source, release firmware, or physical device was changed.
+
+## Latest web-emulator build result
+
+Build-only workflow `41797236085` on `a9cf869a497239d994d6aba947aa484930b0b54b`
+passed the pinned browser/Node and Python contract tests, engine dependencies,
+full WebAssembly build, licensed ROM preparation, and unchanged v1.6.6
+firmware checksum validation. The updated runner then tried both profiles;
+**X3 and X4 both failed** at the same early C3 ROM panic
+(`PC=0x4004cc4e`, `MCAUSE=5`, `MTVAL=0x1b`), before the Nooir second-stage
+bootloader. Diagnostic artifact `13307320900` is 1,271 bytes with SHA-256
+`5d3191a13ca5bc4d7be870b1e52718b22473e9bf0d6d485dbd06856eae8dd215`; it
+expires 2026-11-07. Packaging and audit were skipped, and the Pages job was
+skipped by its hard-disabled condition. PR Formatting passed. Regular CI
+`41797236067` separately failed at the unavailable v1.6.6 FreeInk SDK
+submodule checkout; its pin remains unchanged. PR #3 remains draft, no
+firmware or ROM artifact was added to the public release, and no device or
+Pages site was touched.

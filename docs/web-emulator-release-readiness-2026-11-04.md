@@ -119,7 +119,11 @@ The general firmware CI remains separately blocked at checkout because the
 v1.6.6 `freeink-sdk` submodule references unavailable commit
 `7bd6aebe9b40198d7dddf455400cee9225430726`. The submodule pin was left
 unchanged; this does not invalidate the web-only workflow, but the general CI
-must not be reported as green.
+must not be reported as green. The latest regular CI run `41797236067` failed
+during recursive checkout, before build or tests; GitHub returned
+`upload-pack: not our ref` for the gitlink in `.gitmodules`
+(`https://github.com/toshio2011/freeink-sdk.git`). No replacement revision was
+guessed or silently substituted.
 
 **Publication remains blocked.** The immediate functional blocker is the X3
 smoke failure with the licensed Espressif ROM; the exact runtime output is not
@@ -271,9 +275,34 @@ opened in a browser. The local web-emulator contract suite passes 13/13 and
 temporary directory because this managed Windows session denies writes to its
 default temporary directory.
 
-**Status:** shared firmware compatibility is supported by the Reader
-Simulator catalog and previous local boots with eink-qemu's stock ROM. The
-Apache-licensed candidate is redistributable with required notices but is
-functionally incompatible in the pinned flat-ROM startup path. PR #3 remains
-draft; Pages deployment is disabled. Physical X3/X4 tests and the X3 external
-browser entry check remain pending.
+## Latest build-only workflow result (2026-11-04)
+
+Run `41797236085` tested branch head
+`a9cf869a497239d994d6aba947aa484930b0b54b`. The pinned engine/browser and
+Python contract tests, dependency build, full WebAssembly build, licensed ROM
+preparation, and unchanged official firmware download/hash check all passed.
+The updated smoke runner attempted both machine profiles independently:
+**X3 failed and X4 failed** with the same C3 panic at
+`PC=0x4004cc4e`, `MCAUSE=5`, `MTVAL=0x1b`, before the Nooir second-stage
+bootloader. This confirms the licensed flat-ROM startup regression affects
+both profiles. The failure-only text artifact is
+`nooir-emulator-smoke-diagnostics` (artifact `13307320900`, 1,271 bytes,
+SHA-256 `5d3191a13ca5bc4d7be870b1e52718b22473e9bf0d6d485dbd06856eae8dd215`,
+expires 2026-11-07). Packaging and package audit were skipped. The deployment
+job was skipped because its workflow condition remains hard-disabled.
+
+The separate regular CI run `41797236067` failed during recursive checkout,
+before build or tests. `.gitmodules` points `freeink-sdk` to
+`https://github.com/toshio2011/freeink-sdk.git`, while v1.6.6 pins
+`7bd6aebe9b40198d7dddf455400cee9225430726`; GitHub returned
+`upload-pack: not our ref`. No replacement SDK was guessed or silently
+substituted. PR Formatting passed. PR #3 is open and draft at the tested
+branch head; Pages deployment remains disabled.
+
+**Status:** the Reader Simulator catalog and prior local stock-ROM boots
+confirm the unchanged official v1.6.6 image is shared by X3 and original X4.
+The Apache-licensed ELF-derived ROM candidate is redistributable with its
+notices but fails both current machine-profile smokes. No unlicensed ROM bytes
+were copied. The package is not ready to publish. Physical device testing,
+browser confirmation of the X3 external handoff, and a licensed self-hosted
+ROM/startup solution remain outstanding.
