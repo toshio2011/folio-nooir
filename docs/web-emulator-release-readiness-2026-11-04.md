@@ -128,3 +128,42 @@ generated site/source archive has not passed its audit or artifact review.
 Pages deployment remains hard-disabled. X4 Pro and X4 Classic remain disabled;
 physical X3/X4 testing is pending; no firmware was flashed and no public site
 was deployed.
+
+## Current X3 failure follow-up (2026-11-04)
+
+The authorized sign-in completed and the isolated branch is now pushed at
+`59abd219b4e13ee0c2f1da8a06f0563580b69bfe`; draft PR #3 remains open. The
+latest build-only run is `41783095009`. Tests, dependency build, full WASM
+build, official ROM download/checksum, and exact v1.6.6 firmware checksum
+passed. X3 smoke failed before expected SPI boot output; packaging, audit,
+and review-artifact upload did not run. The failure log artifact is
+`13301086190` (1,295 bytes; SHA-256
+`844e8a9e20efde1becaa9e466ffc07b134f5bc58f9095ffdd634b2b70570450a`; expires
+2026-11-07).
+
+Its C3 panic reports `PC=0x4004cc4e`, `MCAUSE=5`, and `MTVAL=0x1b`. The
+checksum-verified Espressif ROM ELF maps this to `spi_dummy_len_fix`; the
+faulting instruction reads offset `0x1b` through a null base, and ELF symbol
+`0x3fcdfff0` is `rom_spiflash_legacy_data`. Both the 20260528 and 20230320
+official release archives were checksum-verified, and contain the same
+`esp32c3_rev3_rom.elf` SHA-256
+`19ac22e08707df926fb0cf4c54795d4067b983fae8635f396ded173a6d78fc3c`.
+Its load-image data at offsets `0x59590`/`0x59664` is zero. The pinned
+emulator ROM has nonzero bytes in this initialization region; the reviewed
+Espressif ELF conversion differs there in 1,022 bytes. This is the leading
+explanation for the panic, but still needs a licensed, boot-validated fix.
+
+The pinned ROM's exact SHA-256 is also the SHA-256 of Espressif QEMU's
+`pc-bios/esp32c3-rom.bin`. Espressif's introducing commit says that it
+includes the C3 BIOS, but no file-level license or redistribution notice was
+found for that binary. This leaves that alternative unresolved and excluded
+from the web distribution. Do not copy its missing initialization values into
+the Apache ELF or use that blob until its terms are clarified. Current ELF
+license terms remain clear, but its image is not functionally compatible with
+the pinned engine's boot path as configured.
+
+Accordingly, the workflow still has no passing X3/X4 licensed-ROM smoke and
+no package artifact to inspect. Do not deploy Pages. No physical device was
+flashed. X4 Pro/Classic remain disabled; physical X3/X4 testing remains
+pending. The main firmware CI also remains blocked at the unchanged
+unavailable FreeInk SDK submodule commit.

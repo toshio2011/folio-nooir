@@ -1175,3 +1175,59 @@ General CI also remains red at v1.6.6 submodule checkout because the pinned
 That gitlink was not changed. No Pages deployment, merge, release change, or
 hardware flash occurred. X4 Pro and X4 Classic remain disabled, and physical
 X3/X4 validation remains pending.
+
+## Browser emulator beta — X3 ROM failure diagnosis (2026-11-04)
+
+The user completed GitHub sign-in and the authorized branch push is no longer
+waiting. Current isolated branch head is `59abd219b4e13ee0c2f1da8a06f0563580b69bfe`
+(`codex/nooir-web-emulator-beta`); draft PR #3 remains open. No source from
+the v1.6.7 development worktree, public release asset, or device was changed.
+
+GitHub Actions run `41783095009` completed the pinned Node/browser tests,
+Python tests, dependency build, full WebAssembly build, ROM preparation, and
+official v1.6.6 firmware hash check. The X3 firmware smoke then failed before
+the ROM printed its normal SPI boot lines. Failure-only artifact
+`nooir-emulator-smoke-diagnostics` (artifact `13301086190`, 1,295 bytes,
+SHA-256 `844e8a9e20efde1becaa9e466ffc07b134f5bc58f9095ffdd634b2b70570450a`,
+expires 2026-11-07) contains:
+
+```text
+ESP-ROM:esp32c3-api1-20210207
+Guru Meditation Error: Core 0 panic'ed (Load access fault)
+PC      : 0x4004cc4e  RA      : 0x4004da70
+MCAUSE  : 0x00000005  MTVAL : 0x0000001b
+```
+
+The exact Espressif release archive `20260528` was fetched and matched its
+documented SHA-256 `caa463d3cbef2430a5a35847c1d9f2f152403b17a802050927ff60c8da54fe46`;
+the extracted `esp32c3_rev3_rom.elf` matched `19ac22e08707df926fb0cf4c54795d4067b983fae8635f396ded173a6d78fc3c`.
+The older official `20230320` archive was also verified against its published
+SHA-256 and contains the same ELF hash. The panic PC maps to ROM symbol
+`spi_dummy_len_fix` at `0x4004cc46`; its faulting load reads byte offset
+`0x1b` from a null base. The ELF symbol table identifies `0x3fcdfff0` as
+`rom_spiflash_legacy_data`.
+
+Byte comparison found the likely compatibility cause: the licensed ELF's
+load-image segments at ROM offsets `0x59590` and `0x59664` are all zero, while
+the pinned emulator's C3 ROM contains nonzero data in the same initialization
+area. The checked-in conversion uses `objcopy -O binary`, which yields the
+licensed output hash `3336ae473a063be8dae6790bd45fee4506f2cf273aa36f3dfd9e0495ecb665cc`;
+that output differs from the pinned ROM in 1,022 bytes in the initialization
+area. This strongly explains the null SPI data pointer, but no compatible,
+licensed replacement has yet been validated by booting the unchanged firmware.
+
+The same 393,216-byte C3 ROM is present in Espressif's own QEMU repository
+(`pc-bios/esp32c3-rom.bin`, SHA-256
+`0de1e65020e803bea0d7443dca149d61895e01fca3bb9c82d073234eebd73f99`).
+Espressif's introducing commit says it includes the C3 BIOS, but the ROM file
+has no file-level redistribution terms or notice. The official repository's
+binary metadata does not identify a separate license. Treat this as unresolved;
+do not replace the reviewed Apache-licensed ELF with this ROM in the web
+package unless its redistribution rights are established.
+
+No functional workaround was committed: copying the unlicensed ROM's data
+into the licensed image, choosing a different silicon revision, or changing
+firmware would be unsupported. The build-only workflow continues to fail
+before package audit and artifact creation. Pages deployment remains hard
+disabled. X4 has not been retested with the licensed ROM in this run; X4 Pro
+and Classic remain disabled; physical X3/X4 validation remains pending.
