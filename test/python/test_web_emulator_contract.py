@@ -27,11 +27,26 @@ package_audit = load_module(
 package_builder = load_module(
     "nooir_web_package_builder", ROOT / "scripts" / "package_nooir_web_emulator.py"
 )
+smoke_runner = load_module(
+    "nooir_shared_firmware_smoke", ROOT / "scripts" / "smoke_nooir_shared_firmware.py"
+)
 rom_prep = (ROOT / "scripts" / "prepare_esp32c3_rom.py").read_text(encoding="utf-8")
 packager = (ROOT / "scripts" / "package_nooir_web_emulator.py").read_text(encoding="utf-8")
 
 
 class WebEmulatorContractTests(unittest.TestCase):
+    def test_failed_firmware_smoke_includes_a_bounded_log_tail(self):
+        with tempfile.TemporaryDirectory() as temp_name:
+            log = Path(temp_name) / "x3.log"
+            log.write_bytes(b"EARLY-LOG-MARKER\n" + b"x" * 20_000 + b"Guru Meditation Error: test\n")
+
+            error = smoke_runner.smoke_failure("x3", "guest/runtime error", log)
+
+        self.assertIn("guest/runtime error", str(error))
+        self.assertIn("Guru Meditation Error: test", str(error))
+        self.assertNotIn("EARLY-LOG-MARKER", str(error))
+        self.assertLess(len(str(error)), 17_000)
+
     def test_release_lookup_is_official_read_only_metadata_and_asset_link(self):
         self.assertIn("https://api.github.com/repos/toshio2011/folio-nooir/releases/latest", APP)
         self.assertIn('credentials: "omit"', APP)

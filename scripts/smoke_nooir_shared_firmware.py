@@ -43,6 +43,21 @@ def parse_ppm(path: Path, expected: tuple[int, int]) -> None:
         raise RuntimeError("panel capture is blank")
 
 
+def smoke_failure(machine: str, reason: str, log_path: Path) -> RuntimeError:
+    try:
+        data = log_path.read_bytes()
+    except OSError:
+        data = b""
+    excerpt = data[-16_384:].decode("utf-8", errors="replace").strip()
+    if excerpt:
+        return RuntimeError(
+            f"{machine}: {reason}\n"
+            "Last emulator output (the complete temporary log is removed after the run):\n"
+            f"{excerpt}"
+        )
+    return RuntimeError(f"{machine}: {reason}; no emulator output was captured")
+
+
 def boot_one(engine: Path, firmware: Path, machine: str, timeout: float) -> None:
     with tempfile.TemporaryDirectory(prefix=f"nooir-{machine}-smoke-") as temp_name:
         work = Path(temp_name).resolve()
@@ -97,7 +112,7 @@ def boot_one(engine: Path, firmware: Path, machine: str, timeout: float) -> None
                             del output[:1024 * 1024]
                     text = output.decode(errors="replace")
                     if any(marker in text for marker in ("Guru Meditation", "RuntimeError:", "Aborted(")):
-                        raise RuntimeError(f"{machine}: guest/runtime error; see {log_path}")
+                        raise smoke_failure(machine, "guest/runtime error", log_path)
                     current = len(MILESTONES[machine].findall(text))
                     milestones = max(milestones, current)
                     if milestones >= 3 and "[MEM]" in text and not screenshot_requested:
@@ -106,14 +121,17 @@ def boot_one(engine: Path, firmware: Path, machine: str, timeout: float) -> None
                         process.stdin.flush()
                         screenshot_requested = True
                     if shot.exists() and shot.stat().st_size > 1000:
-                        parse_ppm(shot, GEOMETRY[machine])
+                        try:
+                            parse_ppm(shot, GEOMETRY[machine])
+                        except RuntimeError as exc:
+                            raise smoke_failure(machine, str(exc), log_path) from exc
                         if process.poll() is not None:
-                            raise RuntimeError(f"{machine}: emulator exited before the capture completed")
+                            raise smoke_failure(machine, "emulator exited before the capture completed", log_path)
                         print(f"{machine}: PASS; Home refreshes={milestones}; display={GEOMETRY[machine][0]}x{GEOMETRY[machine][1]}")
                         return
                     if process.poll() is not None:
-                        raise RuntimeError(f"{machine}: emulator exited {process.returncode}; see {log_path}")
-            raise RuntimeError(f"{machine}: timed out before a nonblank Home capture; see {log_path}")
+                        raise smoke_failure(machine, f"emulator exited {process.returncode}", log_path)
+            raise smoke_failure(machine, "timed out before a nonblank Home capture", log_path)
         finally:
             if process.poll() is None:
                 process.terminate()
