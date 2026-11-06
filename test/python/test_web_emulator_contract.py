@@ -47,19 +47,24 @@ class WebEmulatorContractTests(unittest.TestCase):
     def test_failed_smoke_diagnostics_remain_runner_local(self):
         self.assertNotIn("Upload bounded emulator smoke diagnostics", web_workflow)
         self.assertNotIn("nooir-emulator-smoke-diagnostics", web_workflow)
-        self.assertIn("detailed emulator output remains on the temporary runner", web_workflow)
+        self.assertIn("Detailed emulator output remains on the temporary runner.", web_workflow)
+        self.assertIn("grep -E '^(x3|x4): FAIL|^FAIL:'", web_workflow)
 
-    def test_failed_firmware_smoke_includes_a_bounded_log_tail(self):
-        with tempfile.TemporaryDirectory() as temp_name:
-            log = Path(temp_name) / "x3.log"
-            log.write_bytes(b"EARLY-LOG-MARKER\n" + b"x" * 20_000 + b"Guru Meditation Error: test\n")
+    def test_failed_firmware_smoke_reports_safe_readiness_state_only(self):
+        error = smoke_runner.smoke_failure(
+            "x3",
+            "guest/runtime error detected",
+            milestones=1,
+            memory_marker_seen=True,
+            screenshot_requested=False,
+            capture_exists=False,
+        )
 
-            error = smoke_runner.smoke_failure("x3", "guest/runtime error", log)
-
-        self.assertIn("guest/runtime error", str(error))
-        self.assertIn("Guru Meditation Error: test", str(error))
-        self.assertNotIn("EARLY-LOG-MARKER", str(error))
-        self.assertLess(len(str(error)), 17_000)
+        self.assertIn("guest/runtime error detected", str(error))
+        self.assertIn("startup milestones=1/3", str(error))
+        self.assertIn("memory marker=yes", str(error))
+        self.assertNotIn("Guru Meditation", str(error))
+        self.assertLess(len(str(error)), 300)
 
     def test_release_lookup_is_official_read_only_metadata_and_asset_link(self):
         self.assertIn("https://api.github.com/repos/toshio2011/folio-nooir/releases/latest", APP)
