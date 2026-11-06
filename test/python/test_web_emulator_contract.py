@@ -44,11 +44,10 @@ class WebEmulatorContractTests(unittest.TestCase):
         self.assertFalse(smoke_runner.is_guest_runtime_error("normal boot output"))
         self.assertEqual(smoke_runner.GUEST_FAILURE_DRAIN_SECONDS, 2.0)
 
-    def test_failed_smoke_uploads_only_a_bounded_text_diagnostic(self):
-        self.assertIn("tail -c 16384", web_workflow)
-        self.assertIn("name: nooir-emulator-smoke-diagnostics", web_workflow)
-        self.assertIn("smoke-failure-tail.txt", web_workflow)
-        self.assertIn("if-no-files-found: ignore", web_workflow)
+    def test_failed_smoke_diagnostics_remain_runner_local(self):
+        self.assertNotIn("Upload bounded emulator smoke diagnostics", web_workflow)
+        self.assertNotIn("nooir-emulator-smoke-diagnostics", web_workflow)
+        self.assertIn("detailed emulator output remains on the temporary runner", web_workflow)
 
     def test_failed_firmware_smoke_includes_a_bounded_log_tail(self):
         with tempfile.TemporaryDirectory() as temp_name:
@@ -153,6 +152,12 @@ class WebEmulatorContractTests(unittest.TestCase):
         self.assertIn("ESP32C3-ROM-NEWLIB-COPYING.NEWLIB", packager)
         self.assertIn("ESP32C3-ROM-ESP-IDF-COPYRIGHT.rst", packager)
         self.assertIn("--experimental-licensed-elf-startup", WORKFLOW)
+        self.assertIn("pyelftools==0.33", WORKFLOW)
+        self.assertIn("nooir-rom-venv/bin/python", WORKFLOW)
+        self.assertIn("Smoke the audited package in Chrome on X3 and X4", WORKFLOW)
+        self.assertIn("NOOIR_INPUT_PROBE_KEY=Left", WORKFLOW)
+        self.assertNotIn("Upload bounded emulator smoke diagnostics", WORKFLOW)
+        self.assertNotIn("nooir-emulator-smoke-diagnostics", WORKFLOW)
         rom_identity = (393216, "3a69ac75662367dc99fbd5b8ddf265515b6288e79e51e4c4168c597aced7b79d")
         self.assertEqual((package_builder.ESP32C3_ROM_BYTES, package_builder.ESP32C3_ROM_SHA256), rom_identity)
         self.assertEqual(package_audit.SUPPORT_BIN_HASHES["engine/esp32c3-rom.bin"], rom_identity)
