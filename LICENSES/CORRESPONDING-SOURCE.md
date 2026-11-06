@@ -32,6 +32,14 @@ repository at the commit that builds the site.
   Berkeley SoftFloat `b64af41c3276f97f0e181920400ee056b9c88037`, DTC
   `b6910bec11614980a21e46fbccc35934b671bd81`, and keycodemapdb
   `f5772a62ec52591ff6870b7e8ef32482371f22c6`.
+* Meson does not materialize the SoftFloat checkout in every build mode. The
+  package workflow therefore reads the pinned `berkeley-softfloat-3.wrap`,
+  verifies its exact GitLab URL and revision, fetches that revision, checks out
+  it detached, verifies `HEAD`, and includes the source and its `COPYING.txt`
+  under `meson-subprojects/berkeley-softfloat-3/`. The archive also records
+  that source revision in `NOOIR-PROVENANCE.txt`. The package builder follows
+  Meson source symlinks only within the pinned engine checkout when collecting
+  DTC and keycodemapdb license texts.
 
 ## Downloaded dependency source archives
 
