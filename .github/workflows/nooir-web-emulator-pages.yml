@@ -8,6 +8,7 @@ on:
       - 'scripts/package_nooir_web_emulator.py'
       - 'scripts/check_nooir_web_package.py'
       - 'scripts/prepare_esp32c3_rom.py'
+      - 'scripts/prepare_nooir_softfloat_source.py'
       - 'scripts/smoke_nooir_shared_firmware.py'
       - 'LICENSES/**'
       - '.github/workflows/nooir-web-emulator-pages.yml'
@@ -129,6 +130,12 @@ jobs:
             exit "$smoke_status"
           fi
           grep -E '^(x3|x4): PASS|^PASS:' "$smoke_log"
+
+      - name: Preserve the exact SoftFloat corresponding source
+        run: |
+          python3 scripts/prepare_nooir_softfloat_source.py \
+            --engine-source work/eink-qemu \
+            --output work/eink-qemu/build-wasm-32limit/nooir-corresponding-source/berkeley-softfloat-3
 
       - name: Package Nooir shell and audit licenses and firmware exclusions
         run: |
