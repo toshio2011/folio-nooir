@@ -124,7 +124,8 @@ jobs:
           smoke_status=$?
           set -e
           if [ "$smoke_status" -ne 0 ]; then
-            echo 'X3/X4 guest smoke failed; detailed emulator output remains on the temporary runner.'
+            grep -E '^(x3|x4): FAIL|^FAIL:' "$smoke_log" || true
+            echo 'Detailed emulator output remains on the temporary runner.'
             exit "$smoke_status"
           fi
           grep -E '^(x3|x4): PASS|^PASS:' "$smoke_log"
