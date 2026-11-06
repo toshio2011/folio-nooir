@@ -25,6 +25,10 @@ ESP32C3_ROM_BYTES = 393216
 ESP32C3_ROM_SHA256 = "3a69ac75662367dc99fbd5b8ddf265515b6288e79e51e4c4168c597aced7b79d"
 ESP32C3_ROM_ARCHIVE_SHA256 = "caa463d3cbef2430a5a35847c1d9f2f152403b17a802050927ff60c8da54fe46"
 ESP32C3_ROM_ELF_SHA256 = "19ac22e08707df926fb0cf4c54795d4067b983fae8635f396ded173a6d78fc3c"
+SOFTFLOAT_REVISION = "b64af41c3276f97f0e181920400ee056b9c88037"
+SOFTFLOAT_SOURCE_RELATIVE = Path(
+    "build-wasm-32limit/nooir-corresponding-source/berkeley-softfloat-3"
+)
 ROM_NOTICE_BLOBS = {
     "ESP32C3-ROM-ELF-README.md": ("esp-rom-elfs-README.md", "0df304ef2d7c2ba4009c3e9931d98a951321dec2"),
     "ESP32C3-ROM-APACHE-2.0.txt": ("Apache-2.0.txt", "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64"),
@@ -39,6 +43,7 @@ LICENSE_AUDIT_ROOTS = (
     ("linux-headers", "linux-headers"),
     ("qemu-subproject-wrappers", "subprojects"),
     ("build-subprojects", "build-wasm-32limit/subprojects"),
+    ("build-subprojects/berkeley-softfloat-3", str(SOFTFLOAT_SOURCE_RELATIVE)),
     ("wasm-build-dependencies/zlib", "build-wasm-deps/zlib"),
     ("wasm-build-dependencies/libffi", "build-wasm-deps/libffi"),
     ("wasm-build-dependencies/pixman", "build-wasm-deps/pixman"),
@@ -130,6 +135,7 @@ def add_source_tree(
     archive_name: str,
     *,
     include_node_modules: bool = False,
+    dereference_symlinks: bool = False,
 ) -> None:
     excluded_directories = {".git", "build-wasm-32limit", "build-wasm", "build-wasm-deps", "__pycache__"}
     if not include_node_modules:
@@ -139,6 +145,10 @@ def add_source_tree(
     def include(member: tarfile.TarInfo) -> tarfile.TarInfo | None:
         parts = PurePosixPath(member.name).parts
         if any(part in excluded_directories for part in parts):
+            return None
+        if include_node_modules and ".bin" in parts:
+            # pnpm/npm's node_modules/.bin entries are generated executable
+            # shims, not source needed to rebuild the frontend dependencies.
             return None
         if not member.isdir() and PurePosixPath(member.name).name.lower() in {"id_rsa", "id_ed25519"}:
             return None
@@ -154,7 +164,12 @@ def add_source_tree(
             return None
         return member
 
-    archive.add(source, arcname=archive_name, recursive=True, filter=include)
+    previous_dereference = archive.dereference
+    archive.dereference = dereference_symlinks
+    try:
+        archive.add(source, arcname=archive_name, recursive=True, filter=include)
+    finally:
+        archive.dereference = previous_dereference
 
 
 def create_corresponding_source_archive(
@@ -165,6 +180,7 @@ def create_corresponding_source_archive(
     required_paths = (
         source / "eink-qemu" / "desktop" / "node_modules" / ".pnpm",
         build_root / "subprojects",
+        source / SOFTFLOAT_SOURCE_RELATIVE,
         dependency_root / "src",
         dependency_root / "em-cache" / "ports" / "sdl2",
     )
@@ -191,7 +207,8 @@ def create_corresponding_source_archive(
                 "Contents: the pinned engine source, resolved Meson subproject source, "
                 "downloaded source archives used by its pinned build scripts, the "
                 "Emscripten SDL2 port source, locked frontend package sources, and the "
-                "four hash-reviewed emulator support binaries plus the ROM build manifest. All other .bin, .elf, "
+                f"SoftFloat source at QEMU wrap revision {SOFTFLOAT_REVISION}, and four hash-reviewed "
+                "emulator support binaries plus the ROM build manifest. All other .bin, .elf, "
                 ".xota, private-key files, and two upstream unit-test fixtures containing "
                 "private-key material are omitted. See licenses/CORRESPONDING-SOURCE.md "
                 "in the adjacent web package for the full source and license map.\n"
@@ -200,7 +217,17 @@ def create_corresponding_source_archive(
             info.size = len(readme)
             archive.addfile(info, io.BytesIO(readme))
             add_source_tree(archive, source, "nooir-corresponding-source/eink-qemu")
-            add_source_tree(archive, build_root / "subprojects", "nooir-corresponding-source/meson-subprojects")
+            add_source_tree(
+                archive,
+                build_root / "subprojects",
+                "nooir-corresponding-source/meson-subprojects",
+                dereference_symlinks=True,
+            )
+            add_source_tree(
+                archive,
+                source / SOFTFLOAT_SOURCE_RELATIVE,
+                "nooir-corresponding-source/meson-subprojects/berkeley-softfloat-3",
+            )
             add_source_tree(archive, dependency_root / "src", "nooir-corresponding-source/build-source-archives")
             package_cache = dependency_root / "glib" / "subprojects" / "packagecache"
             if package_cache.exists():
@@ -247,22 +274,50 @@ def copy_component_license_texts(source: Path, output: Path) -> int:
         if not root.is_dir():
             missing_roots.append(relative_root)
             continue
-        for license_file in sorted(root.rglob("*")):
-            if not license_file.is_file() or not is_license_text(license_file):
-                continue
+        root_real = root.resolve(strict=True)
+        visited: set[Path] = set()
+        for directory, directory_names, file_names in os.walk(root, followlinks=True):
+            current = Path(directory)
             try:
-                if license_file.stat().st_size > 2 * 1024 * 1024:
-                    continue
-                contents = license_file.read_bytes()
+                current_real = current.resolve(strict=True)
             except OSError:
+                directory_names.clear()
                 continue
-            if b"\0" in contents[:4096]:
+            if current_real in visited:
+                directory_names.clear()
                 continue
-            relative = license_file.relative_to(root)
-            destination = destination_root / label / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(license_file, destination)
-            copied += 1
+            visited.add(current_real)
+            # Meson materializes some wrapped sources as symlinked directories.
+            # Follow only targets contained in this checkout and guard against
+            # cycles so license discovery cannot escape into unrelated files.
+            safe_directories: list[str] = []
+            for name in directory_names:
+                candidate = current / name
+                try:
+                    resolved = candidate.resolve(strict=True)
+                except OSError:
+                    continue
+                if resolved == root_real or root_real in resolved.parents:
+                    safe_directories.append(name)
+            directory_names[:] = safe_directories
+            for name in file_names:
+                license_file = current / name
+                try:
+                    resolved_file = license_file.resolve(strict=True)
+                    if root_real not in resolved_file.parents or not resolved_file.is_file():
+                        continue
+                    if not is_license_text(license_file) or resolved_file.stat().st_size > 2 * 1024 * 1024:
+                        continue
+                    contents = resolved_file.read_bytes()
+                except OSError:
+                    continue
+                if b"\0" in contents[:4096]:
+                    continue
+                relative = license_file.relative_to(root)
+                destination = destination_root / label / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(contents)
+                copied += 1
     if missing_roots:
         raise SystemExit("required source/license roots are missing: " + ", ".join(missing_roots))
     if copied < 15:
