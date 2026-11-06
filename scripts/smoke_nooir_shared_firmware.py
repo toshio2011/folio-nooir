@@ -16,7 +16,9 @@ import time
 FIRMWARE_SHA256 = "badcd6fb6cb4b5323f92714e893f9c488e887aa8f7b5d8e28cd0e6639aeae108"
 MILESTONES = {
     "x3": re.compile(r"Wait complete:\s+(?:8279|X3)_DRF"),
-    "x4": re.compile(r"Wait complete:\s+(?:8179|8279x4)_DRF"),
+    # The preserved X4 profile reports the generic refresh label instead of
+    # the controller-specific DRF label used by X3.
+    "x4": re.compile(r"Wait complete:\s+(?:(?:8179|8279x4)_DRF|refresh)"),
 }
 GEOMETRY = {"x3": (528, 792), "x4": (480, 800)}
 GUEST_FAILURE_DRAIN_SECONDS = 2.0
