@@ -44,6 +44,16 @@ class WebEmulatorContractTests(unittest.TestCase):
         self.assertFalse(smoke_runner.is_guest_runtime_error("normal boot output"))
         self.assertEqual(smoke_runner.GUEST_FAILURE_DRAIN_SECONDS, 2.0)
 
+    def test_x4_readiness_accepts_its_observed_generic_refresh_label(self):
+        self.assertEqual(
+            len(smoke_runner.MILESTONES["x4"].findall("Wait complete: refresh")),
+            1,
+        )
+        self.assertEqual(
+            len(smoke_runner.MILESTONES["x3"].findall("Wait complete: refresh")),
+            0,
+        )
+
     def test_failed_smoke_diagnostics_remain_runner_local(self):
         self.assertNotIn("Upload bounded emulator smoke diagnostics", web_workflow)
         self.assertNotIn("nooir-emulator-smoke-diagnostics", web_workflow)
