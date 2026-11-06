@@ -3,6 +3,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import tarfile
 import tempfile
 import unittest
 
@@ -111,6 +112,27 @@ class WebEmulatorContractTests(unittest.TestCase):
         self.assertIn("not uploaded", APP)
         self.assertIn('accept=".bin,application/octet-stream"', HTML)
 
+    def test_local_screenshot_fallback_captures_engine_canvas_and_offers_download_and_tab(self):
+        self.assertIn('id="capture-screen"', HTML)
+        self.assertIn('id="screen-capture-dialog"', HTML)
+        self.assertIn('id="download-screen-image"', HTML)
+        self.assertIn('id="open-screen-image"', HTML)
+        self.assertIn('frame.contentDocument?.querySelector("#canvas")', APP)
+        self.assertIn('canvas.toBlob(blob =>', APP)
+        self.assertIn('URL.createObjectURL(blob)', APP)
+        self.assertIn("screenCaptureDialog.close()", APP)
+        self.assertIn('"screenshot.css"', packager)
+        self.assertTrue((WEB / "screenshot.css").is_file())
+
+    def test_browser_smoke_is_explicitly_local_and_checks_reload(self):
+        smoke = (ROOT / "scripts" / "nooir_browser_smoke.mjs").read_text(encoding="utf-8")
+        self.assertIn("DOM.setFileInputFiles", smoke)
+        self.assertIn("Input.dispatchMouseEvent", smoke)
+        self.assertIn("Page.reload", smoke)
+        self.assertIn("sdRestoredAfterReload", smoke)
+        self.assertIn("progressRestoredAfterReload", smoke)
+        self.assertIn("uploaded", smoke.lower())
+
     def test_ci_does_not_enable_pages_deployment_or_include_reader_firmware(self):
         self.assertIn("if: ${{ false }}", WORKFLOW)
         self.assertIn("No reader firmware binaries were copied.", (ROOT / "scripts" / "package_nooir_web_emulator.py").read_text(encoding="utf-8"))
@@ -118,6 +140,11 @@ class WebEmulatorContractTests(unittest.TestCase):
     def test_public_support_images_are_hash_locked_and_unlicensed_roms_are_rejected(self):
         self.assertEqual(len(package_audit.ALLOWED_SUPPORT_BINS), 4)
         self.assertIn("3336ae473a063be8dae6790bd45fee4506f2cf273aa36f3dfd9e0495ecb665cc", rom_prep)
+        self.assertIn("--experimental-licensed-elf-startup", rom_prep)
+        self.assertIn("3a69ac75662367dc99fbd5b8ddf265515b6288e79e51e4c4168c597aced7b79d", rom_prep)
+        self.assertIn("61d28bfe60e74152e262f11758fe4c0fb5eb794e9ae3b80a62f0631cae7b221b", rom_prep)
+        self.assertIn('"redistribution_review_complete": True', rom_prep)
+        self.assertIn("pyelftools==0.33", (ROOT / "scripts" / "requirements.txt").read_text(encoding="utf-8"))
         self.assertIn("caa463d3cbef2430a5a35847c1d9f2f152403b17a802050927ff60c8da54fe46", rom_prep)
         self.assertIn("--esp32c3-rom", packager)
         self.assertIn("--emsdk-root", packager)
@@ -125,6 +152,21 @@ class WebEmulatorContractTests(unittest.TestCase):
         self.assertIn("copy_esp32c3_rom_notices", packager)
         self.assertIn("ESP32C3-ROM-NEWLIB-COPYING.NEWLIB", packager)
         self.assertIn("ESP32C3-ROM-ESP-IDF-COPYRIGHT.rst", packager)
+        self.assertIn("--experimental-licensed-elf-startup", WORKFLOW)
+        rom_identity = (393216, "3a69ac75662367dc99fbd5b8ddf265515b6288e79e51e4c4168c597aced7b79d")
+        self.assertEqual((package_builder.ESP32C3_ROM_BYTES, package_builder.ESP32C3_ROM_SHA256), rom_identity)
+        self.assertEqual(package_audit.SUPPORT_BIN_HASHES["engine/esp32c3-rom.bin"], rom_identity)
+
+    def test_reviewed_rom_manifest_is_required_and_matches_the_source_archive(self):
+        manifest_path = "licenses/esp32c3-rom/esp32c3-rom.bin.manifest.json"
+        self.assertIn(manifest_path, package_audit.REQUIRED)
+        self.assertIn("def verify_rom_manifest", packager)
+        self.assertIn("redistribution_review_complete", packager)
+        self.assertIn("nooir-corresponding-source/emulator-support/esp32c3-rom.bin.manifest.json", packager)
+        audit_source = (ROOT / "scripts" / "check_nooir_web_package.py").read_text(encoding="utf-8")
+        self.assertIn("corresponding-source ROM manifest differs from the packaged manifest", audit_source)
+        self.assertIn("nooir-corresponding-source/eink-qemu/docs/devel/build-system.rst", audit_source)
+        self.assertIn("nooir-corresponding-source/eink-qemu/configure", audit_source)
 
     def test_visible_credits_link_corresponding_sources_and_rom_origins(self):
         self.assertIn("sources/eink-qemu-d1b24a5f-corresponding-source.tar.gz", HTML)
@@ -177,6 +219,37 @@ class WebEmulatorContractTests(unittest.TestCase):
             self.assertIn("engine/boot/nooir-v1.6.6.bin", captured.getvalue())
             self.assertNotIn("binary is not on the reviewed emulator-support allowlist: engine/boot/nvs-crosspoint.bin", captured.getvalue())
             self.assertIn("support binary provenance hash mismatch: engine/boot/nvs-crosspoint.bin", captured.getvalue())
+
+    def test_screenshot_stylesheet_is_a_required_package_file(self):
+        self.assertIn("screenshot.css", package_audit.REQUIRED)
+        self.assertIn("screenshot.css", package_audit.PACKAGE_ROOT_FILES)
+
+    def test_corresponding_source_omits_private_key_test_fixtures(self):
+        with tempfile.TemporaryDirectory(prefix="nooir-source-filter-") as temporary:
+            source = Path(temporary) / "eink-qemu"
+            (source / "tests" / "keys").mkdir(parents=True)
+            (source / "tests" / "unit").mkdir(parents=True)
+            (source / "src").mkdir()
+            (source / "tests" / "keys" / "id_rsa").write_text("fixture", encoding="utf-8")
+            (source / "tests" / "unit" / "crypto-tls-x509-helpers.c").write_text(
+                "test key fixture", encoding="utf-8"
+            )
+            (source / "src" / "main.c").write_text("source", encoding="utf-8")
+            archive_path = Path(temporary) / "source.tar.gz"
+            with tarfile.open(archive_path, "w:gz") as archive:
+                package_builder.add_source_tree(
+                    archive, source, "nooir-corresponding-source/eink-qemu"
+                )
+            with tarfile.open(archive_path, "r:gz") as archive:
+                names = set(archive.getnames())
+            self.assertNotIn(
+                "nooir-corresponding-source/eink-qemu/tests/keys/id_rsa", names
+            )
+            self.assertNotIn(
+                "nooir-corresponding-source/eink-qemu/tests/unit/crypto-tls-x509-helpers.c",
+                names,
+            )
+            self.assertIn("nooir-corresponding-source/eink-qemu/src/main.c", names)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ REQUIRED = (
     "index.html",
     "app.js",
     "style.css",
+    "screenshot.css",
     "README.md",
     "dependencies.json",
     "engine/index.html",
@@ -34,6 +35,7 @@ REQUIRED = (
     "licenses/CORRESPONDING-SOURCE.md",
     "licenses/ESP32C3-ROM-NOTICES.md",
     "licenses/esp32c3-rom/esp-rom-elfs-README.md",
+    "licenses/esp32c3-rom/esp32c3-rom.bin.manifest.json",
     "licenses/esp32c3-rom/Apache-2.0.txt",
     "licenses/esp32c3-rom/esp-idf-COPYRIGHT.rst",
     "licenses/esp32c3-rom/Newlib-COPYING.NEWLIB",
@@ -58,7 +60,7 @@ COMPONENT_LICENSES = {
     "linux-headers": {"COPYING"},
 }
 PACKAGE_ROOT_FILES = {
-    "index.html", "app.js", "style.css", "README.md", "dependencies.json",
+    "index.html", "app.js", "style.css", "screenshot.css", "README.md", "dependencies.json",
     "coi-serviceworker.js", "NOOIR-WEB-EMULATOR-NOTICE.md",
 }
 PACKAGE_ROOT_DIRECTORIES = {"engine", "licenses", "sources"}
@@ -79,11 +81,13 @@ ALLOWED_SUPPORT_BINS = {
     "engine/esp32c3-rom.bin",
 }
 SUPPORT_BIN_HASHES = {
-    "engine/esp32c3-rom.bin": (387784, "3336ae473a063be8dae6790bd45fee4506f2cf273aa36f3dfd9e0495ecb665cc"),
+    "engine/esp32c3-rom.bin": (393216, "3a69ac75662367dc99fbd5b8ddf265515b6288e79e51e4c4168c597aced7b79d"),
     "engine/boot/bootloader-esp32c3.bin": (18688, "46893df6619f0c7d7689fa309e76551e964e3d83d68c38ccb3e52ed8c3537226"),
     "engine/boot/nvs-crosspoint.bin": (20480, "67c80ffb02df062522216e33553f0691a9ddea06be794404365a66c90bc8e94f"),
     "engine/boot/partitions.bin": (3072, "bd0f7954aca2ef7d925ee21aaa1f3dc8822d1d6ce5cbbd26a135e5886bfff6ce"),
 }
+ROM_SOURCE_ARCHIVE_SHA256 = "caa463d3cbef2430a5a35847c1d9f2f152403b17a802050927ff60c8da54fe46"
+ROM_ELF_SHA256 = "19ac22e08707df926fb0cf4c54795d4067b983fae8635f396ded173a6d78fc3c"
 LICENSE_FILE_BLOBS = {
     "licenses/esp32c3-rom/esp-rom-elfs-README.md": "0df304ef2d7c2ba4009c3e9931d98a951321dec2",
     "licenses/esp32c3-rom/Apache-2.0.txt": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
@@ -192,6 +196,26 @@ def main() -> int:
                 f"(bytes={len(data)}, sha256={actual_sha256})"
             )
 
+    rom_manifest_path = package / "licenses/esp32c3-rom/esp32c3-rom.bin.manifest.json"
+    if rom_manifest_path.is_file():
+        try:
+            rom_manifest = json.loads(rom_manifest_path.read_text(encoding="utf-8"))
+            if (
+                rom_manifest.get("esp_rom_elf_release") != "20260528"
+                or rom_manifest.get("esp_rom_elf_sha256") != ROM_ELF_SHA256
+                or rom_manifest.get("archive_sha256") != ROM_SOURCE_ARCHIVE_SHA256
+                or rom_manifest.get("output_bytes") != SUPPORT_BIN_HASHES["engine/esp32c3-rom.bin"][0]
+                or rom_manifest.get("output_sha256") != SUPPORT_BIN_HASHES["engine/esp32c3-rom.bin"][1]
+                or rom_manifest.get("stock_rom_bytes_used") is not False
+                or rom_manifest.get("redistribution_review_complete") is not True
+                or rom_manifest.get("startup_copy_table", {}).get("matched_sections") != 14
+                or rom_manifest.get("startup_copy_table", {}).get("initialized_bytes") != 1316
+                or rom_manifest.get("layout_pointer_section", {}).get("name") != ".rodata.interface"
+            ):
+                errors.append("Espressif ROM build manifest does not match the reviewed source/output identity")
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"could not parse Espressif ROM build manifest: {exc}")
+
     import re
 
     def scan_text(relative: str, content: str) -> None:
@@ -212,36 +236,48 @@ def main() -> int:
         try:
             with tarfile.open(source_archive, "r:gz") as archive:
                 members = archive.getmembers()
-            member_names = {member.name for member in members}
-            for required_source in (
-                "nooir-corresponding-source/eink-qemu/COPYING",
-                "nooir-corresponding-source/eink-qemu/eink-qemu/wasm/build-deps.sh",
-                "nooir-corresponding-source/eink-qemu/eink-qemu/desktop/pnpm-lock.yaml",
-                "nooir-corresponding-source/meson-subprojects",
-                "nooir-corresponding-source/meson-subprojects/berkeley-softfloat-3",
-                "nooir-corresponding-source/meson-subprojects/dtc",
-                "nooir-corresponding-source/meson-subprojects/keycodemapdb",
-            ):
-                if not any(name == required_source or name.startswith(required_source + "/") for name in member_names):
-                    errors.append(f"corresponding-source archive is missing: {required_source}")
-            allowed_source_bins = {
-                "nooir-corresponding-source/emulator-support/esp32c3-rom.bin",
-                "nooir-corresponding-source/emulator-support/bootloader-esp32c3.bin",
-                "nooir-corresponding-source/emulator-support/nvs-crosspoint.bin",
-                "nooir-corresponding-source/emulator-support/partitions.bin",
-            }
-            for member in members:
-                name = member.name.lower()
-                if name.endswith((".elf", ".xota", ".pem", ".p12", ".pfx", ".key")) or Path(name).name.lower() in {".env", ".npmrc", "id_rsa", "id_ed25519"}:
-                    errors.append(f"non-source or secret file in corresponding-source archive: {member.name}")
-                if name.endswith(".bin") and member.name not in allowed_source_bins:
-                    errors.append(f"unreviewed binary in corresponding-source archive: {member.name}")
-                if Path(member.name).name.lower() in {"firmware.bin", "boot_app0.bin", "firmware.xota"}:
-                    errors.append(f"reader firmware in corresponding-source archive: {member.name}")
-                if member.isfile() and Path(name).suffix in TEXT_SUFFIXES and member.size <= 8 * 1024 * 1024:
-                    stream = archive.extractfile(member)
-                    if stream is not None:
-                        scan_text(member.name, stream.read().decode("utf-8", errors="replace"))
+                member_names = {member.name for member in members}
+                for required_source in (
+                    "nooir-corresponding-source/eink-qemu/COPYING",
+                    "nooir-corresponding-source/eink-qemu/configure",
+                    "nooir-corresponding-source/eink-qemu/docs/devel/build-system.rst",
+                    "nooir-corresponding-source/eink-qemu/eink-qemu/wasm/build.sh",
+                    "nooir-corresponding-source/eink-qemu/eink-qemu/wasm/build-deps.sh",
+                    "nooir-corresponding-source/eink-qemu/eink-qemu/desktop/pnpm-lock.yaml",
+                    "nooir-corresponding-source/meson-subprojects",
+                    "nooir-corresponding-source/meson-subprojects/berkeley-softfloat-3",
+                    "nooir-corresponding-source/meson-subprojects/dtc",
+                    "nooir-corresponding-source/meson-subprojects/keycodemapdb",
+                ):
+                    if not any(name == required_source or name.startswith(required_source + "/") for name in member_names):
+                        errors.append(f"corresponding-source archive is missing: {required_source}")
+                allowed_source_bins = {
+                    "nooir-corresponding-source/emulator-support/esp32c3-rom.bin",
+                    "nooir-corresponding-source/emulator-support/esp32c3-rom.bin.manifest.json",
+                    "nooir-corresponding-source/emulator-support/bootloader-esp32c3.bin",
+                    "nooir-corresponding-source/emulator-support/nvs-crosspoint.bin",
+                    "nooir-corresponding-source/emulator-support/partitions.bin",
+                }
+                for member in members:
+                    name = member.name.lower()
+                    if name.endswith((".elf", ".xota", ".pem", ".p12", ".pfx", ".key")) or Path(name).name.lower() in {".env", ".npmrc", "id_rsa", "id_ed25519"}:
+                        errors.append(f"non-source or secret file in corresponding-source archive: {member.name}")
+                    if name.endswith(".bin") and member.name not in allowed_source_bins:
+                        errors.append(f"unreviewed binary in corresponding-source archive: {member.name}")
+                    if Path(member.name).name.lower() in {"firmware.bin", "boot_app0.bin", "firmware.xota"}:
+                        errors.append(f"reader firmware in corresponding-source archive: {member.name}")
+                    if member.isfile() and Path(name).suffix in TEXT_SUFFIXES and member.size <= 8 * 1024 * 1024:
+                        stream = archive.extractfile(member)
+                        if stream is not None:
+                            with stream:
+                                scan_text(member.name, stream.read().decode("utf-8", errors="replace"))
+                manifest_member = archive.extractfile(
+                    "nooir-corresponding-source/emulator-support/esp32c3-rom.bin.manifest.json"
+                ) if "nooir-corresponding-source/emulator-support/esp32c3-rom.bin.manifest.json" in member_names else None
+                if manifest_member is not None and rom_manifest_path.is_file():
+                    with manifest_member:
+                        if manifest_member.read() != rom_manifest_path.read_bytes():
+                            errors.append("corresponding-source ROM manifest differs from the packaged manifest")
         except (OSError, tarfile.TarError) as exc:
             errors.append(f"could not inspect corresponding-source archive: {exc}")
 

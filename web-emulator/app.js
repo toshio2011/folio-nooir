@@ -12,6 +12,8 @@ const releasePill = $("#release-version");
 let selectedRelease = null;
 let selectedFirmware = null;
 const activeObjectUrls = [];
+const screenCaptureDialog = $("#screen-capture-dialog");
+let screenCaptureUrl = null;
 
 function selectedDevice() { return $("#device-model").value; }
 function deviceLabel(device = selectedDevice()) { return DEVICE_LABELS[device] || device; }
@@ -30,6 +32,61 @@ function setStatus(message, kind = "normal") {
   firmwareStatus.dataset.kind = kind;
 }
 function setRuntime(message) { $("#runtime-note").textContent = message; }
+function getEngineCanvas() {
+  try {
+    const doc = engine.contentDocument;
+    if (!doc) return null;
+    const direct = doc.querySelector("#canvas");
+    if (direct) return direct;
+    for (const frame of doc.querySelectorAll("iframe")) {
+      const canvas = frame.contentDocument?.querySelector("#canvas");
+      if (canvas) return canvas;
+    }
+  } catch { /* The engine must be same-origin for local firmware handoff. */ }
+  return null;
+}
+function captureEmulatorScreen() {
+  const status = $("#screen-capture-status");
+  const canvas = getEngineCanvas();
+  if (!canvas || !canvas.width || !canvas.height) {
+    status.textContent = "The emulator screen is not available yet. Start the device and try again.";
+    status.dataset.kind = "warning";
+    return;
+  }
+  const showCaptureFailure = () => {
+    status.textContent = "This browser could not capture the emulator canvas. You can still use your browser's built-in screenshot tool.";
+    status.dataset.kind = "warning";
+    screenCaptureDialog.showModal();
+  };
+  try { canvas.toBlob(blob => {
+    if (!blob) {
+      showCaptureFailure();
+      return;
+    }
+    if (screenCaptureUrl) URL.revokeObjectURL(screenCaptureUrl);
+    screenCaptureUrl = URL.createObjectURL(blob);
+    $("#captured-screen").src = screenCaptureUrl;
+    const filename = `folio-nooir-${selectedDevice()}-screen.png`;
+    const download = $("#download-screen-image");
+    download.href = screenCaptureUrl;
+    download.download = filename;
+    const openImage = $("#open-screen-image");
+    openImage.href = screenCaptureUrl;
+    status.textContent = `PNG ready (${canvas.width} × ${canvas.height}). Download it, or open it in a new tab if this browser does not support downloads.`;
+    status.dataset.kind = "success";
+    screenCaptureDialog.showModal();
+  }, "image/png"); }
+  catch { showCaptureFailure(); }
+}
+$("#capture-screen").addEventListener("click", captureEmulatorScreen);
+$("#close-screen-capture").addEventListener("click", () => screenCaptureDialog.close());
+screenCaptureDialog.addEventListener("close", () => {
+  $("#captured-screen").removeAttribute("src");
+  $("#download-screen-image").removeAttribute("href");
+  $("#open-screen-image").removeAttribute("href");
+  if (screenCaptureUrl) URL.revokeObjectURL(screenCaptureUrl);
+  screenCaptureUrl = null;
+});
 function versionLabel(release) {
   const name = (release.name || "").replace(/^#\s*/, "").trim();
   return `${name || release.tag_name} · stable`;
@@ -56,6 +113,88 @@ function loadSelectedFirmware() {
   }
   startEngine(selectedFirmware.url, selectedFirmware.displayName);
 }
+
+// eink-qemu's scripted GPIO presses hold a key for 150 ms. A browser pointer
+// click can produce pointerdown and pointerup in the same task, before the
+// guest's ADC key scan observes the press. Keep this adapter in the Nooir
+// wrapper: it extends only short taps on the pinned engine's virtual keys and
+// leaves longer holds (including Power) unchanged.
+function installMinimumPointerKeyPress(iframe) {
+  let doc, win;
+  try {
+    doc = iframe.contentDocument;
+    win = iframe.contentWindow;
+  } catch { return; }
+  if (!doc || !win || doc.documentElement.dataset.nooirMinimumKeyPress === "installed") return;
+  doc.documentElement.dataset.nooirMinimumKeyPress = "installed";
+
+  const minimumMs = 150;
+  const starts = new Map();
+  const pending = new Map();
+  function keyButton(event) {
+    const button = event.target?.closest?.("#keys button[data-key]");
+    if (!button) return null;
+    return {button, token: `${event.pointerId}:${button.dataset.key}`};
+  }
+  function clearPending() {
+    for (const item of pending.values()) win.clearTimeout(item.timer);
+    pending.clear();
+    starts.clear();
+  }
+
+  doc.addEventListener("pointerdown", event => {
+    const match = keyButton(event);
+    if (!match) return;
+    const previous = pending.get(match.token);
+    if (previous) {
+      win.clearTimeout(previous.timer);
+      pending.delete(match.token);
+      starts.set(match.token, {button: match.button, started: previous.started});
+    } else {
+      starts.set(match.token, {button: match.button, started: win.performance.now()});
+    }
+  }, true);
+
+  doc.addEventListener("pointerup", event => {
+    const match = keyButton(event);
+    const started = match && starts.get(match.token);
+    if (!match || !started) return;
+    starts.delete(match.token);
+    const delay = Math.ceil(minimumMs - (win.performance.now() - started.started));
+    if (delay <= 0) return;
+
+    // Let the click itself finish, but hold the engine's key-up until the
+    // minimum guest-visible press has elapsed. Suppress the matching capture
+    // loss because the engine also treats that event as an immediate release.
+    event.stopImmediatePropagation();
+    const entry = {button: started.button, started: started.started, timer: 0};
+    const pointer = {
+      bubbles: true,
+      cancelable: true,
+      pointerId: event.pointerId,
+      pointerType: event.pointerType || "mouse",
+      button: event.button,
+      buttons: 0,
+      isPrimary: event.isPrimary,
+    };
+    entry.timer = win.setTimeout(() => {
+      pending.delete(match.token);
+      entry.button.dispatchEvent(new win.PointerEvent("pointerup", pointer));
+    }, delay);
+    pending.set(match.token, entry);
+  }, true);
+
+  doc.addEventListener("lostpointercapture", event => {
+    const match = keyButton(event);
+    if (match && pending.has(match.token)) event.stopImmediatePropagation();
+  }, true);
+  doc.addEventListener("pointercancel", event => {
+    const match = keyButton(event);
+    if (match) starts.delete(match.token);
+  }, true);
+  win.addEventListener("blur", clearPending, true);
+}
+
 function readHexDigest(digest) {
   const match = /^sha256:([a-f0-9]{64})$/i.exec(digest || "");
   return match ? match[1].toLowerCase() : null;
@@ -166,6 +305,8 @@ $("#nav-about").addEventListener("click", () => showView("about"));
 engine.addEventListener("load", () => {
   try {
     if (engine.contentWindow.location.origin === location.origin) {
+      installMinimumPointerKeyPress(engine);
+      $("#capture-screen").disabled = false;
       uploadNote.textContent = "Selected .bin files are handed to the local emulator in this browser; they are not uploaded to a server.";
       uploadNote.dataset.kind = "normal";
     }

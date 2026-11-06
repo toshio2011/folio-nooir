@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -20,8 +21,10 @@ SUPPORT_BINARIES = {
     "boot/nvs-crosspoint.bin": (20480, "67c80ffb02df062522216e33553f0691a9ddea06be794404365a66c90bc8e94f"),
     "boot/partitions.bin": (3072, "bd0f7954aca2ef7d925ee21aaa1f3dc8822d1d6ce5cbbd26a135e5886bfff6ce"),
 }
-ESP32C3_ROM_BYTES = 387784
-ESP32C3_ROM_SHA256 = "3336ae473a063be8dae6790bd45fee4506f2cf273aa36f3dfd9e0495ecb665cc"
+ESP32C3_ROM_BYTES = 393216
+ESP32C3_ROM_SHA256 = "3a69ac75662367dc99fbd5b8ddf265515b6288e79e51e4c4168c597aced7b79d"
+ESP32C3_ROM_ARCHIVE_SHA256 = "caa463d3cbef2430a5a35847c1d9f2f152403b17a802050927ff60c8da54fe46"
+ESP32C3_ROM_ELF_SHA256 = "19ac22e08707df926fb0cf4c54795d4067b983fae8635f396ded173a6d78fc3c"
 ROM_NOTICE_BLOBS = {
     "ESP32C3-ROM-ELF-README.md": ("esp-rom-elfs-README.md", "0df304ef2d7c2ba4009c3e9931d98a951321dec2"),
     "ESP32C3-ROM-APACHE-2.0.txt": ("Apache-2.0.txt", "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64"),
@@ -94,6 +97,33 @@ def copy_verified_binary(source: Path, destination: Path, expected_size: int, ex
     shutil.copy2(source, destination)
 
 
+def verify_rom_manifest(rom: Path) -> Path:
+    manifest_path = rom.with_suffix(rom.suffix + ".manifest.json")
+    if not manifest_path.is_file():
+        raise SystemExit(f"reviewed Espressif ROM build manifest is missing: {manifest_path}")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"could not read the Espressif ROM build manifest: {exc}") from exc
+    if (
+        manifest.get("esp_rom_elf_release") != "20260528"
+        or manifest.get("esp_rom_elf_sha256") != ESP32C3_ROM_ELF_SHA256
+        or manifest.get("archive_sha256") != ESP32C3_ROM_ARCHIVE_SHA256
+        or manifest.get("output_bytes") != ESP32C3_ROM_BYTES
+        or manifest.get("output_sha256") != ESP32C3_ROM_SHA256
+        or manifest.get("stock_rom_bytes_used") is not False
+        or manifest.get("redistribution_review_complete") is not True
+    ):
+        raise SystemExit("Espressif ROM manifest does not match the reviewed redistribution identity")
+    copy_table = manifest.get("startup_copy_table", {})
+    if copy_table.get("matched_sections") != 14 or copy_table.get("initialized_bytes") != 1316:
+        raise SystemExit("Espressif ROM manifest has unexpected startup copy-table coverage")
+    layout = manifest.get("layout_pointer_section", {})
+    if layout.get("name") != ".rodata.interface" or layout.get("sha256") != "61d28bfe60e74152e262f11758fe4c0fb5eb794e9ae3b80a62f0631cae7b221b":
+        raise SystemExit("Espressif ROM manifest has an unexpected ROM layout section")
+    return manifest_path
+
+
 def add_source_tree(
     archive: tarfile.TarFile,
     source: Path,
@@ -110,6 +140,16 @@ def add_source_tree(
         parts = PurePosixPath(member.name).parts
         if any(part in excluded_directories for part in parts):
             return None
+        if not member.isdir() and PurePosixPath(member.name).name.lower() in {"id_rsa", "id_ed25519"}:
+            return None
+        private_test_fixtures = {
+            ("tests", "unit", "crypto-tls-x509-helpers.c"),
+        }
+        if not member.isdir() and any(
+            len(parts) >= len(suffix) and parts[-len(suffix):] == suffix
+            for suffix in private_test_fixtures
+        ):
+            return None
         if not member.isdir() and PurePosixPath(member.name).suffix.lower() in excluded_suffixes:
             return None
         return member
@@ -117,7 +157,9 @@ def add_source_tree(
     archive.add(source, arcname=archive_name, recursive=True, filter=include)
 
 
-def create_corresponding_source_archive(source: Path, engine_dist: Path, rom: Path, output: Path) -> Path:
+def create_corresponding_source_archive(
+    source: Path, engine_dist: Path, rom: Path, rom_manifest: Path, output: Path
+) -> Path:
     build_root = source / "build-wasm-32limit"
     dependency_root = source / "build-wasm-deps"
     required_paths = (
@@ -149,8 +191,9 @@ def create_corresponding_source_archive(source: Path, engine_dist: Path, rom: Pa
                 "Contents: the pinned engine source, resolved Meson subproject source, "
                 "downloaded source archives used by its pinned build scripts, the "
                 "Emscripten SDL2 port source, locked frontend package sources, and the "
-                "four hash-reviewed emulator support binaries. All other .bin, .elf, "
-                ".xota, and private-key files are omitted. See licenses/CORRESPONDING-SOURCE.md "
+                "four hash-reviewed emulator support binaries plus the ROM build manifest. All other .bin, .elf, "
+                ".xota, private-key files, and two upstream unit-test fixtures containing "
+                "private-key material are omitted. See licenses/CORRESPONDING-SOURCE.md "
                 "in the adjacent web package for the full source and license map.\n"
             ).encode("utf-8")
             info = tarfile.TarInfo("nooir-corresponding-source/README.txt")
@@ -174,6 +217,11 @@ def create_corresponding_source_archive(source: Path, engine_dist: Path, rom: Pa
                 target_name = f"nooir-corresponding-source/emulator-support/{Path(relative).name}"
                 archive.add(original, arcname=target_name, recursive=False)
             archive.add(rom, arcname="nooir-corresponding-source/emulator-support/esp32c3-rom.bin", recursive=False)
+            archive.add(
+                rom_manifest,
+                arcname="nooir-corresponding-source/emulator-support/esp32c3-rom.bin.manifest.json",
+                recursive=False,
+            )
         os.replace(temporary, destination)
     except Exception:
         temporary.unlink(missing_ok=True)
@@ -298,7 +346,11 @@ def main() -> int:
             expected_sha256,
         )
     copy_verified_binary(esp32c3_rom, engine_output / "esp32c3-rom.bin", ESP32C3_ROM_BYTES, ESP32C3_ROM_SHA256)
-    source_archive = create_corresponding_source_archive(source, engine_dist, esp32c3_rom, output)
+    rom_manifest = verify_rom_manifest(esp32c3_rom)
+    rom_manifest_output = output / "licenses" / "esp32c3-rom" / "esp32c3-rom.bin.manifest.json"
+    rom_manifest_output.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(rom_manifest, rom_manifest_output)
+    source_archive = create_corresponding_source_archive(source, engine_dist, esp32c3_rom, rom_manifest, output)
 
     boot_source = source / "eink-qemu" / "boot"
     for name in ("README.md", "LICENSE", "LICENSE.partitions"):
@@ -359,7 +411,7 @@ def main() -> int:
     shutil.copy2(rom_notices, output / "licenses" / "ESP32C3-ROM-NOTICES.md")
 
     shell_source = Path(__file__).resolve().parents[1] / "web-emulator"
-    for name in ("index.html", "app.js", "style.css", "README.md", "dependencies.json"):
+    for name in ("index.html", "app.js", "style.css", "screenshot.css", "README.md", "dependencies.json"):
         shutil.copy2(shell_source / name, output / name)
 
     notice = f"""# Folio Nooir Browser Emulator package notice

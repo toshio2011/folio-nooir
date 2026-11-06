@@ -1,15 +1,20 @@
 # ESP32-C3 emulator ROM notices
 
-The porting branch has one licensed C3 ROM **candidate**:
-`engine/esp32c3-rom.bin`. It is **not reader firmware**. It is generated from Espressif's
+The porting branch has one reviewed C3 ROM image for use as an experimental
+emulator support asset: `engine/esp32c3-rom.bin`. It is **not reader firmware**.
+It is generated from Espressif's
 `esp32c3_rev3_rom.elf` in the official
 [esp-rom-elfs](https://github.com/espressif/esp-rom-elfs) release `20260528`.
 Espressif states that the ROM ELF files may be used under Apache License 2.0,
-while the mask-ROM implementation itself is not open source. The ELF-derived
-object is redistributable with the listed notices, but its current flat-image
-conversion fails the pinned eink-qemu startup smoke and is **not approved for
-public packaging**. This branch does not include or redistribute the
-unlicensed upstream ROM image or bytes copied from it.
+while the mask-ROM implementation itself is not open source. The ROM-specific
+redistribution review is complete on the condition that the exact pinned
+Espressif and embedded-component notices below accompany the image. This does
+not clear the complete emulator package: GPL corresponding source, other
+component notices, and the package audit remain required before beta
+publication. The experimental construction restores only startup copy-table
+payloads and the `.rodata.interface` layout section from the licensed ELF.
+Native and browser X3/X4 runs reached Nooir Home and completed EPUB navigation
+with FAT32 SD cards. No bytes from eink-qemu's unlicensed stock ROM are used.
 
 ## Exact source and conversion
 
@@ -17,15 +22,26 @@ unlicensed upstream ROM image or bytes copied from it.
 |---|---:|---|
 | `esp-rom-elfs-20260528.tar.gz` | 4,902,355 bytes | `caa463d3cbef2430a5a35847c1d9f2f152403b17a802050927ff60c8da54fe46` |
 | `esp32c3_rev3_rom.elf` | — | `19ac22e08707df926fb0cf4c54795d4067b983fae8635f396ded173a6d78fc3c` |
-| Generated `esp32c3-rom.bin` | 387,784 bytes | `3336ae473a063be8dae6790bd45fee4506f2cf273aa36f3dfd9e0495ecb665cc` |
+| Default flat `esp32c3-rom.bin` | 387,784 bytes | `3336ae473a063be8dae6790bd45fee4506f2cf273aa36f3dfd9e0495ecb665cc` |
+| Experimental copy-table-only image | 387,784 bytes | `2202e4f5c946fb2f8fc3d77e48f71ce29758b42913e7da868b955f0f6813fb72` |
+| Experimental image with layout section and zero padding | 393,216 bytes | `3a69ac75662367dc99fbd5b8ddf265515b6288e79e51e4c4168c597aced7b79d` |
 
-The build runs `riscv64-unknown-elf-objcopy -O binary` on the verified ELF.
-[`scripts/prepare_esp32c3_rom.py`](../scripts/prepare_esp32c3_rom.py) pins the
-release archive, input ELF and expected output hashes, and refuses to overwrite
-an existing destination. The output may be redistributed under the Apache-2.0
-object-form permission stated by Espressif. Any later package must preserve the exact
-Espressif license and the ROM-related third-party notices listed below; it does
-not redistribute the unlicensed upstream eink-qemu ROM blobs.
+[`scripts/prepare_esp32c3_rom.py`](../scripts/prepare_esp32c3_rom.py)
+pins the release archive, input ELF and expected output hashes, and refuses to
+overwrite existing outputs. The flat image may be produced by
+`riscv64-unknown-elf-objcopy -O binary`; the pinned Python/pyelftools path can
+also reconstruct it from the file-backed allocated `PT_LOAD` sections. Both
+paths are checked against the same flat-image length and hash. Passing
+`--experimental-licensed-elf-startup`
+reconstructs only the ELF sections matched to the ROM copy table plus the exact
+`.rodata.interface` section mapped through its zero-length PT_LOAD anchor. It
+checks the DROM alias, section flags, address ranges, symbol values, section
+hashes and complete output hash, then writes a JSON manifest with the reviewed
+source hashes, initialized ranges, and no-stock-ROM assertion. The verified
+reconstruction used the pinned archive and matched the existing image and
+manifest byte-for-byte. Any package must preserve the exact Espressif license
+and the ROM-related third-party notices listed below; it does not redistribute
+eink-qemu's unlicensed upstream ROM blobs.
 
 Any generated site that redistributes this candidate must carry these offline notice files under
 `licenses/esp32c3-rom/`:

@@ -23,6 +23,9 @@ repository at the commit that builds the site.
   `eink-qemu/wasm/build-deps.sh` for Emscripten's compiler ID. The pinned
   script contains the exact patch operation; the source archive includes that
   original script and the pristine, hash-pinned GLib source archive.
+* The full pinned QEMU tree includes its top-level `configure` script and
+  `docs/devel/build-system.rst` build/install documentation. The package audit
+  requires both, as well as the `wasm/build.sh` and `wasm/build-deps.sh` scripts.
 * QEMU's resolved Meson sources are included from the build's
   `build-wasm-32limit/subprojects` directory. The relevant upstream wrap files
   are in the pinned repository and identify exact source revisions, including
@@ -82,7 +85,9 @@ license text (with the CC0 notice for its SPDX license-list source). The
 Newlib and BSD-3 files remove trailing whitespace only; their original
 upstream blob hashes and normalized copy hashes are checked. Their
 exact source commits and file hashes are recorded in that
-notice. The generator is included in the Nooir repository. The C3
+notice. A machine-readable ROM manifest is included beside these notices and
+copied into the corresponding-source archive. The generator is included in the
+Nooir repository. The C3
 second-stage bootloader source and conversion,
 CrossPoint partition table source/MIT notice, and NVS generator/profile are
 documented in `licenses/eink-qemu-boot/README.md` and the pinned engine source.
