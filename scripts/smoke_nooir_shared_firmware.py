@@ -45,19 +45,25 @@ def parse_ppm(path: Path, expected: tuple[int, int]) -> None:
         raise RuntimeError("panel capture is blank")
 
 
-def smoke_failure(machine: str, reason: str, log_path: Path) -> RuntimeError:
-    try:
-        data = log_path.read_bytes()
-    except OSError:
-        data = b""
-    excerpt = data[-16_384:].decode("utf-8", errors="replace").strip()
-    if excerpt:
-        return RuntimeError(
-            f"{machine}: {reason}\n"
-            "Last emulator output (the complete temporary log is removed after the run):\n"
-            f"{excerpt}"
-        )
-    return RuntimeError(f"{machine}: {reason}; no emulator output was captured")
+def smoke_failure(
+    machine: str,
+    reason: str,
+    *,
+    milestones: int,
+    memory_marker_seen: bool,
+    screenshot_requested: bool,
+    capture_exists: bool,
+) -> RuntimeError:
+    """Return a safe summary; serial output and guest data stay runner-local."""
+    if reason == "timed out before a nonblank Home capture":
+        reason = "home-readiness timeout before a nonblank capture"
+    summary = (
+        f"{machine}: {reason}; startup milestones={min(milestones, 3)}/3; "
+        f"memory marker={'yes' if memory_marker_seen else 'no'}; "
+        f"capture requested={'yes' if screenshot_requested else 'no'}; "
+        f"capture present={'yes' if capture_exists else 'no'}"
+    )
+    return RuntimeError(summary)
 
 
 def is_guest_runtime_error(output: str) -> bool:
@@ -103,6 +109,7 @@ def boot_one(engine: Path, firmware: Path, machine: str, timeout: float) -> None
         output = bytearray()
         milestones = 0
         screenshot_requested = False
+        memory_marker_seen = False
         guest_failure_started: float | None = None
         start = time.monotonic()
         try:
@@ -118,6 +125,7 @@ def boot_one(engine: Path, firmware: Path, machine: str, timeout: float) -> None
                         if len(output) > 2 * 1024 * 1024:
                             del output[:1024 * 1024]
                     text = output.decode(errors="replace")
+                    memory_marker_seen = memory_marker_seen or "[MEM]" in text
                     if guest_failure_started is None and is_guest_runtime_error(text):
                         guest_failure_started = time.monotonic()
                     if guest_failure_started is not None:
@@ -125,7 +133,14 @@ def boot_one(engine: Path, firmware: Path, machine: str, timeout: float) -> None
                             process.poll() is not None
                             or time.monotonic() - guest_failure_started >= GUEST_FAILURE_DRAIN_SECONDS
                         ):
-                            raise smoke_failure(machine, "guest/runtime error", log_path)
+                            raise smoke_failure(
+                                machine,
+                                "guest/runtime error detected",
+                                milestones=milestones,
+                                memory_marker_seen=memory_marker_seen,
+                                screenshot_requested=screenshot_requested,
+                                capture_exists=shot.exists(),
+                            )
                         # Let the emulator finish printing the panic/backtrace
                         # before terminating it in the finally block.
                         continue
@@ -140,14 +155,42 @@ def boot_one(engine: Path, firmware: Path, machine: str, timeout: float) -> None
                         try:
                             parse_ppm(shot, GEOMETRY[machine])
                         except RuntimeError as exc:
-                            raise smoke_failure(machine, str(exc), log_path) from exc
+                            raise smoke_failure(
+                                machine,
+                                str(exc),
+                                milestones=milestones,
+                                memory_marker_seen=memory_marker_seen,
+                                screenshot_requested=screenshot_requested,
+                                capture_exists=shot.exists(),
+                            ) from exc
                         if process.poll() is not None:
-                            raise smoke_failure(machine, "emulator exited before the capture completed", log_path)
+                            raise smoke_failure(
+                                machine,
+                                "emulator exited before capture completed",
+                                milestones=milestones,
+                                memory_marker_seen=memory_marker_seen,
+                                screenshot_requested=screenshot_requested,
+                                capture_exists=shot.exists(),
+                            )
                         print(f"{machine}: PASS; Home refreshes={milestones}; display={GEOMETRY[machine][0]}x{GEOMETRY[machine][1]}")
                         return
                     if process.poll() is not None:
-                        raise smoke_failure(machine, f"emulator exited {process.returncode}", log_path)
-            raise smoke_failure(machine, "timed out before a nonblank Home capture", log_path)
+                        raise smoke_failure(
+                            machine,
+                            f"emulator exited with code {process.returncode}",
+                            milestones=milestones,
+                            memory_marker_seen=memory_marker_seen,
+                            screenshot_requested=screenshot_requested,
+                            capture_exists=shot.exists(),
+                        )
+            raise smoke_failure(
+                machine,
+                "timed out before a nonblank Home capture",
+                milestones=milestones,
+                memory_marker_seen=memory_marker_seen,
+                screenshot_requested=screenshot_requested,
+                capture_exists=shot.exists(),
+            )
         finally:
             if process.poll() is None:
                 process.terminate()
