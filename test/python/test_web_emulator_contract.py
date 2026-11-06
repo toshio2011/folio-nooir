@@ -34,6 +34,9 @@ smoke_runner = load_module(
 rom_prep = (ROOT / "scripts" / "prepare_esp32c3_rom.py").read_text(encoding="utf-8")
 packager = (ROOT / "scripts" / "package_nooir_web_emulator.py").read_text(encoding="utf-8")
 web_workflow = (ROOT / ".github" / "workflows" / "nooir-web-emulator-pages.yml").read_text(encoding="utf-8")
+softfloat_prep = load_module(
+    "nooir_softfloat_source_prep", ROOT / "scripts" / "prepare_nooir_softfloat_source.py"
+)
 
 
 class WebEmulatorContractTests(unittest.TestCase):
@@ -270,6 +273,96 @@ class WebEmulatorContractTests(unittest.TestCase):
                 names,
             )
             self.assertIn("nooir-corresponding-source/eink-qemu/src/main.c", names)
+
+    def test_corresponding_source_excludes_generated_node_binary_shims(self):
+        with tempfile.TemporaryDirectory(prefix="nooir-node-shims-") as temporary:
+            source = Path(temporary) / "frontend"
+            generated = source / "package" / "node_modules" / ".bin"
+            generated.mkdir(parents=True)
+            (generated / "vite").write_text("generated shim", encoding="utf-8")
+            package_source = source / "package" / "node_modules" / "vite" / "index.js"
+            package_source.parent.mkdir(parents=True)
+            package_source.write_text("source", encoding="utf-8")
+            archive_path = Path(temporary) / "source.tar.gz"
+            with tarfile.open(archive_path, "w:gz") as archive:
+                package_builder.add_source_tree(
+                    archive, source, "frontend-package-sources", include_node_modules=True
+                )
+            with tarfile.open(archive_path, "r:gz") as archive:
+                names = set(archive.getnames())
+            self.assertNotIn("frontend-package-sources/package/node_modules/.bin/vite", names)
+            self.assertIn("frontend-package-sources/package/node_modules/vite/index.js", names)
+
+    def test_softfloat_preparation_requires_the_exact_qemu_wrap_pin(self):
+        with tempfile.TemporaryDirectory(prefix="nooir-softfloat-wrap-") as temporary:
+            engine = Path(temporary) / "engine"
+            wrap = engine / "subprojects" / "berkeley-softfloat-3.wrap"
+            wrap.parent.mkdir(parents=True)
+            wrap.write_text(
+                "[wrap-git]\n"
+                "url = https://gitlab.com/qemu-project/berkeley-softfloat-3.git\n"
+                "revision = b64af41c3276f97f0e181920400ee056b9c88037\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                softfloat_prep.read_pinned_wrap(engine),
+                (softfloat_prep.EXPECTED_URL, softfloat_prep.EXPECTED_REVISION),
+            )
+            wrap.write_text(
+                "[wrap-git]\nurl = https://gitlab.com/qemu-project/berkeley-softfloat-3.git\n"
+                "revision = guessed-revision\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(SystemExit):
+                softfloat_prep.read_pinned_wrap(engine)
+
+    def test_softfloat_preparation_is_in_the_release_workflow_and_source_map(self):
+        self.assertIn("scripts/prepare_nooir_softfloat_source.py", web_workflow)
+        self.assertEqual(
+            softfloat_prep.EXPECTED_URL,
+            "https://gitlab.com/qemu-project/berkeley-softfloat-3.git",
+        )
+        self.assertIn("--depth=1", (ROOT / "scripts" / "prepare_nooir_softfloat_source.py").read_text(encoding="utf-8"))
+        self.assertIn(softfloat_prep.EXPECTED_REVISION, packager)
+        self.assertIn(softfloat_prep.EXPECTED_REVISION, (ROOT / "LICENSES" / "CORRESPONDING-SOURCE.md").read_text(encoding="utf-8"))
+        audit_source = (ROOT / "scripts" / "check_nooir_web_package.py").read_text(encoding="utf-8")
+        self.assertIn("PINNED_SOFTFLOAT", audit_source)
+        self.assertIn("NOOIR-PROVENANCE.txt", audit_source)
+
+    def test_component_license_scan_follows_source_links_without_leaving_checkout(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory(prefix="nooir-license-symlink-") as temporary:
+            source = Path(temporary) / "checkout"
+            target = source / "actual-dtc-source"
+            target.mkdir(parents=True)
+            for index in range(15):
+                (target / f"LICENSE.{index:02d}").write_text(
+                    "license notice", encoding="utf-8"
+                )
+            outside = Path(temporary) / "outside-checkout"
+            outside.mkdir()
+            (outside / "LICENSE.private").write_text("must not copy", encoding="utf-8")
+            linked_root = source / "build-subprojects"
+            try:
+                linked_root.symlink_to(target, target_is_directory=True)
+                (target / "escape").symlink_to(outside, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"directory symlinks unavailable in this environment: {exc}")
+            output = Path(temporary) / "package"
+            with patch.object(
+                package_builder,
+                "LICENSE_AUDIT_ROOTS",
+                (("symlinked-dtc", "build-subprojects"),),
+            ):
+                copied = package_builder.copy_component_license_texts(source, output)
+            self.assertEqual(copied, 15)
+            self.assertTrue(
+                (output / "licenses/eink-qemu-components/symlinked-dtc/LICENSE.00").is_file()
+            )
+            self.assertFalse(
+                (output / "licenses/eink-qemu-components/symlinked-dtc/escape/LICENSE.private").exists()
+            )
 
 
 if __name__ == "__main__":
