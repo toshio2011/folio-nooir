@@ -1,0 +1,231 @@
+name: Nooir web emulator (build only)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'web-emulator/**'
+      - 'scripts/package_nooir_web_emulator.py'
+      - 'scripts/check_nooir_web_package.py'
+      - 'scripts/prepare_esp32c3_rom.py'
+      - 'scripts/prepare_nooir_softfloat_source.py'
+      - 'scripts/smoke_nooir_shared_firmware.py'
+      - 'LICENSES/**'
+      - '.github/workflows/nooir-web-emulator-pages.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      EINK_QEMU_REVISION: d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc
+      EMSDK_VERSION: '6.0.12'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out the pinned emulator engine
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: serialx/eink-qemu
+          ref: d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc
+          path: work/eink-qemu
+          persist-credentials: false
+
+      - name: Install host build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential autoconf automake libtool libltdl-dev \
+            pkg-config ninja-build meson python3-venv texinfo gettext \
+            dosfstools mtools cmake openssl curl binutils-riscv64-unknown-elf
+
+      - name: Install Emscripten
+        uses: emscripten-core/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
+        with:
+          version: ${{ env.EMSDK_VERSION }}
+          actions-cache-folder: emsdk-cache
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 12.5.1
+
+      - name: Verify engine pin and test browser modules
+        working-directory: work/eink-qemu
+        run: |
+          test "$(git rev-parse HEAD)" = "$EINK_QEMU_REVISION"
+          node --test eink-qemu/wasm/web/*.test.mjs eink-qemu/tests/*.mjs
+          python3 -m unittest eink-qemu.tests.test_mksd
+          python3 -m unittest eink-qemu.tests.test_panel_launchers eink-qemu.tests.test_wifi_launchers
+          python3 -m unittest discover -s eink-qemu/wasm -p test_wifi_assets.py
+          cd "$GITHUB_WORKSPACE"
+          python3 test/python/test_web_emulator_contract.py
+
+      - name: Build pinned engine dependencies
+        working-directory: work/eink-qemu
+        env:
+          WIFI_ASSETS: none
+        run: eink-qemu/wasm/build-deps.sh
+
+      - name: Build pinned engine without optional font downloads
+        working-directory: work/eink-qemu
+        env:
+          WIFI_ASSETS: none
+        run: eink-qemu/wasm/build.sh --web
+
+      - name: Install the pinned ROM ELF parser
+        run: |
+          python3 -m venv "$RUNNER_TEMP/nooir-rom-venv"
+          "$RUNNER_TEMP/nooir-rom-venv/bin/python" -m pip install --disable-pip-version-check pyelftools==0.33
+
+      - name: Prepare the hash-verified licensed ESP32-C3 ROM
+        run: |
+          "$RUNNER_TEMP/nooir-rom-venv/bin/python" scripts/prepare_esp32c3_rom.py \
+            --output build/esp32c3-rom.bin \
+            --objcopy riscv64-unknown-elf-objcopy \
+            --experimental-licensed-elf-startup
+
+      - name: Download the exact public v1.6.6 image for ephemeral emulator smoke tests
+        run: |
+          firmware="$RUNNER_TEMP/folio-nooir-v1.6.6-firmware.bin"
+          curl --fail --location --retry 3 \
+            https://github.com/toshio2011/folio-nooir/releases/download/1.6.6/firmware.bin \
+            --output "$firmware"
+          echo 'badcd6fb6cb4b5323f92714e893f9c488e887aa8f7b5d8e28cd0e6639aeae108  '"$firmware" | sha256sum --check --status
+
+      - name: Smoke the licensed C3 ROM with the unchanged X3/X4 firmware
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import shutil
+
+          rom = Path('build/esp32c3-rom.bin').read_bytes()
+          target = Path('work/eink-qemu/pc-bios/esp32c3-rom.bin')
+          original = target.read_bytes()
+          expected = '0de1e65020e803bea0d7443dca149d61895e01fca3bb9c82d073234eebd73f99'
+          actual = hashlib.sha256(original).hexdigest()
+          if actual != expected:
+              raise SystemExit(f'Pinned QEMU C3 ROM source hash changed: {actual}')
+          target.write_bytes(rom)
+          PY
+          smoke_log="$RUNNER_TEMP/nooir-smoke-console.log"
+          set +e
+          python3 scripts/smoke_nooir_shared_firmware.py \
+            --engine-source work/eink-qemu \
+            --firmware "$RUNNER_TEMP/folio-nooir-v1.6.6-firmware.bin" > "$smoke_log" 2>&1
+          smoke_status=$?
+          set -e
+          if [ "$smoke_status" -ne 0 ]; then
+            grep -E '^(x3|x4): FAIL|^FAIL:' "$smoke_log" || true
+            echo 'Detailed emulator output remains on the temporary runner.'
+            exit "$smoke_status"
+          fi
+          grep -E '^(x3|x4): PASS|^PASS:' "$smoke_log"
+
+      - name: Preserve the exact SoftFloat corresponding source
+        run: |
+          python3 scripts/prepare_nooir_softfloat_source.py \
+            --engine-source work/eink-qemu \
+            --output work/eink-qemu/build-wasm-32limit/nooir-corresponding-source/berkeley-softfloat-3
+
+      - name: Package Nooir shell and audit licenses and firmware exclusions
+        run: |
+          python3 scripts/package_nooir_web_emulator.py \
+            --engine-source work/eink-qemu \
+            --engine-dist work/eink-qemu/build-wasm-32limit/web-dist \
+            --esp32c3-rom build/esp32c3-rom.bin \
+            --emsdk-root "$EMSDK" \
+            --output build/nooir-web-emulator
+          python3 scripts/check_nooir_web_package.py build/nooir-web-emulator
+
+      - name: Smoke the audited package in Chrome on X3 and X4
+        run: |
+          set -euo pipefail
+          google-chrome --version
+          mkdir -p build/nooir-browser-smoke build/nooir-browser-evidence
+          cp -a build/nooir-web-emulator/. build/nooir-browser-smoke/
+          for device in x3 x4; do
+            sd="build/nooir-test-${device}.img"
+            python3 work/eink-qemu/eink-qemu/mksd.py "$sd" 64 --cluster-size 512
+            mmd -i "$sd" ::/books
+            cp "$sd" "build/nooir-browser-smoke/nooir-test-${device}.img"
+          done
+
+          python3 scripts/serve_nooir_web_emulator.py \
+            --directory build/nooir-browser-smoke --host 127.0.0.1 --port 8178 \
+            > "$RUNNER_TEMP/nooir-preview.log" 2>&1 &
+          server_pid=$!
+          for _ in $(seq 1 50); do
+            if curl --fail --silent http://127.0.0.1:8178/ >/dev/null; then break; fi
+            sleep 0.2
+          done
+          curl --fail --silent http://127.0.0.1:8178/ >/dev/null
+
+          google-chrome --headless=new --no-sandbox --disable-dev-shm-usage \
+            --disable-gpu --no-first-run --no-default-browser-check \
+            --remote-debugging-port=9224 \
+            --user-data-dir="$RUNNER_TEMP/nooir-chrome-profile" \
+            http://127.0.0.1:8178/ > "$RUNNER_TEMP/nooir-chrome.log" 2>&1 &
+          chrome_pid=$!
+          trap 'kill "$chrome_pid" "$server_pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:9224/json/list >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:9224/json/list >/dev/null
+
+          for device in x3 x4; do
+            NOOIR_BUTTON_HOLD_MS=170 \
+            NOOIR_INPUT_PROBE_KEY=Left \
+            NOOIR_SD_ASSET="nooir-test-${device}.img" \
+            CDP_PORT=9224 \
+              node scripts/nooir_browser_smoke.mjs \
+                http://127.0.0.1:8178/ "$device" \
+                "$RUNNER_TEMP/folio-nooir-v1.6.6-firmware.bin" \
+                "build/nooir-test-${device}.img" \
+                "build/nooir-browser-evidence/${device}" \
+                > "$RUNNER_TEMP/nooir-browser-${device}.log" 2>&1
+            python3 - "build/nooir-browser-evidence/${device}/result.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          result = json.loads(Path(sys.argv[1]).read_text())
+          action = result["actions"][-1]
+          print(
+              f"{result['device']}: {result['result']}; "
+              f"firmware_sha256={result['firmwareSha256']}; "
+              f"sd_sha256={result['sdMount']['sha256']}; "
+              f"button={action['key']} held_ms={action['heldMs']} "
+              f"screen_change={action.get('screenDifference', {}).get('differentFraction', 'activity')}"
+          )
+          PY
+          done
+
+      - name: Upload review build (no reader firmware)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nooir-web-emulator-review
+          path: build/nooir-web-emulator
+          if-no-files-found: error
+          retention-days: 7
+
+  # Deployment stays impossible until this workflow is changed after explicit approval.
+  deploy-pages:
+    if: ${{ false }}
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    steps:
+      - run: echo 'Deployment is intentionally disabled.'

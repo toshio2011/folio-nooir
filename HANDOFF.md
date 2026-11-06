@@ -1116,3 +1116,200 @@ table confirms NimBLE and BleKeyboardHost. Offline GTests were unavailable
 (no CMake/CTest or host C++ compiler); Settings JS syntax and `git diff --check`
 passed. The build was not flashed; no stage/commit/push was performed. Do not
 call this release-ready until the physical X4 checklist passes.
+
+## Browser emulator beta — local web-only branch (2026-11-04)
+
+A clean local worktree `C:\Users\fatiha\Documents\side\work\folio-nooir-web-beta` was created on branch `codex/nooir-web-emulator-beta` from official Folio Nooir v1.6.6 commit `b6d428a3187afc25d434fcb475e9ab436099c1ba`. It contains only browser-emulator changes, documentation, license inventory, and the build-only Pages workflow. The Pro/Classic port remains in its original worktree. This branch has not been committed or pushed; no PR or deployment exists.
+
+The packaged wrapper was verified locally with the unchanged official v1.6.6 image (6,082,160 bytes; SHA-256 `badcd6fb6cb4b5323f92714e893f9c488e887aa8f7b5d8e28cd0e6639aeae108`). X4 booted at 480×800 and X3 at 528×792; both reported matching device detection, SD detection, and `render_ready`. The virtual SD accepted `test/epubs/test_text_decorations.epub`. On both profiles, Left entered Library, Confirm opened the EPUB, Right advanced pages, and Back exited Reader. X4 resumed at page 2/3 (67%) after a full browser reload of the wrapper origin; the SD and reading records persisted. The browser must select the local firmware file again after reload.
+
+GitHub latest-release metadata lookup succeeded, but the browser's fetch of the redirected `firmware.bin` asset failed with `TypeError: Failed to fetch`. The user downloads from the official release and selects the file locally; firmware is neither mirrored nor included in the package. The package audit allows only seven identified emulator-support `.bin` assets and excludes reader firmware. Exact support-file hashes are in `LICENSES/EINK-QEMU-WEB-BUNDLE.md`.
+
+Public release remains blocked by the file-level GPL/LGPL and corresponding-source review, confirmation of ROM/NVS/Picco support-asset terms, the static-host limitation if automatic firmware byte loading is required, and a successful GitHub build-only workflow. The workflow's deployment job remains hard-disabled. No hardware was flashed; physical validation is pending.
+
+## Browser emulator beta — license and package remediation (2026-11-04)
+
+This update supersedes the preliminary blocker summary immediately above. The active web-only checkout is `C:\Users\fatiha\Documents\side\work\folio-nooir-web-beta-standalone`, on `codex/nooir-web-emulator-beta`, based on official Folio Nooir v1.6.6 commit `b6d428a3187afc25d434fcb475e9ab436099c1ba`. The other linked worktree and its external parent repository were not changed.
+
+The linked worktree metadata was inspected and found valid. I made no metadata repair because none was needed; no reset, clean, prune, or global Git configuration change was made. Before isolating Git operations, the full original worktree snapshot was copied to `C:\Users\fatiha\Documents\side\_backups\folio-nooir-web-beta-pre-git-repair-20261104-104009`: 1,031 worktree files and six Git metadata files were hash-checked with zero mismatches, and the Git bundle verified.
+
+License/source work now replaces the pinned eink-qemu C3 ROM blob with the hash-verified ESP32-C3 rev3 ROM derived from Espressif's Apache-2.0 ELF release `20260528`. The source tree also contains hash-pinned copies of Espressif's ROM ELF README/license, the ESP-IDF ROM copyright notices and complete Newlib notice, plus BSD-3-Clause and CC0 license texts. The package audit allows only four exact support `.bin` files, verifies these pinned notice files, rejects reader firmware and unknown binary/key files, checks text for common secret formats, restricts package root contents, and requires the resolved Meson source subprojects in the corresponding-source archive. Upstream ROM blobs without explicit redistribution permission are excluded.
+
+Local prior browser validation proved X3/X4 behavior with the earlier emulator ROM. The new licensed-ROM browser smoke has not run yet. The local synthetic package audit was intentionally not treated as a pass: its fixture omitted the resolved Meson source checkout, and the audit correctly reported absent subproject license files. A fresh Ubuntu engine build and complete package/source audit are still required.
+
+The pinned Node suite passed 115 tests on Windows after omitting two POSIX host-tool-dependent test files; the workflow installs the required Linux FAT tools and runs all tests. The web-emulator Python contract suite passed 8/8 after the notice-file pinning changes. The fresh GitHub build workflow still needs to run. Historical Nooir regression evidence from this v1.6.6 workstream reports 148 Python tests and native CTest 585/585 passed.
+
+Current release gate: do not deploy Pages until the Ubuntu workflow boots the unchanged official X3/X4 firmware with the licensed ROM, builds and audits the actual package, and the resulting artifact is inspected. Automatic firmware-byte download is not a beta blocker; the browser requires manual local selection. X4 Pro/Classic remain disabled, no official firmware asset changed, and no physical device was flashed. See `docs/web-emulator-release-readiness-2026-11-04.md` for the current detailed report.
+
+## Browser emulator beta — hosted validation follow-up (2026-11-04)
+
+The exact support-image origins and license terms were checked against the
+pinned `serialx/eink-qemu` boot README and Espressif's official ROM ELF license
+statement. The C3 ROM is generated from the Apache-2.0 object-form Espressif
+release; the C3 second-stage bootloader is an Apache-2.0 ESP-IDF image from the
+versioned pioarduino package; the NVS image is generated by the pinned GPL-2.0
+engine script/profile; and the partition image derives from CrossPoint 1.6.5's
+MIT-licensed table. Exact hashes and notices are in
+`LICENSES/EINK-QEMU-WEB-BUNDLE.md` and
+`LICENSES/ESP32C3-ROM-NOTICES.md`. The unlicensed upstream ROM blobs are
+excluded. These traced terms support distribution only with the required
+notices and matching corresponding sources; the actual generated artifact has
+not yet passed its package audit and must be inspected before any publication.
+
+GitHub Actions web workflow run `41773789500` on remote revision
+`e3c80d8bfe9f0c5d7b89b56c2a9496929aef4dc2` passed the pinned Node tests
+(135/135), Python suites, dependency build, WebAssembly build, ROM preparation,
+and exact v1.6.6 firmware hash check. The X3 firmware smoke failed immediately
+after startup, so packaging was skipped and there is no artifact to inspect.
+The initial runner output only included a temporary log path that was deleted
+after failure. Local commit `8550d15d` adds a bounded log-tail diagnostic and a
+regression test; the focused Python contract suite passed 9/9. The push is
+currently waiting on Git Credential Manager, and the remote PR head is still
+`e3c80d8bfe9f0c5d7b89b56c2a9496929aef4dc2`; no second push was started and no
+remote files changed. Once the diagnostic commit is pushed, use the next
+workflow run to identify and fix the X3 failure without weakening the smoke
+gate.
+
+General CI also remains red at v1.6.6 submodule checkout because the pinned
+`freeink-sdk` commit `7bd6aebe9b40198d7dddf455400cee9225430726` is unavailable.
+That gitlink was not changed. No Pages deployment, merge, release change, or
+hardware flash occurred. X4 Pro and X4 Classic remain disabled, and physical
+X3/X4 validation remains pending.
+
+## Browser emulator beta — X3 ROM failure diagnosis (2026-11-04)
+
+The user completed GitHub sign-in and the authorized branch push is no longer
+waiting. Current isolated branch head is `59abd219b4e13ee0c2f1da8a06f0563580b69bfe`
+(`codex/nooir-web-emulator-beta`); draft PR #3 remains open. No source from
+the v1.6.7 development worktree, public release asset, or device was changed.
+
+GitHub Actions run `41783095009` completed the pinned Node/browser tests,
+Python tests, dependency build, full WebAssembly build, ROM preparation, and
+official v1.6.6 firmware hash check. The X3 firmware smoke then failed before
+the ROM printed its normal SPI boot lines. Failure-only artifact
+`nooir-emulator-smoke-diagnostics` (artifact `13301086190`, 1,295 bytes,
+SHA-256 `844e8a9e20efde1becaa9e466ffc07b134f5bc58f9095ffdd634b2b70570450a`,
+expires 2026-11-07) contains:
+
+```text
+ESP-ROM:esp32c3-api1-20210207
+Guru Meditation Error: Core 0 panic'ed (Load access fault)
+PC      : 0x4004cc4e  RA      : 0x4004da70
+MCAUSE  : 0x00000005  MTVAL : 0x0000001b
+```
+
+The exact Espressif release archive `20260528` was fetched and matched its
+documented SHA-256 `caa463d3cbef2430a5a35847c1d9f2f152403b17a802050927ff60c8da54fe46`;
+the extracted `esp32c3_rev3_rom.elf` matched `19ac22e08707df926fb0cf4c54795d4067b983fae8635f396ded173a6d78fc3c`.
+The older official `20230320` archive was also verified against its published
+SHA-256 and contains the same ELF hash. The panic PC maps to ROM symbol
+`spi_dummy_len_fix` at `0x4004cc46`; its faulting load reads byte offset
+`0x1b` from a null base. The ELF symbol table identifies `0x3fcdfff0` as
+`rom_spiflash_legacy_data`.
+
+Byte comparison found the likely compatibility cause: the licensed ELF's
+load-image segments at ROM offsets `0x59590` and `0x59664` are all zero, while
+the pinned emulator's C3 ROM contains nonzero data in the same initialization
+area. The checked-in conversion uses `objcopy -O binary`, which yields the
+licensed output hash `3336ae473a063be8dae6790bd45fee4506f2cf273aa36f3dfd9e0495ecb665cc`;
+that output differs from the pinned ROM in 1,022 bytes in the initialization
+area. This strongly explains the null SPI data pointer, but no compatible,
+licensed replacement has yet been validated by booting the unchanged firmware.
+
+The same 393,216-byte C3 ROM is present in Espressif's own QEMU repository
+(`pc-bios/esp32c3-rom.bin`, SHA-256
+`0de1e65020e803bea0d7443dca149d61895e01fca3bb9c82d073234eebd73f99`).
+Espressif's introducing commit says it includes the C3 BIOS, but the ROM file
+has no file-level redistribution terms or notice. The official repository's
+binary metadata does not identify a separate license. Treat this as unresolved;
+do not replace the reviewed Apache-licensed ELF with this ROM in the web
+package unless its redistribution rights are established.
+
+No functional workaround was committed: copying the unlicensed ROM's data
+into the licensed image, choosing a different silicon revision, or changing
+firmware would be unsupported. The build-only workflow continues to fail
+before package audit and artifact creation. Pages deployment remains hard
+disabled. X4 has not been retested with the licensed ROM in this run; X4 Pro
+and Classic remain disabled; physical X3/X4 validation remains pending.
+
+## Browser emulator beta — Reader Simulator ROM comparison (2026-11-04)
+
+The Reader Simulator catalog contains Folio Nooir 1.6.6 on X3 at
+`machine: x3`, 6,082,160 bytes, SHA-256
+`badcd6fb6cb4b5323f92714e893f9c488e887aa8f7b5d8e28cd0e6639aeae108`, the
+same official image used on original X4. Its checker
+(`PewPewzxc/reader-simulator/emulator/check.py`) checks chip ID 5 and runs
+`eink-qemu.exe run` with `--machine x3`, `ready`, a boot screenshot, a Down
+press and a second screenshot. The published row says `keys: false`, so this
+confirms boot only. The checker accepts an executable path; its repository
+does not pin the exact engine revision or ROM/boot asset hashes.
+
+The Reader Simulator page opens the external eink-qemu site for this entry
+and its own Pages workflow mirrors firmware under `/emu/` to work around
+GitHub release CORS. We do not use that mirror or pass a firmware URL. Our
+new fallback opens `https://serialx.github.io/eink-qemu/` with only
+`device=x3` or `device=x4`; the user chooses the official firmware locally.
+
+Our pinned engine is eink-qemu
+`d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc`. `hw/riscv/esp32c3.c` maps the
+C3 ROM at `0x40000000` for `0x60000` bytes and loads a flat image there. X3
+and X4 are both C3 profiles. The default flash layout puts the bootloader at
+`0x0`, the partition table at `0x8000`, NVS at `0x9000`, OTA data at `0xe000`,
+app0/OTA_0 at `0x10000` (`0x640000` bytes), and app1/OTA_1 at `0x650000`.
+`mkflash.py --machine x3` validates chip ID 5, composes a 16 MiB image and
+uses the CrossPoint X3 NVS seed only when CrossPoint marker strings exist in
+the app. Our smoke uses that same pinned helper, a blank 64 MiB SD image,
+`X4MACHINE=x3` and `wasm/run-node.sh`. The upstream checker does not override
+ROM, bootloader, partition, NVS or app offsets; its historical binary hashes
+are unavailable, so exact asset parity cannot be asserted.
+
+The Apache-licensed candidate comes from Espressif release 20260528
+`esp32c3_rev3_rom.elf`, SHA-256
+`19ac22e08707df926fb0cf4c54795d4067b983fae8635f396ded173a6d78fc3c`, converted
+with `riscv64-unknown-elf-objcopy -O binary` into 387,784 bytes, SHA-256
+`3336ae473a063be8dae6790bd45fee4506f2cf273aa36f3dfd9e0495ecb665cc`. The
+stock QEMU C3 ROM is 393,216 bytes, SHA-256
+`0de1e65020e803bea0d7443dca149d61895e01fca3bb9c82d073234eebd73f99`. The
+ELF load image has zero data at `0x59590` for `0xd8` bytes and `0x59664` for
+4 bytes, while the stock ROM contains initialization data there; 1,022 bytes
+differ overall. The X3 panic maps to `spi_dummy_len_fix` (`PC=0x4004cc4e`,
+`MTVAL=0x1b`) dereferencing a null base; symbol `rom_spiflash_legacy_data`
+is at `0x3fcdfff0`. These required bytes are absent from the licensed ELF.
+Neither different flat `objcopy` flags nor an ELF-aware loader can reconstruct
+data not in the input. We will not copy unlicensed ROM bytes. A licensed
+complete ROM or independently sourced, licensed initialization logic proven
+against the C3 machine is required for self-hosted X3/X4 boot.
+
+The X3 smoke failure is a ROM/startup regression, not a distinct X3 firmware
+requirement. Workflow run `41789041621` passed JS/browser tests, Python tests, pinned
+dependency and WASM builds, licensed ROM preparation, and the official
+firmware hash check; X3 failed before the second-stage bootloader, and the old
+runner stopped without testing X4. The updated script attempts both profiles
+independently but still blocks packaging if either fails. The external link
+has a source-contract test. The X4 model-only URL
+`https://serialx.github.io/eink-qemu/?device=x4` was opened in a browser; it
+showed “Choose firmware to begin” and “No device running.” No firmware file
+or URL was attached, and no file was selected or sent. The X3 URL is not yet
+browser-checked. Local validation of these changes passed the 13-test web
+emulator contract suite (the test temp directory was redirected into the
+workspace because the managed Windows temp directory denies writes), and
+`node --check web-emulator/app.js`. No package artifact was made. PR #3 remains
+draft and Pages deployment disabled.
+No v1.6.7 source, release firmware, or physical device was changed.
+
+## Latest web-emulator build result
+
+Build-only workflow `41797236085` on `a9cf869a497239d994d6aba947aa484930b0b54b`
+passed the pinned browser/Node and Python contract tests, engine dependencies,
+full WebAssembly build, licensed ROM preparation, and unchanged v1.6.6
+firmware checksum validation. The updated runner then tried both profiles;
+**X3 and X4 both failed** at the same early C3 ROM panic
+(`PC=0x4004cc4e`, `MCAUSE=5`, `MTVAL=0x1b`), before the Nooir second-stage
+bootloader. Diagnostic artifact `13307320900` is 1,271 bytes with SHA-256
+`5d3191a13ca5bc4d7be870b1e52718b22473e9bf0d6d485dbd06856eae8dd215`; it
+expires 2026-11-07. Packaging and audit were skipped, and the Pages job was
+skipped by its hard-disabled condition. PR Formatting passed. Regular CI
+`41797236067` separately failed at the unavailable v1.6.6 FreeInk SDK
+submodule checkout; its pin remains unchanged. PR #3 remains draft, no
+firmware or ROM artifact was added to the public release, and no device or
+Pages site was touched.
