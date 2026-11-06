@@ -9,6 +9,7 @@ import tarfile
 from pathlib import Path
 
 PINNED_ENGINE = "d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc"
+PINNED_SOFTFLOAT = "b64af41c3276f97f0e181920400ee056b9c88037"
 REQUIRED = (
     "index.html",
     "app.js",
@@ -246,6 +247,8 @@ def main() -> int:
                     "nooir-corresponding-source/eink-qemu/eink-qemu/desktop/pnpm-lock.yaml",
                     "nooir-corresponding-source/meson-subprojects",
                     "nooir-corresponding-source/meson-subprojects/berkeley-softfloat-3",
+                    "nooir-corresponding-source/meson-subprojects/berkeley-softfloat-3/COPYING.txt",
+                    "nooir-corresponding-source/meson-subprojects/berkeley-softfloat-3/NOOIR-PROVENANCE.txt",
                     "nooir-corresponding-source/meson-subprojects/dtc",
                     "nooir-corresponding-source/meson-subprojects/keycodemapdb",
                 ):
@@ -271,6 +274,20 @@ def main() -> int:
                         if stream is not None:
                             with stream:
                                 scan_text(member.name, stream.read().decode("utf-8", errors="replace"))
+                provenance_name = (
+                    "nooir-corresponding-source/meson-subprojects/berkeley-softfloat-3/"
+                    "NOOIR-PROVENANCE.txt"
+                )
+                if provenance_name in member_names:
+                    provenance_file = archive.extractfile(provenance_name)
+                    if provenance_file is not None:
+                        with provenance_file:
+                            provenance = provenance_file.read().decode("utf-8", errors="replace")
+                        if (
+                            "https://gitlab.com/qemu-project/berkeley-softfloat-3.git" not in provenance
+                            or PINNED_SOFTFLOAT not in provenance
+                        ):
+                            errors.append("corresponding-source SoftFloat provenance does not match its QEMU wrap pin")
                 manifest_member = archive.extractfile(
                     "nooir-corresponding-source/emulator-support/esp32c3-rom.bin.manifest.json"
                 ) if "nooir-corresponding-source/emulator-support/esp32c3-rom.bin.manifest.json" in member_names else None
