@@ -16,6 +16,13 @@ from pathlib import Path
 
 PINNED_EINK_QEMU = "d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc"
 COPYING_FILES = ("COPYING", "COPYING.LIB", "LICENSE")
+PINNED_COMPONENT_LICENSE_BLOBS = {
+    "keycodemapdb/LICENSE.BSD": "ec1a29d34d6e419411c75523408aca72f705345c",
+    "keycodemapdb/LICENSE.GPL2": "d511905c1647a1e311e8b20d5930a37a9c2531cd",
+    "dtc/BSD-2-Clause": "da366e2ce50be9b4ec250cad773677bee7fc1d9d",
+    "dtc/GPL": "d159169d1050894d3ea3b98e1c965c4058208fe1",
+    "dtc/README.license": "102b004d02290bddd7e537d5d45a0ba8f724d85b",
+}
 SUPPORT_BINARIES = {
     "boot/bootloader-esp32c3.bin": (18688, "46893df6619f0c7d7689fa309e76551e964e3d83d68c38ccb3e52ed8c3537226"),
     "boot/nvs-crosspoint.bin": (20480, "67c80ffb02df062522216e33553f0691a9ddea06be794404365a66c90bc8e94f"),
@@ -150,16 +157,31 @@ def add_source_tree(
             # pnpm/npm's node_modules/.bin entries are generated executable
             # shims, not source needed to rebuild the frontend dependencies.
             return None
-        if not member.isdir() and PurePosixPath(member.name).name.lower() in {"id_rsa", "id_ed25519"}:
-            return None
+        # These exact files in the pinned QEMU source tree contain private
+        # test fixtures. Keep similarly named files and all other source.
         private_test_fixtures = {
+            ("tests", "keys", "id_rsa"),
+            ("tests", "keys", "id_ed25519"),
+            ("tests", "keys", "vagrant"),
             ("tests", "unit", "crypto-tls-x509-helpers.c"),
+            ("tests", "unit", "test-crypto-der.c"),
+            ("tests", "unit", "test-crypto-akcipher.c"),
+            ("tests", "bench", "test_akcipher_keys.c.inc"),
+            ("tests", "bench", "benchmark-crypto-akcipher.c"),
         }
-        if not member.isdir() and any(
-            len(parts) >= len(suffix) and parts[-len(suffix):] == suffix
-            for suffix in private_test_fixtures
+        archive_prefix = PurePosixPath(archive_name).parts
+        relative_parts = (
+            parts[len(archive_prefix):]
+            if parts[:len(archive_prefix)] == archive_prefix
+            else ()
+        )
+        if (
+            archive_name == "nooir-corresponding-source/eink-qemu"
+            and not member.isdir()
+            and relative_parts in private_test_fixtures
         ):
             return None
+
         if not member.isdir() and PurePosixPath(member.name).suffix.lower() in excluded_suffixes:
             return None
         return member
@@ -209,8 +231,10 @@ def create_corresponding_source_archive(
                 "Emscripten SDL2 port source, locked frontend package sources, and the "
                 f"SoftFloat source at QEMU wrap revision {SOFTFLOAT_REVISION}, and four hash-reviewed "
                 "emulator support binaries plus the ROM build manifest. All other .bin, .elf, "
-                ".xota, private-key files, and two upstream unit-test fixtures containing "
-                "private-key material are omitted. See licenses/CORRESPONDING-SOURCE.md "
+                ".xota, private-key files, and the exact upstream test-only files that "
+                "embed or load private-key fixtures are omitted. Runtime QEMU source, "
+                "build/install scripts, and required dependencies are retained. See "
+                "licenses/CORRESPONDING-SOURCE.md "
                 "in the adjacent web package for the full source and license map.\n"
             ).encode("utf-8")
             info = tarfile.TarInfo("nooir-corresponding-source/README.txt")
@@ -337,6 +361,39 @@ def copy_component_license_texts(source: Path, output: Path) -> int:
     return copied
 
 
+
+def copy_pinned_component_license_texts(repository: Path, output: Path) -> int:
+    """Copy authentic notices for the exact DTC/keycodemapdb Meson pins.
+
+    The build-source scan remains mandatory; these reviewed copies make the
+    package notice set deterministic and verify the upstream Git blob bytes.
+    """
+    source_root = repository / "LICENSES" / "eink-qemu-components"
+    destination_root = output / "licenses" / "eink-qemu-components" / "build-subprojects"
+    copied = 0
+    for relative, expected_blob in PINNED_COMPONENT_LICENSE_BLOBS.items():
+        source_file = source_root / relative
+        if not source_file.is_file():
+            raise SystemExit(f"pinned QEMU dependency notice is missing: {source_file}")
+        data = source_file.read_bytes()
+        actual_blob = git_blob_sha1(data)
+        if actual_blob != expected_blob:
+            raise SystemExit(
+                f"pinned QEMU dependency notice differs from its upstream Git object: "
+                f"{relative} (expected {expected_blob}, got {actual_blob})"
+            )
+        target = destination_root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            if target.read_bytes() != data:
+                raise SystemExit(
+                    f"build-tree license notice differs from pinned upstream bytes: {target}"
+                )
+        else:
+            target.write_bytes(data)
+            copied += 1
+    return copied
+
 def copy_emscripten_license_texts(emsdk_root: Path, output: Path) -> None:
     candidates = (
         (emsdk_root / "upstream" / "emscripten" / "LICENSE", output / "licenses" / "emscripten" / "LICENSE"),
@@ -440,6 +497,7 @@ def main() -> int:
         raise SystemExit(f"Nooir engine component inventory is missing: {component_inventory}")
     shutil.copy2(component_inventory, output / "licenses" / "EINK-QEMU-WEB-BUNDLE.md")
     license_count = copy_component_license_texts(source, output)
+    license_count += copy_pinned_component_license_texts(repository, output)
     copy_emscripten_license_texts(emsdk_root, output)
     copy_esp32c3_rom_notices(repository, output)
 

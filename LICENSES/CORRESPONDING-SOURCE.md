@@ -103,3 +103,41 @@ documented in `licenses/eink-qemu-boot/README.md` and the pinned engine source.
 No `esp32c3-rom.bin` or `esp32s3_rev0_rom.bin` from the pinned eink-qemu
 `pc-bios` directory is redistributed. No S3 or Picco support files and no
 reader firmware are included.
+
+## Exact DTC and keycodemapdb notice files
+
+The pinned eink-qemu wrap files name these Meson dependency revisions:
+
+- keycodemapdb: f5772a62ec52591ff6870b7e8ef32482371f22c6
+- DTC: b6910bec11614980a21e46fbccc35934b671bd81
+
+The corresponding notice texts are copied byte-for-byte from the files at those exact revisions:
+
+| Component file | Pinned upstream file | Git blob SHA-1 |
+|---|---|---|
+| keycodemapdb/LICENSE.BSD | [f5772a6/LICENSE.BSD](https://github.com/qemu/keycodemapdb/blob/f5772a62ec52591ff6870b7e8ef32482371f22c6/LICENSE.BSD) | ec1a29d34d6e419411c75523408aca72f705345c |
+| keycodemapdb/LICENSE.GPL2 | [f5772a6/LICENSE.GPL2](https://github.com/qemu/keycodemapdb/blob/f5772a62ec52591ff6870b7e8ef32482371f22c6/LICENSE.GPL2) | d511905c1647a1e311e8b20d5930a37a9c2531cd |
+| dtc/BSD-2-Clause | [b6910be/BSD-2-Clause](https://github.com/dgibson/dtc/blob/b6910bec11614980a21e46fbccc35934b671bd81/BSD-2-Clause) | da366e2ce50be9b4ec250cad773677bee7fc1d9d |
+| dtc/GPL | [b6910be/GPL](https://github.com/dgibson/dtc/blob/b6910bec11614980a21e46fbccc35934b671bd81/GPL) | d159169d1050894d3ea3b98e1c965c4058208fe1 |
+| dtc/README.license | [b6910be/README.license](https://github.com/dgibson/dtc/blob/b6910bec11614980a21e46fbccc35934b671bd81/README.license) | 102b004d02290bddd7e537d5d45a0ba8f724d85b |
+
+Repository copies are in LICENSES/eink-qemu-components/. The package builder verifies their upstream Git blob SHA-1 values and copies them under licenses/eink-qemu-components/build-subprojects/. The package checker independently verifies every packaged file against those same hashes. Its ordinary build-source scan, required-directory checks, minimum-notice count, corresponding-source archive checks, and secret/firmware checks remain enabled.
+
+DTC's README.license states that dtc is GPL-licensed and libfdt is dual-licensed GPL/BSD-2-Clause. The pinned keycodemapdb LICENSE.BSD includes a clause referring to “PyCA Cryptography”; it is retained exactly as upstream, alongside LICENSE.GPL2. This source inventory records the files and terms but does not treat the presence of these texts alone as completion of the overall release license review.
+
+### Test-only private-key fixtures excluded from the source archive
+
+The pinned engine checkout contains well-known test keys that are not inputs to
+its configured WebAssembly runtime. The archive omits the raw test private-key
+files `tests/keys/id_rsa`, `tests/keys/id_ed25519`, and `tests/keys/vagrant`,
+plus the test-only TLS/crypto/benchmark files that embed or load those keys:
+`tests/unit/crypto-tls-x509-helpers.c`,
+`tests/unit/test-crypto-der.c`, `tests/unit/test-crypto-akcipher.c`,
+`tests/bench/test_akcipher_keys.c.inc`, and its companion
+`tests/bench/benchmark-crypto-akcipher.c`. The QEMU runtime sources, build and
+installation scripts, Meson wrap files, DTC, keycodemapdb, SoftFloat, downloaded
+build-source archives, and SDL2 port remain required archive inputs. The
+contract test verifies both the exact exclusions and that representative build,
+installation, wrapper, and non-key source files remain present.
+
+The full pinned source archive is still not locally available: the D: engine checkout lacks build-wasm-32limit, resolved Meson source directories, and SoftFloat source. The notice files do not substitute for those required corresponding sources.

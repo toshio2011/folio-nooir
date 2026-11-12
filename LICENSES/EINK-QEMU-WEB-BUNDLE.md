@@ -74,3 +74,9 @@ The pinned upstream eink-qemu `pc-bios/esp32c3-rom.bin` and
 revision and are excluded. The S3 bootloader and Picco partition binary are
 unused for verified Nooir X3/X4 and are excluded as well. This package does not
 enable X4 Pro/X4 Classic and does not contain any reader firmware.
+
+## Pinned DTC and keycodemapdb notice verification
+
+The current source inventory includes byte-for-byte license and explanatory texts from the exact QEMU wrap commits: keycodemapdb f5772a62ec52591ff6870b7e8ef32482371f22c6 and DTC b6910bec11614980a21e46fbccc35934b671bd81. Their upstream file links, Git blob hashes, and license scope are recorded in CORRESPONDING-SOURCE.md. The package builder and strict package checker verify each exact file; these additions do not bypass the source archive, component notice, secret, or firmware checks.
+
+The pinned keycodemapdb BSD text contains an upstream clause naming “PyCA Cryptography”. The file is preserved unchanged next to the pinned GPL2 text. DTC's README.license distinguishes GPL-licensed dtc from libfdt's GPL/BSD-2-Clause alternatives. This inventory does not mark the complete package license audit as passed: the full corresponding-source archive and package audit still require a fresh build and review.

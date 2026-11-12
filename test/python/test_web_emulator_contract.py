@@ -146,6 +146,7 @@ class WebEmulatorContractTests(unittest.TestCase):
         self.assertIn("DOM.setFileInputFiles", smoke)
         self.assertIn("Input.dispatchMouseEvent", smoke)
         self.assertIn("Page.reload", smoke)
+        self.assertIn("performance.timeOrigin !==", smoke)
         self.assertIn("sdRestoredAfterReload", smoke)
         self.assertIn("progressRestoredAfterReload", smoke)
         self.assertIn("uploaded", smoke.lower())
@@ -207,12 +208,33 @@ class WebEmulatorContractTests(unittest.TestCase):
             "SPDX-CC0-1.0.txt": "0e259d42c996742e9e3cba14c677129b2c1b6311",
         }
         for filename, blob_sha in expected.items():
-            data = (ROOT / "LICENSES" / filename).read_bytes()
+            # Match Git's text-file clean conversion on Windows checkouts.
+            data = (ROOT / "LICENSES" / filename).read_bytes().replace(b"\r\n", b"\n")
             actual = package_builder.git_blob_sha1(data)
             self.assertEqual(actual, blob_sha)
             self.assertEqual(package_audit.git_blob_sha1(data), blob_sha)
         self.assertIn("value=\"x4pro\" disabled", HTML)
         self.assertIn("value=\"x4classic\" disabled", HTML)
+
+    def test_pinned_qemu_dependency_notices_match_and_are_copied_exactly(self):
+        expected = {
+            "keycodemapdb/LICENSE.BSD": "ec1a29d34d6e419411c75523408aca72f705345c",
+            "keycodemapdb/LICENSE.GPL2": "d511905c1647a1e311e8b20d5930a37a9c2531cd",
+            "dtc/BSD-2-Clause": "da366e2ce50be9b4ec250cad773677bee7fc1d9d",
+            "dtc/GPL": "d159169d1050894d3ea3b98e1c965c4058208fe1",
+            "dtc/README.license": "102b004d02290bddd7e537d5d45a0ba8f724d85b",
+        }
+        for relative, blob_sha in expected.items():
+            data = (ROOT / "LICENSES" / "eink-qemu-components" / relative).read_bytes()
+            self.assertEqual(package_builder.git_blob_sha1(data), blob_sha)
+            self.assertEqual(package_audit.git_blob_sha1(data), blob_sha)
+        with tempfile.TemporaryDirectory(prefix="nooir-pinned-license-") as temporary:
+            output = Path(temporary)
+            copied = package_builder.copy_pinned_component_license_texts(ROOT, output)
+            self.assertEqual(copied, len(expected))
+            for relative in expected:
+                target = output / "licenses/eink-qemu-components/build-subprojects" / relative
+                self.assertEqual(target.read_bytes(), (ROOT / "LICENSES/eink-qemu-components" / relative).read_bytes())
 
     def test_package_audit_rejects_unreviewed_binary_and_checks_support_hashes(self):
         with tempfile.TemporaryDirectory(prefix="nooir-web-package-audit-") as temporary:
@@ -250,14 +272,34 @@ class WebEmulatorContractTests(unittest.TestCase):
     def test_corresponding_source_omits_private_key_test_fixtures(self):
         with tempfile.TemporaryDirectory(prefix="nooir-source-filter-") as temporary:
             source = Path(temporary) / "eink-qemu"
-            (source / "tests" / "keys").mkdir(parents=True)
-            (source / "tests" / "unit").mkdir(parents=True)
-            (source / "src").mkdir()
-            (source / "tests" / "keys" / "id_rsa").write_text("fixture", encoding="utf-8")
-            (source / "tests" / "unit" / "crypto-tls-x509-helpers.c").write_text(
-                "test key fixture", encoding="utf-8"
+            fixture_paths = (
+                "tests/keys/id_rsa",
+                "tests/keys/id_ed25519",
+                "tests/keys/vagrant",
+                "tests/unit/crypto-tls-x509-helpers.c",
+                "tests/unit/test-crypto-der.c",
+                "tests/unit/test-crypto-akcipher.c",
+                "tests/bench/test_akcipher_keys.c.inc",
+                "tests/bench/benchmark-crypto-akcipher.c",
             )
-            (source / "src" / "main.c").write_text("source", encoding="utf-8")
+            retained_paths = (
+                "src/main.c",
+                "docs/devel/build-system.rst",
+                "eink-qemu/wasm/build.sh",
+                "eink-qemu/wasm/build-deps.sh",
+                "eink-qemu/wasm/package-web.sh",
+                "subprojects/dtc.wrap",
+                "subprojects/keycodemapdb.wrap",
+                "subprojects/berkeley-softfloat-3.wrap",
+                "tests/keys/README",
+                "tests/keys/id_rsa.pub",
+                "tests/unit/test-crypto-cipher.c",
+                "tests/unit/vendor/tests/keys/id_rsa",
+            )
+            for relative in fixture_paths + retained_paths:
+                fixture = source / relative
+                fixture.parent.mkdir(parents=True, exist_ok=True)
+                fixture.write_text("test source fixture", encoding="utf-8")
             archive_path = Path(temporary) / "source.tar.gz"
             with tarfile.open(archive_path, "w:gz") as archive:
                 package_builder.add_source_tree(
@@ -265,14 +307,56 @@ class WebEmulatorContractTests(unittest.TestCase):
                 )
             with tarfile.open(archive_path, "r:gz") as archive:
                 names = set(archive.getnames())
-            self.assertNotIn(
-                "nooir-corresponding-source/eink-qemu/tests/keys/id_rsa", names
+            for relative in fixture_paths:
+                self.assertNotIn(
+                    f"nooir-corresponding-source/eink-qemu/{relative}", names
+                )
+            for relative in retained_paths:
+                self.assertIn(
+                    f"nooir-corresponding-source/eink-qemu/{relative}", names
+                )
+
+    def test_strict_audit_rejects_all_eight_private_key_archive_paths(self):
+        prohibited = {
+            "nooir-corresponding-source/eink-qemu/tests/keys/id_rsa",
+            "nooir-corresponding-source/eink-qemu/tests/keys/id_ed25519",
+            "nooir-corresponding-source/eink-qemu/tests/keys/vagrant",
+            "nooir-corresponding-source/eink-qemu/tests/unit/crypto-tls-x509-helpers.c",
+            "nooir-corresponding-source/eink-qemu/tests/unit/test-crypto-der.c",
+            "nooir-corresponding-source/eink-qemu/tests/unit/test-crypto-akcipher.c",
+            "nooir-corresponding-source/eink-qemu/tests/bench/test_akcipher_keys.c.inc",
+            "nooir-corresponding-source/eink-qemu/tests/bench/benchmark-crypto-akcipher.c",
+        }
+        with tempfile.TemporaryDirectory(prefix="nooir-audit-prohibited-archive-") as temporary:
+            archive_path = Path(temporary) / "source.tar.gz"
+            with tarfile.open(archive_path, "w:gz") as archive:
+                for name in sorted(prohibited):
+                    archive.addfile(tarfile.TarInfo(name))
+            with tarfile.open(archive_path, "r:gz") as archive:
+                names = {member.name for member in archive.getmembers()}
+            self.assertEqual(
+                set(package_audit.find_prohibited_source_archive_paths(names)), prohibited
             )
-            self.assertNotIn(
-                "nooir-corresponding-source/eink-qemu/tests/unit/crypto-tls-x509-helpers.c",
-                names,
-            )
-            self.assertIn("nooir-corresponding-source/eink-qemu/src/main.c", names)
+
+    def test_strict_audit_allows_runtime_and_build_sources(self):
+        retained = {
+            "nooir-corresponding-source/eink-qemu/configure",
+            "nooir-corresponding-source/eink-qemu/docs/devel/build-system.rst",
+            "nooir-corresponding-source/eink-qemu/eink-qemu/wasm/build.sh",
+            "nooir-corresponding-source/eink-qemu/eink-qemu/wasm/build-deps.sh",
+            "nooir-corresponding-source/eink-qemu/hw/display/epaper.c",
+            "nooir-corresponding-source/eink-qemu/tests/keys/id_rsa.pub",
+            "nooir-corresponding-source/eink-qemu/tests/unit/test-crypto-cipher.c",
+        }
+        with tempfile.TemporaryDirectory(prefix="nooir-audit-allowed-archive-") as temporary:
+            archive_path = Path(temporary) / "source.tar.gz"
+            with tarfile.open(archive_path, "w:gz") as archive:
+                for name in sorted(retained):
+                    archive.addfile(tarfile.TarInfo(name))
+            with tarfile.open(archive_path, "r:gz") as archive:
+                names = {member.name for member in archive.getmembers()}
+            self.assertEqual(package_audit.find_prohibited_source_archive_paths(names), [])
+
 
     def test_corresponding_source_excludes_generated_node_binary_shims(self):
         with tempfile.TemporaryDirectory(prefix="nooir-node-shims-") as temporary:

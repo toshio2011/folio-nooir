@@ -234,8 +234,8 @@ async function getLatestStable() {
   link.href = downloadUrl;
   link.textContent = `Download v${release.tag_name} firmware`;
 
-  selectedFirmware = null;
-  showNoCompatibleFirmware();
+  // Stable metadata may resolve after a local image is selected; preserve that active selection.
+  if (!selectedFirmware) showNoCompatibleFirmware();
   const crossDeviceNote = isVerifiedShared166(release, asset)
     ? "The v1.6.6 release is the verified shared X3/X4 image."
     : "This release has no verified device manifest in the emulator, so select only a model-matched image.";

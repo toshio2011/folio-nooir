@@ -10,6 +10,12 @@ import {createHash} from "node:crypto";
 const [url, device, firmwareArg, sdArg, evidenceArg] = process.argv.slice(2);
 const requestedHoldMs = Number(process.env.NOOIR_BUTTON_HOLD_MS);
 const buttonHoldMs = Number.isFinite(requestedHoldMs) ? Math.min(600, Math.max(170, requestedHoldMs)) : 170;
+const requestedBackHoldMs = Number(process.env.NOOIR_BACK_HOLD_MS);
+function holdFor(label) {
+  return label === 'Back' && Number.isFinite(requestedBackHoldMs)
+    ? Math.min(600, Math.max(50, requestedBackHoldMs))
+    : buttonHoldMs;
+}
 if (!url || !["x3", "x4"].includes(device) || !firmwareArg || !sdArg || !evidenceArg) {
   throw new Error("Usage: node scripts/nooir_browser_smoke.mjs <local-url> <x3|x4> <firmware.bin> <test-sd.img> <new-evidence-dir>");
 }
@@ -54,10 +60,18 @@ async function setFile(selector, file, dispatchChange = false) {
   await cdp("DOM.setFileInputFiles", {nodeId, files: [file]});
   let selection = {selector, name: path.basename(file), event: "not-requested"};
   if (dispatchChange) {
-    const uploadSelected = "/selected locally/.test(document.querySelector('#upload-note')?.textContent||'')";
+    // The Nooir handler clears input.value immediately and starts loading the
+    // firmware asynchronously; the later engine-load event also resets the
+    // helper note. Treat the exact v1.6.6 build+render markers as confirmation
+    // that the browser consumed the selected file after a page reload.
+    const uploadSelected = `(() => {
+      const note=document.querySelector('#upload-note')?.textContent||'';
+      const serial=document.querySelector('#emulator-engine')?.contentDocument?.querySelector('#console')?.textContent||'';
+      return /selected locally/i.test(note) || (/app=1\\.6\\.6\\+b961c1f7/.test(serial) && /render_ready/.test(serial));
+    })()`;
     try {
-      await waitFor(uploadSelected, "firmware file change event", 2_000);
-      selection.event = "automatic";
+      await waitFor(uploadSelected, "firmware selection or verified guest startup", 5_000);
+      selection.event = "automatic-or-boot-confirmed";
     } catch {
       const result = await evalPage(`(() => {
         const input=document.querySelector(${JSON.stringify(selector)});
@@ -67,9 +81,14 @@ async function setFile(selector, file, dispatchChange = false) {
         input.dispatchEvent(new Event('change',{bubbles:true}));
         return {found:true,files:1,...file};
       })()`);
-      if (!result.value?.found || result.value.files !== 1) throw new Error(`The browser did not handle ${selector} selection and no file remains to dispatch: ${JSON.stringify(result.value)}`);
-      await waitFor(uploadSelected, "manual firmware file change event", 30_000);
-      selection = {...selection, ...result.value, event: "manual"};
+      if (!result.value?.found) throw new Error(`The browser did not handle ${selector} selection: ${JSON.stringify(result.value)}`);
+      if (result.value.files === 1) {
+        await waitFor(uploadSelected, "manual firmware selection or verified guest startup", 120_000);
+        selection = {...selection, ...result.value, event: "manual-or-boot-confirmed"};
+      } else {
+        await waitFor(uploadSelected, "firmware selection consumed by the wrapper", 120_000);
+        selection = {...selection, event: "automatic-consumed"};
+      }
     }
   }
   return selection;
@@ -93,17 +112,30 @@ async function screenshot(name) {
 async function canvasPng() {
   return (await evalPage(`(() => { const f=document.querySelector('#emulator-engine'); const c=f?.contentDocument?.querySelector('iframe')?.contentDocument?.querySelector('#canvas'); return c?.width ? c.toDataURL('image/png') : null; })()`)).value;
 }
-async function stableCanvas(timeout = 12_000) {
-  let previous = await canvasPng(), stable = 0;
+async function stableCanvas(timeout = 20_000, maximumChangedFraction = 0.005) {
+  // E-paper refreshes can rewrite a few pixels (for example dithering or a
+  // small status mark) after the visible page is already stable. Compare
+  // decoded pixels with a strict 0.5% ceiling instead of requiring identical
+  // PNG encodings; expected navigation still has its own activity and visible
+  // screen-change assertions below.
+  let previous = await canvasPng(), stableIntervals = 0, lastDifference = null;
   if (!previous) throw new Error("The nested e-paper canvas is unavailable.");
   const until = Date.now() + timeout;
   while (Date.now() < until) {
     await pause(500);
     const now = await canvasPng();
-    if (now === previous) { if (++stable >= 3) return now; }
-    else { previous = now; stable = 0; }
+    const difference = await canvasDifference(previous);
+    if (!difference.available) throw new Error("The nested e-paper canvas became unavailable while settling.");
+    if (difference.passed === false) throw new Error(`The e-paper canvas geometry changed while settling: ${difference.reason || "unknown geometry change"}.`);
+    lastDifference = difference.differentFraction;
+    if (lastDifference <= maximumChangedFraction) {
+      if (++stableIntervals >= 3) return now;
+    } else {
+      stableIntervals = 0;
+    }
+    previous = now;
   }
-  throw new Error("The e-paper canvas did not settle before the next key press.");
+  throw new Error(`The e-paper canvas did not settle: last frame changed ${(lastDifference ?? 1).toFixed(4)} of pixels; allowed=${maximumChangedFraction.toFixed(4)}; timeout=${timeout}ms.`);
 }
 async function installInputTrace() {
   await evalPage(`(()=>{
@@ -123,12 +155,51 @@ async function installInputTrace() {
       const rw=runtime.contentWindow,rd=runtime.contentDocument;
       rw.addEventListener('message',e=>{if(e.data?.type==='key')record('runtime-key-message',{code:e.data.code,down:e.data.down})},true);
       for(const type of ['keydown','keyup'])rd.addEventListener(type,e=>record('runtime-'+type,{code:e.code,key:e.key,trusted:e.isTrusted}),true);
+      const originalMonitorLine = rw.monitorLine;
+      if (typeof originalMonitorLine === 'function' && typeof rw.command === 'function') {
+        rw.__nooirHmpTrace = [];
+        rw.monitorLine = function(line) {
+          rw.__nooirHmpTrace.push(String(line));
+          if (rw.__nooirHmpTrace.length > 200) rw.__nooirHmpTrace.shift();
+          return originalMonitorLine.call(this, line);
+        };
+        record('runtime-hmp-probe-ready');
+      } else {
+        record('runtime-hmp-probe-unavailable', {monitorLine: typeof originalMonitorLine, command: typeof rw.command, eval: typeof rw.eval});
+      }
     }else record('runtime-frame-missing');
   })()`);
 }
 async function currentInputTrace() {
   const value = await evalPage("JSON.stringify(document.querySelector('#emulator-engine')?.contentWindow?.__nooirInputTrace||[])");
   return JSON.parse(value.value || "[]");
+}
+async function qomGetKey(label) {
+  const property = ({Back: 'back', Confirm: 'confirm', Left: 'left', Right: 'right', Up: 'up', Down: 'down'})[label];
+  if (!property) throw new Error(`No QEMU key property for ${label}.`);
+  const result = await evalPage(`(() => {
+    const engine = document.querySelector('#emulator-engine');
+    const runtime = [...(engine?.contentDocument?.querySelectorAll('iframe') || [])]
+      .find(frame => { try { return Boolean(frame.contentDocument?.querySelector('#canvas')); } catch { return false; } });
+    const w = runtime?.contentWindow;
+    if (!w || typeof w.command !== 'function' || !Array.isArray(w.__nooirHmpTrace)) {
+      return Promise.reject(new Error('QEMU HMP key probe is unavailable: command=' + typeof w?.command + ', trace=' + Array.isArray(w?.__nooirHmpTrace)));
+    }
+    const start = w.__nooirHmpTrace.length;
+    w.command('qom-get /machine/x3-keys ${property}');
+    return new Promise((resolve, reject) => {
+      const until = Date.now() + 3_000;
+      const poll = () => {
+        const lines = w.__nooirHmpTrace.slice(start);
+        const value = [...lines].reverse().map(line => String(line).trim()).find(line => line === 'true' || line === 'false');
+        if (value) { resolve({value: value === 'true', lines}); return; }
+        if (Date.now() >= until) { reject(new Error('QEMU HMP did not return x3-keys.' + '${property}' + ': ' + JSON.stringify(lines))); return; }
+        setTimeout(poll, 50);
+      };
+      poll();
+    });
+  })()`);
+  return result.value;
 }
 async function buttonPoint(label) {
   const point = (await evalPage(`(async() => {
@@ -200,7 +271,8 @@ async function press(label, expectation = {}, timeout = 30_000) {
   const baseline = await stableCanvas();
   const serialOffset = await activityLogLength();
   const b = await buttonPoint(label);
-  const action = {key: label, button: b.text, dataKey: b.code, keyboardCode: b.kbd, heldMs: buttonHoldMs, point: b};
+  const holdMs = holdFor(label);
+  const action = {key: label, button: b.text, dataKey: b.code, keyboardCode: b.kbd, heldMs: holdMs, point: b};
   if (expectation.readerPositionChange) {
     action.readerPositionBefore = await readerPosition();
     if (!action.readerPositionBefore) throw new Error(`No EPUB quiescent-position marker exists before ${label}.`);
@@ -208,9 +280,20 @@ async function press(label, expectation = {}, timeout = 30_000) {
   state.actions.push(action);
   await cdp("Input.dispatchMouseEvent", {type: "mouseMoved", x: b.x, y: b.y});
   await cdp("Input.dispatchMouseEvent", {type: "mousePressed", button: "left", clickCount: 1, x: b.x, y: b.y});
-  await pause(buttonHoldMs);
+  const downAt = Date.now();
+  if (['Back', 'Left', 'Confirm'].includes(label)) {
+    action.qomProperty = label.toLowerCase();
+    action.qomStateBefore = await qomGetKey(label);
+    await pause(Math.max(50, Math.floor(holdMs / 2)));
+    action.qomStateWhilePressed = await qomGetKey(label);
+    await pause(Math.max(0, holdMs - (Date.now() - downAt)));
+  } else await pause(holdMs);
   await cdp("Input.dispatchMouseEvent", {type: "mouseReleased", button: "left", clickCount: 1, x: b.x, y: b.y});
   await pause(50);
+  if (['Back', 'Left', 'Confirm'].includes(label)) {
+    action.qomStateAfter = await qomGetKey(label);
+    action.actualHeldMs = Date.now() - downAt;
+  }
   const trace = await currentInputTrace();
   action.inputEvents = trace.slice(-12);
   const activityNeedle = expectation.activity ? `activity=${expectation.activity}` : null;
@@ -261,7 +344,7 @@ try {
   await cdp("Runtime.enable"); await cdp("Page.enable"); await cdp("DOM.enable");
   await cdp("Browser.setDownloadBehavior", {behavior: "allow", downloadPath: evidence});
   await cdp("Page.navigate", {url});
-  await waitFor("crossOriginIsolated && document.querySelector('#custom-bin')", "isolated Nooir wrapper");
+  await waitFor("document.readyState === 'complete' && crossOriginIsolated && document.querySelector('#device-model') && document.querySelector('#custom-bin')", "isolated Nooir wrapper");
   await waitFor("/stable|failed/i.test(document.querySelector('#release-version')?.textContent || '')", "stable release lookup settle", 30_000);
   stage("wrapper ready; preparing virtual SD");
   const localSdHash = createHash('sha256').update(fs.readFileSync(sd)).digest('hex');
@@ -349,13 +432,18 @@ try {
   state.screenshots.recentProgressBeforeReload = await screenshot(`${device}-recent-progress-before-reload.png`);
   await waitFor("document.querySelector('#emulator-engine')?.contentDocument?.querySelector('#sd-save')?.textContent?.toLowerCase().includes('saved')", "browser SD save", 60_000).catch(()=>null);
 
+  const previousWrapperTimeOrigin = (await evalPage("performance.timeOrigin")).value;
   await cdp("Page.reload", {ignoreCache: true});
   stage("saved card; reloading wrapper");
-  await waitFor("crossOriginIsolated && document.querySelector('#custom-bin')", "wrapper reload");
+  // Page.reload returns before the old document is replaced. Require a new
+  // navigation time origin first so we cannot mistake the old complete page
+  // for the reloaded document while the new page is still loading.
+  await waitFor("performance.timeOrigin !== " + JSON.stringify(previousWrapperTimeOrigin), "new wrapper document after reload", 30_000);
+  await waitFor("document.readyState === 'complete' && crossOriginIsolated && document.querySelector('#device-model') && document.querySelector('#custom-bin')", "complete isolated wrapper reload");
   await evalPage(`(() => { const s=document.querySelector('#device-model'); s.value=${JSON.stringify(device)}; s.dispatchEvent(new Event('change',{bubbles:true})); })()`);
   const reloadFile = await setFile("#custom-bin", firmware, true);
   state.reloadFileSelection = reloadFile;
-  await waitFor("/selected locally/.test(document.querySelector('#upload-note')?.textContent||'')", "firmware selection after reload", 30_000);
+  await waitFor("(() => { const c=document.querySelector('#emulator-engine')?.contentDocument?.querySelector('#console')?.textContent||''; return /app=1\\.6\\.6\\+b961c1f7/.test(c) && /render_ready/.test(c); })()", "verified Nooir firmware boot after reload", 120_000);
   await waitFor("(() => { const c=document.querySelector('#emulator-engine')?.contentDocument?.querySelector('#console')?.textContent||''; return c.length>0 && /ESP-ROM|render_ready|Guru Meditation|panic/i.test(c); })()", "fresh engine serial output after reload", 30_000);
   await waitFor("document.querySelector('#emulator-engine')?.contentDocument?.querySelector('iframe')?.contentDocument?.querySelector('#canvas')", "reboot after reload", 120_000);
   screen = await ready("browser reload");

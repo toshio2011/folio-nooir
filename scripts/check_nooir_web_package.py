@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import sys
 import tarfile
 from pathlib import Path
@@ -89,6 +90,30 @@ SUPPORT_BIN_HASHES = {
 }
 ROM_SOURCE_ARCHIVE_SHA256 = "caa463d3cbef2430a5a35847c1d9f2f152403b17a802050927ff60c8da54fe46"
 ROM_ELF_SHA256 = "19ac22e08707df926fb0cf4c54795d4067b983fae8635f396ded173a6d78fc3c"
+PROHIBITED_SOURCE_ARCHIVE_PATHS = frozenset({
+    "nooir-corresponding-source/eink-qemu/tests/keys/id_rsa",
+    "nooir-corresponding-source/eink-qemu/tests/keys/id_ed25519",
+    "nooir-corresponding-source/eink-qemu/tests/keys/vagrant",
+    "nooir-corresponding-source/eink-qemu/tests/unit/crypto-tls-x509-helpers.c",
+    "nooir-corresponding-source/eink-qemu/tests/unit/test-crypto-der.c",
+    "nooir-corresponding-source/eink-qemu/tests/unit/test-crypto-akcipher.c",
+    "nooir-corresponding-source/eink-qemu/tests/bench/test_akcipher_keys.c.inc",
+    "nooir-corresponding-source/eink-qemu/tests/bench/benchmark-crypto-akcipher.c",
+})
+
+def find_prohibited_source_archive_paths(member_names: set[str]) -> list[str]:
+    """Return exact prohibited test-fixture paths present in a source archive."""
+    normalized_names = {posixpath.normpath(name) for name in member_names}
+    return sorted(PROHIBITED_SOURCE_ARCHIVE_PATHS & normalized_names)
+
+
+PINNED_DEPENDENCY_LICENSE_BLOBS = {
+    "licenses/eink-qemu-components/build-subprojects/keycodemapdb/LICENSE.BSD": "ec1a29d34d6e419411c75523408aca72f705345c",
+    "licenses/eink-qemu-components/build-subprojects/keycodemapdb/LICENSE.GPL2": "d511905c1647a1e311e8b20d5930a37a9c2531cd",
+    "licenses/eink-qemu-components/build-subprojects/dtc/BSD-2-Clause": "da366e2ce50be9b4ec250cad773677bee7fc1d9d",
+    "licenses/eink-qemu-components/build-subprojects/dtc/GPL": "d159169d1050894d3ea3b98e1c965c4058208fe1",
+    "licenses/eink-qemu-components/build-subprojects/dtc/README.license": "102b004d02290bddd7e537d5d45a0ba8f724d85b",
+}
 LICENSE_FILE_BLOBS = {
     "licenses/esp32c3-rom/esp-rom-elfs-README.md": "0df304ef2d7c2ba4009c3e9931d98a951321dec2",
     "licenses/esp32c3-rom/Apache-2.0.txt": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
@@ -120,7 +145,7 @@ def main() -> int:
     for relative in REQUIRED:
         if not (package / relative).is_file():
             errors.append(f"missing required package/license file: {relative}")
-    for relative, expected_blob in LICENSE_FILE_BLOBS.items():
+    for relative, expected_blob in {**LICENSE_FILE_BLOBS, **PINNED_DEPENDENCY_LICENSE_BLOBS}.items():
         path = package / relative
         if path.is_file() and git_blob_sha1(path.read_bytes()) != expected_blob:
             errors.append(f"upstream license/notice file differs from its pinned Git object: {relative}")
@@ -238,6 +263,11 @@ def main() -> int:
             with tarfile.open(source_archive, "r:gz") as archive:
                 members = archive.getmembers()
                 member_names = {member.name for member in members}
+                for fixture_path in find_prohibited_source_archive_paths(member_names):
+                    errors.append(
+                        "prohibited private-key test fixture in corresponding-source archive: "
+                        f"{fixture_path}"
+                    )
                 for required_source in (
                     "nooir-corresponding-source/eink-qemu/COPYING",
                     "nooir-corresponding-source/eink-qemu/configure",
