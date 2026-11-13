@@ -156,7 +156,7 @@ jobs:
           for device in x3 x4; do
             sd="build/nooir-test-${device}.img"
             python3 work/eink-qemu/eink-qemu/mksd.py "$sd" 64 --cluster-size 512
-            mmd -i "$sd" ::/books
+            mmd -i "${sd}@@1048576" ::/books
             cp "$sd" "build/nooir-browser-smoke/nooir-test-${device}.img"
           done
 
