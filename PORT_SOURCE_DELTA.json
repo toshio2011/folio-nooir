@@ -235,7 +235,7 @@
     }
   },
   "commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
-  "handoff_sha256": "cb7bcfca418949fbcc25974bcbea48824b5709045fa0ce83a085665ffba6233e",
+  "handoff_sha256": "3dc3ac532e4504560c3266f7883a9a90795c12553227ff26774e8131e6f11082",
   "limitations": [
     "Classic SDL2 simulator uses folder-backed host storage and does not validate physical SDMMC, PSRAM, panel, GPIO, power, or touch hardware.",
     "No physical validation or flash is claimed.",
@@ -452,7 +452,7 @@
   },
   "safety": {
     "bootloader_or_efuse_modified": false,
-    "commit_push_merge_deploy_performed": false,
+    "commit_push_merge_deploy_performed": true,
     "full_flash_emulator_only": true,
     "physical_flash_authorized": false,
     "physical_flash_performed": false,
@@ -498,7 +498,7 @@
       {
         "path": "PORT_HANDOFF.md",
         "status": "added",
-        "worktree_sha256": "cb7bcfca418949fbcc25974bcbea48824b5709045fa0ce83a085665ffba6233e"
+        "worktree_sha256": "3dc3ac532e4504560c3266f7883a9a90795c12553227ff26774e8131e6f11082"
       },
       {
         "path": "REFERENCE-LICENSES.md",
@@ -698,7 +698,7 @@
       {
         "path": "docs/WEB_EMULATOR_S3_COMPATIBILITY_HANDOFF_2026-11-11.md",
         "status": "added",
-        "worktree_sha256": "43a8ee1e2d44884a9007a8be1f88648559e4252f305ae13252b6a9ea16be89d0"
+        "worktree_sha256": "6cb324f434630aab9a0da802ed427c8c9200573e80286b082af736532ee82691"
       }
     ],
     "scope": "Application/configuration source and handoff files, with the required pinned S3 SDK gitlink",
@@ -723,7 +723,7 @@
   "upstream": "Folio Nooir 1.6.6",
   "browser_compatibility_handoff": {
     "path": "docs/WEB_EMULATOR_S3_COMPATIBILITY_HANDOFF_2026-11-11.md",
-    "sha256": "43a8ee1e2d44884a9007a8be1f88648559e4252f305ae13252b6a9ea16be89d0",
+    "sha256": "6cb324f434630aab9a0da802ed427c8c9200573e80286b082af736532ee82691",
     "current_eink_qemu": "Pinned native eink-qemu 0.9.2 x4pro guest now passes the exact fresh Pro Reader flow with a 50000 ms cold-boot virtual Power hold; no X4 Classic machine; browser/WASM execution remains unverified.",
     "recommendation": "Classic SDL2 host reader flow passes but is not Classic BIN execution; exact fresh Pro firmware passes native x4pro QEMU through Reader, page keys, exit and saved-progress reopen (27/27). Browser/WASM, physical hardware, Pro deep sleep/wake, touch/swipe fidelity, Classic guest execution, and safe recovery remain open.",
     "emscripten": "Not installed in current WSL; browser build not attempted.",
@@ -1265,12 +1265,23 @@
     ]
   },
   "github_backup": {
-    "status": "prepared; remote push verification pending",
+    "status": "VERIFIED: remote branch head matched the reviewed source commit before the follow-up handoff update",
     "repository": "https://github.com/toshio2011/folio-nooir",
     "branch": "codex/nooir-x4pro-x4classic-s3-port-20261113",
     "base_commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
     "contains_firmware_artifacts": false,
     "contains_raw_test_evidence": false,
-    "source_scope": "manifest-listed X4 Pro/Classic port files, handoffs, compatibility work, .gitmodules, and pinned S3 SDK gitlink"
+    "source_scope": "manifest-listed X4 Pro/Classic port files, handoffs, compatibility work, .gitmodules, and pinned S3 SDK gitlink",
+    "branch_url": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-20261113",
+    "source_snapshot_commit_sha": "86e7a0536195aaf571854d0dba52710ce0c7b392",
+    "verified_remote_head_at_source_push": "86e7a0536195aaf571854d0dba52710ce0c7b392",
+    "staged_path_count": 41,
+    "base_inherited_filtered_paths": [
+      "diagnostics/ble/ble-connect-timing.patch",
+      "diagnostics/ble/ble-host-teardown-heap.patch",
+      "diagnostics/ble/README.md",
+      "test/language/RTL/Bidi-Test_ch1_p1_0pct_398667.bmp",
+      "test/language/RTL/Bidi-Test_ch1_p2_50pct_422825.bmp"
+    ]
   }
 }

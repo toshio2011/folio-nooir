@@ -172,4 +172,4 @@ The verified software evidence is separated by execution type: exact fresh X4 Pr
 
 Resume only for a specifically scoped physical validation with safe external recovery prepared, or a concrete Web Emulator integration requirement. Keep the browser host-simulator backend distinct from a real ESP32-S3 guest backend.
 
-Remote backup verification will be added after the push is confirmed.
+**Verified backup:** [codex/nooir-x4pro-x4classic-s3-port-20261113](https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-20261113), source snapshot commit $sha. The branch's pushed tree contains the reviewed compatibility source and this handoff; raw test logs and firmware artifacts remain local-only.
