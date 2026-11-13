@@ -44,3 +44,6 @@ lib/EpdFont/scripts/output/
 /sdkconfig.default
 /sdkconfig.defaults
 sdkconfig.sticky
+
+sdkconfig.x4pro
+sdkconfig.x4classic

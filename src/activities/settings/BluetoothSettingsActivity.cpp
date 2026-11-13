@@ -142,7 +142,9 @@ void BluetoothSettingsActivity::applyPreset(bool free3) {
   // Buttons" if their device sends different codes.
   using Btn = MappedInputManager::Button;
   SETTINGS.bleControllerPreset = CrossPointSettings::BLE_CONTROLLER_PRESET_GENERIC;
+#if FREEINK_CAP_BLE_HID_HOST
   BleHid.setInputPreset(freeink::InputPreset::GenericHid);
+#endif
   for (auto& e : SETTINGS.bleKeyMap) e = CrossPointSettings::BleKeyMapEntry{};
   auto set = [&](int slot, freeink::SpecialKey key, Btn button) {
     SETTINGS.bleKeyMap[slot].keyKind = 0;  // SpecialKey
@@ -161,7 +163,9 @@ void BluetoothSettingsActivity::applyPreset(bool free3) {
 void BluetoothSettingsActivity::applyYiserPreset() {
   using Btn = MappedInputManager::Button;
   SETTINGS.bleControllerPreset = CrossPointSettings::BLE_CONTROLLER_PRESET_YISER_J6_RING;
+#if FREEINK_CAP_BLE_HID_HOST
   BleHid.setInputPreset(freeink::InputPreset::YiserJ6Ring);
+#endif
   for (auto& e : SETTINGS.bleKeyMap) e = CrossPointSettings::BleKeyMapEntry{};
   auto set = [&](int slot, freeink::SpecialKey key, Btn button) {
     SETTINGS.bleKeyMap[slot].keyKind = 0;  // normalized SpecialKey
@@ -182,7 +186,9 @@ void BluetoothSettingsActivity::applyYiserPreset() {
 
 void BluetoothSettingsActivity::resetMappingsToDefaults() {
   SETTINGS.bleControllerPreset = CrossPointSettings::BLE_CONTROLLER_PRESET_GENERIC;
+#if FREEINK_CAP_BLE_HID_HOST
   BleHid.setInputPreset(freeink::InputPreset::GenericHid);
+#endif
   const bleinput::mapping::DefaultBinding defaults[] = {
       {{0, static_cast<uint8_t>(freeink::SpecialKey::Right)}, bleinput::mapping::kButtonAction,
        static_cast<uint8_t>(MappedInputManager::Button::Right)},

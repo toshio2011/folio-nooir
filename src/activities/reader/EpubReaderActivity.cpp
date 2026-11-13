@@ -1117,9 +1117,11 @@ void EpubReaderActivity::reportReaderQuiescent(const char* reason) {
   if (completedRender) {
     sampleReaderFreeHeap();
     if (auto* fontCache = renderer.getFontCacheManager()) {
-        readerLargestRenderRequestBytes = std::max(
-            readerLargestRenderRequestBytes,
-            std::max(static_cast<size_t>(fontCache->largestAllocationRequestBytes()), cachedRenderLargestRequestThisRender));
+      size_t largestRequest = static_cast<size_t>(fontCache->largestAllocationRequestBytes());
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
+      largestRequest = std::max(largestRequest, cachedRenderLargestRequestThisRender);
+#endif
+      readerLargestRenderRequestBytes = std::max(readerLargestRenderRequestBytes, largestRequest);
       readerLastRenderAllocationFailed = fontCache->failedAllocationCount() > 0;
     }
   }

@@ -26,7 +26,6 @@ class DeviceInfoActivity final : public Activity {
   enum class LinkState : uint8_t { Off, On, Connected };
 
   struct Snapshot {
-    bool modelIsX3 = false;
     uint16_t panelWidth = 0;
     uint16_t panelHeight = 0;
     uint16_t batteryPercent = 0;

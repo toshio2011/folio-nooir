@@ -1,3 +1,6 @@
 [submodule "freeink-sdk"]
 	path = freeink-sdk
 	url = https://github.com/toshio2011/freeink-sdk.git
+[submodule "freeink-sdk-s3"]
+	path = freeink-sdk-s3
+	url = https://github.com/Free-Ink/freeink-sdk.git

@@ -786,10 +786,17 @@ bool encodeKey(const freeink::KeyEvent& ev, uint8_t& kind, uint8_t& value) {
 }
 
 bool encodeLearnedKey(const freeink::KeyEvent& ev, uint8_t& kind, uint8_t& value) {
+#if FREEINK_CAP_BLE_HID_HOST
   if (mapping::encodeNormalizedSpecialForLearning(ev.specialNormalized,
                                                   static_cast<uint8_t>(ev.special), kind, value))
     return true;
   return mapping::encodeKeyboardUsageForLearning(ev.usagePage, ev.keycode, kind, value);
+#else
+  (void)ev;
+  (void)kind;
+  (void)value;
+  return false;
+#endif
 }
 
 namespace {

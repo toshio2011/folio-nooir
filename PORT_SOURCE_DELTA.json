@@ -1,0 +1,1276 @@
+{
+  "added_file_count": 18,
+  "archive_sha256": "caa9ec28400ce4cb87178b47f74d5dff8744221d52081556ba9b9e8420d1b9f4",
+  "artifact_tests": {
+    "command": "py -3 test/python/test_firmware_artifacts.py -v",
+    "result": "5 passed",
+    "tests": [
+      {
+        "name": "test_both_targets_use_original_unchanged_app_slot_bound",
+        "status": "passed"
+      },
+      {
+        "name": "test_export_is_target_marked_app_only_and_never_overwrites",
+        "status": "passed"
+      },
+      {
+        "name": "test_upload_guard_allows_builds_and_preserves_c3_behavior",
+        "status": "passed"
+      },
+      {
+        "name": "test_upload_guard_blocks_hardware_writes_for_experimental_targets",
+        "status": "passed"
+      },
+      {
+        "name": "test_wrong_target_or_unsafe_artifact_metadata_is_rejected",
+        "status": "passed"
+      }
+    ]
+  },
+  "build_identities": {
+    "c3_gh_release_intermediate": {
+      "official_release_asset": false,
+      "path": "artifacts/QUARANTINED-Folio-Nooir-v1.6.6-C3-gh_release-intermediate-NOT-OFFICIAL-RELEASE-NOT-FOR-S3-NOT-FOR-FLASH.bin",
+      "quarantine_manifest_sha256": "a1fa286dbfc43a2218a9863142732444f3f3eb307e7ac4084069d08c7cd4c56c",
+      "quarantined_bytes_unchanged": true,
+      "separate_pio_build_copy_present": false,
+      "sha256": "5e05dfc31001aa27cf635f795c77b3447f1bfab70713ad522c850b6a64d6147e",
+      "size_bytes": 6082400,
+      "target": "ESP32-C3"
+    },
+    "firmware_toolchain": {
+      "arduino_esp32": "3.3.7",
+      "esp_idf": "5.5.2",
+      "espressif32": "55.3.37",
+      "esptool": "5.1.2",
+      "platformio_core": "6.1.19",
+      "xtensa": "14.2.0+20251107"
+    },
+    "pro_symbol_map_rebuild": {
+      "app_sha256": "aaeb1d9d5cdd694b6050c10f9b7497496802dfcca18821b6cb66cc764e263bf7",
+      "app_size_bytes": 5671104,
+      "difference_bytes": 144,
+      "elf_sha256": "66164b500552651815f2c26403afccd98f00e7b9c5845a57885f136548bb4104",
+      "elf_size_bytes": 86746360,
+      "environment": "x4pro/Ubuntu 24.04.4 WSL",
+      "exact_preserved_app_match": false,
+      "mapping": "provisional: 0x42185479/0x421854d2 -> s_test_psram; 0x4223c974 -> esp_vApplicationIdleHook; exact attribution awaits byte-matched ELF"
+    },
+    "x4classic": {
+      "board": "esp32-s3-devkitc1-n16r8",
+      "environment": "x4classic",
+      "flash_bytes": 16777216,
+      "flash_mode": "dio",
+      "flash_performed": false,
+      "manifest_sha256": "4f0ddfa6d835f65a292bf4d1bc3163b6a02087f3bdb705d237b36d8ed4cee096",
+      "memory_type": "dio_opi",
+      "path": "artifacts/Folio-Nooir-v1.6.6-X4CLASSIC-EXPERIMENTAL-NOT-FOR-FLASHING.bin",
+      "psram": "8 MiB OPI",
+      "role": "application-only",
+      "sha256": "3309e364639d53ffe1602befb6b2c9fc62e66d088e0bc383833e2cf0c55f804a",
+      "size_bytes": 5676432,
+      "slot_bytes": 6553600
+    },
+    "x4pro": {
+      "board": "esp32-s3-devkitc1-n16r8",
+      "environment": "x4pro",
+      "flash_bytes": 16777216,
+      "flash_mode": "dio",
+      "flash_performed": false,
+      "manifest_sha256": "ce3838619c4cf86bc78a0b31495a1391d391335d4256f435248120665d405a4c",
+      "memory_type": "dio_opi",
+      "path": "artifacts/Folio-Nooir-v1.6.6-X4PRO-EXPERIMENTAL-NOT-FOR-FLASHING.bin",
+      "psram": "8 MiB OPI",
+      "role": "application-only",
+      "sha256": "7e4ac1c63a24005383a7ebf2a63fd988a96bbb1bd421c990c334e5466e800494",
+      "size_bytes": 5671248,
+      "slot_bytes": 6553600
+    }
+  },
+  "changed_file_count": 22,
+  "classic_native_simulator": {
+    "build": "passed",
+    "environment": "simulator_x4classic",
+    "framebuffer": "480x800 BMP output (logical display profile 800x480)",
+    "host": "Ubuntu 24.04.4 WSL / WSLg",
+    "input_sequence": [
+      "RIGHT shelf tab",
+      "LEFT Library",
+      "CONFIRM open EPUB",
+      "DOWN next page",
+      "BACK exit"
+    ],
+    "log": {
+      "path": "diagnostics/eink-qemu-0.9.2/classic-simulator-multipage-run.log",
+      "sha256": "6fa86af701634ed6862da44219b6d7c2abdedad356b7cf5cff002be1cb3a04bf"
+    },
+    "platformio_core": "6.1.19",
+    "runtime": "Home/Library/EPUB Reader/page turn/exit/progress save passed",
+    "sample_epub_sha256": "c8e8de68968636258d0417b2ca059ec993f88f4c1d6d82779f91dca2cfbb68bc",
+    "screens": {
+      "after_exit": {
+        "path": "diagnostics/eink-qemu-0.9.2/classic-simulator-multipage-after-exit.bmp",
+        "sha256": "87442aa57a4517b293da2c4cf890f4aa8a8dd74c9694bc1c6cc801cf3a46de61"
+      },
+      "home": {
+        "path": "diagnostics/eink-qemu-0.9.2/classic-simulator-multipage-home.bmp",
+        "sha256": "db3953f07f2970264c3ae866a324e555bb57c62d0e51871f8afb962c7ee8c911"
+      },
+      "library": {
+        "path": "diagnostics/eink-qemu-0.9.2/classic-simulator-multipage-library.bmp",
+        "sha256": "16fe87bc1173b44e723f26413bf1db0d14d474b1e7925094df038ac69effc3cb"
+      },
+      "reader_page0": {
+        "path": "diagnostics/eink-qemu-0.9.2/classic-simulator-multipage-reader-page0.bmp",
+        "sha256": "681e17e852ccfe02e7f68faa38f0c1e4504894c1c82d64dd94e8482d6e3701fd"
+      },
+      "reader_page1": {
+        "path": "diagnostics/eink-qemu-0.9.2/classic-simulator-multipage-reader-page1.bmp",
+        "sha256": "3db4f98dfb1ed3c0b1158b99b30bed310bd7ef8e234f93b34192d9d0c2584eca"
+      }
+    },
+    "sdl2": "2.30.0",
+    "storage": "host-folder virtual SD; not SDMMC",
+    "touch": "disabled in Classic profile; no touch event used",
+    "current_validation": {
+      "date": "2026-11-11",
+      "build_command": "pio run -d ${NOOIR_D_ROOT}/_c-side-migration-20261110/_isolated_nooir_x4_pro_classic_v166 -e simulator_x4classic -j 4",
+      "build_result": "SUCCESS",
+      "build_duration_seconds": 1529.16,
+      "build_exit_code": 0,
+      "build_log": "${NOOIR_D_ROOT}/logs/x4classic-validation-20261111-run01/build-attempt-02-parallel.log",
+      "build_log_sha256": "00be9c09025d9d4314b2435f7c2a29dc5466ac15f25ee83dcadda35e61ed7286",
+      "initial_serial_attempt": "Interrupted with Ctrl+C after partial compilation; log preserved as build.log; status in build-attempt-01.status",
+      "host": "Ubuntu 24.04.4 WSL; SDL2 2.30.0; g++ 13.3.0; Python 3.12.3; PlatformIO Core 6.1.19",
+      "pio_core": "${NOOIR_D_ROOT}/.pio-home-wsl-x4classic-20261111",
+      "temp_and_cache": "${NOOIR_D_ROOT}/logs/x4classic-validation-20261111-run01/{tmp,cache}",
+      "simulator_profile": "SIMULATOR_DEVICE_X4_CLASSIC; touch disabled",
+      "executable": ".pio/build/simulator_x4classic/program",
+      "executable_bytes": 15092112,
+      "executable_sha256": "3cb2f787d85be6248cacbfeb3f189fa41ca21946e32a40bec263017698a6e445",
+      "runtime_command": "run-classic-simulator.sh",
+      "runtime_result": "PASS; exit code 0",
+      "runtime_log": "${NOOIR_D_ROOT}/logs/x4classic-validation-20261111-run01/classic-simulator.log",
+      "runtime_log_sha256": "562ec89ace26042898ed691406e4870ced1a3cc40bfd5a2689bf535ca982d4d2",
+      "input_script": "1200:RIGHT;2400:LEFT;6500:ENTER;10000:DOWN;14000:ESCAPE;18000:QUIT",
+      "sample_epub_sha256": "c8e8de68968636258d0417b2ca059ec993f88f4c1d6d82779f91dca2cfbb68bc",
+      "virtual_sd": "${NOOIR_D_ROOT}/logs/x4classic-validation-20261111-run01/sd",
+      "virtual_sd_result_files": [
+        {
+          "path": ".crosspoint/<book>/progress.bin",
+          "sha256": "b08abdf5ff9376b88e9e728b3dd190cf158333a383178f9eebcfabc15503980e"
+        },
+        {
+          "path": ".crosspoint/book-states.json",
+          "sha256": "78c9feca0bbcc9577212f4e0c3cfbf6ecda482e14f198e9070c1b984983b8712"
+        },
+        {
+          "path": ".crosspoint/reading-stats.json",
+          "sha256": "ccb01a73a5c581438c199a781d25e5f3bc4e32167ee635e7375a1f05a2c3228c"
+        }
+      ],
+      "storage": "Host folder-backed virtual SD; not physical SDMMC",
+      "stage_results": [
+        "X4 Classic identity: passed",
+        "Display initialized: passed",
+        "Home/Finished shelf to Library: passed",
+        "EPUB open and render: passed",
+        "Page 0 to page 1: passed",
+        "Reader exit: passed",
+        "Progress/book state/reading statistics persisted: passed"
+      ],
+      "screenshots": [
+        {
+          "name": "home.bmp",
+          "width": 480,
+          "height": 800,
+          "sha256": "075261a1acab5c0232bbe3bf4f13333936d93497f11dc33cc12ce867872c136e"
+        },
+        {
+          "name": "library.bmp",
+          "width": 480,
+          "height": 800,
+          "sha256": "b365864df890baf57ec47b9611d86353d49a4cab86a6f421c30b0c0d7bece060"
+        },
+        {
+          "name": "reader-page0.bmp",
+          "width": 480,
+          "height": 800,
+          "sha256": "681e17e852ccfe02e7f68faa38f0c1e4504894c1c82d64dd94e8482d6e3701fd"
+        },
+        {
+          "name": "reader-page1.bmp",
+          "width": 480,
+          "height": 800,
+          "sha256": "3db4f98dfb1ed3c0b1158b99b30bed310bd7ef8e234f93b34192d9d0c2584eca"
+        },
+        {
+          "name": "after-exit.bmp",
+          "width": 480,
+          "height": 800,
+          "sha256": "87442aa57a4517b293da2c4cf890f4aa8a8dd74c9694bc1c6cc801cf3a46de61"
+        }
+      ],
+      "warnings": [
+        "snprintf date text may truncate in ClockWeatherActivity.cpp",
+        "nonnull strlen warning in network code",
+        "explicit Rect aggregate-conversion warnings in CarouselTheme.cpp"
+      ],
+      "prebuild_generated_html_headers": [
+        "src/network/html/ClippingsPageHtml.generated.h",
+        "src/network/html/FilesPageHtml.generated.h",
+        "src/network/html/FontsPageHtml.generated.h",
+        "src/network/html/HomePageHtml.generated.h",
+        "src/network/html/LibraryPageHtml.generated.h",
+        "src/network/html/SettingsPageHtml.generated.h",
+        "src/network/html/StatsPageHtml.generated.h",
+        "src/network/html/ToDoPageHtml.generated.h",
+        "src/network/html/js/jszip_minJs.generated.h"
+      ],
+      "source_delta_preexisting_entries_match": 37,
+      "source_delta_mismatches": 0,
+      "active_old_C_workspace_references": 0,
+      "old_C_references_remaining": "8 generated font header command comments; historic QEMU console/run metadata",
+      "no_S3_firmware_built": true
+    }
+  },
+  "commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
+  "handoff_sha256": "cb7bcfca418949fbcc25974bcbea48824b5709045fa0ce83a085665ffba6233e",
+  "limitations": [
+    "Classic SDL2 simulator uses folder-backed host storage and does not validate physical SDMMC, PSRAM, panel, GPIO, power, or touch hardware.",
+    "No physical validation or flash is claimed.",
+    "eink-qemu supports an X4 Pro ESP32-S3 machine but no X4 Classic machine.",
+    "The 1,500 ms QEMU default Power hold expires before the app power check; the fresh Home capture used a 49,000 ms virtual event, with subsequent emulator low-power behavior still model-specific.",
+    "Original preserved Pro/Classic BINs have no matching historical ELF files in the isolated tree; new canonical BIN/ELF pairs match through embedded ELF hashes.",
+    "One earlier QEMU run inherited C: TEMP for synthesized flash; later runs explicitly used D: temp. No C: source workspace was recreated.",
+    "Pro exact-build QEMU now passed Reader open/render, key page turns, exit, progress save, and reopen; swipe gesture and deep-sleep/wake remain limited/unverified.",
+    "The first content render is confirmed by logs, but the preserved initial Reader screenshot is page 3/10 rather than an isolated page-1 frame.",
+    "Classic SDL2 results remain host-only; no Classic QEMU machine exists, and no physical S3 compatibility is certified.",
+    "The experimental OTA and in-device SD recovery routes are disabled by compile-time guards; external recovery is required for any separately approved hardware bring-up.",
+    "No browser/WASM build or runtime result is present; the prior WSL report that Emscripten was unavailable is historical and must be rechecked at restart.",
+    "Physical Pro/Classic behavior, Pro deep sleep/wake, Classic S3 firmware execution, physical touch/swipe and safe external recovery remain open."
+  ],
+  "missing_file_count": 0,
+  "pro_emulator": {
+    "cause_proven": true,
+    "checksum_manifest_sha256": "099feabb7808c5861e54e1d9d0e116c269ba2edf94fb1a1bf903ad295164d501",
+    "cli_archive_sha256": "d1a0dc3c6a3b02af8e197979018a3aa153bb1825082807c244f5acd464571295",
+    "extended_run": {
+      "EPC1": "0x4223c974",
+      "EPC4": "0x4037b30e",
+      "EXCCAUSE": "0x4 (level-1 interrupt)",
+      "EXCVADDR": "0x0",
+      "PC": "0x4037a265",
+      "blank_screenshot_sha256": "701199968b22a20c1cc68b494543684e73ed1d4d850e2e6b019a9cf528d0857e",
+      "console_jsonl_sha256": "c6591427d291abf335f5047a75310925f2cfebbdb7e4b35a4ecd87f3d356a0ea",
+      "guest_seconds": 120,
+      "no_app_log": true,
+      "panel_refreshes": 0,
+      "panic_or_reset": false,
+      "rom": "ESP-ROM:esp32s3-20210327; rst:0x1 POWERON, boot:0x4 SPI_FLASH_BOOT",
+      "run_jsonl_sha256": "6b037bfe290d791e89ab1e1dc825a5afe019bf172301990bd578548c3156baf5",
+      "sd_messages": [
+        "SD: Optional CMD52 not implemented",
+        "SD: Optional CMD5 not implemented"
+      ],
+      "serial_log_sha256": "4c5088db0c3e63e6a266d39fc7db50f3f742df6c5d39595c1fdacd9b2eeca0b6"
+    },
+    "first_failed_observable_milestone": "No application-level milestone failed in run04. Synthetic swipe-left had no settled transition in run03; runtime deep-sleep/wake is not verified because the pinned CLI has no configurable post-boot long-power hold.",
+    "full_virtual_flash": {
+      "app0_offset": "0x10000",
+      "app_bytes_match_preserved_app": true,
+      "bootloader_offset": "0x0",
+      "command": "eink-qemu flash .pio/build/x4pro <output.bin> --machine x4pro",
+      "partition_table_offset": "0x8000",
+      "path": "diagnostics/eink-qemu-0.9.2/Folio-Nooir-v1.6.6-X4PRO-EMU-ONLY-NOT-FOR-PHYSICAL-FLASH-16MiB.bin",
+      "safety": "EMULATOR ONLY — NOT FOR PHYSICAL FLASHING",
+      "sha256": "26ae6518b77cf8c268679f64fd40754212fb1cb6f84f3cc838223f5e18eb39cd",
+      "size_bytes": 16777216
+    },
+    "headless": true,
+    "home_reader_reached": true,
+    "last_confirmed": "Exact fresh X4 Pro QEMU run passed Reader open/render, key page navigation, Reader exit to Library, progress save, and reopen at saved position; see reader_validation.",
+    "machine": "x4pro",
+    "panel": "uc8279-68",
+    "runs": [
+      "pro-app-only-default",
+      "pro-app-only-default-uart0",
+      "pro-full-flash-uart0",
+      "pro-full-flash-psram-progress",
+      "pro-full-flash-extended-04",
+      "qemu-exact-build-trace-02",
+      "qemu-powerhold-55000",
+      "qemu-home-input-04",
+      "qemu-books-input-05",
+      "qemu-reader-06",
+      "qemu-reader-corrected-07",
+      "qemu-exact-build-trace-02",
+      "qemu-powerhold-55000",
+      "qemu-home-input-04",
+      "qemu-books-input-05",
+      "qemu-reader-06",
+      "qemu-reader-corrected-07"
+    ],
+    "version": "eink-qemu 0.9.2",
+    "xtensa_softmmu_archive_sha256": "dd64bacb45359cacb790822695d68883e53e4172ea63b3a5713d58bc25774e52",
+    "serial_route_review": {
+      "build_flags": [
+        "ARDUINO_USB_MODE=1",
+        "ARDUINO_USB_CDC_ON_BOOT=1"
+      ],
+      "application_serial": "Arduino Serial maps to hardware USB Serial/JTAG CDC.",
+      "USB_Serial_JTAG_runs": [
+        "pro-app-only-default: 25 seconds; ROM only, no Nooir app log",
+        "pro-full-flash-cpu-state: 20 seconds; ROM only, no Nooir app log"
+      ],
+      "UART0_runs": "pro-full-flash-extended-04 (120 seconds) and other longer captures; useful for QEMU diagnostics but UART0 is not the primary app Serial route.",
+      "ROM": "ESP-ROM:esp32s3-20210327; rst POWERON; SPI_FLASH_BOOT; entry 0x403c8898",
+      "panic_or_reset": "None recorded"
+    },
+    "application_start_order": [
+      "BoardConfig::holdPowerRails",
+      "Serial setup",
+      "HalSystem::begin",
+      "GPIO/power/tilt/clock initialization",
+      "compile-time Nooir device identity log",
+      "Storage.begin / SDMMC",
+      "settings and display setup"
+    ],
+    "last_guest_peripheral_activity": "Exact fresh app logs show X4 Pro profile, SDMMC card mounted, display initialized, Reader rendering, and progress.bin writes; optional QEMU IMU is absent.",
+    "psram_status": "Exact fresh Pro ELF maps early PC to s_test_psram; heap capture reports PSRAM free 8,283,560 bytes, largest 8,283,552, corrupt 0. Emulator-only; physical PSRAM training unverified.",
+    "prior_first_failed_observable_milestone": "Under default 1,500 ms QEMU cold-boot Power hold, Nooir logs are delayed until after OPI PSRAM startup (~48.8 s firmware time) and verifyPowerButtonWakeup; release occurs too early and the app re-enters sleep.",
+    "home_rendered": true,
+    "library_navigation_verified": true,
+    "reader_opened": true,
+    "page_turn_verified": true,
+    "reader_exit_verified": true,
+    "progress_persistence_verified": true,
+    "fresh_build_full_virtual_flash": {
+      "path": "diagnostics/eink-qemu-0.9.2/Folio-Nooir-v1.6.6-X4PRO-FRESHBUILD-EMU-ONLY-NOT-FOR-PHYSICAL-FLASH-20261111-16MiB.bin",
+      "size_bytes": 16777216,
+      "sha256": "b8389fa4e55be012411a6e5bac9e6a10724e04903b9dbbb0e8764023a61c392d",
+      "safety": "EMULATOR ONLY - NOT FOR PHYSICAL FLASHING",
+      "composition": {
+        "bootloader_offset": "0x0",
+        "bootloader_bytes": 18736,
+        "bootloader_sha256": "09c6a477ac9b33721e9ea455fda1e29dc5b2f35c85d0b858b693defcab6f19fb",
+        "partition_table_offset": "0x8000",
+        "partition_table_bytes": 3072,
+        "partition_table_sha256": "bd0f7954aca2ef7d925ee21aaa1f3dc8822d1d6ce5cbbd26a135e5886bfff6ce",
+        "app0_offset": "0x10000",
+        "app_sha256": "0a0b5bb6eaa47ec4cdacc2a6af7f1d2a7166ff913658d86c555aac23aaa69ba9",
+        "app1_offset": "0x650000",
+        "command": "eink-qemu flash .pio/build/x4pro <output.bin> --machine x4pro"
+      }
+    },
+    "fresh_build_runs": [
+      {
+        "name": "qemu-exact-build-trace-02",
+        "log_sha256": "f811508713510ddf901f2c57b25886181e4b2a7b5a9f862740533afe25627ff6",
+        "run_jsonl_sha256": "23fdff676e2c113e05ca50355b88bfa4a938162067e7835d92f244d7fe3b5ee5",
+        "result": "Default 1500 ms Power hold expires before app power-duration check and leads to pre-display deep sleep; no panic/reset."
+      },
+      {
+        "name": "qemu-powerhold-55000",
+        "log_sha256": "9e78f4a067b1a838c8b9f26947def77e240b8f2df5e333277f52cd9987de3022",
+        "run_jsonl_sha256": "a6db2e4874684f8d44a792e256637a8254cbdb63ab19b7ef324daceb2f4c08c5",
+        "screenshot_sha256": "ed22e869007ea9531c5abd9840e2dc8e906e697cf4b7b553cf4f620085571f9b",
+        "heap_json_sha256": "01b92b64c4b31de3e676f7b654feb79e03a7979f5f651c8fcf9a63f885295b02",
+        "result": "Home rendered; 2 panel refreshes; exact ELF PSRAM heap present; X4 Pro identity and SDMMC mount logged."
+      },
+      {
+        "name": "qemu-home-input-04",
+        "log_sha256": "059a3deea5de030fba1f9853c8559989c8e2b9fb4c13f3d08773353c3739dc1b",
+        "run_jsonl_sha256": "52cb256fb3376557f31dcf9797ca0f08a40b0c2bf0a1905165441bfe1416d35f",
+        "home_screenshot_sha256": "ed22e869007ea9531c5abd9840e2dc8e906e697cf4b7b553cf4f620085571f9b",
+        "library_screenshot_sha256": "94e6fb1f7f705eac36738f3b591466b3e399003d63b5f3623371bc927ff11a1e",
+        "result": "Touch switched Home to FolioLibrary; staged Books folder shown. QEMU temp flash inherited C: TEMP for this run."
+      },
+      {
+        "name": "qemu-books-input-05",
+        "log_sha256": "76b02ae6454dcc419617ab9e4f56e77ff4f95bb43a69f7f9651ddc965f7b8897",
+        "run_jsonl_sha256": "19e48b567730d5e08f535a2c531a509fac9af1a32021e14889b941298b54a113",
+        "screenshot_sha256": "2b1e34d3eba85e2a1c4dc10829a9078d9c858584fa5561deeacd365aa4f58e88",
+        "result": "Opened Books folder and listed EPUB, but staged host file was nested beneath folder named Nooir-QEMU-Pro.epub."
+      },
+      {
+        "name": "qemu-reader-06",
+        "log_sha256": "802dab7c97118254bb3e021e31d82840067304bd62d93bc42098e514ba5e5c18",
+        "run_jsonl_sha256": "c09db5c3d5c79b2a235f235dc979bd44186906991d20629845070ede4d58ca54",
+        "result": "Mis-staged EPUB metadata preview only; no Reader/page-turn/progress evidence."
+      },
+      {
+        "name": "qemu-reader-corrected-07",
+        "log_sha256": "cce6d413f63dfba5de3d1ed97db2b78efaac8c051375341721c791db0496669c",
+        "run_jsonl_sha256": "a3bbfb5fc7462e481bce67dbd2f5017bda0cc8983234f8edba6dde69138c0db",
+        "result": "Correct /Books staging; first touch did not change RecentBooks; stopped with Ctrl+C after idle screen wait; no panic."
+      }
+    ],
+    "latest_fresh_build_capture": {
+      "serial_evidence": [
+        "ESP-ROM:esp32s3-20210327; rst POWERON; SPI_FLASH_BOOT",
+        "[MAIN] Hardware detect: X4 Pro",
+        "[SD] SDMMC card mounted",
+        "Starting CrossPoint version 1.6.6-x4p-exp-no-flash",
+        "[MAIN] Display initialized",
+        "[SHELF] render_ready theme=Main"
+      ],
+      "psram_evidence": "Separate exact-ELF heap capture reports PSRAM free 8,283,560 bytes, largest 8,283,552, corrupt 0 (emulator only).",
+      "home_screenshot_sha256": "ed22e869007ea9531c5abd9840e2dc8e906e697cf4b7b553cf4f620085571f9b",
+      "app_sha256": "0a0b5bb6eaa47ec4cdacc2a6af7f1d2a7166ff913658d86c555aac23aaa69ba9",
+      "console_jsonl_sha256": "2654535bd377bc75b69a93b27d7ccedb0fb0a504a0f7a8d6596d796a9348bb45",
+      "exact_app_bin": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4pro-EXPERIMENTAL.bin",
+      "qemu_version": "eink-qemu 0.9.2",
+      "panel_refreshes": 2,
+      "matching_elf": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4pro-EXPERIMENTAL.elf",
+      "latest_result": "This historical Home capture reached Nooir startup, X4 Pro profile, SDMMC mount, display initialization, and Home; the later exact-build Reader run04 passed 27/27 as recorded in reader_validation.",
+      "limitation": "The long virtual Power boot event can later enter the emulator low-power path; not a physical behavior or normal interactive-session proof.",
+      "log_sha256": "f9e6dbf7f824d451d19405425294eae30e639a39857905d0abc3b6a99c8bb933",
+      "serial": "USB Serial/JTAG",
+      "home_screenshot": "diagnostics/s3-revalidation-20261111/pro-qemu-fresh-home-capture-12/shots/home.png",
+      "machine": "x4pro",
+      "first_unverified_milestone": "This Home-only capture did not exercise Reader. The later exact-build reader_validation run04 passed 27/27; remaining unconfirmed items are listed in closing_checkpoint.",
+      "panel": "uc8279-68",
+      "run_jsonl_sha256": "2e9dcb6471947e66edeada8d499179c3bc7ad27fc2f5ed61931d6d44d88d54ae4",
+      "emulator_flash_sha256": "b8389fa4e55be012411a6e5bac9e6a10724e04903b9dbbb0e8764023a61c392d",
+      "power_hold_ms": 49000,
+      "elf_sha256": "bd768427c55b500a87b2ffe3a39542a7053e102139b884ac103a9224765017e2",
+      "run": "diagnostics/s3-revalidation-20261111/pro-qemu-fresh-home-capture-12",
+      "date": "2026-11-11"
+    },
+    "first_unverified_milestone": "Dedicated page-1 screenshot, swipe result, physical Pro behavior, and deep sleep/wake remain unconfirmed; the Reader workflow itself passed 27/27 in reader_validation.",
+    "reopen_saved_progress_verified": true,
+    "clean_deep_sleep_wake_verified": false
+  },
+  "references": {
+    "crossink": "https://github.com/uxjulia/CrossInk",
+    "crosspoint_platformio": "https://github.com/crosspoint-reader/crosspoint-reader/blob/develop/platformio.ini",
+    "eink_qemu": "https://github.com/serialx/eink-qemu",
+    "esp_emulator": "https://github.com/espressif/esp-emulator",
+    "crosspoint_simulator": "https://github.com/crosspoint-reader/crosspoint-simulator",
+    "reader_simulator": "https://github.com/PewPewzxc/reader-simulator"
+  },
+  "safety": {
+    "bootloader_or_efuse_modified": false,
+    "commit_push_merge_deploy_performed": false,
+    "full_flash_emulator_only": true,
+    "physical_flash_authorized": false,
+    "physical_flash_performed": false,
+    "release_or_publish_performed": false
+  },
+  "schema_version": 2,
+  "source_and_partition": {
+    "app0_offset": "0x10000",
+    "app1_offset": "0x650000",
+    "app_slot_bytes": 6553600,
+    "archive_path": ".provenance/folio-nooir-1.6.6-source.zip",
+    "archive_size_bytes": 29889199,
+    "base_c3_sdk": "7bd6aebe9b40198d7dddf455400cee9225430726",
+    "official_release_url": "https://github.com/toshio2011/folio-nooir/releases/tag/1.6.6",
+    "partitions_csv_sha256": "98e02c50532c388d85cc3b7c96d004142dc713b23368d293c881ecdcb419e44e",
+    "s3_sdk": "5e94fe7480f019c89fbf691aef87523eb1b46704",
+    "s3_sdk_snapshot_manifest_sha256": "7135d4f471de6b0a81629b1a1a3af6d1929fe34d492235a2aab3c33a97ee0276"
+  },
+  "source_delta_policy": {
+    "comparison": "bytewise versus the archived official source ZIP",
+    "excluded_generated_or_separate": [
+      ".pio/build outputs and project build caches",
+      "experimental BIN/ELF outputs and QEMU-only full-flash images",
+      "temporary SD images, raw logs, screenshots, and backup archives (identities retained in the manifest)",
+      "generated sdkconfig and generated source outputs",
+      "bulk SDK snapshot directories; the S3 SDK is represented by a pinned gitlink, while the inherited base SDK snapshot remains local-only because its recorded commit is unavailable",
+      "provenance ZIPs and private machine-specific files",
+      "standalone Web Emulator source and unrelated v1.6.7 development"
+    ],
+    "files": [
+      {
+        "path": ".gitmodules",
+        "status": "modified",
+        "upstream_sha256": "d1a29841276a9e0ab9dddbb7930947c9e98363da6579fb8070d65af5a2b34bed",
+        "worktree_sha256": "9b2e032c81b64cfeea0ec59ab0b79597f84f8ccb4ba224589ee425be7352c66c"
+      },
+      {
+        "path": ".gitignore",
+        "status": "modified",
+        "upstream_sha256": "19b9f590012ff240b2dd8c55efdc0f84873fa47f8823d77d6cb720125e2addae",
+        "worktree_sha256": "2994167673c2e21f39d43ff22f992e1f9d8f54816abc1e5f076da666449ebda1"
+      },
+      {
+        "path": "PORT_HANDOFF.md",
+        "status": "added",
+        "worktree_sha256": "cb7bcfca418949fbcc25974bcbea48824b5709045fa0ce83a085665ffba6233e"
+      },
+      {
+        "path": "REFERENCE-LICENSES.md",
+        "status": "added",
+        "worktree_sha256": "5079ad70c0559329f1aa35fe2df0d4227f0c23c2f2356614447d28ce69a0c873"
+      },
+      {
+        "path": "lib/hal/HalGPIO.cpp",
+        "status": "modified",
+        "upstream_sha256": "ce730740356f3230e32fee0d56793ffa9c13127c719d397918f2d1eb5cd8a488",
+        "worktree_sha256": "9a48ed8777ffc75a864d3dda9b17b78a071a15a6ac5d75594fb77944d6220517"
+      },
+      {
+        "path": "lib/hal/HalGPIO.h",
+        "status": "modified",
+        "upstream_sha256": "3c1bcb28ce865f424b6194ab353c793730f2d0f09fa21f16e9d1c1f80dd4fbcb",
+        "worktree_sha256": "d645a778a1062f0bb5b924b5dcb0a35b463e3bf9f1f0706698b3cc30c81f47f3"
+      },
+      {
+        "path": "lib/hal/HalStorage.cpp",
+        "status": "modified",
+        "upstream_sha256": "f6e439b84bed1125c268ad1b4e2b384fbfb7e37a2374f5549a9c25bef51087d1",
+        "worktree_sha256": "36cd9c92e0bcf70f8c7cae34994b92e8cf3774009b179f1e5bf349a5e5dffad3"
+      },
+      {
+        "path": "platformio.ini",
+        "status": "modified",
+        "upstream_sha256": "ff03157d7a81b1f60341dbf4d5ffbe33bb2fe49f6e3cb7d09ff42bf5d87b6f28",
+        "worktree_sha256": "258e3b7abd1cccdb55634379ea9b8b8d063247898d79f0af51ef582dd00706f6"
+      },
+      {
+        "path": "scripts/export_experimental_firmware.py",
+        "status": "added",
+        "worktree_sha256": "c2d7037af8970c0054d169a8a85844e20811fde8a2c12bcd7e5434c42f816874"
+      },
+      {
+        "path": "scripts/guard_nooir_upload.py",
+        "status": "added",
+        "worktree_sha256": "b8b4366bbfab33e8eb028e432bcd9afb9ff5d5adedc13331ed5ed17af3811817"
+      },
+      {
+        "path": "scripts/simulator_gpio_compat.py",
+        "status": "added",
+        "worktree_sha256": "319d8768f7f0e5e0a7108b403ca237940cf94cbdb15673c9d10570a310c8ae26"
+      },
+      {
+        "path": "scripts/simulator_hal_clock.py",
+        "status": "modified",
+        "upstream_sha256": "921da56e0b4ba0dbf26fbe2c7f5f601fd9b407c074a0be08e50b55cfcc93ce75",
+        "worktree_sha256": "0dbfb4e6c10a1f31fb4f8caa6906adb7c5f3d15f75882d2a28692a7dd4f93385"
+      },
+      {
+        "path": "scripts/simulator_hal_storage.py",
+        "status": "added",
+        "worktree_sha256": "cc83d0b785441a4c126f01144a447e06a4573e693df6e4a4654b0cbf4652ebb4"
+      },
+      {
+        "path": "scripts/simulator_heap_compat.py",
+        "status": "added",
+        "worktree_sha256": "9dd43674bcb5147fe4be34afeb19f9802d866767db4efddfee3c875edd9decdc"
+      },
+      {
+        "path": "scripts/simulator_network_compat.py",
+        "status": "added",
+        "worktree_sha256": "75fe5a691a186794b72614dc391d6f26ba4c2e1cbd7a30ed42bbd1b0cc327b39"
+      },
+      {
+        "path": "scripts/simulator_png_compat.py",
+        "status": "modified",
+        "upstream_sha256": "8e6355fe65e7cb1455e94d588f9df4832577bdaff9fdb3da14258c58cbc9dbba",
+        "worktree_sha256": "059f33728d492378aa3fb6c65ce0bfbfe2887bbca74436fb219884a241197be3"
+      },
+      {
+        "path": "scripts/simulator_string_compat.py",
+        "status": "modified",
+        "upstream_sha256": "105e3de2d77e1669d096e8ac4a9c96a805e2825e851fbbc07bd3f370acf6affa",
+        "worktree_sha256": "ee12006aeff4fdb780d90c0bf95c58e06bdf14dadbbdee957eeebf7e91b9fc84"
+      },
+      {
+        "path": "scripts/simulator_system_compat.py",
+        "status": "added",
+        "worktree_sha256": "6adab62759baf91dfe146f8edcaf08db28684d3eb9184dfbe79d9304040ee2c2"
+      },
+      {
+        "path": "scripts/simulator_wifi_compat.py",
+        "status": "added",
+        "worktree_sha256": "56375cbb3dd40ecaf37e764f7f85265ee72e54ce0ea87e0e580b35e83f41e1e9"
+      },
+      {
+        "path": "simulator_compat/esp_netif.h",
+        "status": "added",
+        "worktree_sha256": "6fceac504206cee55ecf0eae10b692593314e2653b85631dc38a08d0dca0b5dd"
+      },
+      {
+        "path": "src/BleInput.cpp",
+        "status": "modified",
+        "upstream_sha256": "567c2370cdf8ee0a8cfc4d2e3dc87b8e98462071ac6be32c76d462e2178b7d7e",
+        "worktree_sha256": "9e1bd7b07f72ed035da48c7bca734baf825195ee7f804eaca573063b894c437f"
+      },
+      {
+        "path": "src/MappedInputManager.cpp",
+        "status": "modified",
+        "upstream_sha256": "03ab2306ea24df36d14d7f641b2dac70ede72672533d55fbd12725bf41dce8c1",
+        "worktree_sha256": "35d76fe2b85c43d0ef9881a0bb97e4a2808a0397bea44cdbbb8705b418c7156e"
+      },
+      {
+        "path": "src/NooirAppDescriptor.cpp",
+        "status": "modified",
+        "upstream_sha256": "1fceee5b2d58698bd4859297e7bc4b75af1e33346e83b87168adbb1e6b25bf0e",
+        "worktree_sha256": "d342c9f3f0a93ef31e8516c19d9e3cd6bdf6688003bba6e04413e5199a0f6914"
+      },
+      {
+        "path": "src/NooirDeviceIdentity.h",
+        "status": "added",
+        "worktree_sha256": "1a027603ce40737c49f02c58e9dac9a0e794c5ff4d6642eda91188f06e1545c2"
+      },
+      {
+        "path": "src/NooirFirmwareIdentity.h",
+        "status": "added",
+        "worktree_sha256": "b0d6be5c8fd7c44e840b555aef2756f02e637b78ddfde92b5e4a8655061bf594"
+      },
+      {
+        "path": "src/activities/reader/EpubReaderActivity.cpp",
+        "status": "modified",
+        "upstream_sha256": "d96f45e5dcfb4732e8fde2b56753b9f149c92b78a041d7b199a361c439a5f1fe",
+        "worktree_sha256": "9c2f77126b7b97500571794a27a95dd2420c2c83a43aa80ad5c9293fd6cb8c72"
+      },
+      {
+        "path": "src/activities/settings/BluetoothSettingsActivity.cpp",
+        "status": "modified",
+        "upstream_sha256": "eac4d8a1a5275959d2bdad195101fbc1fa1b0e648a0438f5bd565000f6961388",
+        "worktree_sha256": "2381aec36e0b30e2a9c8c2d86f32aba286913c25a392370a5efb42c27dd10dc3"
+      },
+      {
+        "path": "src/activities/settings/DeviceInfoActivity.cpp",
+        "status": "modified",
+        "upstream_sha256": "c49f6f21e66915e5743a06bb7d387e30919970d1a2fa79b3215711cdf74b2e53",
+        "worktree_sha256": "433bb5f44278ffc4b1324ae18730d218b2ac876e3453b1cd63e1bc5b7fe1c445"
+      },
+      {
+        "path": "src/activities/settings/DeviceInfoActivity.h",
+        "status": "modified",
+        "upstream_sha256": "3620c611749e26712430ba09d8d648ef55ae8e135ca57a6fb62763513986dacb",
+        "worktree_sha256": "d85f7235914ee24954b9f17398799ec1feb92f46357ef54a0355cfa57bc5f148"
+      },
+      {
+        "path": "src/activities/settings/SettingsActivity.cpp",
+        "status": "modified",
+        "upstream_sha256": "38cb0de91bb0db33adac3a552dbea677833e6f6ebd71dbab0dc9eac36a10fadc",
+        "worktree_sha256": "90a612819e11a3b31f9f8e3cff68d6d8b0816312e1f615a0fda110de7bba7a30"
+      },
+      {
+        "path": "src/main.cpp",
+        "status": "modified",
+        "upstream_sha256": "97cfb8332d98e53b613a744da96d9c012efa275b7d209bdb58f5226decf8112f",
+        "worktree_sha256": "842e792aef8addd612bc49a0f336ccd18f14f0d12c56b36d68adbb0ce69f5668"
+      },
+      {
+        "path": "src/network/FirmwareFlasher.cpp",
+        "status": "modified",
+        "upstream_sha256": "fc05a6af5c6b1343cf67b851c183ed1d205403443c1ba53364969cb14e1ab29e",
+        "worktree_sha256": "944c01b4fa82436ebd41b5aab839e5edf29ce77e54fd9617e7a29309d33d3380"
+      },
+      {
+        "path": "src/network/FirmwareFlasher.h",
+        "status": "modified",
+        "upstream_sha256": "82f950bdbbdb710f71ff97443c1e920a0c693d3a495387cf8122070ac2492178",
+        "worktree_sha256": "2b64de6d40f361a4cadfd515d9f33ed766d5752a8875ebd849d5d2cf1e8d0a1f"
+      },
+      {
+        "path": "src/network/OtaUpdater.cpp",
+        "status": "modified",
+        "upstream_sha256": "2180d03e7d733f03e94675879d50c0448da58f702d16363e103387d1cf9d7b34",
+        "worktree_sha256": "b91c89a303d7adc5ede38bf54ecf074f4685984becf96b29b3868ddf69dba9d2"
+      },
+      {
+        "path": "src/platform/skip_efuse_blk_check.c",
+        "status": "modified",
+        "upstream_sha256": "d5a9f47527ee8d89b2a667e7e24492b81f5e46bb9adddaa6855535b3fa01ea11",
+        "worktree_sha256": "e250b150c25465dd943f9d5434a77811f57912a51fd4580966faf0624ede5eac"
+      },
+      {
+        "path": "test/nooir_firmware_identity/CMakeLists.txt",
+        "status": "added",
+        "worktree_sha256": "0250c1a3294f1c91baed4f8da3df38cecad3f86518cdc89032048815dd12c2b0"
+      },
+      {
+        "path": "test/nooir_firmware_identity/NooirFirmwareIdentityTest.cpp",
+        "status": "added",
+        "worktree_sha256": "e9f75395c430e3a9b29fecef457977f9b52b6e7329bfb18685edb496ef4567d3"
+      },
+      {
+        "path": "test/python/test_firmware_artifacts.py",
+        "status": "added",
+        "worktree_sha256": "67dbd458e265ca15d815385fd940d7ca3d8c42934a2e09ec4fba00536bc5fb9d"
+      },
+      {
+        "path": "docs/WEB_EMULATOR_S3_COMPATIBILITY_HANDOFF_2026-11-11.md",
+        "status": "added",
+        "worktree_sha256": "43a8ee1e2d44884a9007a8be1f88648559e4252f305ae13252b6a9ea16be89d0"
+      }
+    ],
+    "scope": "Application/configuration source and handoff files, with the required pinned S3 SDK gitlink",
+    "dependencies": [
+      {
+        "path": "freeink-sdk-s3",
+        "repository": "https://github.com/Free-Ink/freeink-sdk.git",
+        "revision": "5e94fe7480f019c89fbf691aef87523eb1b46704",
+        "status": "pinned gitlink; upstream reachable; local snapshot matched 1,034 files",
+        "license": "MIT; upstream LICENSE and NOTICE retained"
+      },
+      {
+        "path": "freeink-sdk",
+        "repository": "https://github.com/toshio2011/freeink-sdk.git",
+        "revision": "7bd6aebe9b40198d7dddf455400cee9225430726",
+        "status": "inherited gitlink; exact revision unavailable from configured and current Free-Ink remotes",
+        "impact": "fresh recursive checkout cannot initialize this legacy dependency; exact snapshot remains local-only"
+      }
+    ],
+    "file_entry_count": 39
+  },
+  "upstream": "Folio Nooir 1.6.6",
+  "browser_compatibility_handoff": {
+    "path": "docs/WEB_EMULATOR_S3_COMPATIBILITY_HANDOFF_2026-11-11.md",
+    "sha256": "43a8ee1e2d44884a9007a8be1f88648559e4252f305ae13252b6a9ea16be89d0",
+    "current_eink_qemu": "Pinned native eink-qemu 0.9.2 x4pro guest now passes the exact fresh Pro Reader flow with a 50000 ms cold-boot virtual Power hold; no X4 Classic machine; browser/WASM execution remains unverified.",
+    "recommendation": "Classic SDL2 host reader flow passes but is not Classic BIN execution; exact fresh Pro firmware passes native x4pro QEMU through Reader, page keys, exit and saved-progress reopen (27/27). Browser/WASM, physical hardware, Pro deep sleep/wake, touch/swipe fidelity, Classic guest execution, and safe recovery remain open.",
+    "emscripten": "Not installed in current WSL; browser build not attempted.",
+    "web_repository_modified": false
+  },
+  "fresh_builds": {
+    "date": "2026-11-11",
+    "result": "Both device-specific ESP32-S3 builds succeeded.",
+    "output_directory": "artifacts/fresh-20261111",
+    "pro": {
+      "device": "X4 Pro",
+      "environment": "x4pro",
+      "binary": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4pro-EXPERIMENTAL.bin",
+      "bin_bytes": 5671104,
+      "bin_sha256": "0a0b5bb6eaa47ec4cdacc2a6af7f1d2a7166ff913658d86c555aac23aaa69ba9",
+      "elf": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4pro-EXPERIMENTAL.elf",
+      "elf_bytes": 86746476,
+      "elf_sha256": "bd768427c55b500a87b2ffe3a39542a7053e102139b884ac103a9224765017e2",
+      "embedded_elf_sha256_verified": true,
+      "project_name": "Folio Nooir X4 Pro",
+      "app_version": "1.6.6-x4p-exp-no-flash",
+      "chip": "ESP32-S3",
+      "board": "esp32-s3-devkitc1-n16r8",
+      "profile_flags": [
+        "FREEINK_DEVICE_X4=0",
+        "FREEINK_DEVICE_X3=0",
+        "FREEINK_DEVICE_X4PRO=1",
+        "FREEINK_DEVICE_X4CLASSIC=0"
+      ],
+      "touch_enabled": true,
+      "flash_bytes": 16777216,
+      "flash_mode": "DIO",
+      "flash_frequency_mhz": 80,
+      "memory_type": "dio_opi",
+      "psram": "8 MiB OPI configured; hardware training unverified",
+      "partition_csv": "partitions.csv",
+      "partition_csv_sha256": "98e02c50532c388d85cc3b7c96d004142dc713b23368d293c881ecdcb419e44e",
+      "app0_offset": "0x10000",
+      "app1_offset": "0x650000",
+      "app_slot_bytes": 6553600,
+      "app_slot_used_percent": 86.5,
+      "image_checksum_valid": true,
+      "image_validation_hash_valid": true,
+      "static_ram_bytes": 66724,
+      "ram_capacity_bytes": 327680,
+      "build_status": "SUCCESS",
+      "exit_code": 0,
+      "duration_seconds": 119.6,
+      "build_log": "D:\\fatiha\\side\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4pro-attempt-03-utf8.log",
+      "build_log_sha256": "ed32d1a71b09411251e8a192392025654c94948a40cb6f32834670a3369c4b5a",
+      "manifest": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4pro-EXPERIMENTAL.bin.manifest.json",
+      "manifest_sha256": "1c3e0cddacbaf8cd0b841669dab0f38482f4e36ac12d77472a5de6a4f4363792",
+      "warnings": [
+        "Windows Long Path Support is disabled; build succeeded."
+      ]
+    },
+    "classic": {
+      "device": "X4 Classic",
+      "environment": "x4classic",
+      "binary": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4classic-EXPERIMENTAL.bin",
+      "bin_bytes": 5676288,
+      "bin_sha256": "a1ece7c1897ab39ac24c6e30d0e0331b29a62925d28fcf52657d39cb92dcabab",
+      "elf": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4classic-EXPERIMENTAL.elf",
+      "elf_bytes": 86770716,
+      "elf_sha256": "bc412ce4b3587fe6248b80aa5c51793704f7e2d8b228a68c3ed1ccd44549e44c",
+      "embedded_elf_sha256_verified": true,
+      "project_name": "Folio Nooir X4 Classic",
+      "app_version": "1.6.6-x4c-exp-no-flash",
+      "chip": "ESP32-S3",
+      "board": "esp32-s3-devkitc1-n16r8",
+      "profile_flags": [
+        "FREEINK_DEVICE_X4=0",
+        "FREEINK_DEVICE_X3=0",
+        "FREEINK_DEVICE_X4PRO=0",
+        "FREEINK_DEVICE_X4CLASSIC=1"
+      ],
+      "touch_enabled": false,
+      "flash_bytes": 16777216,
+      "flash_mode": "DIO",
+      "flash_frequency_mhz": 80,
+      "memory_type": "dio_opi",
+      "psram": "8 MiB OPI configured; hardware training unverified",
+      "partition_csv": "partitions.csv",
+      "partition_csv_sha256": "98e02c50532c388d85cc3b7c96d004142dc713b23368d293c881ecdcb419e44e",
+      "app0_offset": "0x10000",
+      "app1_offset": "0x650000",
+      "app_slot_bytes": 6553600,
+      "app_slot_used_percent": 86.6,
+      "image_checksum_valid": true,
+      "image_validation_hash_valid": true,
+      "static_ram_bytes": 66724,
+      "ram_capacity_bytes": 327680,
+      "build_status": "SUCCESS",
+      "exit_code": 0,
+      "duration_seconds": 145.68,
+      "build_log": "D:\\fatiha\\side\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4classic-attempt-02-serial.log",
+      "build_log_sha256": "642efa96b0a295f7387c42da764766ac1bd67bc46e505fd6f9e447df52babe53",
+      "manifest": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4classic-EXPERIMENTAL.bin.manifest.json",
+      "manifest_sha256": "f81c6a9cf462c7fcb0a52e02265438e040b93ff0000a8d99cb99fa033708953b",
+      "warnings": [
+        "Windows Long Path Support is disabled; build succeeded.",
+        "The earlier parallel attempt reported wolfSSL macro redefinitions and a Windows object-file lock; serial retry succeeded."
+      ]
+    },
+    "toolchain": {
+      "platformio_core": "6.1.19",
+      "pio_cli": "D:\\fatiha\\side\\.venv\\Scripts\\pio.exe",
+      "pio_home": "D:\\fatiha\\side\\.pio-home",
+      "platform": "pioarduino/espressif32 55.03.37",
+      "arduino_esp32": "3.3.7",
+      "esp_idf": "5.5.2",
+      "xtensa": "14.2.0+20251107",
+      "esptool": "5.1.2",
+      "project_build_cache": "D:\\fatiha\\side\\_c-side-migration-20261110\\_isolated_nooir_x4_pro_classic_v166\\.cache"
+    },
+    "build_attempts": [
+      {
+        "target": "Pro",
+        "log": "D:\\fatiha\\side\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4pro.log",
+        "result": "Failed before build: command ran from C: conversation directory, no platformio.ini.",
+        "log_sha256": "9ff2eb8960ea5fedb55444b4df7d465f3c15cac058ecb55e1563206ed8b77e37"
+      },
+      {
+        "target": "Pro",
+        "log": "D:\\fatiha\\side\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4pro-attempt-02.log",
+        "result": "CP1252 logger UnicodeEncodeError; interrupted and preserved; no toolchain change.",
+        "log_sha256": "fc54614bd70e64f1f10c774ba5b2f17923150628f183df993fd5b666d49ae892"
+      },
+      {
+        "target": "Pro",
+        "log": "D:\\fatiha\\side\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4pro-attempt-03-utf8.log",
+        "result": "Success; UTF-8 scoped to this process; exit 0."
+      },
+      {
+        "target": "Classic",
+        "log": "D:\\fatiha\\side\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4classic-utf8.log",
+        "result": "Parallel build failed on Windows object-file lock; warning-only wolfSSL macro redefinitions in that attempt.",
+        "log_sha256": "aeb2e79d2b264518c3ea9b51ccd7f70f8a67df83e365af03a94035482702540d"
+      },
+      {
+        "target": "Classic",
+        "log": "D:\\fatiha\\side\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4classic-attempt-02-serial.log",
+        "result": "Serial retry succeeded; exit 0."
+      }
+    ],
+    "artifact_tests": {
+      "existing_firmware_artifact_suite": "5/5 passed on 2026-11-06; not rerun in this build turn.",
+      "fresh_binary_verification": "Both build environments succeeded; esptool image-info verified ESP32-S3 identity, image checksum/hash, app name/version/flash settings; embedded ELF SHA-256 equals matching standalone ELF; file sizes and SHA-256 recorded.",
+      "classic_simulator": "Prior SDL2 host simulator passed EPUB/page/exit/progress; deliberately not rerun here and does not execute the S3 BIN."
+    },
+    "preserved_original_images": {
+      "pro": {
+        "path": "artifacts/Folio-Nooir-v1.6.6-X4PRO-EXPERIMENTAL-NOT-FOR-FLASHING.bin",
+        "bytes": 5671248,
+        "sha256": "7e4ac1c63a24005383a7ebf2a63fd988a96bbb1bd421c990c334e5466e800494",
+        "matching_elf_found": false,
+        "embedded_elf_sha256": "f68a42e00843ddcc8b22cc88954b074688b3260fc6cf4e78da08a39a3ce63e5b"
+      },
+      "classic": {
+        "path": "artifacts/Folio-Nooir-v1.6.6-X4CLASSIC-EXPERIMENTAL-NOT-FOR-FLASHING.bin",
+        "bytes": 5676432,
+        "sha256": "3309e364639d53ffe1602befb6b2c9fc62e66d088e0bc383833e2cf0c55f804a",
+        "matching_elf_found": false,
+        "embedded_elf_sha256": "cbfd346868bcca08d0c63eed947850dbce4e3bc82ae3376122718bb947766408"
+      }
+    },
+    "extra_preserved_exports": [
+      {
+        "device": "Pro",
+        "path": "artifacts/Folio-Nooir-v1.6.6-X4PRO-EXPERIMENTAL-NOT-FOR-FLASHING-2.bin",
+        "sha256": "5c261706d52d35b73879ca65918fb012f36aa65dcdf44b24d8f51251d9b011dc",
+        "classification": "noncanonical preserved export"
+      },
+      {
+        "device": "Pro",
+        "path": "artifacts/Folio-Nooir-v1.6.6-X4PRO-EXPERIMENTAL-NOT-FOR-FLASHING-3.bin",
+        "sha256": "5c261706d52d35b73879ca65918fb012f36aa65dcdf44b24d8f51251d9b011dc",
+        "classification": "noncanonical preserved export"
+      },
+      {
+        "device": "Pro",
+        "path": "artifacts/Folio-Nooir-v1.6.6-X4PRO-EXPERIMENTAL-NOT-FOR-FLASHING-4.bin",
+        "sha256": "0a0b5bb6eaa47ec4cdacc2a6af7f1d2a7166ff913658d86c555aac23aaa69ba9",
+        "classification": "matches canonical fresh Pro BIN"
+      },
+      {
+        "device": "Classic",
+        "path": "artifacts/Folio-Nooir-v1.6.6-X4CLASSIC-EXPERIMENTAL-NOT-FOR-FLASHING-2.bin",
+        "sha256": "a1d73922e1c0c1bf3764e37dc5e37464fb945a1e34050956ac35b47105b8b33c",
+        "classification": "noncanonical preserved export"
+      },
+      {
+        "device": "Classic",
+        "path": "artifacts/Folio-Nooir-v1.6.6-X4CLASSIC-EXPERIMENTAL-NOT-FOR-FLASHING-3.bin",
+        "sha256": "a1ece7c1897ab39ac24c6e30d0e0331b29a62925d28fcf52657d39cb92dcabab",
+        "classification": "matches fresh canonical Classic BIN"
+      }
+    ],
+    "source_integrity": {
+      "official_v166_commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
+      "source_delta_entries": 38,
+      "changed_files": 21,
+      "added_files": 17,
+      "missing_or_mismatching": 0,
+      "partition_csv_sha256": "98e02c50532c388d85cc3b7c96d004142dc713b23368d293c881ecdcb419e44e"
+    },
+    "limitations": [
+      "App-only images and matching ELF verified by build metadata; physical boot compatibility is not established.",
+      "Original app-only BINs were preserved, but their matching historical ELF files are absent.",
+      "The inherited partition table is build-compatible by slot size only; retail X4 Pro/Classic bootloader and flash layout remain unverified.",
+      "PSRAM is configured as 8 MiB OPI; only Pro QEMU allocator initialization was observed, not physical PSRAM training.",
+      "Classic simulator is host code and does not execute its S3 BIN; eink-qemu has no X4 Classic machine.",
+      "No device was flashed; no release, publish, push, merge, or deploy occurred.",
+      "NOOIR_DISABLE_FIRMWARE_FLASHING guards the SD-based FirmwareFlasher paths; OTA updater behavior was not separately validated or disabled."
+    ],
+    "feature_configuration": {
+      "x4classic": [
+        "FREEINK_DEVICE_X4=0",
+        "FREEINK_DEVICE_X3=0",
+        "FREEINK_DEVICE_X4PRO=0",
+        "FREEINK_DEVICE_X4CLASSIC=1",
+        "FREEINK_CAP_TOUCH=0",
+        "NOOIR_DEVICE_ID=X4CLASSIC"
+      ],
+      "shared_enabled_flags": [
+        "USE_BLOCK_DEVICE_INTERFACE=1",
+        "FREEINK_FB_PSRAM=1",
+        "NOOIR_S3_SDK_COMPAT=1",
+        "NOOIR_DISABLE_FIRMWARE_FLASHING=1",
+        "NOOIR_EXPERIMENTAL_DEVICE_BUILD=1",
+        "ENABLE_SERIAL_LOG",
+        "LOG_LEVEL=2"
+      ],
+      "x4pro": [
+        "FREEINK_DEVICE_X4=0",
+        "FREEINK_DEVICE_X3=0",
+        "FREEINK_DEVICE_X4PRO=1",
+        "FREEINK_DEVICE_X4CLASSIC=0",
+        "FREEINK_CAP_TOUCH=1",
+        "NOOIR_DEVICE_ID=X4PRO"
+      ],
+      "runtime_note": "v1.6.6 library/reader application sources are included; exact-build Pro Reader flow passed 27/27 in eink-qemu 0.9.2; physical hardware behavior remains unverified.",
+      "shared_disabled_capabilities": [
+        "FREEINK_CAP_BLE_HID_HOST=0",
+        "FREEINK_CAP_USB_MSC=0",
+        "FREEINK_CAP_FRONTLIGHT=0",
+        "FREEINK_CAP_WARMLIGHT=0"
+      ],
+      "firmware_update_flag_semantics": "NOOIR_DISABLE_FIRMWARE_FLASHING=1 compile-time disables the SD-based FirmwareFlasher paths; OTA behavior was not separately validated or disabled."
+    },
+    "pro_qemu_latest_capture": {
+      "serial_evidence": [
+        "ESP-ROM:esp32s3-20210327; rst POWERON; SPI_FLASH_BOOT",
+        "[MAIN] Hardware detect: X4 Pro",
+        "[SD] SDMMC card mounted",
+        "Starting CrossPoint version 1.6.6-x4p-exp-no-flash",
+        "[MAIN] Display initialized",
+        "[SHELF] render_ready theme=Main"
+      ],
+      "psram_evidence": "Separate exact-ELF heap capture reports PSRAM free 8,283,560 bytes, largest 8,283,552, corrupt 0 (emulator only).",
+      "home_screenshot_sha256": "ed22e869007ea9531c5abd9840e2dc8e906e697cf4b7b553cf4f620085571f9b",
+      "app_sha256": "0a0b5bb6eaa47ec4cdacc2a6af7f1d2a7166ff913658d86c555aac23aaa69ba9",
+      "console_jsonl_sha256": "2654535bd377bc75b69a93b27d7ccedb0fb0a504a0f7a8d6596d796a9348bb45",
+      "exact_app_bin": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4pro-EXPERIMENTAL.bin",
+      "qemu_version": "eink-qemu 0.9.2",
+      "panel_refreshes": 2,
+      "matching_elf": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4pro-EXPERIMENTAL.elf",
+      "latest_result": "This is the earlier exact-build Home capture; the later exact-build Reader run04 passed 27/27, including page keys, exit, progress save, and reopen (see reader_validation).",
+      "limitation": "The long virtual Power boot event can later enter the emulator low-power path; not a physical behavior or normal interactive-session proof.",
+      "log_sha256": "f9e6dbf7f824d451d19405425294eae30e639a39857905d0abc3b6a99c8bb933",
+      "serial": "USB Serial/JTAG",
+      "home_screenshot": "diagnostics/s3-revalidation-20261111/pro-qemu-fresh-home-capture-12/shots/home.png",
+      "machine": "x4pro",
+      "first_unverified_milestone": "This Home-only capture stopped at Home; reader_validation supersedes its Reader status. Dedicated page-1 screenshot, swipe, deep sleep/wake, and physical behavior remain unconfirmed.",
+      "panel": "uc8279-68",
+      "run_jsonl_sha256": "2e9dcb6471947e66edeada8d499179c3bc7ad27fc2f5ed61931d6d44d88d54ae4",
+      "emulator_flash_sha256": "b8389fa4e55be012411a6e5bac9e6a10724e04903b9dbbb0e8764023a61c392d",
+      "power_hold_ms": 49000,
+      "elf_sha256": "bd768427c55b500a87b2ffe3a39542a7053e102139b884ac103a9224765017e2",
+      "run": "diagnostics/s3-revalidation-20261111/pro-qemu-fresh-home-capture-12",
+      "date": "2026-11-11"
+    }
+  },
+  "reader_validation": {
+    "date": "2026-11-11",
+    "status": "Pro QEMU Reader run04 passed 27/27 scripted steps; no firmware rebuild or source edit was needed.",
+    "emulator": {
+      "version": "eink-qemu 0.9.2",
+      "machine": "x4pro",
+      "panel": "uc8279-68",
+      "console": "USB Serial/JTAG",
+      "virtual_sd_mib": 2050,
+      "cold_boot_power_hold_ms": 50000,
+      "virtual_flash": "diagnostics/eink-qemu-0.9.2/Folio-Nooir-v1.6.6-X4PRO-FRESHBUILD-EMU-ONLY-NOT-FOR-PHYSICAL-FLASH-20261111-16MiB.bin",
+      "virtual_flash_bytes": 16777216,
+      "virtual_flash_sha256": "b8389fa4e55be012411a6e5bac9e6a10724e04903b9dbbb0e8764023a61c392d",
+      "physical_use": "NEVER; emulator only"
+    },
+    "firmware": {
+      "bin": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4pro-EXPERIMENTAL.bin",
+      "bin_bytes": 5671104,
+      "bin_sha256": "0a0b5bb6eaa47ec4cdacc2a6af7f1d2a7166ff913658d86c555aac23aaa69ba9",
+      "elf": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4pro-EXPERIMENTAL.elf",
+      "elf_bytes": 86746476,
+      "elf_sha256": "bd768427c55b500a87b2ffe3a39542a7053e102139b884ac103a9224765017e2",
+      "identity": "Folio Nooir X4 Pro 1.6.6-x4p-exp-no-flash"
+    },
+    "runs": [
+      {
+        "name": "run02-full-reader-flow",
+        "exit_code": 1,
+        "outcome": "Home reached; a later scripted tap timed out after the guest entered low-power mode. Harness timing issue.",
+        "run_jsonl_sha256": "dcb8228a030c154b8cbdc10f8a705246943f30f573391214ded96a90caebc4aa"
+      },
+      {
+        "name": "run03-reader-open-corrected-card",
+        "exit_code": 1,
+        "outcome": "Reader opened and rendered; saved progress; synthetic swipe-left did not settle/change screen before timeout.",
+        "run_jsonl_sha256": "39fd98f22cf80a0be9d7dfbd93ee93570c9244e9af3f37e464c8c10a55084dca",
+        "console_jsonl_sha256": "d669c16f349f9d4a69827628f86bfe514f761832e134cd77725b9aaafc9d93ff8",
+        "reader_screenshot_pixels_sha256": "0cae4b130409464b5cb20f75d879d5480802474dfc7488ded332437bb32d7a8e"
+      },
+      {
+        "name": "run04-reopen-progress-page-keys-exit",
+        "exit_code": 0,
+        "steps_passed": 27,
+        "duration_seconds": 73.4,
+        "run_jsonl_sha256": "072fc25e9f691724555b43cca8065fb7a842d5e68023f0b07791abe0bdc3f1e2",
+        "console_jsonl_sha256": "867a88b10065d31d9550121520c88851b4b1c4bb1ffb43af33df13cca56fab66",
+        "metrics_json_sha256": "dd849be107baf39421ba8c3e53dc53174b1a81c1c79f34095e4b240abfd67b65",
+        "reader_reopened_screenshot_pixels_sha256": "0cae4b130409464b5cb20f75d879d5480802474dfc7488ded332437bb32d7a8e",
+        "reader_next_screenshot_pixels_sha256": "faff833e08d88f5cb2f68f0c4007da4c2e83859166c1470a073177815fb7d650",
+        "library_after_exit_screenshot_pixels_sha256": "e7d3ba3d096da2f23151bf0e8c8dc99f675c693f2748632e81ac4caffdffdfd1"
+      }
+    ],
+    "milestones": {
+      "application_entry": true,
+      "nooir_startup_logs": true,
+      "psram_allocator_initialized_in_qemu": true,
+      "x4_pro_profile_identified": true,
+      "display_and_home_rendered": true,
+      "virtual_sdmmc_mounted": true,
+      "epub_reader_entered": true,
+      "epub_content_rendered": true,
+      "isolated_page_1_screenshot_retained": false,
+      "next_and_previous_page_keys": true,
+      "reader_exit_to_recent_books_and_library": true,
+      "progress_bin_save": true,
+      "reopened_at_saved_progress": true,
+      "deep_sleep_shutdown_and_wake": false
+    },
+    "run04_metrics": {
+      "render_events": 3,
+      "render_ms": [
+        2120,
+        1324,
+        1314
+      ],
+      "render_median_ms": 1324,
+      "panel_refreshes": 24,
+      "screen_updates": 26,
+      "log_warnings": 0,
+      "log_errors": 2,
+      "log_error_causes": [
+        "optional emulator IMU not present",
+        "fresh virtual NVS used defaults"
+      ],
+      "panic_or_reset": false
+    },
+    "heap_snapshots": {
+      "home": {
+        "psram_free_bytes": 8283560,
+        "psram_largest_block_bytes": 8283552,
+        "internal_dram_free_bytes": 263816,
+        "internal_dram_largest_bytes": 223996,
+        "corrupt_blocks": 0
+      },
+      "reader_reopened": {
+        "psram_free_bytes": 8288684,
+        "psram_largest_block_bytes": 8283552,
+        "psram_min_free_bytes": 8240276,
+        "internal_dram_free_bytes": 258404,
+        "internal_dram_largest_bytes": 215408,
+        "corrupt_blocks": 0
+      },
+      "reader_exit": {
+        "psram_free_bytes": 8283560,
+        "psram_largest_block_bytes": 8283552,
+        "internal_dram_free_bytes": 263892,
+        "internal_dram_largest_bytes": 222304,
+        "corrupt_blocks": 0
+      }
+    },
+    "power": {
+      "boot_workaround": "--power-hold 50000 guest ms; default 1500 ms ends before app startup check",
+      "observed": "CPU low-power frequency entry/restore only",
+      "runtime_sleep_wake": "unverified; CLI has no configurable long post-boot power hold; no deep_sleep_enter or fresh wake boot evidenced"
+    },
+    "limitations": [
+      "QEMU results are virtual, not physical compatibility certification.",
+      "The captured initial Reader screenshot is page 3/10; first content render is logged and progress begins at page 0, but a dedicated page-1 screenshot was not retained.",
+      "Synthetic swipe failed to settle in run03; down/up keys passed in run04.",
+      "No same-configuration performance baseline was available."
+    ]
+  },
+  "safety_audit": {
+    "profiles": "x4pro and x4classic; no source/flag changes made during this audit",
+    "NOOIR_DISABLE_FIRMWARE_FLASHING": "Set to 1. Only guards SD FirmwareFlasher::validateImageFile and flashFromSdPath; both return FLASHING_DISABLED. This flag alone does not disable OTA.",
+    "NOOIR_EXPERIMENTAL_DEVICE_BUILD": "Set to 1. OtaUpdater checkForUpdate and installUpdate return NO_UPDATE; Settings updater/SD-update actions and main.cpp SD-recovery key path are compiled out.",
+    "updater_object_compiled": true,
+    "ota_transport_or_install_tested": false,
+    "sd_firmware_write_tested": false,
+    "in_device_recovery_available": false,
+    "implication": "A failed experimental boot has no OTA or SD-recovery route. Require separately prepared external, model-correct recovery before any future authorized device write.",
+    "ota_enablement_prerequisites": [
+      "device-specific image and release manifest",
+      "validate app-slot and boot-selection/rollback behavior",
+      "tested external recovery path",
+      "never use generic public C3 v1.6.6 firmware.bin"
+    ],
+    "partition_table_unchanged": true,
+    "physical_flash_performed": false,
+    "physical_bootloader_efuse_security_or_partition_touched": false,
+    "profile_review": {
+      "shared": {
+        "flash": "16 MiB DIO 80 MHz",
+        "psram": "8 MiB OPI dio_opi configured",
+        "framebuffer": "FREEINK_FB_PSRAM=1",
+        "sdmmc": "1-bit CLK41 CMD42 DAT0 40"
+      },
+      "x4pro": {
+        "touch": true,
+        "touch_reference": "GT911; GPIO2 active-low power",
+        "sd_power_reference": "GPIO5 active-low",
+        "selected_qemu_panel": "UC8279-68",
+        "frontlight_capability_compiled_out": true
+      },
+      "x4classic": {
+        "touch": false,
+        "input": "button-only mapping retained",
+        "sd_power_reference": "GPIO6 active-low",
+        "panel": "separate Classic UC8279 configuration; no Pro PLL command",
+        "frontlight": false
+      }
+    }
+  },
+  "classic_review": {
+    "reviewed_this_turn": true,
+    "simulator_rerun_this_turn": false,
+    "host_simulator_test_executes_classic_s3_bin": false,
+    "prior_replay": "SDL2; button-style navigation, Library, EPUB open/render, page 0 to 1, Reader exit, progress/book-state/statistics writes passed.",
+    "prior_log": "${NOOIR_D_ROOT}/logs/x4classic-validation-20261111-run01/classic-simulator.log",
+    "prior_log_sha256": "562ec89ace26042898ed691406e4870ced1a3cc40bfd5a2689bf535ca982d4d2",
+    "progress_reopen_after_host_restart_verified": false,
+    "touch_disabled_profile": true,
+    "qemu_machine_available": false,
+    "physical_gaps": [
+      "S3 BIN boot",
+      "SDMMC and GPIO",
+      "panel controller/power/refresh",
+      "PSRAM training",
+      "buttons/touch-disabled behavior on unit",
+      "sleep and wake",
+      "physical progress persistence"
+    ]
+  },
+  "hardware_bringup_checklist": [
+    "Confirm exact retail model/revision and Pro/Classic panel-controller variant.",
+    "Before any write, take read-only flash/partition/eFuse/security inventory, verify complete backups, and prepare model-correct external recovery.",
+    "Only after separate approval, use the device-specific image and staged plan on a spare unit; monitor serial output and current draw.",
+    "Verify PSRAM training/allocations, panel ID/orientation/full refresh, correct rails, and Pro GT911 or Classic buttons.",
+    "Test SDMMC mount and read/write on a spare card; check RTC and battery reporting.",
+    "Exercise Home, Library, EPUB first page, next/previous, exit, progress reopen, deep sleep, button wake, and repeated transitions while monitoring reset/brownout/heap/card integrity.",
+    "Keep OTA unavailable until image/manifest, partition/rollback state, and external recovery are reviewed and tested."
+  ],
+  "workstream_status": "PAUSED — awaiting physical hardware testing or a concrete Web Emulator integration requirement.",
+  "closing_checkpoint": {
+    "date": "2026-11-13",
+    "status": "PAUSED — awaiting physical hardware testing or a concrete Web Emulator integration requirement",
+    "latest_evidence": {
+      "classic_sdl2": {
+        "result": "PASS; host simulator only",
+        "log": "${NOOIR_D_ROOT}/logs/x4classic-validation-20261111-run01/classic-simulator.log",
+        "log_sha256": "562ec89ace26042898ed691406e4870ced1a3cc40bfd5a2689bf535ca982d4d2",
+        "unconfirmed": [
+          "Classic S3 BIN execution",
+          "progress reopen after simulator restart",
+          "physical hardware"
+        ]
+      },
+      "pro_native_qemu": {
+        "result": "PASS; exact fresh firmware; 27/27 steps",
+        "run": "diagnostics/s3-reader-validation-20261111/run04-reopen-progress-page-keys-exit/run.jsonl",
+        "run_sha256": "072fc25e9f691724555b43cca8065fb7a842d5e68023f0b07791abe0bdc3f1e2",
+        "unconfirmed": [
+          "dedicated page-1 screenshot",
+          "swipe result",
+          "physical touch behavior",
+          "deep sleep/wake",
+          "physical hardware"
+        ]
+      },
+      "browser_wasm": "UNCONFIRMED; no browser build/runtime evidence"
+    },
+    "canonical_validated_pairs": {
+      "x4pro": {
+        "bin": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4pro-EXPERIMENTAL.bin",
+        "bin_sha256": "0a0b5bb6eaa47ec4cdacc2a6af7f1d2a7166ff913658d86c555aac23aaa69ba9",
+        "elf": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4pro-EXPERIMENTAL.elf",
+        "elf_sha256": "bd768427c55b500a87b2ffe3a39542a7053e102139b884ac103a9224765017e2"
+      },
+      "x4classic": {
+        "bin": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4classic-EXPERIMENTAL.bin",
+        "bin_sha256": "a1ece7c1897ab39ac24c6e30d0e0331b29a62925d28fcf52657d39cb92dcabab",
+        "elf": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4classic-EXPERIMENTAL.elf",
+        "elf_sha256": "bc412ce4b3587fe6248b80aa5c51793704f7e2d8b228a68c3ed1ccd44549e44c"
+      }
+    },
+    "preservation": "All pre-existing BIN/ELF/export/manifest/QEMU/test artifacts retained. Older hash-different app-only exports without matching historical ELF remain separate and unresolved; no rebuild attempted. Both 16 MiB Pro full-flash images remain emulator-only and never for physical flashing.",
+    "open_items": [
+      "physical Pro/Classic validation",
+      "Pro deep-sleep and wake",
+      "Classic firmware execution",
+      "physical touch/swipe and button fidelity",
+      "browser/WASM runtime",
+      "first-page screenshot",
+      "safe external backup/recovery"
+    ],
+    "actions_this_checkpoint": {
+      "new_builds": false,
+      "tests_rerun": false,
+      "source_changes": false,
+      "physical_flash": false,
+      "commit_push_merge_release_deploy": false
+    },
+    "restart_conditions": [
+      "physical unit available with exact board/panel identification plus validated read-only backup and external recovery procedure",
+      "or a concrete Web Emulator integration requirement specifying host simulator versus real-firmware guest backend"
+    ]
+  },
+  "github_backup": {
+    "status": "prepared; remote push verification pending",
+    "repository": "https://github.com/toshio2011/folio-nooir",
+    "branch": "codex/nooir-x4pro-x4classic-s3-port-20261113",
+    "base_commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
+    "contains_firmware_artifacts": false,
+    "contains_raw_test_evidence": false,
+    "source_scope": "manifest-listed X4 Pro/Classic port files, handoffs, compatibility work, .gitmodules, and pinned S3 SDK gitlink"
+  }
+}
