@@ -235,7 +235,7 @@
     }
   },
   "commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
-  "handoff_sha256": "3dc3ac532e4504560c3266f7883a9a90795c12553227ff26774e8131e6f11082",
+  "handoff_sha256": "0c280beebca18687dc85c01d1bf1675103974a3f444b9e55bcb06e9155c4a98d",
   "limitations": [
     "Classic SDL2 simulator uses folder-backed host storage and does not validate physical SDMMC, PSRAM, panel, GPIO, power, or touch hardware.",
     "No physical validation or flash is claimed.",
@@ -487,218 +487,257 @@
         "path": ".gitmodules",
         "status": "modified",
         "upstream_sha256": "d1a29841276a9e0ab9dddbb7930947c9e98363da6579fb8070d65af5a2b34bed",
-        "worktree_sha256": "9b2e032c81b64cfeea0ec59ab0b79597f84f8ccb4ba224589ee425be7352c66c"
+        "worktree_sha256": "9b2e032c81b64cfeea0ec59ab0b79597f84f8ccb4ba224589ee425be7352c66c",
+        "git_blob_sha256": "3108d704813451c2ec341a6b12f34388bd3f424c02b6485f732eda0c5cad4dda"
       },
       {
         "path": ".gitignore",
         "status": "modified",
         "upstream_sha256": "19b9f590012ff240b2dd8c55efdc0f84873fa47f8823d77d6cb720125e2addae",
-        "worktree_sha256": "2994167673c2e21f39d43ff22f992e1f9d8f54816abc1e5f076da666449ebda1"
+        "worktree_sha256": "2994167673c2e21f39d43ff22f992e1f9d8f54816abc1e5f076da666449ebda1",
+        "git_blob_sha256": "2994167673c2e21f39d43ff22f992e1f9d8f54816abc1e5f076da666449ebda1"
       },
       {
         "path": "PORT_HANDOFF.md",
         "status": "added",
-        "worktree_sha256": "3dc3ac532e4504560c3266f7883a9a90795c12553227ff26774e8131e6f11082"
+        "worktree_sha256": "0c280beebca18687dc85c01d1bf1675103974a3f444b9e55bcb06e9155c4a98d",
+        "git_blob_sha256": "ec2b9dd02ee5bb378b4df3ab0537fba58407dbcd9e14946f96ddfea0017e2019"
       },
       {
         "path": "REFERENCE-LICENSES.md",
         "status": "added",
-        "worktree_sha256": "5079ad70c0559329f1aa35fe2df0d4227f0c23c2f2356614447d28ce69a0c873"
+        "worktree_sha256": "5079ad70c0559329f1aa35fe2df0d4227f0c23c2f2356614447d28ce69a0c873",
+        "git_blob_sha256": "5079ad70c0559329f1aa35fe2df0d4227f0c23c2f2356614447d28ce69a0c873"
       },
       {
         "path": "lib/hal/HalGPIO.cpp",
         "status": "modified",
         "upstream_sha256": "ce730740356f3230e32fee0d56793ffa9c13127c719d397918f2d1eb5cd8a488",
-        "worktree_sha256": "9a48ed8777ffc75a864d3dda9b17b78a071a15a6ac5d75594fb77944d6220517"
+        "worktree_sha256": "9a48ed8777ffc75a864d3dda9b17b78a071a15a6ac5d75594fb77944d6220517",
+        "git_blob_sha256": "ed9c6a71257c4fbdd99d36cdaa08f4e1d3bc82faeb741afba1af9409b014aa9f"
       },
       {
         "path": "lib/hal/HalGPIO.h",
         "status": "modified",
         "upstream_sha256": "3c1bcb28ce865f424b6194ab353c793730f2d0f09fa21f16e9d1c1f80dd4fbcb",
-        "worktree_sha256": "d645a778a1062f0bb5b924b5dcb0a35b463e3bf9f1f0706698b3cc30c81f47f3"
+        "worktree_sha256": "d645a778a1062f0bb5b924b5dcb0a35b463e3bf9f1f0706698b3cc30c81f47f3",
+        "git_blob_sha256": "c96f7506cb70173fdda197038de029ee3dd4f9cfc83614f60cd628ea41b13a52"
       },
       {
         "path": "lib/hal/HalStorage.cpp",
         "status": "modified",
         "upstream_sha256": "f6e439b84bed1125c268ad1b4e2b384fbfb7e37a2374f5549a9c25bef51087d1",
-        "worktree_sha256": "36cd9c92e0bcf70f8c7cae34994b92e8cf3774009b179f1e5bf349a5e5dffad3"
+        "worktree_sha256": "36cd9c92e0bcf70f8c7cae34994b92e8cf3774009b179f1e5bf349a5e5dffad3",
+        "git_blob_sha256": "36cd9c92e0bcf70f8c7cae34994b92e8cf3774009b179f1e5bf349a5e5dffad3"
       },
       {
         "path": "platformio.ini",
         "status": "modified",
         "upstream_sha256": "ff03157d7a81b1f60341dbf4d5ffbe33bb2fe49f6e3cb7d09ff42bf5d87b6f28",
-        "worktree_sha256": "258e3b7abd1cccdb55634379ea9b8b8d063247898d79f0af51ef582dd00706f6"
+        "worktree_sha256": "258e3b7abd1cccdb55634379ea9b8b8d063247898d79f0af51ef582dd00706f6",
+        "git_blob_sha256": "258e3b7abd1cccdb55634379ea9b8b8d063247898d79f0af51ef582dd00706f6"
       },
       {
         "path": "scripts/export_experimental_firmware.py",
         "status": "added",
-        "worktree_sha256": "c2d7037af8970c0054d169a8a85844e20811fde8a2c12bcd7e5434c42f816874"
+        "worktree_sha256": "c2d7037af8970c0054d169a8a85844e20811fde8a2c12bcd7e5434c42f816874",
+        "git_blob_sha256": "c2d7037af8970c0054d169a8a85844e20811fde8a2c12bcd7e5434c42f816874"
       },
       {
         "path": "scripts/guard_nooir_upload.py",
         "status": "added",
-        "worktree_sha256": "b8b4366bbfab33e8eb028e432bcd9afb9ff5d5adedc13331ed5ed17af3811817"
+        "worktree_sha256": "b8b4366bbfab33e8eb028e432bcd9afb9ff5d5adedc13331ed5ed17af3811817",
+        "git_blob_sha256": "b8b4366bbfab33e8eb028e432bcd9afb9ff5d5adedc13331ed5ed17af3811817"
       },
       {
         "path": "scripts/simulator_gpio_compat.py",
         "status": "added",
-        "worktree_sha256": "319d8768f7f0e5e0a7108b403ca237940cf94cbdb15673c9d10570a310c8ae26"
+        "worktree_sha256": "319d8768f7f0e5e0a7108b403ca237940cf94cbdb15673c9d10570a310c8ae26",
+        "git_blob_sha256": "319d8768f7f0e5e0a7108b403ca237940cf94cbdb15673c9d10570a310c8ae26"
       },
       {
         "path": "scripts/simulator_hal_clock.py",
         "status": "modified",
         "upstream_sha256": "921da56e0b4ba0dbf26fbe2c7f5f601fd9b407c074a0be08e50b55cfcc93ce75",
-        "worktree_sha256": "0dbfb4e6c10a1f31fb4f8caa6906adb7c5f3d15f75882d2a28692a7dd4f93385"
+        "worktree_sha256": "0dbfb4e6c10a1f31fb4f8caa6906adb7c5f3d15f75882d2a28692a7dd4f93385",
+        "git_blob_sha256": "40109bf0af0281ee90a5ead7194ae1990d1167e024669c4034876d9753f2e9dd"
       },
       {
         "path": "scripts/simulator_hal_storage.py",
         "status": "added",
-        "worktree_sha256": "cc83d0b785441a4c126f01144a447e06a4573e693df6e4a4654b0cbf4652ebb4"
+        "worktree_sha256": "cc83d0b785441a4c126f01144a447e06a4573e693df6e4a4654b0cbf4652ebb4",
+        "git_blob_sha256": "cc83d0b785441a4c126f01144a447e06a4573e693df6e4a4654b0cbf4652ebb4"
       },
       {
         "path": "scripts/simulator_heap_compat.py",
         "status": "added",
-        "worktree_sha256": "9dd43674bcb5147fe4be34afeb19f9802d866767db4efddfee3c875edd9decdc"
+        "worktree_sha256": "9dd43674bcb5147fe4be34afeb19f9802d866767db4efddfee3c875edd9decdc",
+        "git_blob_sha256": "9dd43674bcb5147fe4be34afeb19f9802d866767db4efddfee3c875edd9decdc"
       },
       {
         "path": "scripts/simulator_network_compat.py",
         "status": "added",
-        "worktree_sha256": "75fe5a691a186794b72614dc391d6f26ba4c2e1cbd7a30ed42bbd1b0cc327b39"
+        "worktree_sha256": "75fe5a691a186794b72614dc391d6f26ba4c2e1cbd7a30ed42bbd1b0cc327b39",
+        "git_blob_sha256": "75fe5a691a186794b72614dc391d6f26ba4c2e1cbd7a30ed42bbd1b0cc327b39"
       },
       {
         "path": "scripts/simulator_png_compat.py",
         "status": "modified",
         "upstream_sha256": "8e6355fe65e7cb1455e94d588f9df4832577bdaff9fdb3da14258c58cbc9dbba",
-        "worktree_sha256": "059f33728d492378aa3fb6c65ce0bfbfe2887bbca74436fb219884a241197be3"
+        "worktree_sha256": "059f33728d492378aa3fb6c65ce0bfbfe2887bbca74436fb219884a241197be3",
+        "git_blob_sha256": "6c930dd5303cc0f04a7eee3364283a43931b099df0544f574a33468afed1ac9c"
       },
       {
         "path": "scripts/simulator_string_compat.py",
         "status": "modified",
         "upstream_sha256": "105e3de2d77e1669d096e8ac4a9c96a805e2825e851fbbc07bd3f370acf6affa",
-        "worktree_sha256": "ee12006aeff4fdb780d90c0bf95c58e06bdf14dadbbdee957eeebf7e91b9fc84"
+        "worktree_sha256": "ee12006aeff4fdb780d90c0bf95c58e06bdf14dadbbdee957eeebf7e91b9fc84",
+        "git_blob_sha256": "e345be98cf8c9a07879f927c58b7d0c9630ebe392df7184ad890c878de84e7dc"
       },
       {
         "path": "scripts/simulator_system_compat.py",
         "status": "added",
-        "worktree_sha256": "6adab62759baf91dfe146f8edcaf08db28684d3eb9184dfbe79d9304040ee2c2"
+        "worktree_sha256": "6adab62759baf91dfe146f8edcaf08db28684d3eb9184dfbe79d9304040ee2c2",
+        "git_blob_sha256": "6adab62759baf91dfe146f8edcaf08db28684d3eb9184dfbe79d9304040ee2c2"
       },
       {
         "path": "scripts/simulator_wifi_compat.py",
         "status": "added",
-        "worktree_sha256": "56375cbb3dd40ecaf37e764f7f85265ee72e54ce0ea87e0e580b35e83f41e1e9"
+        "worktree_sha256": "56375cbb3dd40ecaf37e764f7f85265ee72e54ce0ea87e0e580b35e83f41e1e9",
+        "git_blob_sha256": "56375cbb3dd40ecaf37e764f7f85265ee72e54ce0ea87e0e580b35e83f41e1e9"
       },
       {
         "path": "simulator_compat/esp_netif.h",
         "status": "added",
-        "worktree_sha256": "6fceac504206cee55ecf0eae10b692593314e2653b85631dc38a08d0dca0b5dd"
+        "worktree_sha256": "6fceac504206cee55ecf0eae10b692593314e2653b85631dc38a08d0dca0b5dd",
+        "git_blob_sha256": "6fceac504206cee55ecf0eae10b692593314e2653b85631dc38a08d0dca0b5dd"
       },
       {
         "path": "src/BleInput.cpp",
         "status": "modified",
         "upstream_sha256": "567c2370cdf8ee0a8cfc4d2e3dc87b8e98462071ac6be32c76d462e2178b7d7e",
-        "worktree_sha256": "9e1bd7b07f72ed035da48c7bca734baf825195ee7f804eaca573063b894c437f"
+        "worktree_sha256": "9e1bd7b07f72ed035da48c7bca734baf825195ee7f804eaca573063b894c437f",
+        "git_blob_sha256": "d882e1d73bb68fa603c479734c41400240deee25875c5dbf7e8db8b57dd924a8"
       },
       {
         "path": "src/MappedInputManager.cpp",
         "status": "modified",
         "upstream_sha256": "03ab2306ea24df36d14d7f641b2dac70ede72672533d55fbd12725bf41dce8c1",
-        "worktree_sha256": "35d76fe2b85c43d0ef9881a0bb97e4a2808a0397bea44cdbbb8705b418c7156e"
+        "worktree_sha256": "35d76fe2b85c43d0ef9881a0bb97e4a2808a0397bea44cdbbb8705b418c7156e",
+        "git_blob_sha256": "cd5b30849b6091f5ee62fb1729353d3cdc94f6fa4533a136bf43bae3e9b2172d"
       },
       {
         "path": "src/NooirAppDescriptor.cpp",
         "status": "modified",
         "upstream_sha256": "1fceee5b2d58698bd4859297e7bc4b75af1e33346e83b87168adbb1e6b25bf0e",
-        "worktree_sha256": "d342c9f3f0a93ef31e8516c19d9e3cd6bdf6688003bba6e04413e5199a0f6914"
+        "worktree_sha256": "d342c9f3f0a93ef31e8516c19d9e3cd6bdf6688003bba6e04413e5199a0f6914",
+        "git_blob_sha256": "3c2d3128b2c1e28ac0480ccd1e603067ab3c1a09e1deca566104fbe653432d4a"
       },
       {
         "path": "src/NooirDeviceIdentity.h",
         "status": "added",
-        "worktree_sha256": "1a027603ce40737c49f02c58e9dac9a0e794c5ff4d6642eda91188f06e1545c2"
+        "worktree_sha256": "1a027603ce40737c49f02c58e9dac9a0e794c5ff4d6642eda91188f06e1545c2",
+        "git_blob_sha256": "1a027603ce40737c49f02c58e9dac9a0e794c5ff4d6642eda91188f06e1545c2"
       },
       {
         "path": "src/NooirFirmwareIdentity.h",
         "status": "added",
-        "worktree_sha256": "b0d6be5c8fd7c44e840b555aef2756f02e637b78ddfde92b5e4a8655061bf594"
+        "worktree_sha256": "b0d6be5c8fd7c44e840b555aef2756f02e637b78ddfde92b5e4a8655061bf594",
+        "git_blob_sha256": "b0d6be5c8fd7c44e840b555aef2756f02e637b78ddfde92b5e4a8655061bf594"
       },
       {
         "path": "src/activities/reader/EpubReaderActivity.cpp",
         "status": "modified",
         "upstream_sha256": "d96f45e5dcfb4732e8fde2b56753b9f149c92b78a041d7b199a361c439a5f1fe",
-        "worktree_sha256": "9c2f77126b7b97500571794a27a95dd2420c2c83a43aa80ad5c9293fd6cb8c72"
+        "worktree_sha256": "9c2f77126b7b97500571794a27a95dd2420c2c83a43aa80ad5c9293fd6cb8c72",
+        "git_blob_sha256": "cb3015a01fec1af33272b5e53dd9b209d44827de1e4cd55c2b97864fead754b3"
       },
       {
         "path": "src/activities/settings/BluetoothSettingsActivity.cpp",
         "status": "modified",
         "upstream_sha256": "eac4d8a1a5275959d2bdad195101fbc1fa1b0e648a0438f5bd565000f6961388",
-        "worktree_sha256": "2381aec36e0b30e2a9c8c2d86f32aba286913c25a392370a5efb42c27dd10dc3"
+        "worktree_sha256": "2381aec36e0b30e2a9c8c2d86f32aba286913c25a392370a5efb42c27dd10dc3",
+        "git_blob_sha256": "7d5f9f12ee7d8a591da341de7c1847d89ec0183bad01de746b03bbf77f212e70"
       },
       {
         "path": "src/activities/settings/DeviceInfoActivity.cpp",
         "status": "modified",
         "upstream_sha256": "c49f6f21e66915e5743a06bb7d387e30919970d1a2fa79b3215711cdf74b2e53",
-        "worktree_sha256": "433bb5f44278ffc4b1324ae18730d218b2ac876e3453b1cd63e1bc5b7fe1c445"
+        "worktree_sha256": "433bb5f44278ffc4b1324ae18730d218b2ac876e3453b1cd63e1bc5b7fe1c445",
+        "git_blob_sha256": "2c24c23f8df887165cee10f8c0b8c2e2effa1b99e4bd711e42f5729cffe6820a"
       },
       {
         "path": "src/activities/settings/DeviceInfoActivity.h",
         "status": "modified",
         "upstream_sha256": "3620c611749e26712430ba09d8d648ef55ae8e135ca57a6fb62763513986dacb",
-        "worktree_sha256": "d85f7235914ee24954b9f17398799ec1feb92f46357ef54a0355cfa57bc5f148"
+        "worktree_sha256": "d85f7235914ee24954b9f17398799ec1feb92f46357ef54a0355cfa57bc5f148",
+        "git_blob_sha256": "3e331c85e6cced6346beca6168581f329b84ead4093f580777b97535c56fd9c3"
       },
       {
         "path": "src/activities/settings/SettingsActivity.cpp",
         "status": "modified",
         "upstream_sha256": "38cb0de91bb0db33adac3a552dbea677833e6f6ebd71dbab0dc9eac36a10fadc",
-        "worktree_sha256": "90a612819e11a3b31f9f8e3cff68d6d8b0816312e1f615a0fda110de7bba7a30"
+        "worktree_sha256": "90a612819e11a3b31f9f8e3cff68d6d8b0816312e1f615a0fda110de7bba7a30",
+        "git_blob_sha256": "90a612819e11a3b31f9f8e3cff68d6d8b0816312e1f615a0fda110de7bba7a30"
       },
       {
         "path": "src/main.cpp",
         "status": "modified",
         "upstream_sha256": "97cfb8332d98e53b613a744da96d9c012efa275b7d209bdb58f5226decf8112f",
-        "worktree_sha256": "842e792aef8addd612bc49a0f336ccd18f14f0d12c56b36d68adbb0ce69f5668"
+        "worktree_sha256": "842e792aef8addd612bc49a0f336ccd18f14f0d12c56b36d68adbb0ce69f5668",
+        "git_blob_sha256": "842e792aef8addd612bc49a0f336ccd18f14f0d12c56b36d68adbb0ce69f5668"
       },
       {
         "path": "src/network/FirmwareFlasher.cpp",
         "status": "modified",
         "upstream_sha256": "fc05a6af5c6b1343cf67b851c183ed1d205403443c1ba53364969cb14e1ab29e",
-        "worktree_sha256": "944c01b4fa82436ebd41b5aab839e5edf29ce77e54fd9617e7a29309d33d3380"
+        "worktree_sha256": "944c01b4fa82436ebd41b5aab839e5edf29ce77e54fd9617e7a29309d33d3380",
+        "git_blob_sha256": "944c01b4fa82436ebd41b5aab839e5edf29ce77e54fd9617e7a29309d33d3380"
       },
       {
         "path": "src/network/FirmwareFlasher.h",
         "status": "modified",
         "upstream_sha256": "82f950bdbbdb710f71ff97443c1e920a0c693d3a495387cf8122070ac2492178",
-        "worktree_sha256": "2b64de6d40f361a4cadfd515d9f33ed766d5752a8875ebd849d5d2cf1e8d0a1f"
+        "worktree_sha256": "2b64de6d40f361a4cadfd515d9f33ed766d5752a8875ebd849d5d2cf1e8d0a1f",
+        "git_blob_sha256": "2b64de6d40f361a4cadfd515d9f33ed766d5752a8875ebd849d5d2cf1e8d0a1f"
       },
       {
         "path": "src/network/OtaUpdater.cpp",
         "status": "modified",
         "upstream_sha256": "2180d03e7d733f03e94675879d50c0448da58f702d16363e103387d1cf9d7b34",
-        "worktree_sha256": "b91c89a303d7adc5ede38bf54ecf074f4685984becf96b29b3868ddf69dba9d2"
+        "worktree_sha256": "b91c89a303d7adc5ede38bf54ecf074f4685984becf96b29b3868ddf69dba9d2",
+        "git_blob_sha256": "4af8dd964d54dda416ec27d79ccdf655ec445197650bb23a548be3a7ec3b7e5d"
       },
       {
         "path": "src/platform/skip_efuse_blk_check.c",
         "status": "modified",
         "upstream_sha256": "d5a9f47527ee8d89b2a667e7e24492b81f5e46bb9adddaa6855535b3fa01ea11",
-        "worktree_sha256": "e250b150c25465dd943f9d5434a77811f57912a51fd4580966faf0624ede5eac"
+        "worktree_sha256": "e250b150c25465dd943f9d5434a77811f57912a51fd4580966faf0624ede5eac",
+        "git_blob_sha256": "e250b150c25465dd943f9d5434a77811f57912a51fd4580966faf0624ede5eac"
       },
       {
         "path": "test/nooir_firmware_identity/CMakeLists.txt",
         "status": "added",
-        "worktree_sha256": "0250c1a3294f1c91baed4f8da3df38cecad3f86518cdc89032048815dd12c2b0"
+        "worktree_sha256": "0250c1a3294f1c91baed4f8da3df38cecad3f86518cdc89032048815dd12c2b0",
+        "git_blob_sha256": "0250c1a3294f1c91baed4f8da3df38cecad3f86518cdc89032048815dd12c2b0"
       },
       {
         "path": "test/nooir_firmware_identity/NooirFirmwareIdentityTest.cpp",
         "status": "added",
-        "worktree_sha256": "e9f75395c430e3a9b29fecef457977f9b52b6e7329bfb18685edb496ef4567d3"
+        "worktree_sha256": "e9f75395c430e3a9b29fecef457977f9b52b6e7329bfb18685edb496ef4567d3",
+        "git_blob_sha256": "e9f75395c430e3a9b29fecef457977f9b52b6e7329bfb18685edb496ef4567d3"
       },
       {
         "path": "test/python/test_firmware_artifacts.py",
         "status": "added",
-        "worktree_sha256": "67dbd458e265ca15d815385fd940d7ca3d8c42934a2e09ec4fba00536bc5fb9d"
+        "worktree_sha256": "67dbd458e265ca15d815385fd940d7ca3d8c42934a2e09ec4fba00536bc5fb9d",
+        "git_blob_sha256": "67dbd458e265ca15d815385fd940d7ca3d8c42934a2e09ec4fba00536bc5fb9d"
       },
       {
         "path": "docs/WEB_EMULATOR_S3_COMPATIBILITY_HANDOFF_2026-11-11.md",
         "status": "added",
-        "worktree_sha256": "6cb324f434630aab9a0da802ed427c8c9200573e80286b082af736532ee82691"
+        "worktree_sha256": "991ef721df98d650969799f3682067ce284365763e7d96b191865f710cda3ff4",
+        "git_blob_sha256": "991ef721df98d650969799f3682067ce284365763e7d96b191865f710cda3ff4"
       }
     ],
     "scope": "Application/configuration source and handoff files, with the required pinned S3 SDK gitlink",
@@ -718,12 +757,13 @@
         "impact": "fresh recursive checkout cannot initialize this legacy dependency; exact snapshot remains local-only"
       }
     ],
-    "file_entry_count": 39
+    "file_entry_count": 39,
+    "hash_semantics": "worktree_sha256 records exact local D: file bytes; git_blob_sha256 records the normalized content staged in this repository. Git line-ending conversion can make these hashes differ."
   },
   "upstream": "Folio Nooir 1.6.6",
   "browser_compatibility_handoff": {
     "path": "docs/WEB_EMULATOR_S3_COMPATIBILITY_HANDOFF_2026-11-11.md",
-    "sha256": "6cb324f434630aab9a0da802ed427c8c9200573e80286b082af736532ee82691",
+    "sha256": "991ef721df98d650969799f3682067ce284365763e7d96b191865f710cda3ff4",
     "current_eink_qemu": "Pinned native eink-qemu 0.9.2 x4pro guest now passes the exact fresh Pro Reader flow with a 50000 ms cold-boot virtual Power hold; no X4 Classic machine; browser/WASM execution remains unverified.",
     "recommendation": "Classic SDL2 host reader flow passes but is not Classic BIN execution; exact fresh Pro firmware passes native x4pro QEMU through Reader, page keys, exit and saved-progress reopen (27/27). Browser/WASM, physical hardware, Pro deep sleep/wake, touch/swipe fidelity, Classic guest execution, and safe recovery remain open.",
     "emscripten": "Not installed in current WSL; browser build not attempted.",
@@ -1265,7 +1305,7 @@
     ]
   },
   "github_backup": {
-    "status": "VERIFIED: remote branch head matched the reviewed source commit before the follow-up handoff update",
+    "status": "VERIFIED: direct remote ref matched the reviewed source commit; handoff follow-up commit was also pushed and verified",
     "repository": "https://github.com/toshio2011/folio-nooir",
     "branch": "codex/nooir-x4pro-x4classic-s3-port-20261113",
     "base_commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
@@ -1282,6 +1322,7 @@
       "diagnostics/ble/README.md",
       "test/language/RTL/Bidi-Test_ch1_p1_0pct_398667.bmp",
       "test/language/RTL/Bidi-Test_ch1_p2_50pct_422825.bmp"
-    ]
+    ],
+    "verified_remote_head_after_handoff_commit_sha": "3ee416a6ebc6ad2d16521c4dd88563570e5c0c4b"
   }
 }
