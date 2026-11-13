@@ -73,6 +73,9 @@ class HalGPIO {
   unsigned long getHeldTime() const;
   unsigned long getPowerButtonHeldTime() const;
   bool hasTouch() const;
+  bool hasHomeKey() const;
+  bool wasHomeKeyPressed() const;
+  bool wasHomeKeyTapped() const;
   bool wasTouchTap(float& nx, float& ny) const;
   bool wasTouchDown(float& nx, float& ny) const;
   bool isTouchTapCandidate(float& nx, float& ny, unsigned long& heldMs) const;

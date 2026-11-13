@@ -259,6 +259,14 @@ void HalGPIO::begin() {
   }
 #else
   _deviceType = DeviceType::X4;
+#if (defined(FREEINK_DEVICE_X4PRO) && FREEINK_DEVICE_X4PRO) || \
+    (defined(FREEINK_DEVICE_X4CLASSIC) && FREEINK_DEVICE_X4CLASSIC)
+  // The X4 Pro and Classic share glass across SSD1677 / UC8179 / UC8279
+  // batches. Unlike the C3 path above, their controller probe is board-profile
+  // based and safe on the S3 pinout. Run it before InputManager/display setup
+  // claims any device pins; never run the C3 X3-vs-X4 I2C fingerprint here.
+  freeink::applyXteinkDisplayController();
+#endif
 #endif
   inputMgr.begin();
 }
@@ -276,7 +284,7 @@ bool HalGPIO::isPressed(uint8_t buttonIndex) const { return inputMgr.isPressed(b
 
 bool HalGPIO::wasPressed(uint8_t buttonIndex) const { return inputMgr.wasPressed(buttonIndex); }
 
-bool HalGPIO::wasAnyPressed() const { return inputMgr.wasAnyPressed(); }
+bool HalGPIO::wasAnyPressed() const { return inputMgr.wasAnyPressed() || inputMgr.wasHomeKeyPressed(); }
 
 bool HalGPIO::wasReleased(uint8_t buttonIndex) const { return inputMgr.wasReleased(buttonIndex); }
 
@@ -287,6 +295,12 @@ unsigned long HalGPIO::getHeldTime() const { return inputMgr.getHeldTime(); }
 unsigned long HalGPIO::getPowerButtonHeldTime() const { return inputMgr.getPowerButtonHeldTime(); }
 
 bool HalGPIO::hasTouch() const { return inputMgr.hasTouch(); }
+
+bool HalGPIO::hasHomeKey() const { return BoardConfig::hasHomeKey(); }
+
+bool HalGPIO::wasHomeKeyPressed() const { return inputMgr.wasHomeKeyPressed(); }
+
+bool HalGPIO::wasHomeKeyTapped() const { return inputMgr.wasHomeKeyTapped(); }
 
 bool HalGPIO::wasTouchTap(float& nx, float& ny) const { return inputMgr.wasTouchTap(nx, ny); }
 

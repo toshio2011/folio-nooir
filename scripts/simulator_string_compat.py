@@ -14,7 +14,7 @@ Import("env")  # noqa: F821  -- provided by PlatformIO
 
 simulator_env = str(env.get("PIOENV") or "")
 
-if simulator_env in ("simulator_x4", "simulator_x3"):
+if simulator_env in ("simulator_x4", "simulator_x3", "simulator_x4pro", "simulator_x4classic"):
     project_dir = Path(env.subst("$PROJECT_DIR"))
     string_path = (
         project_dir
@@ -60,6 +60,20 @@ if simulator_env in ("simulator_x4", "simulator_x3"):
                 print("Patched simulator String with equalsIgnoreCase")
         else:
             print("Simulator String already provides equalsIgnoreCase")
+
+        clear_method = "  void clear() { s.clear(); readPos = 0; }\n"
+        if text.count(clear_method) > 1:
+            text = text.replace(clear_method, "", text.count(clear_method) - 1)
+            string_path.write_text(text, encoding="utf-8", newline="")
+            print("Removed duplicate simulator String clear shim")
+        if "void clear()" not in text:
+            anchor = "  bool isEmpty() const { return s.empty(); }\n"
+            if anchor not in text:
+                print("Simulator String compatibility: isEmpty API shape changed; leaving clear unchanged")
+            else:
+                text = text.replace(anchor, anchor + clear_method, 1)
+                string_path.write_text(text, encoding="utf-8", newline="")
+                print("Patched simulator String with clear")
 
         if "operator std::string() const" not in text:
             anchor = "  const char *c_str() const { return s.c_str(); }\n"

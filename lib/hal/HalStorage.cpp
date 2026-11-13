@@ -326,6 +326,94 @@ HalStorageReadStatus HalStorage::readFileChecked(const char* path, String& conte
 #endif
   );
   lock.setLimitBytes(maxBytes);
+#if defined(NOOIR_S3_SDK_COMPAT) && NOOIR_S3_SDK_COMPAT
+  // The pinned S3 FreeInk SDK predates SDCardManager::readFileChecked(). Keep
+  // the v1.6.6 checked-read contract here while retaining v1.6.7 lock telemetry.
+  const auto finish = [&](const HalStorageReadStatus status) {
+    lock.setOutcome(content.length(), static_cast<uint8_t>(status));
+    return status;
+  };
+  content = "";
+  if (!SDCard.ready()) return finish(HalStorageReadStatus::Unavailable);
+  if (!path || !path[0]) return finish(HalStorageReadStatus::IoError);
+
+  FsFile file = SDCard.open(path, O_RDONLY);
+  if (file) {
+    const uint64_t expected = file.fileSize();
+    if (expected > maxBytes) {
+      file.close();
+      return finish(HalStorageReadStatus::TooLarge);
+    }
+    if (!content.reserve(static_cast<unsigned int>(expected))) {
+      file.close();
+      return finish(HalStorageReadStatus::IoError);
+    }
+
+    uint8_t buffer[256];
+    uint64_t total = 0;
+    while (total < expected) {
+      const size_t wanted = static_cast<size_t>(std::min<uint64_t>(sizeof(buffer), expected - total));
+      const int count = file.read(buffer, wanted);
+      if (count <= 0 || static_cast<size_t>(count) > wanted ||
+          !content.concat(reinterpret_cast<const char*>(buffer), static_cast<unsigned int>(count))) {
+        file.close();
+        content = "";
+        return finish(HalStorageReadStatus::IoError);
+      }
+      total += static_cast<size_t>(count);
+    }
+    const bool readError = file.getError() != 0 || total != expected || file.fileSize() != expected;
+    file.close();
+    if (readError) {
+      content = "";
+      return finish(HalStorageReadStatus::IoError);
+    }
+    return finish(HalStorageReadStatus::Success);
+  }
+
+  // Confirm a clean miss by scanning the parent. A failed directory scan is
+  // conservatively an I/O error so persistence recovery never treats a card
+  // fault as an absent settings file.
+  const char* finalSlash = strrchr(path, '/');
+  const char* baseName = finalSlash ? finalSlash + 1 : path;
+  if (!baseName[0]) return finish(HalStorageReadStatus::IoError);
+  String parentPath = finalSlash ? String(path).substring(0, finalSlash - path) : String(".");
+  if (parentPath.isEmpty()) parentPath = "/";
+
+  auto scanDirectory = [](const char* directoryPath, const char* wantedName, bool& complete) {
+    complete = false;
+    FsFile directory = SDCard.open(directoryPath, O_RDONLY);
+    if (!directory || !directory.isDirectory()) return false;
+    bool found = false;
+    char name[256];
+    while (true) {
+      FsFile entry = directory.openNextFile();
+      if (!entry) break;
+      name[0] = '\0';
+      entry.getName(name, sizeof(name));
+      entry.close();
+      if (strcmp(name, wantedName) == 0) {
+        found = true;
+        break;
+      }
+    }
+    complete = found || directory.getError() == 0;
+    directory.close();
+    return found;
+  };
+
+  bool parentScanComplete = false;
+  if (scanDirectory(parentPath.c_str(), baseName, parentScanComplete))
+    return finish(HalStorageReadStatus::IoError);
+  if (parentScanComplete) return finish(HalStorageReadStatus::NotFound);
+
+  if (parentPath == "/.crosspoint") {
+    bool rootScanComplete = false;
+    if (scanDirectory("/", ".crosspoint", rootScanComplete)) return finish(HalStorageReadStatus::IoError);
+    if (rootScanComplete) return finish(HalStorageReadStatus::ParentMissing);
+  }
+  return finish(HalStorageReadStatus::IoError);
+#else
   const auto status = SDCard.readFileChecked(path, content, maxBytes);
   lock.setOutcome(content.length(), static_cast<uint8_t>(status));
   switch (status) {
@@ -343,6 +431,7 @@ HalStorageReadStatus HalStorage::readFileChecked(const char* path, String& conte
     default:
       return HalStorageReadStatus::IoError;
   }
+#endif
 }
 
 bool HalStorage::readFileToStream(const char* path, Print& out, size_t chunkSize) {

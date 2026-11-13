@@ -282,6 +282,11 @@ bool MappedInputManager::wasMenuGesture() const {
 }
 
 bool MappedInputManager::wasHomeGesture() const {
+  // The X4 Pro's capacitive Home key is a distinct GT911 event, not a GPIO
+  // button or swipe. A short tap is the Home action; long-press semantics are
+  // left to the hardware input manager and do not navigate away unexpectedly.
+  if (gpio.wasHomeKeyTapped()) return true;
+
   int sx = 0;
   int sy = 0;
   int ex = 0;
@@ -457,6 +462,7 @@ bool MappedInputManager::takeCapturedBleSignature(uint8_t* kinds, uint8_t* value
 }
 
 void MappedInputManager::pollBle() {
+#if FREEINK_CAP_BLE_HID_HOST
   bleActivityThisFrame = false;
   auto clearBleInputState = [&] {
     for (uint8_t i = 0; i < kButtonCount; i++) {
@@ -741,6 +747,11 @@ void MappedInputManager::pollBle() {
     bleinput::recordDecodedKey(event, kind, value, mappedButton, disposition, mappedButton != 0xFF);
 #endif
   }
+#else
+  // Experimental X4 profiles ship without Bluetooth. Keep the regular input
+  // manager independent of BLE-only event fields exposed by newer SDK builds.
+  bleActivityThisFrame = false;
+#endif
 }
 
 bool MappedInputManager::takeBleShortcut(uint8_t& action) {
@@ -751,7 +762,7 @@ bool MappedInputManager::takeBleShortcut(uint8_t& action) {
 }
 
 bool MappedInputManager::wasAnyPressed() const {
-  if (gpio.wasAnyPressed()) return true;
+  if (gpio.wasAnyPressed() || gpio.wasHomeKeyPressed()) return true;
   for (uint8_t i = 0; i < kButtonCount; ++i) {
     if (blePressEdge[i]) return true;
   }

@@ -1,0 +1,9 @@
+add_executable(nooir_firmware_identity_test NooirFirmwareIdentityTest.cpp)
+target_link_libraries(nooir_firmware_identity_test PRIVATE GTest::gtest_main crosspoint_test_common)
+target_compile_definitions(nooir_firmware_identity_test PRIVATE
+  NOOIR_DEVICE_ID=\"X4PRO\"
+  NOOIR_EXPERIMENTAL_DEVICE_BUILD=1
+)
+
+include(GoogleTest)
+gtest_discover_tests(nooir_firmware_identity_test)

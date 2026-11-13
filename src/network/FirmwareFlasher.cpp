@@ -12,6 +12,7 @@
 #include <cstring>
 #include <memory>
 
+#include "NooirFirmwareIdentity.h"
 #include "OtaBootSwitch.h"
 
 namespace firmware_flash {
@@ -48,6 +49,10 @@ const char* resultName(Result r) {
       return "BAD_SHA";
     case Result::BAD_SIZE:
       return "BAD_SIZE";
+    case Result::DEVICE_MISMATCH:
+      return "DEVICE_MISMATCH";
+    case Result::FLASHING_DISABLED:
+      return "FLASHING_DISABLED";
     case Result::NO_PARTITION:
       return "NO_PARTITION";
     case Result::OOM:
@@ -68,12 +73,14 @@ namespace {
 // Stream `length` bytes from `file` starting at the current read offset, feeding them through
 // both the XOR-checksum and SHA256 accumulators. Used by validateImageFile so the whole image
 // is verified end-to-end without holding it in RAM (ESP32-C3 only has ~380 KB).
-Result feedHashAndChecksum(HalFile& file, size_t length, uint8_t* xorAccum, mbedtls_sha256_context* sha, uint8_t* buf) {
+Result feedHashAndChecksum(HalFile& file, size_t length, uint8_t* xorAccum, mbedtls_sha256_context* sha,
+                           uint8_t* buf, nooir::firmware_identity::TargetMarkerScanner* identity) {
   size_t remaining = length;
   while (remaining > 0) {
     const size_t want = std::min<size_t>(CHUNK, remaining);
     const int got = file.read(buf, want);
     if (got <= 0 || static_cast<size_t>(got) != want) return Result::READ_FAIL;
+    if (identity) identity->feed(buf, want);
     if (sha) mbedtls_sha256_update(sha, buf, want);
     if (xorAccum) {
       uint8_t acc = *xorAccum;
@@ -87,6 +94,11 @@ Result feedHashAndChecksum(HalFile& file, size_t length, uint8_t* xorAccum, mbed
 }  // namespace
 
 Result validateImageFile(const char* sdPath, size_t partitionSize) {
+#if defined(NOOIR_DISABLE_FIRMWARE_FLASHING) && NOOIR_DISABLE_FIRMWARE_FLASHING
+  (void)sdPath;
+  (void)partitionSize;
+  return Result::FLASHING_DISABLED;
+#else
   HalFile file;
   if (!Storage.openFileForRead("FLASH", sdPath, file) || !file) {
     LOG_ERR("FLASH", "validate: open failed: %s", sdPath);
@@ -112,6 +124,8 @@ Result validateImageFile(const char* sdPath, size_t partitionSize) {
     file.close();
     return Result::READ_FAIL;
   }
+  nooir::firmware_identity::TargetMarkerScanner identity;
+  identity.feed(header, HEADER_SIZE);
   if (header[0] != ESP_IMAGE_MAGIC) {
     LOG_ERR("FLASH", "validate: bad magic 0x%02X", header[0]);
     file.close();
@@ -147,6 +161,7 @@ Result validateImageFile(const char* sdPath, size_t partitionSize) {
       file.close();
       return Result::READ_FAIL;
     }
+    identity.feed(segHdr, SEG_HEADER_SIZE);
     mbedtls_sha256_update(&shaCtx, segHdr, SEG_HEADER_SIZE);
     pos += SEG_HEADER_SIZE;
 
@@ -160,7 +175,7 @@ Result validateImageFile(const char* sdPath, size_t partitionSize) {
       return Result::BAD_SEGMENTS;
     }
 
-    const Result feedRes = feedHashAndChecksum(file, dataLen, &xorAccum, &shaCtx, buf.get());
+    const Result feedRes = feedHashAndChecksum(file, dataLen, &xorAccum, &shaCtx, buf.get(), &identity);
     if (feedRes != Result::OK) {
       mbedtls_sha256_free(&shaCtx);
       file.close();
@@ -194,6 +209,7 @@ Result validateImageFile(const char* sdPath, size_t partitionSize) {
     file.close();
     return Result::READ_FAIL;
   }
+  identity.feed(padBuf, padLen);
   mbedtls_sha256_update(&shaCtx, padBuf, padLen);
 
   const uint8_t storedChecksum = padBuf[padLen - 1];
@@ -213,6 +229,7 @@ Result validateImageFile(const char* sdPath, size_t partitionSize) {
       file.close();
       return Result::READ_FAIL;
     }
+    identity.feed(stored, SHA_TRAILER);
     if (std::memcmp(computed, stored, SHA_TRAILER) != 0) {
       LOG_ERR("FLASH", "validate: SHA256 mismatch");
       mbedtls_sha256_free(&shaCtx);
@@ -221,12 +238,31 @@ Result validateImageFile(const char* sdPath, size_t partitionSize) {
     }
   }
 
+  const auto targetResult = identity.result(nooir::firmware_identity::kRequireTargetMarker);
+  if (targetResult == nooir::firmware_identity::CandidateTarget::Mismatch ||
+      targetResult == nooir::firmware_identity::CandidateTarget::Missing) {
+    LOG_ERR("FLASH", "candidate firmware identity does not match device target=%s marker=%d mismatch=%d",
+            nooir::firmware_identity::kExpectedDeviceId, identity.sawMarker() ? 1 : 0,
+            identity.sawMismatch() ? 1 : 0);
+    mbedtls_sha256_free(&shaCtx);
+    file.close();
+    return Result::DEVICE_MISMATCH;
+  }
+
   mbedtls_sha256_free(&shaCtx);
   file.close();
   return Result::OK;
+#endif
 }
 
 Result flashFromSdPath(const char* sdPath, ProgressCb onProgress, void* ctx, bool alreadyValidated) {
+#if defined(NOOIR_DISABLE_FIRMWARE_FLASHING) && NOOIR_DISABLE_FIRMWARE_FLASHING
+  (void)sdPath;
+  (void)onProgress;
+  (void)ctx;
+  (void)alreadyValidated;
+  return Result::FLASHING_DISABLED;
+#else
   // Resolve destination first so we can size-check during validation. The full image-integrity
   // pass below verifies header, segment table, XOR checksum and SHA256 trailer end-to-end before
   // we touch otadata, so a truncated/corrupted .bin can never become the next boot target.
@@ -306,6 +342,7 @@ Result flashFromSdPath(const char* sdPath, ProgressCb onProgress, void* ctx, boo
     return Result::OTADATA_FAIL;
   }
   return Result::OK;
+#endif
 }
 
 }  // namespace firmware_flash

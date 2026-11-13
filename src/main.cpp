@@ -27,6 +27,8 @@
 #include "CrossPointState.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
+#include "NooirDeviceIdentity.h"
+#include "NooirFirmwareIdentity.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "BookStateStore.h"
@@ -416,7 +418,8 @@ void setup() {
                ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   EpubDiagnostics::phaseRecord("boot_hardware_ready");
 
-  LOG_INF("MAIN", "Hardware detect: %s", gpio.deviceIsX3() ? "X3" : "X4");
+  LOG_INF("MAIN", "Hardware detect: %s",
+          nooir::device_identity::statusName(nooir::device_identity::currentModel(gpio)));
 
   // SD Card Initialization
   // We need 6 open files concurrently when parsing a new chapter
@@ -489,9 +492,9 @@ void setup() {
       break;
   }
 
+#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD
   // Recovery firmware mode: hold left side button (BTN_UP) together with the power button at
-  // boot to skip directly to the SD-card firmware update screen. Useful on devices where USB
-  // flashing has been locked down (e.g. recent X3 firmware).
+  // boot to skip directly to the SD-card firmware update screen.
   bool recoveryFirmwareMode = false;
   if (wakeupReason == HalGPIO::WakeupReason::PowerButton) {
     // Refresh the cached button state a few times — isPressed() needs ~half a second to settle
@@ -507,6 +510,7 @@ void setup() {
       LOG_INF("MAIN", "Recovery firmware mode (UP + POWER held at boot)");
     }
   }
+#endif
 
   // First serial output only here to avoid timing inconsistencies for power button press duration verification
 #if defined(FREEINK_BLE_HID_LIFECYCLE_DIAGNOSTICS) && defined(NOOIR_BUILD_SHA) && defined(NOOIR_APP_VERSION)
@@ -578,11 +582,14 @@ void setup() {
       break;
   }
 
+#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD
   if (recoveryFirmwareMode) {
     // Skip normal home/reader routing: jump straight into the SD firmware picker.
     activityManager.replaceActivity(
         std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInputManager, /*recoveryMode=*/true));
-  } else if (HalSystem::isRebootFromPanic()) {
+  } else
+#endif
+  if (HalSystem::isRebootFromPanic()) {
     // If we rebooted from a panic, go to crash report screen to show the panic info
     activityManager.goToCrashReport();
   } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_READER &&
@@ -1009,8 +1016,9 @@ void loop() {
 
   // Check for any user activity (button press or release) or active background work
   static unsigned long lastActivityTime = millis();
-  if (gpio.wasAnyPressed() || gpio.wasAnyReleased() || gpio.wasTouchActivity() || halTiltSensor.hadActivity() ||
-      mappedInputManager.bleHadActivityThisFrame() || activityManager.preventAutoSleep()) {
+  if (gpio.wasAnyPressed() || gpio.wasAnyReleased() || gpio.wasHomeKeyPressed() || gpio.wasTouchActivity() ||
+      halTiltSensor.hadActivity() || mappedInputManager.bleHadActivityThisFrame() ||
+      activityManager.preventAutoSleep()) {
     lastActivityTime = millis();         // Reset inactivity timer
     powerManager.setPowerSaving(false);  // Restore normal CPU frequency on user activity
   }

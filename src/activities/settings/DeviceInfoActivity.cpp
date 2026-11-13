@@ -17,6 +17,7 @@
 #include "BleInput.h"
 #include "CrossPointState.h"
 #include "MappedInputManager.h"
+#include "NooirDeviceIdentity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -95,7 +96,6 @@ void DeviceInfoActivity::onEnter() {
   Activity::onEnter();
   // Capture only cheap cached HAL/runtime values once. Storage.ready() is a
   // readiness flag; this page deliberately does not ask FAT for free space.
-  snapshot_.modelIsX3 = gpio.deviceIsX3();
   snapshot_.panelWidth = display.getDisplayWidth();
   snapshot_.panelHeight = display.getDisplayHeight();
   snapshot_.sdReady = Storage.ready();
@@ -154,7 +154,15 @@ std::string DeviceInfoActivity::rowValue(const Row row) const {
   // for visible rows, while the per-entry snapshot and row table stay fixed.
   char value[64]{};
   switch (row) {
-    case Row::Model: return snapshot_.modelIsX3 ? tr(STR_DEVICE_MODEL_X3) : tr(STR_DEVICE_MODEL_X4);
+    case Row::Model: {
+      switch (nooir::device_identity::currentModel(gpio)) {
+        case nooir::device_identity::Model::X3: return tr(STR_DEVICE_MODEL_X3);
+        case nooir::device_identity::Model::X4: return tr(STR_DEVICE_MODEL_X4);
+        case nooir::device_identity::Model::X4Pro: return "XTEINK X4 Pro";
+        case nooir::device_identity::Model::X4Classic: return "XTEINK X4 Classic";
+      }
+      return tr(STR_DEVICE_MODEL_X4);
+    }
     case Row::ActivePanel:
       snprintf(value, sizeof(value), tr(STR_DEVICE_PANEL_FORMAT), static_cast<unsigned>(snapshot_.panelWidth),
                static_cast<unsigned>(snapshot_.panelHeight));

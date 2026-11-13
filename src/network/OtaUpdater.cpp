@@ -5,6 +5,7 @@
 // ip4_addr.h unless seen first. Pin this order; clang-format would otherwise sort
 // the local header last and break the build.
 #include "HttpDownloader.h"
+#include "NooirFirmwareIdentity.h"
 #include <Logging.h>
 #include <ReleaseJsonParser.h>
 #include <esp_ota_ops.h>
@@ -20,6 +21,13 @@ constexpr char latestReleaseUrl[] = "https://api.github.com/repos/toshio2011/fol
 }  // namespace
 
 OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
+#if NOOIR_EXPERIMENTAL_DEVICE_BUILD
+  // The public v1.6.6 release asset is the C3 X3/X4 image. Keep experimental
+  // S3 builds away from the generic firmware.bin endpoint until there is a
+  // per-model release manifest and verified OTA policy.
+  LOG_INF("OTA", "remote update disabled for experimental target=%s", NOOIR_DEVICE_ID);
+  return NO_UPDATE;
+#else
   LOG_DBG("OTA", "Checking for update (current: %s)", CROSSPOINT_VERSION);
 
   // Stream the ~32KB release JSON straight into the parser as it arrives.
@@ -59,6 +67,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   LOG_DBG("OTA", "Found update: tag=%s size=%zu", latestVersion.c_str(), otaSize);
   LOG_DBG("OTA", "Firmware URL: %s", otaUrl.c_str());
   return OK;
+#endif
 }
 
 bool OtaUpdater::isUpdateNewer() const {
@@ -107,6 +116,11 @@ bool OtaUpdater::isUpdateNewer() const {
 const std::string& OtaUpdater::getLatestVersion() const { return latestVersion; }
 
 OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgress, void* ctx) {
+#if NOOIR_EXPERIMENTAL_DEVICE_BUILD
+  (void)onProgress;
+  (void)ctx;
+  return NO_UPDATE;
+#else
   if (!isUpdateNewer()) {
     return UPDATE_OLDER_ERROR;
   }
@@ -177,4 +191,5 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
 
   LOG_INF("OTA", "Update completed");
   return OK;
+#endif
 }

@@ -28,6 +28,7 @@
 #include "KOReaderSettingsActivity.h"
 #include "LanguageSelectActivity.h"
 #include "MappedInputManager.h"
+#include "NooirFirmwareIdentity.h"
 #include "OpdsServerListActivity.h"
 #include "OtaUpdateActivity.h"
 #include "SdCardFontSystem.h"
@@ -500,11 +501,15 @@ void SettingsActivity::rebuildSettingsLists() {
       currentGroupSettings.push_back(
           SettingInfo::Action(StrId::STR_SETTINGS_PROFILES, SettingAction::SettingsProfiles));
       currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
+#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD
       if (!BoardConfig::hasTouch()) {
         currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
       }
+#endif
+#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD
       currentGroupSettings.push_back(
           SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
+#endif
       currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
       currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_DEVICE_INFO, SettingAction::DeviceInfo));
       break;
@@ -1024,10 +1029,14 @@ void SettingsActivity::toggleCurrentSetting() {
         startActivityForResult(std::make_unique<ClearCacheActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::CheckForUpdates:
+#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD
         startActivityForResult(std::make_unique<OtaUpdateActivity>(renderer, mappedInput), resultHandler);
+#endif
         break;
       case SettingAction::SdFirmwareUpdate:
+#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD
         startActivityForResult(std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInput), resultHandler);
+#endif
         break;
       case SettingAction::DownloadFonts:
         startActivityForResult(std::make_unique<FontDownloadActivity>(renderer, mappedInput),

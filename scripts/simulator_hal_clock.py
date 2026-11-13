@@ -15,7 +15,12 @@ import re
 Import("env")  # noqa: F821  -- provided by PlatformIO
 
 
-if str(env.get("PIOENV") or "") in ("simulator_x4", "simulator_x3"):
+if str(env.get("PIOENV") or "") in (
+    "simulator_x4",
+    "simulator_x3",
+    "simulator_x4pro",
+    "simulator_x4classic",
+):
     project_dir = Path(env.subst("$PROJECT_DIR"))
     simulator_dir = project_dir / ".pio" / "libdeps" / str(env.get("PIOENV")) / "simulator"
     header_path = simulator_dir / "src" / "HalClock.h"
@@ -33,6 +38,7 @@ if str(env.get("PIOENV") or "") in ("simulator_x4", "simulator_x3"):
   // Date keys use the same YYYYMMDD representation as the device HAL.
   bool hasUsableTime() const;
   bool restoreFromEpoch(int64_t epoch);
+  bool setUtcEpoch(int64_t epoch);
   uint32_t getDateKey() const;
 """
 
@@ -122,6 +128,22 @@ bool HalClock::restoreFromEpoch(const int64_t epoch) {
                 if anchor not in source:
                     raise RuntimeError("Simulator HalClock changed: setUtcTime API missing")
                 source = source.replace(anchor, definitions + anchor, 1)
+
+        if "bool HalClock::setUtcEpoch" not in source:
+            restore_match = re.search(
+                r"(?m)^bool\s+HalClock::restoreFromEpoch\s*\([^)]*\)\s*\{.*?^\}\s*",
+                source,
+                re.S,
+            )
+            if not restore_match:
+                raise RuntimeError("Simulator HalClock compatibility restore method missing")
+            source = (
+                source[: restore_match.end()]
+                + "\nbool HalClock::setUtcEpoch(const int64_t epoch) {\n"
+                + "  return restoreFromEpoch(epoch);\n"
+                + "}\n"
+                + source[restore_match.end() :]
+            )
 
         header_path.write_text(header, encoding="utf-8", newline="")
         source_path.write_text(source, encoding="utf-8", newline="")
