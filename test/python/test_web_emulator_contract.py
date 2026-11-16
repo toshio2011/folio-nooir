@@ -31,6 +31,9 @@ package_builder = load_module(
 smoke_runner = load_module(
     "nooir_shared_firmware_smoke", ROOT / "scripts" / "smoke_nooir_shared_firmware.py"
 )
+browser_diagnostics = load_module(
+    "nooir_browser_smoke_diagnostics", ROOT / "scripts" / "prepare_nooir_browser_smoke_diagnostics.py"
+)
 rom_prep = (ROOT / "scripts" / "prepare_esp32c3_rom.py").read_text(encoding="utf-8")
 packager = (ROOT / "scripts" / "package_nooir_web_emulator.py").read_text(encoding="utf-8")
 web_workflow = (ROOT / ".github" / "workflows" / "nooir-web-emulator-pages.yml").read_text(encoding="utf-8")
@@ -57,11 +60,105 @@ class WebEmulatorContractTests(unittest.TestCase):
             0,
         )
 
-    def test_failed_smoke_diagnostics_remain_runner_local(self):
-        self.assertNotIn("Upload bounded emulator smoke diagnostics", web_workflow)
-        self.assertNotIn("nooir-emulator-smoke-diagnostics", web_workflow)
-        self.assertIn("Detailed emulator output remains on the temporary runner.", web_workflow)
-        self.assertIn("grep -E '^(x3|x4): FAIL|^FAIL:'", web_workflow)
+    def test_browser_smoke_profiles_run_independently_and_upload_only_failure_diagnostics(self):
+        self.assertIn("id: browser_smoke", web_workflow)
+        self.assertIn("for device in x3 x4; do", web_workflow)
+        self.assertIn("|| smoke_status=$?", web_workflow)
+        self.assertIn("scripts/prepare_nooir_browser_smoke_diagnostics.py", web_workflow)
+        self.assertIn("browser_smoke_failed=1", web_workflow)
+        self.assertIn("Upload X3/X4 browser smoke diagnostics (failure only)", web_workflow)
+        self.assertIn("steps.browser_smoke.outcome == 'failure'", web_workflow)
+        startup_diagnostics = web_workflow.split('if [ "$cdp_ready" -ne 1 ]; then', 1)[1].split(
+            'echo "Chrome CDP /json/list became ready."', 1
+        )[0]
+        self.assertIn("--user-data-dir=[redacted browser profile]", startup_diagnostics)
+        self.assertIn("[redacted local path]", startup_diagnostics)
+        self.assertIn(r"(?:bin|rom|elf)", startup_diagnostics)
+        self.assertIn("path: build/nooir-browser-smoke-diagnostics/", web_workflow)
+        upload = web_workflow.split("name: nooir-browser-smoke-diagnostics", 1)[1].split(
+            "      - name: Upload Chrome startup diagnostics", 1
+        )[0]
+        self.assertNotIn("firmware", upload.lower())
+        self.assertNotIn("rom", upload.lower())
+        self.assertNotIn("profile", upload.lower())
+        self.assertLess(
+            web_workflow.index("Package Nooir shell and audit licenses"),
+            web_workflow.index("Smoke the audited package in Chrome on X3 and X4"),
+        )
+
+    def test_browser_smoke_failure_diagnostics_are_redacted_and_bounded(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            tmp_path = Path(tmp)
+            source = tmp_path / "smoke.log"
+            output = tmp_path / "diagnostics"
+            lines = [f"ordinary log line {index} " + ("x" * 1500) for index in range(120)]
+            lines.extend([
+                "AssertionError: first Nooir Home assertion failed at C:\\Users\\reader\\AppData\\Local\\Chrome\\User Data\\Profile 1",
+                "launch --user-data-dir=/tmp/nooir-private-profile",
+                "firmware C:\\runner\\folio-nooir-v1.6.6-firmware.bin",
+                "ROM asset /tmp/esp32s3_rev0_rom.elf",
+                "Bearer abcdefghijklmnopqrstuvwxyz0123456789",
+                "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+                "webSocketDebuggerUrl=ws://127.0.0.1:9224/devtools/browser/private-id",
+                "-----BEGIN PRIVATE KEY-----",
+                "PRIVATE_KEY_MATERIAL_MUST_NOT_ESCAPE",
+                "-----END PRIVATE KEY-----",
+            ])
+            source.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            browser_diagnostics.record("x3", 1, source, output)
+
+            summary = (output / "summary.txt").read_text(encoding="utf-8")
+            diagnostic_log = (output / "x3.log").read_text(encoding="utf-8")
+            self.assertIn("x3: FAIL", summary)
+            self.assertIn("AssertionError: first Nooir Home assertion failed", summary)
+            self.assertIn("first Nooir Home assertion failed", diagnostic_log)
+            for secret in (
+                "reader\\AppData",
+                "Profile 1",
+                "nooir-private-profile",
+                "firmware.bin",
+                "esp32s3_rev0_rom.elf",
+                "Bearer abcdef",
+                "ghp_abcdefghijklmnopqrstuvwxyz",
+                "private-id",
+                "PRIVATE_KEY_MATERIAL_MUST_NOT_ESCAPE",
+            ):
+                self.assertNotIn(secret, summary + diagnostic_log)
+            self.assertLessEqual(len(diagnostic_log.splitlines()), browser_diagnostics.MAX_LOG_LINES)
+            self.assertLessEqual(
+                len(diagnostic_log.encode("utf-8")),
+                browser_diagnostics.MAX_LOG_LINES * browser_diagnostics.MAX_LINE_CHARS + 100,
+            )
+            self.assertEqual(
+                {path.name for path in output.iterdir()},
+                {"summary.txt", "x3.log"},
+            )
+
+            browser_diagnostics.record("x4", 0, source, output)
+            self.assertIn("x4: PASS", (output / "summary.txt").read_text(encoding="utf-8"))
+            self.assertFalse((output / "x4.log").exists())
+
+    def test_first_error_summary_redacts_inline_private_key_block(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            tmp_path = Path(tmp)
+            source = tmp_path / "smoke.log"
+            output = tmp_path / "diagnostics"
+            source.write_text(
+                "AssertionError: boot failed -----BEGIN PRIVATE KEY----- "
+                "PRIVATE_KEY_MATERIAL_MUST_NOT_ESCAPE -----END PRIVATE KEY-----\n",
+                encoding="utf-8",
+            )
+            browser_diagnostics.record("x4", 1, source, output)
+            summary = (output / "summary.txt").read_text(encoding="utf-8")
+            diagnostic_log = (output / "x4.log").read_text(encoding="utf-8")
+
+            self.assertIn("x4: FAIL", summary)
+            self.assertIn("[redacted private-key block]", summary)
+            self.assertNotIn("PRIVATE_KEY_MATERIAL_MUST_NOT_ESCAPE", summary + diagnostic_log)
 
     def test_failed_firmware_smoke_reports_safe_readiness_state_only(self):
         error = smoke_runner.smoke_failure(
@@ -151,6 +248,24 @@ class WebEmulatorContractTests(unittest.TestCase):
         self.assertIn("progressRestoredAfterReload", smoke)
         self.assertIn("uploaded", smoke.lower())
 
+    def test_review_package_upload_survives_browser_failure_only_after_audit_passes(self):
+        self.assertIn("id: package_audit", WORKFLOW)
+        self.assertIn(
+            "if: always() && steps.package_audit.outcome == 'success'",
+            WORKFLOW,
+        )
+        self.assertLess(
+            WORKFLOW.index("Package Nooir shell and audit licenses"),
+            WORKFLOW.index("Smoke the audited package in Chrome on X3 and X4"),
+        )
+        review = WORKFLOW.split("name: nooir-web-emulator-review", 1)[1].split(
+            "  # Deployment stays impossible", 1
+        )[0]
+        self.assertIn("path: build/nooir-web-emulator", review)
+        self.assertIn("retention-days: 7", review)
+        self.assertIn("shutil.copytree(engine_dist, engine_output, ignore=ignore_firmware", packager)
+        self.assertIn('lower.endswith((".xota", ".bin", ".elf", ".pem"))', packager)
+
     def test_ci_does_not_enable_pages_deployment_or_include_reader_firmware(self):
         self.assertIn("if: ${{ false }}", WORKFLOW)
         self.assertIn("No reader firmware binaries were copied.", (ROOT / "scripts" / "package_nooir_web_emulator.py").read_text(encoding="utf-8"))
@@ -175,8 +290,8 @@ class WebEmulatorContractTests(unittest.TestCase):
         self.assertIn("nooir-rom-venv/bin/python", WORKFLOW)
         self.assertIn("Smoke the audited package in Chrome on X3 and X4", WORKFLOW)
         self.assertIn("NOOIR_INPUT_PROBE_KEY=Left", WORKFLOW)
-        self.assertNotIn("Upload bounded emulator smoke diagnostics", WORKFLOW)
-        self.assertNotIn("nooir-emulator-smoke-diagnostics", WORKFLOW)
+        self.assertIn("Upload X3/X4 browser smoke diagnostics (failure only)", WORKFLOW)
+        self.assertIn("nooir-browser-smoke-diagnostics", WORKFLOW)
         rom_identity = (393216, "3a69ac75662367dc99fbd5b8ddf265515b6288e79e51e4c4168c597aced7b79d")
         self.assertEqual((package_builder.ESP32C3_ROM_BYTES, package_builder.ESP32C3_ROM_SHA256), rom_identity)
         self.assertEqual(package_audit.SUPPORT_BIN_HASHES["engine/esp32c3-rom.bin"], rom_identity)
