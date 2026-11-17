@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {createHash} from "node:crypto";
+import {formatCdpTargetDiagnostics, selectCdpPageTarget} from "./select_cdp_page_target.mjs";
 
 const [url, device, firmwareArg, sdArg, evidenceArg] = process.argv.slice(2);
 const requestedHoldMs = Number(process.env.NOOIR_BUTTON_HOLD_MS);
@@ -25,9 +26,8 @@ if (fs.existsSync(evidence)) throw new Error(`Evidence directory already exists:
 for (const file of [firmware, sd]) if (!fs.statSync(file).isFile()) throw new Error(`Not a file: ${file}`);
 fs.mkdirSync(evidence, {recursive: true});
 const targets = await (await fetch(`http://127.0.0.1:${process.env.CDP_PORT || 9224}/json/list`)).json();
-const desiredOrigin = new URL(url).origin;
-const target = targets.find(item => item.type === "page" && new URL(item.url).origin === desiredOrigin);
-if (!target) throw new Error("No Chrome page target found on the requested CDP port.");
+const {target, diagnostics: targetDiagnostics} = selectCdpPageTarget(targets, url);
+if (!target) throw new Error(formatCdpTargetDiagnostics(targetDiagnostics));
 const ws = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise((resolve, reject) => { ws.addEventListener("open", resolve, {once: true}); ws.addEventListener("error", reject, {once: true}); });
 const pending = new Map(); let seq = 0; const errors = [];
