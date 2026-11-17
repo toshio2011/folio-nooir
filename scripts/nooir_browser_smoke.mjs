@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {createHash} from "node:crypto";
-import {formatCdpTargetDiagnostics, selectCdpPageTarget} from "./select_cdp_page_target.mjs";
+import {formatCdpTargetDiagnostics, waitForCdpPageTarget} from "./select_cdp_page_target.mjs";
 
 const [url, device, firmwareArg, sdArg, evidenceArg] = process.argv.slice(2);
 const requestedHoldMs = Number(process.env.NOOIR_BUTTON_HOLD_MS);
@@ -25,8 +25,11 @@ const sdAsset = process.env.NOOIR_SD_ASSET || `nooir-test-${device}.img`;
 if (fs.existsSync(evidence)) throw new Error(`Evidence directory already exists: ${evidence}`);
 for (const file of [firmware, sd]) if (!fs.statSync(file).isFile()) throw new Error(`Not a file: ${file}`);
 fs.mkdirSync(evidence, {recursive: true});
-const targets = await (await fetch(`http://127.0.0.1:${process.env.CDP_PORT || 9224}/json/list`)).json();
-const {target, diagnostics: targetDiagnostics} = selectCdpPageTarget(targets, url);
+const {target, diagnostics: targetDiagnostics} = await waitForCdpPageTarget(async signal => {
+  const response = await fetch(`http://127.0.0.1:${process.env.CDP_PORT || 9224}/json/list`, {signal});
+  if (!response.ok) throw new Error("CDP /json/list returned HTTP " + response.status);
+  return response.json();
+}, url);
 if (!target) throw new Error(formatCdpTargetDiagnostics(targetDiagnostics));
 const ws = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise((resolve, reject) => { ws.addEventListener("open", resolve, {once: true}); ws.addEventListener("error", reject, {once: true}); });
