@@ -4,6 +4,46 @@ on:
   push:
     branches: [master]
   pull_request:
+    # The legacy FreeInk SDK gitlink used by this firmware CI is unavailable.
+    # Skip this workflow only for PRs whose changed paths are all web-emulator
+    # code, packaging, attribution, or documentation. Any firmware source,
+    # PlatformIO configuration, test, or submodule change remains unignored
+    # and therefore runs the normal firmware CI with its real result visible.
+    paths-ignore:
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/nooir-web-emulator-pages.yml'
+      - 'web-emulator/**'
+      - 'scripts/check_nooir_web_package.py'
+      - 'scripts/nooir_browser_smoke.mjs'
+      - 'scripts/package_nooir_web_emulator.py'
+      - 'scripts/prepare_esp32c3_rom.py'
+      - 'scripts/prepare_nooir_softfloat_source.py'
+      - 'scripts/prepare_nooir_browser_smoke_diagnostics.py'
+      - 'scripts/prepare_nooir_browser_acceptance_evidence.py'
+      - 'scripts/select_cdp_page_target.mjs'
+      - 'scripts/serve_nooir_web_emulator.py'
+      - 'scripts/smoke_nooir_shared_firmware.py'
+      - 'scripts/verify_nooir_screenshot_download.mjs'
+      - 'scripts/requirements.txt'
+      - 'test/node/**'
+      - 'test/python/test_web_emulator_contract.py'
+      - 'LICENSES/CORRESPONDING-SOURCE.md'
+      - 'LICENSES/EINK-QEMU-WEB-BUNDLE.md'
+      - 'LICENSES/ESP32C3-ROM-APACHE-2.0.txt'
+      - 'LICENSES/ESP32C3-ROM-BSD-3-CLAUSE.txt'
+      - 'LICENSES/ESP32C3-ROM-ELF-README.md'
+      - 'LICENSES/ESP32C3-ROM-ESP-IDF-COPYRIGHT.rst'
+      - 'LICENSES/ESP32C3-ROM-NEWLIB-COPYING.NEWLIB'
+      - 'LICENSES/ESP32C3-ROM-NOTICES.md'
+      - 'LICENSES/REFERENCE-PROJECTS.md'
+      - 'LICENSES/SPDX-CC0-1.0.txt'
+      - 'LICENSES/eink-qemu-components/**'
+      - 'ROADMAP.md'
+      - 'README.md'
+      - 'HANDOFF.md'
+      - 'docs/web-emulator-pr-draft.md'
+      - 'docs/web-emulator-readiness.md'
+      - 'docs/web-emulator-release-readiness-2026-11-04.md'
 
 permissions:
   contents: read

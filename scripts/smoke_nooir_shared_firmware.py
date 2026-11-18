@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""Boot the unchanged official v1.6.6 image in the C3 X3 and X4 profiles."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+from pathlib import Path
+import re
+import selectors
+import subprocess
+import sys
+import tempfile
+import time
+
+FIRMWARE_SHA256 = "badcd6fb6cb4b5323f92714e893f9c488e887aa8f7b5d8e28cd0e6639aeae108"
+MILESTONES = {
+    "x3": re.compile(r"Wait complete:\s+(?:8279|X3)_DRF"),
+    # The preserved X4 profile reports the generic refresh label instead of
+    # the controller-specific DRF label used by X3.
+    "x4": re.compile(r"Wait complete:\s+(?:(?:8179|8279x4)_DRF|refresh)"),
+}
+GEOMETRY = {"x3": (528, 792), "x4": (480, 800)}
+GUEST_FAILURE_DRAIN_SECONDS = 2.0
+GUEST_FAILURE_MARKERS = ("Guru Meditation", "RuntimeError:", "Aborted(")
+
+
+def validate_firmware(path: Path) -> None:
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != FIRMWARE_SHA256:
+        raise SystemExit(
+            "smoke firmware is not the unchanged official v1.6.6 shared image: "
+            f"expected {FIRMWARE_SHA256}, got {digest}"
+        )
+
+
+def parse_ppm(path: Path, expected: tuple[int, int]) -> None:
+    data = path.read_bytes()
+    header = data.split(b"\n", 3)
+    if len(header) != 4 or header[0] != b"P6":
+        raise RuntimeError("QEMU screen capture is not a binary PPM")
+    width, height = map(int, header[1].split())
+    pixels = header[3]
+    if (width, height) != expected or len(pixels) != width * height * 3:
+        raise RuntimeError(f"unexpected panel capture {width}x{height}")
+    if len(set(pixels)) < 2:
+        raise RuntimeError("panel capture is blank")
+
+
+def smoke_failure(
+    machine: str,
+    reason: str,
+    *,
+    milestones: int,
+    memory_marker_seen: bool,
+    screenshot_requested: bool,
+    capture_exists: bool,
+) -> RuntimeError:
+    """Return a safe summary; serial output and guest data stay runner-local."""
+    if reason == "timed out before a nonblank Home capture":
+        reason = "home-readiness timeout before a nonblank capture"
+    summary = (
+        f"{machine}: {reason}; startup milestones={min(milestones, 3)}/3; "
+        f"memory marker={'yes' if memory_marker_seen else 'no'}; "
+        f"capture requested={'yes' if screenshot_requested else 'no'}; "
+        f"capture present={'yes' if capture_exists else 'no'}"
+    )
+    return RuntimeError(summary)
+
+
+def is_guest_runtime_error(output: str) -> bool:
+    return any(marker in output for marker in GUEST_FAILURE_MARKERS)
+
+
+def boot_one(engine: Path, firmware: Path, machine: str, timeout: float) -> None:
+    with tempfile.TemporaryDirectory(prefix=f"nooir-{machine}-smoke-") as temp_name:
+        work = Path(temp_name).resolve()
+        flash = work / "flash.img"
+        sd = work / "sd.img"
+        shot = work / f"{machine}.ppm"
+        log_path = work / f"{machine}.log"
+        subprocess.run(
+            [sys.executable, str(engine / "eink-qemu" / "mkflash.py"),
+             "--machine", machine, str(firmware), str(flash)],
+            check=True,
+        )
+        subprocess.run(
+            [sys.executable, str(engine / "eink-qemu" / "mksd.py"),
+             str(sd), "64", "--cluster-size", "512"],
+            check=True,
+        )
+        env = {
+            **os.environ,
+            "X4MACHINE": machine,
+            "WASM64_MODE": "32",
+            "RUN_NODE_SLEEP": "off",
+            "TURBO": "1",
+            "WASM_JIT_STATS": "1",
+        }
+        process = subprocess.Popen(
+            ["bash", str(engine / "eink-qemu" / "wasm" / "run-node.sh"), str(flash), str(sd)],
+            cwd=engine,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=env,
+        )
+        selector = selectors.DefaultSelector()
+        assert process.stdout is not None and process.stdin is not None
+        selector.register(process.stdout, selectors.EVENT_READ)
+        output = bytearray()
+        milestones = 0
+        screenshot_requested = False
+        memory_marker_seen = False
+        guest_failure_started: float | None = None
+        start = time.monotonic()
+        try:
+            with log_path.open("wb") as log:
+                while time.monotonic() - start < timeout:
+                    for key, _ in selector.select(0.1):
+                        chunk = os.read(key.fd, 65536)
+                        if not chunk:
+                            continue
+                        log.write(chunk)
+                        log.flush()
+                        output.extend(chunk)
+                        if len(output) > 2 * 1024 * 1024:
+                            del output[:1024 * 1024]
+                    text = output.decode(errors="replace")
+                    memory_marker_seen = memory_marker_seen or "[MEM]" in text
+                    if guest_failure_started is None and is_guest_runtime_error(text):
+                        guest_failure_started = time.monotonic()
+                    if guest_failure_started is not None:
+                        if (
+                            process.poll() is not None
+                            or time.monotonic() - guest_failure_started >= GUEST_FAILURE_DRAIN_SECONDS
+                        ):
+                            raise smoke_failure(
+                                machine,
+                                "guest/runtime error detected",
+                                milestones=milestones,
+                                memory_marker_seen=memory_marker_seen,
+                                screenshot_requested=screenshot_requested,
+                                capture_exists=shot.exists(),
+                            )
+                        # Let the emulator finish printing the panic/backtrace
+                        # before terminating it in the finally block.
+                        continue
+                    current = len(MILESTONES[machine].findall(text))
+                    milestones = max(milestones, current)
+                    if milestones >= 3 and "[MEM]" in text and not screenshot_requested:
+                        monitor_path = "/host" + shot.as_posix()
+                        process.stdin.write(f'\x01cscreendump "{monitor_path}" panel\n'.encode())
+                        process.stdin.flush()
+                        screenshot_requested = True
+                    if shot.exists() and shot.stat().st_size > 1000:
+                        try:
+                            parse_ppm(shot, GEOMETRY[machine])
+                        except RuntimeError as exc:
+                            raise smoke_failure(
+                                machine,
+                                str(exc),
+                                milestones=milestones,
+                                memory_marker_seen=memory_marker_seen,
+                                screenshot_requested=screenshot_requested,
+                                capture_exists=shot.exists(),
+                            ) from exc
+                        if process.poll() is not None:
+                            raise smoke_failure(
+                                machine,
+                                "emulator exited before capture completed",
+                                milestones=milestones,
+                                memory_marker_seen=memory_marker_seen,
+                                screenshot_requested=screenshot_requested,
+                                capture_exists=shot.exists(),
+                            )
+                        print(f"{machine}: PASS; Home refreshes={milestones}; display={GEOMETRY[machine][0]}x{GEOMETRY[machine][1]}")
+                        return
+                    if process.poll() is not None:
+                        raise smoke_failure(
+                            machine,
+                            f"emulator exited with code {process.returncode}",
+                            milestones=milestones,
+                            memory_marker_seen=memory_marker_seen,
+                            screenshot_requested=screenshot_requested,
+                            capture_exists=shot.exists(),
+                        )
+            raise smoke_failure(
+                machine,
+                "timed out before a nonblank Home capture",
+                milestones=milestones,
+                memory_marker_seen=memory_marker_seen,
+                screenshot_requested=screenshot_requested,
+                capture_exists=shot.exists(),
+            )
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            selector.close()
+            process.stdin.close()
+            process.stdout.close()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--engine-source", type=Path, required=True)
+    parser.add_argument("--firmware", type=Path, required=True)
+    parser.add_argument("--timeout", type=float, default=240)
+    args = parser.parse_args()
+    engine = args.engine_source.resolve(strict=True)
+    firmware = args.firmware.resolve(strict=True)
+    validate_firmware(firmware)
+    failures: list[tuple[str, Exception]] = []
+    for machine in ("x3", "x4"):
+        try:
+            boot_one(engine, firmware, machine, args.timeout)
+        except Exception as exc:
+            failures.append((machine, exc))
+            print(f"{machine}: FAIL; {exc}", file=sys.stderr)
+    if failures:
+        print(
+            "FAIL: licensed-ROM smoke did not pass both shared-firmware profiles; "
+            "the package step must remain blocked.",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"PASS: unchanged v1.6.6 shared firmware SHA-256 {FIRMWARE_SHA256} on X3 and X4")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

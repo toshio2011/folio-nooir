@@ -1,0 +1,6 @@
+.screen-capture{width:min(92vw,760px);max-height:92vh;border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--ink);padding:18px;box-shadow:0 18px 60px #0004}
+.screen-capture::backdrop{background:#17191499}
+.screen-capture-head,.screen-capture-actions{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.screen-capture-head h2{margin:0;font-family:Georgia,serif;font-weight:500}
+.screen-capture img{display:block;width:min(100%,528px);max-height:68vh;object-fit:contain;margin:16px auto;background:#ddd;image-rendering:pixelated}
+.screen-capture-actions{justify-content:flex-start;flex-wrap:wrap;margin-top:12px}
