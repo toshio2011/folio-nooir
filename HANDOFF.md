@@ -1413,3 +1413,86 @@ A new negative contract confirms an upstream README target escaping the pinned r
 - No local engine checkout, built site package, prepared ROM input, or EMSDK was found. Full package regeneration/license audit and actual Chrome reader acceptance must run in the hosted build-only workflow. PyYAML is not installed locally; structural workflow contract tests passed, and hosted formatting/build workflow is the YAML gate.
 - No firmware, ROM, SD image, private-key payload, credential, generated package, lockfile or SDK file is in the 14-path change inventory. Pattern hits are synthetic redaction fixtures/regexes only.
 - Next: stage only the exact 14 R3 paths; review staged names/stat/diff and whitespace; commit one scoped Web Emulator validation update; recheck PR head before a normal fast-forward push. Then inspect the build-only run, separate X3/X4 results, screenshot downloads/evidence, package audit and artifact contents. Keep PR draft and Pages disabled; do not merge/deploy/publish.
+
+## 2026-11-18 hosted package and X3/X4 browser-acceptance checkpoint
+
+**Status: package passed strict audit; complete browser Reader acceptance failed in both hosted profiles, so the beta is not deployment-ready.** This entry supersedes the 2026-11-18 pre-push “next” status below; historical notes and R3/R4 preservation records remain unchanged.
+
+### Remote checkpoint
+
+- Repository/PR: `toshio2011/folio-nooir` PR #3, open, draft, unmerged. Remote branch `codex/nooir-web-emulator-beta` is at `106da25a10b1898d682906c5a1d617684cf50cba`.
+- Commit `106da25a10b1898d682906c5a1d617684cf50cba` (`test(web-emulator): validate X3/X4 beta acceptance`) was pushed as a normal fast-forward child of `33e3c5e1a03f6239f050409e7a41b29d4098d011`. The local review-push checkout is at that same commit. Git status was clean before the local follow-up described below.
+- PR Formatting run [44223336516](https://github.com/toshio2011/folio-nooir/actions/runs/44223336516): PASS.
+- Web Emulator build-only run [44223336526](https://github.com/toshio2011/folio-nooir/actions/runs/44223336526): FAILED only in the Chrome X3/X4 acceptance step. Pinned engine checks/build, licensed C3 ROM preparation, firmware checksum validation, native X3/X4 startup smoke, corresponding-source preparation, and strict package/license audit all passed. The success-evidence upload was skipped because browser smoke failed. Review package uploaded. Pages deployment job was skipped; its `if: false` guard remains.
+- General firmware CI was not triggered for this web-only change because the reviewed path filter excludes only web-emulator paths. The separate FreeInk checkout blocker remains unresolved at gitlink `7bd6aebe9b40198d7dddf455400cee9225430726`; no dependency pin was changed.
+
+### What hosted Chrome actually passed and failed
+
+The failure-only artifact is `nooir-browser-smoke-diagnostics`, ID `14391144854`, 1,022 bytes, GitHub digest SHA-256 `71e26b1f6fabc3387127f7994dea767b6ad0a41f226bc1f50bf84b151c371ba8`. Preserved at `D:\fatiha\side\_c-side-migration-20261110\work\folio-nooir-web-emulator-reconcile-20261112\preservation\ci-artifacts-44223336526\diagnostics`.
+
+Both X3 and X4 logs show this sequence: wrapper ready; virtual FAT32 SD mounted; the checksum-verified official v1.6.6 image selected for that profile; Nooir Home rendered; screenshot export path completed; Left opened Library. Both then fail at the first Confirm after Library with `Confirm virtual-button action did not meet its expected state (screen change >= 0.02)`. X3 and X4 are independent failures at the same assertion. EPUB entry, page turns, Reader exit, reload, and progress restoration did not run. Do not report full hosted reader acceptance.
+
+The stage order establishes that the smoke runner passed its PNG download/file checks and Library navigation before reaching the failing Confirm: the `virtual Left opened Library` stage is logged only after screenshot validation/download and the Left action assertion. Those binary screenshots/results were not uploaded because the run failed later.
+
+The confirmed workflow fixture defect is that CI creates a 64 MiB FAT32 image and an empty `/books` directory, but never copies any EPUB into it. The runner then tries to enter the empty folder and requires at least a 2% framebuffer change. The best-supported explanation is that opening an empty folder leaves a visually indistinguishable Library screen; the artifact does **not** include the original per-action QEMU key states or framebuffer difference, so it cannot prove whether Confirm reached the guest or whether the empty-folder screen alone caused the timeout. This is not evidence of an X3/X4 firmware regression.
+
+### Package and license review for run 44223336526
+
+- Review artifact `nooir-web-emulator-review`, ID `14392711035`, GitHub size 111,516,044 bytes, SHA-256 `6f7c39f81bcf8fcdc766ab87c0a40b2e3667a318a8b48b6c7514ddd3e8e92cf2`; expires 2026-11-25. Preserved extracted copy: `D:\fatiha\side\_c-side-migration-20261110\work\folio-nooir-web-emulator-reconcile-20261112\preservation\ci-artifacts-44223336526\review` (208,703,027 extracted bytes).
+- The artifact's corresponding-source archive is `sources/eink-qemu-d1b24a5f-corresponding-source.tar.gz`, 99,552,083 bytes, SHA-256 `DC022ED29F8A2844F42AD0C8A45E8A5417686F9B72B80E927AC3FC8C57AAF5EC`, with 16,651 members.
+- Strict package audit passed in hosted Linux and was rerun locally from the LF-only test checkout against this exact extracted artifact. It confirmed the pinned eink-qemu revision `d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc`, required corresponding source/notices/attributions, and hash-locked C3 ROM/boot/NVS/partition assets.
+- Manual file inventory found no Nooir firmware `.bin`, `.xota`, firmware/debug `.elf`, `.epub`, or `nooir-test-*` SD image. The only `.bin` files are the audited `engine/esp32c3-rom.bin` (393,216 bytes, SHA-256 `3A69AC75662367DC99FBD5B8DDF265515B6288E79E51E4C4168C597ACED7B79D`), `engine/boot/bootloader-esp32c3.bin` (18,688 bytes, `46893DF6619F0C7D7689FA309E76551E964E3D83D68C38CCB3E52ED8C3537226`), `engine/boot/nvs-crosspoint.bin` (20,480 bytes, `67C80FFB02DF062522216E33553F0691A9DDEA06BE794404365A66C90BC8E94F`), and `engine/boot/partitions.bin` (3,072 bytes, `BD0F7954ACA2EF7D925EE21AAA1F3DC8822D1D6CE5CBBD26A135E5886BFFF6CE`). `engine/blank-sd.img` is the blank runtime template, not a user/test card.
+- Authentic DTC/keycodemapdb license texts, CrossPoint MIT target, attribution links, and corresponding-source inventory passed strict audit. No license or ROM file was changed in the follow-up.
+- A first audit invocation from the Windows CRLF checkout reported the packaged ROM-preparation script hash differed. This was a line-ending false alarm: D: has `core.autocrlf=true`; the LF test checkout's source hash and package copy both equal `DDE01D5ED9AB4509625C791240DF51A5A555FE68A83127C7583171B7B7D133E1`. The strict audit passed from that byte-preserving LF checkout. Do not modify license notices to address line-ending conversion.
+
+### Local-only follow-up candidate (not committed or pushed)
+
+A pre-change backup of the six affected files was made at `D:\fatiha\side\_c-side-migration-20261110\work\folio-nooir-web-emulator-reconcile-20261112\preservation\pre-browser-fixture-followup-20261118`, with `before-change-manifest.json`. The LF test checkout's three replaced files are separately backed up under `preservation\pre-lf-test-update-20261118`.
+
+The local-only source diff contains three files:
+
+- `.github/workflows/nooir-web-emulator-pages.yml`: the temporary CI SD image now receives the existing tracked `test/epubs/test_text_decorations.epub` at the temporary SD root as `/nooir-smoke.epub` using the same verified 1,048,576-byte partition offset, then lists the root. With the sole EPUB directly in the Library, the next Confirm is accepted only when guest output reaches `activity=EpubReader`; this avoids using a pixel threshold for an empty-folder transition. It is copied only into `build/nooir-browser-smoke/engine/nooir-test-*.img`; the distributable remains `build/nooir-web-emulator` and the review-artifact path is unchanged.
+- `scripts/prepare_nooir_browser_smoke_diagnostics.py`: optional failure-context processing emits only an allowlisted device/action summary (button, bounded press duration, boolean QOM key state, known key-event names, bounded screen-difference fraction, acceptance booleans and runtime readiness). It excludes raw serial, firmware/ROM hashes or paths, URLs, browser profile, coordinates and arbitrary page data.
+- `test/python/test_web_emulator_contract.py`: positive/negative contracts cover temporary-only EPUB placement and sensitive failure-context omission.
+
+This correction is only locally prepared. `mcopy`/FAT image creation and a real Chrome reader run were not locally executable because the pinned QEMU/ROM/firmware/mtools build inputs are absent. Hosted rerun is required; no commit/push is authorized by this checkpoint.
+
+### Validation and next steps
+
+- In the LF test checkout, the full Python Web Emulator contract suite passed: 39 tests, 1 skipped. The new fixture-isolation and context-redaction tests each passed.
+- Node screenshot download tests: 4/4 passed. JS syntax checks and Python AST syntax checks passed. `git diff --check` passed with `cr-at-eol` handling.
+- Local full QEMU/WASM/browser build was not run. The preview ports 8178/8181 had no listeners and no QEMU process was identified. Host-level Chrome/Node processes were present; they were not attributable to this task and were left untouched. The focused Node test commands had already exited.
+- Current X3/X4 status: hosted Home + screenshot + Library path reached; the Reader acceptance stage failed before EPUB open. Earlier private/manual EPUB workflows remain historical baseline evidence, not substitutes for this hosted run.
+- Next: review the six-file local candidate diff and R5 inventory; run current source checks from LF checkout; then obtain approval before making another commit/push and triggering hosted CI. Require separate X3 and X4 results through PNG download, Library, opening this test EPUB, forward/back turns, Back to Home, SD reload and progress restore. Manually inspect the package generated by that same successful run. Keep PR #3 draft and Pages disabled.
+- Before any public beta, refresh the stale PR description to this checkpoint and complete the above acceptance gate. Deployment still needs a separate explicit approval. Rollback plan: preserve deployment commit and reviewed package hash; after authorized deployment either restore the last approved Pages artifact/commit or disable Pages to take the preview offline, then verify the public URL is restored/offline. No Pages setting has been changed.
+
+### Do Not Repeat register — 2026-11-18 hosted follow-up
+
+- Do not rerun unchanged run `44223336526` and expect full acceptance: its ephemeral SD has an empty `/books`; the local fix below is not in that remote commit.
+- Do not claim either device passed EPUB/page-turn/progress acceptance from the stage log. Those actions never ran.
+- Do not call this a Nooir firmware regression: both profiles reached Home, screenshot and Library; the first failing assertion is the empty-folder Confirm screen-change check.
+- Do not claim the screen-difference hypothesis is proven; the prior failure artifact omitted action-level QOM/event/frame-difference fields. Use the curated new context summary on the next approved hosted run.
+- Do not rerun the strict package audit from the CRLF-normalized Windows worktree and edit pinned license files. Use the LF checkout/Linux source bytes; the package's ROM-prep script hash matched exactly there.
+- Do not rebuild the already audited package at the same `106da25` commit; rerun package/browser gates only on a reviewed follow-up commit.
+- Do not alter official firmware, ROMs/notices, FreeInk pin, S3 support, v1.6.7, or Pages configuration for this fixture correction.
+
+
+## 2026-11-18 — R5 root-EPUB follow-up approved for push
+
+The user approved one six-file R5 follow-up commit/push to PR #3 and a hosted build-only run. The remote PR is open/draft/unmerged at `106da25a10b1898d682906c5a1d617684cf50cba`; local HEAD matches. The original R5 manifest is preserved unchanged at `preservation/local-change-manifest-20261118-r5.json` (SHA-256 `1c986728b3dab486bd22a83b64bf780bb1c7f8b3bcd9433f8779abaf0671d6df`). Its original six-file pre-root state is backed up at `preservation/pre-root-epub-followup-20261118`; this current revision has a separate manifest alongside this handoff update.
+
+The test EPUB is staged at the **root** of each temporary X3/X4 FAT32 card as `/nooir-smoke.epub`. This avoids selecting an empty `/books` folder and makes the first Library confirmation require the guest `activity=EpubReader` marker. The existing reader page checks require `reader_quiescent` spine/page movement plus the rendered screen; screenshot acceptance requires a downloaded PNG whose bytes, dimensions, and digest match the preview. The test image is created after the distributable is packaged and copied only under `build/nooir-browser-smoke/engine/`; the package remains `build/nooir-web-emulator`.
+
+Validation before push: focused Node tests passed 18/18. The complete Python contract suite passed 39 tests with one expected symlink-permission skip in the LF test checkout. The direct CRLF checkout run failed the pinned keycodemapdb BSD blob test because CRLF bytes differ; no notice was changed, and the complete test passed in the LF checkout using the same reviewed candidate workflow/test files. JavaScript and Python syntax checks passed. Local full QEMU/WASM build/Chrome testing was unavailable; actual X3/X4 reading acceptance remains a hosted gate.
+
+Exact six-file scope: `.github/workflows/nooir-web-emulator-pages.yml`, `scripts/prepare_nooir_browser_smoke_diagnostics.py`, `test/python/test_web_emulator_contract.py`, `HANDOFF.md`, `ROADMAP.md`, `docs/web-emulator-readiness.md`. No firmware, ROM, SD image, generated package, SDK, lockfile, or unrelated source file is included. Package/corresponding-source/license audits are unchanged and remain mandatory in hosted CI. Pro/Classic remain disabled; Pages remains disabled.
+
+The local Git status/diff commands still report `this operation must be run in a work tree`, despite valid worktree HEAD resolution; no Git metadata repair was attempted. The complete candidate was reviewed from the R5 manifest, file hashes, and normalized HEAD-versus-working-tree content. The upcoming remote update must be one parented, fast-forward-only commit with an expected-head check.
+
+### Do Not Repeat — R5 pre-push
+
+- Do not re-run the CRLF contract suite as evidence of a pinned-notice failure; use the byte-preserving LF test checkout, where the full suite passed. Do not edit notices or weaken the test.
+- Do not copy the EPUB into the distributable. It belongs only in each ephemeral browser-smoke SD image.
+- Do not accept an empty-folder screen pixel difference as Library navigation. Require `activity=EpubReader`, then page/spine movement and real screenshot download checks.
+- Do not claim hosted X3/X4 full acceptance until both independent results include firmware identity/checksum, Home/Library, Reader page movement, Back, PNG download, SD persistence and progress restoration after reload.
+- Keep the package and corresponding-source/license audit strict; the next CI run must execute these gates before uploading a separate package and evidence artifact.

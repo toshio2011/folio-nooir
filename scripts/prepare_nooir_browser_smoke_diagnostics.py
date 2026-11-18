@@ -4,12 +4,18 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import re
 
 MAX_INPUT_BYTES = 128 * 1024
 MAX_LOG_LINES = 80
 MAX_LINE_CHARS = 1200
+MAX_CONTEXT_BYTES = 128 * 1024
+SAFE_BUTTONS = {"Back", "Left", "Right", "Up", "Down", "Confirm"}
+SAFE_CODES = {"Enter", "Escape", "Backspace", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"}
+SAFE_ACCEPTANCE = {"home", "screenshotDownload", "library", "epubOpen", "forwardPageTurn", "backwardPageTurn", "readerExit", "sdPersistenceAfterReload", "progressPersistenceAfterReload"}
+SAFE_EVENTS = {"pointerdown", "pointerup", "pointercancel", "lostpointercapture", "key-click", "key-held-class", "runtime-key-message", "runtime-keydown", "runtime-keyup"}
 
 PRIVATE_KEY_BEGIN = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
 PRIVATE_KEY_END = re.compile(r"-----END [A-Z0-9 ]*PRIVATE KEY-----")
@@ -63,7 +69,103 @@ def sanitize(lines: list[str]) -> list[str]:
         output.append(safe[:MAX_LINE_CHARS] + (" [truncated]" if len(safe) > MAX_LINE_CHARS else ""))
     return output[-MAX_LOG_LINES:]
 
-def record(device: str, exit_status: int, log_path: Path, output_dir: Path) -> None:
+def _bounded_int(value: object, maximum: int = 120_000) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value < 0 or value > maximum:
+        return None
+    return int(value)
+
+def _screen_difference(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {"available": False}
+    available = value.get("available") is True
+    fraction = value.get("differentFraction")
+    if isinstance(fraction, bool) or not isinstance(fraction, (int, float)) or not 0 <= fraction <= 1:
+        return {"available": available}
+    return {"available": available, "differentFraction": round(float(fraction), 6)}
+
+def _safe_qom_value(value: object) -> bool | None:
+    if isinstance(value, dict) and isinstance(value.get("value"), bool):
+        return value["value"]
+    return None
+
+def sanitize_failure_context(path: Path, device: str) -> dict[str, object]:
+    """Select bounded action telemetry; never copy raw page state or serial data."""
+    base: dict[str, object] = {"schema": 1, "device": device, "contextAvailable": False}
+    if not path.is_file():
+        base["reason"] = "missing"
+        return base
+    try:
+        if path.stat().st_size > MAX_CONTEXT_BYTES:
+            base["reason"] = "oversize"
+            return base
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        base["reason"] = "unreadable"
+        return base
+    if not isinstance(raw, dict) or not isinstance(raw.get("state"), dict):
+        base["reason"] = "invalid-shape"
+        return base
+    state = raw["state"]
+    if state.get("device") != device:
+        base["reason"] = "device-mismatch"
+        return base
+    acceptance = state.get("acceptance")
+    if isinstance(acceptance, dict):
+        base["acceptance"] = {key: acceptance[key] is True for key in sorted(SAFE_ACCEPTANCE) if key in acceptance}
+    actions = state.get("actions")
+    if isinstance(actions, list) and actions and isinstance(actions[-1], dict):
+        action = actions[-1]
+        button = action.get("key")
+        last: dict[str, object] = {"button": button if button in SAFE_BUTTONS else "unknown"}
+        for source, target in (("heldMs", "heldMs"), ("actualHeldMs", "actualHeldMs")):
+            value = _bounded_int(action.get(source), 1000)
+            if value is not None:
+                last[target] = value
+        qom = {}
+        for source, target in (("qomStateBefore", "before"), ("qomStateWhilePressed", "whilePressed"), ("qomStateAfter", "after")):
+            value = _safe_qom_value(action.get(source))
+            if value is not None:
+                qom[target] = value
+        if qom:
+            last["qomKeyState"] = qom
+        events = action.get("finalInputEvents") or action.get("inputEvents") or []
+        safe_events = []
+        if isinstance(events, list):
+            for event in events[-24:]:
+                if not isinstance(event, dict) or event.get("event") not in SAFE_EVENTS:
+                    continue
+                safe: dict[str, object] = {"event": event["event"]}
+                key = event.get("key")
+                code = event.get("code")
+                if isinstance(key, str) and key in SAFE_BUTTONS:
+                    safe["key"] = key
+                if isinstance(code, str) and code in SAFE_CODES:
+                    safe["code"] = code
+                for field in ("down", "held", "trusted"):
+                    if isinstance(event.get(field), bool):
+                        safe[field] = event[field]
+                safe_events.append(safe)
+        last["inputEvents"] = safe_events
+        last["screenDifference"] = _screen_difference(action.get("finalScreenDifference") or action.get("screenDifference"))
+        base["lastAction"] = last
+    page_state = raw.get("pageState")
+    wrapper = page_state.get("wrapper") if isinstance(page_state, dict) else None
+    if isinstance(wrapper, dict):
+        runtime: dict[str, object] = {}
+        for field in ("engineLoaded", "crossOriginIsolated"):
+            if isinstance(wrapper.get(field), bool):
+                runtime[field] = wrapper[field]
+        length = _bounded_int(wrapper.get("consoleLength"), 10_000_000)
+        if length is not None:
+            runtime["consoleLength"] = length
+        if runtime:
+            base["runtime"] = runtime
+    base["contextAvailable"] = True
+    return base
+
+def record(device: str, exit_status: int, log_path: Path, output_dir: Path, context_path: Path | None = None) -> None:
     if device not in {"x3", "x4"}:
         raise ValueError("device must be x3 or x4")
     if exit_status < 0 or exit_status > 255:
@@ -80,6 +182,11 @@ def record(device: str, exit_status: int, log_path: Path, output_dir: Path) -> N
         line = f"{device}: FAIL (exit={exit_status}; first_error={first_error})"
         safe_lines = sanitize(lines)
         (output_dir / f"{device}.log").write_text("\n".join(safe_lines) + "\n", encoding="utf-8")
+        if context_path is not None:
+            context = sanitize_failure_context(context_path, device)
+            (output_dir / f"{device}-context.json").write_text(json.dumps(context, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+            context_status = "available" if context["contextAvailable"] else str(context.get("reason", "unavailable"))
+            line += f"; action_context={context_status}"
     with report.open("a", encoding="utf-8") as stream:
         stream.write(line + "\n")
 
@@ -88,9 +195,10 @@ def main() -> int:
     parser.add_argument("--device", choices=("x3", "x4"), required=True)
     parser.add_argument("--exit-status", type=int, required=True)
     parser.add_argument("--log", type=Path, required=True)
+    parser.add_argument("--context", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
-    record(args.device, args.exit_status, args.log, args.output_dir)
+    record(args.device, args.exit_status, args.log, args.output_dir, args.context)
     return 0
 
 if __name__ == "__main__":

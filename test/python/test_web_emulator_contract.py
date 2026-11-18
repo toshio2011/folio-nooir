@@ -292,6 +292,65 @@ class WebEmulatorContractTests(unittest.TestCase):
         self.assertNotIn("nooir-test-", acceptance_upload.lower())
         self.assertNotIn("rom", acceptance_upload.lower())
 
+    def test_browser_smoke_stages_a_test_epub_only_on_the_ephemeral_sd(self):
+        smoke = web_workflow.split("      - name: Smoke the audited package in Chrome on X3 and X4", 1)[1].split(
+            "      - name: Prepare successful X3/X4 acceptance evidence outside the package", 1
+        )[0]
+        self.assertNotIn('mmd -i "${sd}@@1048576" ::/books', smoke)
+        self.assertIn('mcopy -i "${sd}@@1048576" test/epubs/test_text_decorations.epub ::/nooir-smoke.epub', smoke)
+        self.assertIn('mdir -i "${sd}@@1048576" ::', smoke)
+        self.assertIn('cp "$sd" "build/nooir-browser-smoke/engine/nooir-test-${device}.img"', smoke)
+        self.assertIn("path: build/nooir-web-emulator", web_workflow)
+        self.assertNotIn("mcopy", web_workflow.split("      - name: Package Nooir shell and audit licenses", 1)[1].split(
+            "      - name: Smoke the audited package in Chrome on X3 and X4", 1
+        )[0])
+
+    def test_browser_failure_context_is_whitelisted_and_redacted(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            tmp_path = Path(tmp)
+            context = tmp_path / "failure-context.json"
+            output = tmp_path / "diagnostics"
+            context.write_text(json.dumps({
+                "state": {
+                    "device": "x3",
+                    "acceptance": {"home": True, "library": True, "epubOpen": False, "privateField": "do-not-copy"},
+                    "firmwareSha256": "private-firmware-hash",
+                    "firmware": "C:\\private\\firmware.bin",
+                    "actions": [{
+                        "key": "Confirm", "heldMs": 170, "actualHeldMs": 173,
+                        "qomStateBefore": {"value": False, "lines": ["private QEMU trace"]},
+                        "qomStateWhilePressed": {"value": True, "lines": ["private QEMU trace"]},
+                        "qomStateAfter": {"value": False, "lines": ["private QEMU trace"]},
+                        "finalInputEvents": [
+                            {"event": "runtime-keydown", "code": "Enter", "key": "Enter", "trusted": True},
+                            {"event": "runtime-keyup", "code": "Enter", "key": "Enter", "trusted": True},
+                            {"event": "untrusted-private-event", "payload": "secret"},
+                        ],
+                        "point": {"x": 123, "y": 456},
+                        "finalSerial": "private serial containing user data",
+                        "finalScreenDifference": {"available": True, "differentFraction": 0.001, "private": "omit"},
+                    }],
+                },
+                "pageState": {"wrapper": {
+                    "engineLoaded": True, "crossOriginIsolated": True, "consoleLength": 1234,
+                    "url": "http://127.0.0.1/private", "customFiles": [{"name": "firmware.bin"}],
+                    "serial": "private serial", "engineSrc": "private path",
+                }},
+            }), encoding="utf-8")
+            log = tmp_path / "smoke.log"
+            log.write_text("Error: Confirm action failed\n", encoding="utf-8")
+            browser_diagnostics.record("x3", 1, log, output, context)
+            summary = (output / "summary.txt").read_text(encoding="utf-8")
+            sanitized = (output / "x3-context.json").read_text(encoding="utf-8")
+            data = json.loads(sanitized)
+            self.assertIn("action_context=available", summary)
+            self.assertEqual(data["lastAction"]["button"], "Confirm")
+            self.assertEqual(data["lastAction"]["qomKeyState"], {"before": False, "whilePressed": True, "after": False})
+            self.assertEqual(data["lastAction"]["screenDifference"]["differentFraction"], 0.001)
+            self.assertEqual([event["event"] for event in data["lastAction"]["inputEvents"]], ["runtime-keydown", "runtime-keyup"])
+            for omitted in ("private-firmware-hash", "firmware.bin", "private serial", "private path", "privateField", "private QEMU trace", "user data", "123,\"y\": 456"):
+                self.assertNotIn(omitted, sanitized)
+
     def test_screenshot_export_is_exact_file_not_only_preview_or_click(self):
         self.assertIn("waitForScreenshotDownload", (ROOT / "scripts" / "nooir_browser_smoke.mjs").read_text(encoding="utf-8"))
         self.assertIn("createImageBitmap(blob)", (ROOT / "scripts" / "nooir_browser_smoke.mjs").read_text(encoding="utf-8"))

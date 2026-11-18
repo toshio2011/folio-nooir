@@ -164,7 +164,8 @@ jobs:
           for device in x3 x4; do
             sd="build/nooir-test-${device}.img"
             python3 work/eink-qemu/eink-qemu/mksd.py "$sd" 64 --cluster-size 512
-            mmd -i "${sd}@@1048576" ::/books
+            mcopy -i "${sd}@@1048576" test/epubs/test_text_decorations.epub ::/nooir-smoke.epub
+            mdir -i "${sd}@@1048576" ::
             cp "$sd" "build/nooir-browser-smoke/engine/nooir-test-${device}.img"
           done
 
@@ -360,7 +361,8 @@ jobs:
 
             if ! python3 scripts/prepare_nooir_browser_smoke_diagnostics.py \
               --device "$device" --exit-status "$smoke_status" \
-              --log "$smoke_log" --output-dir "$diagnostics_dir"; then
+              --log "$smoke_log" --context "build/nooir-browser-evidence/$device/failure-context.json" \
+              --output-dir "$diagnostics_dir"; then
               echo "$device: diagnostic collection failed; continuing to the other profile."
               browser_smoke_failed=1
             fi
