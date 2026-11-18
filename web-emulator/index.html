@@ -58,7 +58,7 @@
           <option value="x4pro" disabled>X4 Pro · validation pending</option>
           <option value="x4classic" disabled>X4 Classic · unsupported by this emulator model</option>
         </select>
-        <p id="device-note" class="status-line">With an experimental Espressif ELF-derived ROM correction, unchanged v1.6.6 firmware has passed local browser X3/X4 Home, Library, FAT32 SD, EPUB navigation, and Reader exit checks. X4 progress survived a full wrapper reload. Public packaging still needs a fresh reproducible WASM build and complete license/source review. Pro and Classic remain disabled.</p>
+        <p id="device-note" class="status-line">The unchanged official v1.6.6 image has passed private X3 and original-X4 browser reading checks. The pinned WASM build, corresponding-source archive, and strict package/license audit passed the hosted build-only workflow on 17 November. The next review run adds byte-verified screenshot downloads and a separate redacted acceptance-evidence artifact. This package contains no reader firmware. X4 Pro and X4 Classic are unsupported and remain disabled.</p>
       </div>
       <div class="custom-card">
         <span class="eyebrow">Bring your own firmware</span>
@@ -73,7 +73,7 @@
     </div>
     <footer class="page-foot">
       <span id="runtime-note">Starting local emulator…</span>
-      <span>Virtual SD card and settings are stored in this browser by eink-qemu.</span>
+      <span>Add EPUBs with the virtual SD controls below the screen. The virtual card and settings stay in this browser profile; clearing site data may erase them.</span>
       <button id="capture-screen" class="quiet-button" type="button" disabled>Save screenshot</button>
     </footer>
     <dialog id="screen-capture-dialog" class="screen-capture" aria-labelledby="screen-capture-title">
@@ -123,7 +123,7 @@
       <article class="credit-card">
         <span class="eyebrow">Emulator support assets</span>
         <h2>Espressif and Emscripten</h2>
-        <p>The experimental C3 ROM combines the pinned flat image with startup copy-table data and the ROM layout section reconstructed from Espressif's Apache-2.0 ESP32-C3 rev3 ROM ELF. Local browser X3 and X4 runs pass screen rendering, virtual navigation, FAT32 SD mounting and EPUB reading. The final license review remains open, so the candidate is not cleared for a public package. Emscripten 6.0.12 compiles the engine and supplies its SDL2 browser port.</p>
+        <p>The experimental C3 ROM is reconstructed from Espressif's Apache-2.0 ESP32-C3 rev3 ROM ELF with the reviewed startup copy-table data. The hosted build-only workflow passed the pinned Emscripten 6.0.12 build, corresponding-source preparation and strict package/license audit on 17 November. The next review run explicitly verifies the saved screenshot file and prepares redacted X3/X4 acceptance evidence separately from the distributable package.</p>
         <p><a href="https://github.com/espressif/esp-rom-elfs/releases/tag/20260528" target="_blank" rel="noreferrer">Espressif ROM ELF release</a> · <a href="https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/COPYRIGHT.html" target="_blank" rel="noreferrer">ROM third-party notices</a> · <a href="https://github.com/emscripten-core/emscripten" target="_blank" rel="noreferrer">Emscripten</a></p>
         <p><a href="./licenses/ESP32C3-ROM-NOTICES.md">ROM provenance and notices</a> · <a href="./licenses/esp32c3-rom/esp-rom-elfs-README.md">Packaged Espressif license basis</a> · <a href="./licenses/esp32c3-rom/Apache-2.0.txt">Apache-2.0 text</a> · <a href="./licenses/esp32c3-rom/esp-idf-COPYRIGHT.rst">ROM component notices</a> · <a href="./licenses/esp32c3-rom/Newlib-COPYING.NEWLIB">Newlib terms</a> · <a href="./licenses/esp32c3-rom/BSD-3-Clause.txt">BSD-3-Clause terms</a></p>
       </article>
@@ -147,7 +147,7 @@
     </section>
     <section class="license-note">
       <h2>Distribution status</h2>
-      <p>This experimental emulator targets X3 and original X4 with the shared v1.6.6 image. Local browser screen rendering, virtual navigation, FAT32 SD and EPUB workflows pass with an experimental licensed-ROM correction. A fresh reproducible WASM build and final redistribution review remain open, so there is no release-ready site artifact. The source package includes no reader firmware; the temporary external handoff does not pass a firmware file or URL.</p>
+      <p>This experimental emulator supports X3 and original X4 with the shared v1.6.6 image. Users select firmware locally; it is not included in the site or sent to a server. The pinned build and strict package/license audit passed in hosted CI, but the review package still needs manual inspection and the new screenshot/evidence checks need a fresh hosted run. X4 Pro and X4 Classic are not supported. Pages deployment remains disabled.</p>
       <a href="./licenses/eink-qemu/COPYING.LIB" data-license-file>Packaged COPYING.LIB</a>
       <a href="./licenses/EINK-QEMU-WEB-BUNDLE.md">Bundle component and source inventory</a>
       <a href="./licenses/CORRESPONDING-SOURCE.md">Corresponding-source index</a>

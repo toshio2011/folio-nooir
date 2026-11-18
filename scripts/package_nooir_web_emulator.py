@@ -7,12 +7,15 @@ import hashlib
 import io
 import json
 import os
+import posixpath
+import re
 import shutil
 import subprocess
 import tarfile
 import tempfile
 from pathlib import PurePosixPath
 from pathlib import Path
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 PINNED_EINK_QEMU = "d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc"
 COPYING_FILES = ("COPYING", "COPYING.LIB", "LICENSE")
@@ -423,6 +426,76 @@ def copy_esp32c3_rom_notices(repository: Path, output: Path) -> None:
                 f"(expected {expected_blob}, got {actual_blob})"
             )
         shutil.copy2(source_file, destination_root / packaged_name)
+    shutil.copy2(destination_root / "Apache-2.0.txt", destination_root / "LICENSE")
+    rom_script = repository / "scripts" / "prepare_esp32c3_rom.py"
+    if not rom_script.is_file():
+        raise SystemExit(f"ROM reconstruction source is missing: {rom_script}")
+    shutil.copy2(rom_script, destination_root / "prepare_esp32c3_rom.py")
+
+
+def write_packaged_reference_inventory(source: Path, destination: Path) -> None:
+    """Copy the attribution inventory with its package-relative MIT license link."""
+    source_license_link = "[`../LICENSE`](../LICENSE)"
+    packaged_license_link = "[`CrossPoint MIT License`](folio-nooir/LICENSE)"
+    text = source.read_text(encoding="utf-8")
+    if text.count(source_license_link) != 1:
+        raise SystemExit("CrossPoint attribution license link changed; review the package mapping explicitly")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        text.replace(source_license_link, packaged_license_link, 1),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def write_packaged_upstream_readme(source: Path, destination: Path) -> None:
+    """Keep the pinned upstream README while making its links usable in-package."""
+    text = source.read_text(encoding="utf-8")
+    link_pattern = re.compile(r"(!?\[[^\]]*\]\()([^)]+)(\))")
+
+    def pin_relative_link(match: re.Match[str]) -> str:
+        target = match.group(2).strip()
+        parsed = urlsplit(target)
+        if parsed.scheme or parsed.netloc or not parsed.path:
+            return match.group(0)
+
+        relative = posixpath.normpath(unquote(parsed.path).lstrip("/"))
+        if relative in {"LICENSE", "COPYING"}:
+            return match.group(0)
+        if parsed.path.startswith("../../releases"):
+            base = "https://github.com/serialx/eink-qemu/releases"
+        elif parsed.path.startswith("../../actions"):
+            base = "https://github.com/serialx/eink-qemu/actions"
+        else:
+            if relative == ".." or relative.startswith("../"):
+                raise SystemExit(f"upstream README link escapes its repository: {target}")
+            suffix = PurePosixPath(relative).suffix.lower()
+            if suffix in {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}:
+                base = f"https://raw.githubusercontent.com/serialx/eink-qemu/{PINNED_EINK_QEMU}/{relative}"
+            else:
+                kind = "blob" if suffix else "tree"
+                base = f"https://github.com/serialx/eink-qemu/{kind}/{PINNED_EINK_QEMU}/{relative}"
+        pinned = urlsplit(base)._replace(query=parsed.query, fragment=parsed.fragment)
+        return match.group(1) + urlunsplit(pinned) + match.group(3)
+
+    text = link_pattern.sub(pin_relative_link, text)
+    text += (
+        "\n\n---\n\n"
+        "Nooir package note: relative documentation links in this packaged copy "
+        f"point to pinned eink-qemu commit `{PINNED_EINK_QEMU}`. The corresponding-source "
+        "archive retains the original upstream source files.\n"
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(text, encoding="utf-8", newline="\n")
+
+def write_packaged_markdown(source: Path, destination: Path, replacements: dict[str, str]) -> None:
+    text = source.read_text(encoding="utf-8")
+    for original, packaged in replacements.items():
+        if text.count(original) != 1:
+            raise SystemExit(f"packaged documentation link changed; review mapping: {original}")
+        text = text.replace(original, packaged, 1)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(text, encoding="utf-8", newline="\n")
 
 
 def main() -> int:
@@ -490,7 +563,7 @@ def main() -> int:
     upstream_readme = source / "README.md"
     if not upstream_readme.is_file():
         raise SystemExit(f"required upstream attribution README is missing: {upstream_readme}")
-    shutil.copy2(upstream_readme, output / "licenses" / "eink-qemu" / "README.md")
+    write_packaged_upstream_readme(upstream_readme, output / "licenses" / "eink-qemu" / "README.md")
 
     component_inventory = repository / "LICENSES" / "EINK-QEMU-WEB-BUNDLE.md"
     if not component_inventory.is_file():
@@ -511,7 +584,10 @@ def main() -> int:
     attribution_inventory = repository / "LICENSES" / "REFERENCE-PROJECTS.md"
     if not attribution_inventory.is_file():
         raise SystemExit(f"Nooir attribution inventory is missing: {attribution_inventory}")
-    shutil.copy2(attribution_inventory, output / "licenses" / "NOOIR-REFERENCE-PROJECTS.md")
+    write_packaged_reference_inventory(
+        attribution_inventory,
+        output / "licenses" / "NOOIR-REFERENCE-PROJECTS.md",
+    )
 
     corresponding_source = repository / "LICENSES" / "CORRESPONDING-SOURCE.md"
     if not corresponding_source.is_file():
@@ -521,11 +597,29 @@ def main() -> int:
     rom_notices = repository / "LICENSES" / "ESP32C3-ROM-NOTICES.md"
     if not rom_notices.is_file():
         raise SystemExit(f"Espressif ROM notice is missing: {rom_notices}")
-    shutil.copy2(rom_notices, output / "licenses" / "ESP32C3-ROM-NOTICES.md")
+    write_packaged_markdown(
+        rom_notices,
+        output / "licenses" / "ESP32C3-ROM-NOTICES.md",
+        {
+            "](../scripts/prepare_esp32c3_rom.py)": "](esp32c3-rom/prepare_esp32c3_rom.py)",
+        },
+    )
 
     shell_source = Path(__file__).resolve().parents[1] / "web-emulator"
     for name in ("index.html", "app.js", "style.css", "screenshot.css", "README.md", "dependencies.json"):
-        shutil.copy2(shell_source / name, output / name)
+        if name == "README.md":
+            write_packaged_markdown(
+                shell_source / name,
+                output / name,
+                {
+                    "](../LICENSES/REFERENCE-PROJECTS.md)": "](licenses/NOOIR-REFERENCE-PROJECTS.md)",
+                    "](../LICENSES/EINK-QEMU-WEB-BUNDLE.md)": "](licenses/EINK-QEMU-WEB-BUNDLE.md)",
+                    "](../LICENSES/ESP32C3-ROM-NOTICES.md)": "](licenses/ESP32C3-ROM-NOTICES.md)",
+                    "](../docs/web-emulator-release-readiness-2026-11-04.md)": "](licenses/EINK-QEMU-WEB-BUNDLE.md)",
+                },
+            )
+        else:
+            shutil.copy2(shell_source / name, output / name)
 
     notice = f"""# Folio Nooir Browser Emulator package notice
 

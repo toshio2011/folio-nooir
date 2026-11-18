@@ -1,11 +1,14 @@
 """Source and packaging safety contracts for the Nooir browser emulator."""
 
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
+import struct
 import tarfile
 import tempfile
 import unittest
+import zlib
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,9 +43,199 @@ web_workflow = (ROOT / ".github" / "workflows" / "nooir-web-emulator-pages.yml")
 softfloat_prep = load_module(
     "nooir_softfloat_source_prep", ROOT / "scripts" / "prepare_nooir_softfloat_source.py"
 )
+acceptance_evidence = load_module(
+    "nooir_browser_acceptance_evidence", ROOT / "scripts" / "prepare_nooir_browser_acceptance_evidence.py"
+)
 
 
 class WebEmulatorContractTests(unittest.TestCase):
+    def test_packaged_attribution_link_resolves_to_copied_crosspoint_license(self):
+        with tempfile.TemporaryDirectory(prefix="nooir-attribution-link-", dir=ROOT) as temporary:
+            root = Path(temporary)
+            packaged = root / "package"
+            license_doc = packaged / "licenses" / "NOOIR-REFERENCE-PROJECTS.md"
+            package_builder.write_packaged_reference_inventory(
+                ROOT / "LICENSES" / "REFERENCE-PROJECTS.md", license_doc
+            )
+            (packaged / "licenses" / "folio-nooir").mkdir(parents=True)
+            (packaged / "licenses" / "folio-nooir" / "LICENSE").write_text("MIT", encoding="utf-8")
+            (packaged / "licenses" / "CORRESPONDING-SOURCE.md").write_text("source", encoding="utf-8")
+            (packaged / "licenses" / "ESP32C3-ROM-NOTICES.md").write_text("rom", encoding="utf-8")
+            errors = package_audit.audit_local_attribution_links(packaged)
+            self.assertEqual(errors, [])
+            self.assertIn("CrossPoint MIT License", license_doc.read_text(encoding="utf-8"))
+            self.assertNotIn("`../LICENSE`", license_doc.read_text(encoding="utf-8"))
+
+    def test_attribution_link_audit_rejects_missing_or_escaping_files(self):
+        with tempfile.TemporaryDirectory(prefix="nooir-attribution-negative-", dir=ROOT) as temporary:
+            package = Path(temporary) / "package"
+            licenses = package / "licenses"
+            licenses.mkdir(parents=True)
+            (licenses / "NOOIR-REFERENCE-PROJECTS.md").write_text(
+                "[missing](missing-LICENSE) [escape](../../outside.txt)\n", encoding="utf-8"
+            )
+            errors = package_audit.audit_local_attribution_links(package)
+            self.assertTrue(any("does not resolve" in error for error in errors))
+            self.assertTrue(any("escapes package" in error for error in errors))
+
+    def test_packaged_readme_and_rom_notice_links_resolve_to_included_sources(self):
+        with tempfile.TemporaryDirectory(prefix="nooir-package-doc-links-", dir=ROOT) as temporary:
+            package = Path(temporary) / "package"
+            licenses = package / "licenses"
+            rom_assets = licenses / "esp32c3-rom"
+            rom_assets.mkdir(parents=True)
+            package_builder.write_packaged_markdown(
+                WEB / "README.md",
+                package / "README.md",
+                {
+                    "](../LICENSES/REFERENCE-PROJECTS.md)": "](licenses/NOOIR-REFERENCE-PROJECTS.md)",
+                    "](../LICENSES/EINK-QEMU-WEB-BUNDLE.md)": "](licenses/EINK-QEMU-WEB-BUNDLE.md)",
+                    "](../LICENSES/ESP32C3-ROM-NOTICES.md)": "](licenses/ESP32C3-ROM-NOTICES.md)",
+                    "](../docs/web-emulator-release-readiness-2026-11-04.md)": "](licenses/EINK-QEMU-WEB-BUNDLE.md)",
+                },
+            )
+            package_builder.write_packaged_markdown(
+                ROOT / "LICENSES" / "ESP32C3-ROM-NOTICES.md",
+                licenses / "ESP32C3-ROM-NOTICES.md",
+                {
+                    "](../scripts/prepare_esp32c3_rom.py)": "](esp32c3-rom/prepare_esp32c3_rom.py)",
+                },
+            )
+            for relative in (
+                "licenses/NOOIR-REFERENCE-PROJECTS.md",
+                "licenses/EINK-QEMU-WEB-BUNDLE.md",
+                "licenses/CORRESPONDING-SOURCE.md",
+                "licenses/esp32c3-rom/esp-rom-elfs-README.md",
+                "licenses/esp32c3-rom/LICENSE",
+                "licenses/esp32c3-rom/prepare_esp32c3_rom.py",
+            ):
+                target = package / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("local target", encoding="utf-8")
+            (package / "licenses/esp32c3-rom/esp-rom-elfs-README.md").write_text(
+                "See [the license](LICENSE).\n", encoding="utf-8"
+            )
+            self.assertEqual(package_audit.audit_local_attribution_links(package), [])
+            bad_source = Path(temporary) / "bad-upstream-README.md"
+            bad_source.write_text("[bad](../../../outside.md)\n", encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                package_builder.write_packaged_upstream_readme(
+                    bad_source, package / "licenses" / "eink-qemu" / "bad-README.md"
+                )
+
+    def test_packaged_engine_readme_links_resolve_or_point_to_the_pinned_source(self):
+        with tempfile.TemporaryDirectory(prefix="nooir-upstream-readme-links-", dir=ROOT) as temporary:
+            root = Path(temporary)
+            source = root / "upstream-README.md"
+            package = root / "package"
+            destination = package / "licenses" / "eink-qemu" / "README.md"
+            source.write_text(
+                "[profiles](eink-qemu/profiles/README.md) "
+                "[guide](EINK-QEMU.md#webassembly-build) "
+                "[releases](../../releases) [actions](../../actions) "
+                "[COPYING](COPYING) [LICENSE](LICENSE) "
+                "![desktop](eink-qemu/screenshots/desktop-light.png)\n",
+                encoding="utf-8",
+            )
+            package_builder.write_packaged_upstream_readme(source, destination)
+            for name in ("COPYING", "LICENSE"):
+                (destination.parent / name).write_text("license text", encoding="utf-8")
+            packaged = destination.read_text(encoding="utf-8")
+            self.assertIn(
+                "https://github.com/serialx/eink-qemu/blob/d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc/eink-qemu/profiles/README.md",
+                packaged,
+            )
+            self.assertIn(
+                "https://raw.githubusercontent.com/serialx/eink-qemu/d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc/eink-qemu/screenshots/desktop-light.png",
+                packaged,
+            )
+            self.assertIn("Nooir package note", packaged)
+            self.assertEqual(package_audit.audit_local_attribution_links(package), [])
+            bad_source = Path(temporary) / "bad-upstream-README.md"
+            bad_source.write_text("[bad](../../../outside.md)\n", encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                package_builder.write_packaged_upstream_readme(
+                    bad_source, package / "licenses" / "eink-qemu" / "bad-README.md"
+                )
+    def test_success_evidence_is_curated_and_excludes_firmware_and_sd_inputs(self):
+        def png_chunk(name, data):
+            kind = name.encode("ascii")
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+        ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
+        png = b"\x89PNG\r\n\x1a\n" + png_chunk("IHDR", ihdr)
+        png += png_chunk("IDAT", zlib.compress(bytes((0, 20, 40, 60, 255))))
+        png += png_chunk("IEND", b"")
+        digest = hashlib.sha256(png).hexdigest()
+        with tempfile.TemporaryDirectory(prefix="nooir-acceptance-evidence-", dir=ROOT) as temporary:
+            root = Path(temporary)
+            input_root = root / "input"
+            output = root / "public-evidence"
+            fields = acceptance_evidence.REQUIRED_SCREEN_FIELDS
+            for device in ("x3", "x4"):
+                source = input_root / device
+                source.mkdir(parents=True)
+                screenshots = {}
+                for field in fields:
+                    stem = acceptance_evidence.SCREEN_FIELDS[field]
+                    page_name = f"{device}-{stem}.png"
+                    panel_name = f"{device}-{stem}-panel.png"
+                    (source / page_name).write_bytes(png)
+                    (source / panel_name).write_bytes(png)
+                    screenshots[field] = {
+                        "pageSha256": digest, "pageWidth": 1, "pageHeight": 1,
+                        "panelFile": panel_name, "panelSha256": digest,
+                        "panelWidth": 1, "panelHeight": 1,
+                    }
+                download_name = f"folio-nooir-{device}-screen.png"
+                (source / download_name).write_bytes(png)
+                (source / "firmware.bin").write_bytes(b"must not copy")
+                (source / f"nooir-test-{device}.img").write_bytes(b"must not copy")
+                (source / "serial.log").write_text(
+                    "app=1.6.6+b961c1f7\nrender_ready\n[private C:\\Users\\reader\\profile] ghp_secret-token\n",
+                    encoding="utf-8",
+                )
+                result = {
+                    "device": device, "result": "PASS", "firmwareSha256": "secret-firmware-id",
+                    "firmware": "C:\\private\\firmware.bin", "sd": "nooir-test.img",
+                    "acceptance": {key: True for key in acceptance_evidence.REQUIRED_ACCEPTANCE},
+                    "screenshots": screenshots,
+                    "screenshotExport": {"downloadedFile": {
+                        "name": download_name, "bytes": len(png), "width": 1, "height": 1, "sha256": digest,
+                    }},
+                }
+                (source / "result.json").write_text(json.dumps(result), encoding="utf-8")
+
+            acceptance_evidence.build_acceptance_evidence(input_root, output)
+            files = [path.relative_to(output).as_posix() for path in output.rglob("*") if path.is_file()]
+            self.assertFalse(any(name.endswith((".bin", ".img")) for name in files))
+            for device in ("x3", "x4"):
+                summary = (output / device / "result.json").read_text(encoding="utf-8")
+                serial = (output / device / "serial-summary.txt").read_text(encoding="utf-8")
+                self.assertNotIn("firmwareSha256", summary)
+                self.assertNotIn("C:\\\\private", summary)
+                self.assertNotIn("ghp_secret-token", serial)
+                self.assertNotIn("Users", serial)
+                self.assertIn("render_ready", serial)
+
+    def test_success_evidence_refuses_incomplete_acceptance_results(self):
+        with tempfile.TemporaryDirectory(prefix="nooir-acceptance-negative-", dir=ROOT) as temporary:
+            root = Path(temporary)
+            input_root = root / "input"
+            input_root.mkdir()
+            for device in ("x3", "x4"):
+                source = input_root / device
+                source.mkdir()
+                result = {
+                    "device": device, "result": "PASS",
+                    "acceptance": {key: True for key in acceptance_evidence.REQUIRED_ACCEPTANCE},
+                }
+                if device == "x4":
+                    result["acceptance"]["epubOpen"] = False
+                (source / "result.json").write_text(json.dumps(result), encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                acceptance_evidence.build_acceptance_evidence(input_root, root / "output")
+
     def test_guest_runtime_failure_is_detected_and_drained(self):
         self.assertTrue(smoke_runner.is_guest_runtime_error("Guru Meditation Error: test"))
         self.assertTrue(smoke_runner.is_guest_runtime_error("RuntimeError: test"))
@@ -85,6 +278,64 @@ class WebEmulatorContractTests(unittest.TestCase):
             web_workflow.index("Package Nooir shell and audit licenses"),
             web_workflow.index("Smoke the audited package in Chrome on X3 and X4"),
         )
+        self.assertNotIn("NOOIR_INPUT_PROBE_KEY=Left", web_workflow)
+        self.assertIn("scripts/prepare_nooir_browser_acceptance_evidence.py", web_workflow)
+        self.assertIn("Upload successful X3/X4 browser acceptance evidence (separate artifact)", web_workflow)
+        self.assertLess(
+            web_workflow.index("Prepare successful X3/X4 acceptance evidence outside the package"),
+            web_workflow.index("Upload successful X3/X4 browser acceptance evidence (separate artifact)"),
+        )
+        acceptance_upload = web_workflow.split("name: nooir-browser-acceptance-evidence", 1)[1].split(
+            "      - name: Upload X3/X4 browser smoke diagnostics", 1
+        )[0]
+        self.assertNotIn("firmware", acceptance_upload.lower())
+        self.assertNotIn("nooir-test-", acceptance_upload.lower())
+        self.assertNotIn("rom", acceptance_upload.lower())
+
+    def test_screenshot_export_is_exact_file_not_only_preview_or_click(self):
+        self.assertIn("waitForScreenshotDownload", (ROOT / "scripts" / "nooir_browser_smoke.mjs").read_text(encoding="utf-8"))
+        self.assertIn("createImageBitmap(blob)", (ROOT / "scripts" / "nooir_browser_smoke.mjs").read_text(encoding="utf-8"))
+        self.assertIn("Downloaded PNG differs from the screenshot preview bytes", (ROOT / "scripts" / "verify_nooir_screenshot_download.mjs").read_text(encoding="utf-8"))
+
+    def test_firmware_ci_is_skipped_only_for_known_web_only_changes(self):
+        ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        ignored = ci.split("    paths-ignore:\n", 1)[1].split("\njobs:", 1)[0]
+        patterns = [line.strip()[3:-1] for line in ignored.splitlines() if line.strip().startswith("- '")]
+        current_pr3_paths = (
+            ".github/workflows/ci.yml",
+            ".github/workflows/nooir-web-emulator-pages.yml",
+            "web-emulator/README.md", "web-emulator/app.js", "web-emulator/dependencies.json",
+            "web-emulator/index.html", "web-emulator/screenshot.css", "web-emulator/style.css",
+            "scripts/check_nooir_web_package.py", "scripts/nooir_browser_smoke.mjs",
+            "scripts/package_nooir_web_emulator.py", "scripts/prepare_esp32c3_rom.py",
+            "scripts/prepare_nooir_softfloat_source.py", "scripts/prepare_nooir_browser_smoke_diagnostics.py",
+            "scripts/prepare_nooir_browser_acceptance_evidence.py", "scripts/verify_nooir_screenshot_download.mjs",
+            "scripts/select_cdp_page_target.mjs", "scripts/serve_nooir_web_emulator.py",
+            "scripts/smoke_nooir_shared_firmware.py", "scripts/requirements.txt",
+            "test/node/cdp-target-selection.test.mjs", "test/node/sd-asset-location.test.mjs",
+            "test/node/screenshot-download.test.mjs",
+            "test/python/test_web_emulator_contract.py",
+            "LICENSES/REFERENCE-PROJECTS.md",
+            "LICENSES/CORRESPONDING-SOURCE.md", "LICENSES/EINK-QEMU-WEB-BUNDLE.md",
+            "LICENSES/ESP32C3-ROM-APACHE-2.0.txt", "LICENSES/ESP32C3-ROM-BSD-3-CLAUSE.txt",
+            "LICENSES/ESP32C3-ROM-ELF-README.md", "LICENSES/ESP32C3-ROM-ESP-IDF-COPYRIGHT.rst",
+            "LICENSES/ESP32C3-ROM-NEWLIB-COPYING.NEWLIB", "LICENSES/ESP32C3-ROM-NOTICES.md",
+            "LICENSES/SPDX-CC0-1.0.txt", "LICENSES/eink-qemu-components/dtc/GPL",
+            "LICENSES/eink-qemu-components/dtc/BSD-2-Clause", "LICENSES/eink-qemu-components/dtc/README.license",
+            "LICENSES/eink-qemu-components/keycodemapdb/LICENSE.BSD",
+            "LICENSES/eink-qemu-components/keycodemapdb/LICENSE.GPL2",
+            "ROADMAP.md", "README.md", "HANDOFF.md", "docs/web-emulator-pr-draft.md",
+            "docs/web-emulator-readiness.md", "docs/web-emulator-release-readiness-2026-11-04.md",
+        )
+        def excluded(source_path):
+            return any(source_path == pattern or (pattern.endswith("/**") and source_path.startswith(pattern[:-2])) for pattern in patterns)
+
+        for source_path in current_pr3_paths:
+            self.assertTrue(excluded(source_path), f"PR #3 web-only path would still trigger firmware CI: {source_path}")
+        firmware_paths = (".gitmodules", "freeink-sdk", "platformio.ini", "src/Battery.cpp", "test/CMakeLists.txt")
+        for source_path in firmware_paths:
+            self.assertFalse(excluded(source_path), f"firmware-impacting path must run firmware CI: {source_path}")
+        self.assertIn("Any firmware source", ci)
 
     def test_browser_smoke_failure_diagnostics_are_redacted_and_bounded(self):
         import tempfile
@@ -289,7 +540,7 @@ class WebEmulatorContractTests(unittest.TestCase):
         self.assertIn("pyelftools==0.33", WORKFLOW)
         self.assertIn("nooir-rom-venv/bin/python", WORKFLOW)
         self.assertIn("Smoke the audited package in Chrome on X3 and X4", WORKFLOW)
-        self.assertIn("NOOIR_INPUT_PROBE_KEY=Left", WORKFLOW)
+        self.assertNotIn("NOOIR_INPUT_PROBE_KEY=Left", WORKFLOW)
         self.assertIn("Upload X3/X4 browser smoke diagnostics (failure only)", WORKFLOW)
         self.assertIn("nooir-browser-smoke-diagnostics", WORKFLOW)
         rom_identity = (393216, "3a69ac75662367dc99fbd5b8ddf265515b6288e79e51e4c4168c597aced7b79d")

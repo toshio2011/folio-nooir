@@ -474,3 +474,34 @@ The map/symbol table confirms linked NimBLE and BleKeyboardHost. Offline host
 tests could not run (no CMake/CTest/compiler); Settings JS syntax and
 `git diff --check` passed. No flash/commit/push. Physical X4 validation remains
 required; this is not release-ready.
+
+## Folio Nooir browser emulator beta — 2026-11-17
+
+### Current scope and status
+
+The first beta targets only XTEINK X3 and original X4 using the shared official v1.6.6 firmware supplied locally by each user. The private/manual browser Reader baseline is reported as passing. Keep X4 Pro and X4 Classic disabled and independent; neither blocks this beta.
+
+PR #3 remains draft at `33e3c5e1a03f6239f050409e7a41b29d4098d011`. The latest green Web Emulator workflow built and audited the pinned engine/package, but its hosted browser command ran Home plus one Left input only. A complete hosted Reader acceptance run, actual screenshot-file validation, new evidence artifact, corrected package link audit, and manual package review remain outstanding.
+
+### Phased beta completion
+
+1. **Local review:** inspect the 11 tracked edits and 3 new test/helper files on `codex/nooir-web-emulator-beta-followup-20261117`; preserve the D: backup and do not include firmware, ROM, engine output, or internal backups in the commit.
+2. **Reviewed hosted validation:** after explicit approval, push the scoped change to PR #3. The build-only workflow must use the pinned `serialx/eink-qemu` revision, build/audit the distributable, and run full X3 and X4 browser acceptance independently. Require firmware identity, Home, saved PNG byte/hash/dimension match, Library, EPUB, both page directions, Reader exit, SD reload and progress restoration. Report per-device status.
+3. **Evidence and package review:** retain successful screenshots, allowlisted serial markers and structured results in a separate short-lived artifact, never in the distributable. Inspect the new package/source archive and hashes; prove the corrected CrossPoint MIT license link resolves and all packaged local attribution links resolve. Exclude reader firmware and temporary test SD images; the blank runtime SD template is distinct and must remain identified as a runtime asset if required.
+4. **Release gate:** confirm pinned source/notice completeness, ROM provenance, corresponding-source archive, strict audit, package exclusions, and no unexpected files. Review branch protection implications of skipping firmware CI for web-only paths; firmware/SDK changes must still run it and expose the unresolved FreeInk gitlink honestly.
+5. **Deployment only after separate approval:** the Pages job remains `if: false`. Do not enable Pages as part of the validation push. Upon separate approval, deploy the exact reviewed commit, verify the live page and a locally selected official image, and record the deployment/package hashes.
+6. **Rollback:** keep the reviewed deployment commit and artifact. If the beta has a functional, security, or license problem, redeploy the last approved commit or disable Pages to take the beta offline; verify the rollback URL and retain all source/artifacts.
+
+### Do not repeat
+
+- The green Home/Left probe is not full hosted Reader acceptance.
+- The existing review ZIP has the previous broken MIT attribution target and must not be published.
+- Do not substitute the unavailable FreeInk SDK commit, rebuild device firmware, or copy large SD images unnecessarily.
+- Do not merge, publish, deploy, or enable Pro/Classic as part of this checkpoint.
+### Documentation-link gate — 2026-11-17
+
+The packaged engine README must retain its attribution while pointing unavailable relative documentation links to the exact pinned upstream revision. The package copy keeps local links to bundled COPYING/LICENSE; the corresponding-source archive preserves upstream originals. The preserved old ZIP is not a candidate. The current link-only check found 32 local links across 15 docs resolving after the packaging rewrite, but the generated package must still pass the full strict audit before release.
+## 2026-11-17 checkpoint
+Before the next commit, resolve the recurring Git work-tree diagnostic without destructive repair and re-confirm staged/untracked inventory. The R2 source manifest matched all 14 files. The latest hosted green run is not full EPUB acceptance; next hosted validation must exercise both devices' complete reader flow and capture separate sanitized evidence. Pro/Classic remain independent and disabled.
+## 2026-11-18 beta validation checkpoint
+The 14-path R3 change set is intact and verified on the D: linked worktree; Git status works in the authorized D: context. Source checks pass in the separate LF checkout (37 Python contracts, one skipped; 4 PNG tests; syntax checks). Do not normalize the pinned license files in the preserved source checkout. Local engine/ROM/package inputs are absent, so use the approved hosted build-only workflow after the scoped push for strict package audit and full independent X3/X4 browser acceptance. The old green run is only Home/input probe. PR #3 stays draft; Pages remains disabled. FreeInk's missing gitlink remains a firmware-CI issue, with the web-only path scope preserving CI for firmware/SDK changes.

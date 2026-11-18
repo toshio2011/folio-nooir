@@ -49,3 +49,46 @@ The visible About & Credits page links CrossPoint Reader, CrossInk, CrossPoint S
 The corresponding-source and license review remains incomplete. The generated WASM/runtime output has not been mapped to every linked source/license at file level, the complete dependency source set and modification set has not been verified as a distribution bundle, and the exact license status of the Espressif ROM binaries in this bundle still needs confirmation. Espressif states that ESP32 ROM code is proprietary and not open source, while separately licensing its published ROM ELF files under Apache-2.0; the package review must establish the provenance and terms for the exact QEMU ROM artifacts: [Espressif ROM ELF repository](https://github.com/espressif/esp-rom-elfs/). A reviewer/maintainer must sign off before publication.
 
 Before a public beta, finish the license and source review, resolve the stable-binary hosting decision, run and inspect the build-only workflow on GitHub, and review the exact package contents. The original release firmware remains outside the source package. Do not enable deployment until those gates pass.
+
+## Current readiness addendum — 2026-11-17
+
+**Status: not ready to publish; locally prepared for reviewed hosted validation.** This addendum is newer than the historical snapshot above and preserves its earlier evidence.
+
+### Current checkpoint
+
+- PR #3 is open and draft at remote/local base `33e3c5e1a03f6239f050409e7a41b29d4098d011`. Local-only changes are on `codex/nooir-web-emulator-beta-followup-20261117`; no commit/push/CI/deploy occurred.
+- Private/manual X3 and original X4 Reader workflows remain the reported functional baseline. The green hosted run 44017191071 built/audited the package and completed a Chrome step, but its workflow injected `NOOIR_INPUT_PROBE_KEY=Left` and stopped after Home plus one input. It does not prove hosted EPUB navigation, screenshot download, or persistence acceptance.
+- Existing review artifact ID 14299759687 is 111,518,504 bytes, SHA-256 `960cd2d0cbc74be0f3e8f530e0ae041b24d832351093c5c085b98fff4bceaf39`. It has no reader firmware or test SD image; its `.img` is the blank runtime template. It is an older artifact with the broken CrossPoint MIT link and is not a candidate for publication.
+
+### Work prepared locally
+
+The browser smoke now verifies a completed device-named PNG exists, is a structurally valid PNG, and byte-matches the screenshot preview using SHA-256 and dimensions. Four focused Node tests pass. The packaging step rewrites the CrossPoint attribution to the included `licenses/folio-nooir/LICENSE`; the new strict package check verifies local links in shipped Markdown/HTML and rejects missing or escaping links. Contract tests cover valid and invalid targets.
+
+Successful acceptance evidence is prepared as a separate success-only output containing allowlisted screenshots, dimensions/hashes, structured acceptance booleans and a bounded serial-marker summary. It omits firmware/ROM/SD bytes, SD identifiers/hashes, raw logs, local paths and user profile data. The helper's positive/negative contracts pass. No real-browser evidence was generated in this local continuation, and no old loose screenshots/log/results were found in the scoped preservation folders.
+
+The browser/UI review confirms X4 default, X3/X4 enabled, Pro/Classic disabled, latest-stable metadata with manual official download/local selection because GitHub's binary redirect is not reliably readable cross-origin, browser-memory firmware handling/no upload, browser-profile SD/settings persistence, visible errors/fallbacks, and experimental limitations. The interface should continue to disclose slow startup, occasional missed presses and unverified browsers.
+
+### Validation and blockers
+
+- Node screenshot tests: 4/4 pass.
+- Python Web Emulator contracts: 36 pass, 1 skipped.
+- Node syntax and Python bytecode compilation pass.
+- Tracked diff whitespace check passes with CR-at-EOL recognized; LF test worktree was used because Windows Git `core.autocrlf=true` otherwise changes pinned LF license bytes during reads.
+- Local full workflow YAML parser unavailable; structural contracts pass, but hosted workflow checks remain necessary.
+- No complete local QEMU/WASM package build or new strict audit was possible: the D: working checkout lacks pinned engine source, generated engine distribution, prepared ROM input, and Emscripten SDK. The prior hosted source archive and audit passed for the old package only. The corrected local package must be rebuilt and strictly audited in hosted validation.
+- CI run 44017191186 failed during recursive checkout for the unrelated unavailable FreeInk gitlink `7bd6aebe9b40198d7dddf455400cee9225430726`; no tests/build ran. A local web-only path filter proposal does not change the pin and keeps firmware/SDK paths on normal firmware CI. Confirm branch-protection behavior for skipped checks before any merge.
+
+### Deployment decision and gates
+
+Keep Pages hard-disabled and PR #3 draft. Before publication, a reviewed commit/push must run the full X3 and X4 browser workflows separately, validate actual screenshot downloads and Reader/persistence flows, upload the separate filtered evidence artifact, rebuild the corrected distributable package, pass strict license/corresponding-source/link/exclusion audits, and undergo manual artifact inspection. After all gates, request a separate explicit approval to enable Pages/deploy. Roll back by redeploying the last approved commit or taking the site offline; keep its exact commit and package hash for that purpose.
+
+X4 Pro and X4 Classic remain disabled and do not block the X3/X4 beta.
+### Package-link audit refinement — 2026-11-17
+
+The previous review ZIP is unchanged and not publishable: its CrossPoint MIT link is broken, and its copied upstream eink-qemu README points to documentation absent from the site package. The package builder now rewrites only generated documentation copies: CrossPoint points to the included Nooir MIT text; upstream README links point to the pinned eink-qemu commit, while packaged COPYING/LICENSE links remain internal. The corresponding-source archive remains the unmodified upstream source.
+
+A read-only link-only audit of the preserved artifact layout after the proposed transformations checked 32 local links across 15 Markdown/HTML documents, with zero missing/escaping targets. This confirms the link mapping against the archived file layout; the package was not regenerated and the complete strict package audit remains pending. A new contract also rejects README links that escape the pinned source tree.
+## 2026-11-17 final integrity check
+Current branch/HEAD are recorded in HANDOFF.md. The final `git status`/`git diff` check failed with a work-tree diagnostic despite valid branch/HEAD resolution; no Git metadata was changed. R2 manifest verified 14 files with zero hash/size mismatches, but fresh stage inventory is unverified and must be resolved before commit. The private-key pattern match is synthetic redaction-test text with no key payload. Full package audit and actual browser screenshot-download acceptance remain pending.
+## 2026-11-18 pre-push gate
+Git metadata is intact; the earlier status error was the D: access context. Authorized status reports the exact R3 set (11 modified tracked, 3 untracked, none staged). A CRLF-only local run fails the pinned notice byte-hash check because `core.autocrlf=true`; the verified LF checkout matches the reviewed code and passes 37 Python contracts (one skipped), 4 PNG helper tests, and JS syntax checks. Full package build/audit and full browser acceptance remain hosted gates because the pinned build inputs are absent locally. PR #3 is open/draft at `33e3c5e1a03f6239f050409e7a41b29d4098d011`; Pages remains disabled.

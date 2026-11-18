@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import posixpath
+import re
 import sys
 import tarfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from urllib.parse import unquote, urlsplit
 
 PINNED_ENGINE = "d1b24a5fbc1bbae7ea31075460f63cd4c989c1dc"
 PINNED_SOFTFLOAT = "b64af41c3276f97f0e181920400ee056b9c88037"
@@ -37,6 +39,8 @@ REQUIRED = (
     "licenses/CORRESPONDING-SOURCE.md",
     "licenses/ESP32C3-ROM-NOTICES.md",
     "licenses/esp32c3-rom/esp-rom-elfs-README.md",
+    "licenses/esp32c3-rom/LICENSE",
+    "licenses/esp32c3-rom/prepare_esp32c3_rom.py",
     "licenses/esp32c3-rom/esp32c3-rom.bin.manifest.json",
     "licenses/esp32c3-rom/Apache-2.0.txt",
     "licenses/esp32c3-rom/esp-idf-COPYRIGHT.rst",
@@ -107,6 +111,66 @@ def find_prohibited_source_archive_paths(member_names: set[str]) -> list[str]:
     return sorted(PROHIBITED_SOURCE_ARCHIVE_PATHS & normalized_names)
 
 
+MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+HTML_LOCAL_LINK_RE = re.compile(r"\b(?:href|src)\s*=\s*['\"]([^'\"]+)['\"]", re.IGNORECASE)
+
+
+def _exact_path_exists(root: Path, relative: str) -> bool:
+    current = root
+    for component in PurePosixPath(relative).parts:
+        if component in {"", "."}:
+            continue
+        if component == "..":
+            return False
+        try:
+            match = next((child for child in current.iterdir() if child.name == component), None)
+        except OSError:
+            return False
+        if match is None:
+            return False
+        current = match
+        try:
+            current.resolve().relative_to(root.resolve())
+        except (OSError, ValueError):
+            return False
+    return current.exists()
+
+
+def audit_local_attribution_links(package: Path) -> list[str]:
+    """Require local links in shipped attribution/license docs and shell to resolve."""
+    package_root = package.resolve()
+    errors: list[str] = []
+
+    def check(relative_source: str, destination: str) -> None:
+        raw = destination.strip()
+        if raw.startswith("<") and ">" in raw:
+            raw = raw[1:raw.index(">")]
+        else:
+            raw = raw.split(maxsplit=1)[0]
+        parsed = urlsplit(raw)
+        if parsed.scheme or parsed.netloc or not parsed.path:
+            return
+        link_path = unquote(parsed.path).lstrip("/")
+        source_parent = posixpath.dirname(relative_source)
+        resolved_relative = posixpath.normpath(posixpath.join(source_parent, link_path))
+        if resolved_relative == ".." or resolved_relative.startswith("../"):
+            errors.append(f"local attribution link escapes package: {relative_source} -> {raw}")
+        elif not _exact_path_exists(package_root, resolved_relative):
+            errors.append(f"local attribution link does not resolve: {relative_source} -> {raw}")
+
+    for source in package_root.rglob("*.md"):
+        relative = source.relative_to(package_root).as_posix()
+        text = source.read_text(encoding="utf-8", errors="replace")
+        for match in MARKDOWN_LINK_RE.finditer(text):
+            check(relative, match.group(1))
+
+    html = package_root / "index.html"
+    if html.is_file():
+        for match in HTML_LOCAL_LINK_RE.finditer(html.read_text(encoding="utf-8", errors="replace")):
+            check("index.html", match.group(1))
+    return errors
+
+
 PINNED_DEPENDENCY_LICENSE_BLOBS = {
     "licenses/eink-qemu-components/build-subprojects/keycodemapdb/LICENSE.BSD": "ec1a29d34d6e419411c75523408aca72f705345c",
     "licenses/eink-qemu-components/build-subprojects/keycodemapdb/LICENSE.GPL2": "d511905c1647a1e311e8b20d5930a37a9c2531cd",
@@ -117,6 +181,7 @@ PINNED_DEPENDENCY_LICENSE_BLOBS = {
 LICENSE_FILE_BLOBS = {
     "licenses/esp32c3-rom/esp-rom-elfs-README.md": "0df304ef2d7c2ba4009c3e9931d98a951321dec2",
     "licenses/esp32c3-rom/Apache-2.0.txt": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+    "licenses/esp32c3-rom/LICENSE": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
     "licenses/esp32c3-rom/esp-idf-COPYRIGHT.rst": "d6f42432fec445e5f05971147a8a1de6d2cbf93e",
     "licenses/esp32c3-rom/Newlib-COPYING.NEWLIB": "d056d18f74c923772ee53fffc131cded0ef26c78",
     "licenses/esp32c3-rom/BSD-3-Clause.txt": "086d3992cb3a8f7000127bda96d6cbe673c8e788",
@@ -145,6 +210,12 @@ def main() -> int:
     for relative in REQUIRED:
         if not (package / relative).is_file():
             errors.append(f"missing required package/license file: {relative}")
+    bundled_rom_script = package / "licenses/esp32c3-rom/prepare_esp32c3_rom.py"
+    source_rom_script = Path(__file__).resolve().parents[1] / "scripts" / "prepare_esp32c3_rom.py"
+    if bundled_rom_script.is_file() and source_rom_script.is_file():
+        if hashlib.sha256(bundled_rom_script.read_bytes()).digest() != hashlib.sha256(source_rom_script.read_bytes()).digest():
+            errors.append("packaged Espressif ROM preparation source differs from this repository revision")
+    errors.extend(audit_local_attribution_links(package))
     for relative, expected_blob in {**LICENSE_FILE_BLOBS, **PINNED_DEPENDENCY_LICENSE_BLOBS}.items():
         path = package / relative
         if path.is_file() and git_blob_sha1(path.read_bytes()) != expected_blob:

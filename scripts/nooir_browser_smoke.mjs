@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {createHash} from "node:crypto";
 import {formatCdpTargetDiagnostics, waitForCdpPageTarget} from "./select_cdp_page_target.mjs";
+import {inspectPng, waitForScreenshotDownload} from "./verify_nooir_screenshot_download.mjs";
 
 const [url, device, firmwareArg, sdArg, evidenceArg] = process.argv.slice(2);
 const requestedHoldMs = Number(process.env.NOOIR_BUTTON_HOLD_MS);
@@ -96,20 +97,31 @@ async function setFile(selector, file, dispatchChange = false) {
   }
   return selection;
 }
-const state = {device, url, firmware: path.basename(firmware), sd: path.basename(sd), actions: [], screenshots: {}, started: new Date().toISOString()};
+const state = {device, url, firmware: path.basename(firmware), sd: path.basename(sd), actions: [], screenshots: {}, acceptance: {
+  home: false, screenshotDownload: false, library: false, epubOpen: false,
+  forwardPageTurn: false, backwardPageTurn: false, readerExit: false,
+  sdPersistenceAfterReload: false, progressPersistenceAfterReload: false
+}, started: new Date().toISOString()};
 const stage = message => console.log(`[${device}] ${message}`);
 async function screenshot(name) {
   const {data} = await cdp("Page.captureScreenshot", {format: "png", captureBeyondViewport: false});
-  const bytes = Buffer.from(data, "base64"); fs.writeFileSync(path.join(evidence, name), bytes);
+  const bytes = Buffer.from(data, "base64");
+  const pageImage = inspectPng(bytes);
+  fs.writeFileSync(path.join(evidence, name), bytes);
   const panelUrl = await canvasPng();
   if (!panelUrl?.startsWith("data:image/png;base64,")) throw new Error("The Nooir e-paper canvas could not be captured.");
   const panelBytes = Buffer.from(panelUrl.slice("data:image/png;base64,".length), "base64");
+  const panelImage = inspectPng(panelBytes);
   const panelName = name.replace(/\.png$/i, "-panel.png");
   fs.writeFileSync(path.join(evidence, panelName), panelBytes);
   return {
     pageSha256: createHash("sha256").update(bytes).digest("hex"),
+    pageWidth: pageImage.width,
+    pageHeight: pageImage.height,
     panelFile: panelName,
-    panelSha256: createHash("sha256").update(panelBytes).digest("hex")
+    panelSha256: createHash("sha256").update(panelBytes).digest("hex"),
+    panelWidth: panelImage.width,
+    panelHeight: panelImage.height
   };
 }
 async function canvasPng() {
@@ -365,6 +377,7 @@ try {
   await setFile("#custom-bin", firmware);
   await waitFor("document.querySelector('#emulator-engine')?.contentDocument?.querySelector('iframe')?.contentDocument?.querySelector('#canvas')", "firmware canvas", 120_000);
   let screen = await ready("initial boot");
+  state.acceptance.home = true;
   await installInputTrace();
   stage("Nooir Home is rendering");
   state.screenshots.home = await screenshot(`${device}-home.png`);
@@ -386,14 +399,36 @@ try {
 
   await evalPage("document.querySelector('#capture-screen').click()");
   await waitFor("document.querySelector('#screen-capture-dialog')?.open && document.querySelector('#download-screen-image')?.href?.startsWith('blob:')", "screenshot preview");
-  const png = (await evalPage("fetch(document.querySelector('#download-screen-image').href).then(r=>r.blob()).then(b=>({type:b.type,size:b.size,name:document.querySelector('#download-screen-image').download}))")).value;
-  if (png.type !== 'image/png' || png.size < 1000) throw new Error(`Screenshot output is not a valid PNG: ${JSON.stringify(png)}`);
+  const png = (await evalPage(`(async()=>{
+    const link=document.querySelector('#download-screen-image');
+    const response=await fetch(link.href);
+    if(!response.ok)throw new Error('screenshot blob fetch failed');
+    const blob=await response.blob();
+    const bitmap=await createImageBitmap(blob);
+    const digest=await crypto.subtle.digest('SHA-256',await blob.arrayBuffer());
+    const sha256=[...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,'0')).join('');
+    const value={type:blob.type,size:blob.size,name:link.download,width:bitmap.width,height:bitmap.height,sha256};
+    bitmap.close();
+    return value;
+  })()`)).value;
+  if (png.type !== 'image/png' || png.size < 1000 || !png.width || !png.height || !png.sha256) {
+    throw new Error(`Screenshot preview did not decode as a valid PNG: ${JSON.stringify(png)}`);
+  }
   state.screenshotExport = png;
-  await evalPage("document.querySelector('#download-screen-image').click(); document.querySelector('#close-screen-capture').click()");
-  await pause(1200);
-  state.screenshotExport.downloaded = fs.readdirSync(evidence).find(n=>n.startsWith('folio-nooir-')&&n.endsWith('.png')) || null;
+  await evalPage("document.querySelector('#download-screen-image').click()");
+  state.screenshotExport.downloadedFile = await waitForScreenshotDownload({
+    directory: evidence,
+    name: png.name,
+    sha256: png.sha256,
+    size: png.size,
+    width: png.width,
+    height: png.height,
+  });
+  state.acceptance.screenshotDownload = true;
+  await evalPage("document.querySelector('#close-screen-capture').click()");
 
   screen = await pressWhenSettled('Left', {activity: 'FolioLibrary'});
+  state.acceptance.library = true;
   stage("virtual Left opened Library");
   state.screenshots.library = await screenshot(`${device}-library.png`);
   if (state.sdMount.files.includes('books')) {
@@ -405,12 +440,14 @@ try {
   } else screen = await pressWhenSettled('Confirm', {activity: 'EpubReader'});
   stage("virtual Confirm opened Reader");
   await waitForReader("reader activity");
+  state.acceptance.epubOpen = true;
   state.readerFirstPosition = await waitForReaderQuiescent("initial Reader page");
   screen = await stableCanvas();
   state.screenshots.readerFirst = await screenshot(`${device}-reader-first.png`);
   const firstPage = screen;
   screen = await pressWhenSettled('Right', {readerPositionChange: true, minimumDifference: 0.02}, 60_000);
   stage("forward page turn passed");
+  state.acceptance.forwardPageTurn = true;
   state.screenshots.readerForward = await screenshot(`${device}-reader-forward.png`);
   let forwardPage = screen;
   screen = await pressWhenSettled('Left', {readerPositionChange: true, minimumDifference: 0.02}, 60_000);
@@ -418,6 +455,7 @@ try {
   state.screenshots.readerBackward = await screenshot(`${device}-reader-backward.png`);
   state.pageBackwardRestoredFirst = state.pageBackwardDifference.available && state.pageBackwardDifference.differentFraction < 0.02;
   if (!state.pageBackwardRestoredFirst) throw new Error(`Backward turn did not restore the first EPUB page: ${JSON.stringify(state.pageBackwardDifference)}`);
+  state.acceptance.backwardPageTurn = true;
   screen = await pressWhenSettled('Right', {readerPositionChange: true, minimumDifference: 0.02}, 60_000);
   state.pageForwardDifference = await canvasDifference(forwardPage);
   state.pageForwardAfterBackDifference = await canvasDifference(firstPage);
@@ -428,6 +466,7 @@ try {
   screen = await pressWhenSettled('Back', {activity: 'RecentBooks'});
   state.screenshots.readerExit = await screenshot(`${device}-reader-exit.png`);
   state.readerExit = true;
+  state.acceptance.readerExit = true;
   state.inputTraceBeforeReload = await currentInputTrace();
   await pause(1800);
   const recentProgressCanvas = await canvasPng();
@@ -454,6 +493,7 @@ try {
   stage("emulator restarted after reload; checking SD and progress");
   card = (await evalPage(`(() => { const d=document.querySelector('#emulator-engine').contentDocument; return {fs:d.querySelector('#sd-info')?.textContent,files:[...d.querySelectorAll('#sd-rows tr[data-name]')].map(r=>r.dataset.name)}; })()`)).value;
   state.sdRestoredAfterReload = /FAT32/i.test(card.fs||'') && (card.files.some(n=>/\.epub$/i.test(n))||card.files.includes('books'));
+  state.acceptance.sdPersistenceAfterReload = state.sdRestoredAfterReload;
   if (!state.sdRestoredAfterReload) throw new Error(`SD contents did not restore after wrapper reload: ${JSON.stringify(card)}`);
   const progressComparison = await evalPage(`(async()=>{
     const reference=sessionStorage.getItem('nooir-browser-smoke-progress-reference');
@@ -481,12 +521,13 @@ try {
   state.pageRestoredAfterReload = state.pageRestoreAfterReloadDifference.available && state.pageRestoreAfterReloadDifference.differentFraction < 0.02;
   state.screenshots.readerRestored = await screenshot(`${device}-reader-restored.png`);
   state.progressRestoredAfterReload = Boolean(state.pageRestoredAfterReload && progressComparison.value.passed && /boot_load=valid count=1/.test(state.serial));
+  state.acceptance.progressPersistenceAfterReload = state.progressRestoredAfterReload;
   if (!state.progressRestoredAfterReload) throw new Error(`The saved Reader page did not return after browser reload: ${JSON.stringify(state.pageRestoreAfterReloadDifference)}`);
   await pressWhenSettled('Back', {activity: 'RecentBooks'});
   state.screenshots.readerRestoredExit = await screenshot(`${device}-reader-restored-exit.png`);
   state.serial = (await evalPage("document.querySelector('#emulator-engine')?.contentDocument?.querySelector('#console')?.textContent||''")).value;
   fs.writeFileSync(path.join(evidence, 'serial.log'), state.serial);
-  state.result = state.progressRestoredAfterReload && state.sdRestoredAfterReload && state.pageBackwardRestoredFirst && state.pageForwardAfterBackConfirmed ? 'PASS' : 'FAIL';
+  state.result = Object.values(state.acceptance).every(Boolean) && state.progressRestoredAfterReload && state.sdRestoredAfterReload && state.pageBackwardRestoredFirst && state.pageForwardAfterBackConfirmed ? 'PASS' : 'FAIL';
   fs.writeFileSync(path.join(evidence, 'result.json'), JSON.stringify(state, null, 2));
   console.log(JSON.stringify({result: state.result, device, sdRestoredAfterReload: state.sdRestoredAfterReload, progressRestoredAfterReload: state.progressRestoredAfterReload, screenshotExport: state.screenshotExport, firmwareSha256: state.firmwareSha256, evidence}, null, 2));
   ws.close();

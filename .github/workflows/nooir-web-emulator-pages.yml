@@ -10,6 +10,11 @@ on:
       - 'scripts/prepare_esp32c3_rom.py'
       - 'scripts/prepare_nooir_softfloat_source.py'
       - 'scripts/smoke_nooir_shared_firmware.py'
+      - 'scripts/nooir_browser_smoke.mjs'
+      - 'scripts/verify_nooir_screenshot_download.mjs'
+      - 'scripts/prepare_nooir_browser_acceptance_evidence.py'
+      - 'test/node/**'
+      - 'test/python/test_web_emulator_contract.py'
       - 'LICENSES/**'
       - '.github/workflows/nooir-web-emulator-pages.yml'
 
@@ -67,7 +72,7 @@ jobs:
           python3 -m unittest eink-qemu.tests.test_panel_launchers eink-qemu.tests.test_wifi_launchers
           python3 -m unittest discover -s eink-qemu/wasm -p test_wifi_assets.py
           cd "$GITHUB_WORKSPACE"
-          node --test test/node/cdp-target-selection.test.mjs test/node/sd-asset-location.test.mjs
+          node --test test/node/cdp-target-selection.test.mjs test/node/sd-asset-location.test.mjs test/node/screenshot-download.test.mjs
           python3 test/python/test_web_emulator_contract.py
 
       - name: Build pinned engine dependencies
@@ -319,7 +324,6 @@ jobs:
             smoke_log="$RUNNER_TEMP/nooir-browser-$device.log"
             smoke_status=0
             NOOIR_BUTTON_HOLD_MS=170 \
-            NOOIR_INPUT_PROBE_KEY=Left \
             NOOIR_SD_ASSET="nooir-test-$device.img" \
             CDP_PORT=9224 \
               node scripts/nooir_browser_smoke.mjs \
@@ -366,6 +370,22 @@ jobs:
             echo "X3/X4 browser smoke failed; see the separate failure-only diagnostics artifact."
             exit 1
           fi
+
+      - name: Prepare successful X3/X4 acceptance evidence outside the package
+        id: acceptance_evidence
+        if: success() && steps.browser_smoke.outcome == 'success'
+        run: |
+          python3 scripts/prepare_nooir_browser_acceptance_evidence.py \
+            build/nooir-browser-evidence build/nooir-browser-acceptance-evidence
+
+      - name: Upload successful X3/X4 browser acceptance evidence (separate artifact)
+        if: success() && steps.acceptance_evidence.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nooir-browser-acceptance-evidence
+          path: build/nooir-browser-acceptance-evidence/
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload X3/X4 browser smoke diagnostics (failure only)
         if: failure() && steps.browser_smoke.outcome == 'failure' && hashFiles('build/nooir-browser-smoke-diagnostics/**') != ''
