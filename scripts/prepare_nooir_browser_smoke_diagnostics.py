@@ -12,6 +12,8 @@ MAX_INPUT_BYTES = 128 * 1024
 MAX_LOG_LINES = 80
 MAX_LINE_CHARS = 1200
 MAX_CONTEXT_BYTES = 128 * 1024
+MAX_FRAME_SAMPLES = 16
+OFFICIAL_V166_SHA256 = "badcd6fb6cb4b5323f92714e893f9c488e887aa8f7b5d8e28cd0e6639aeae108"
 SAFE_BUTTONS = {"Back", "Left", "Right", "Up", "Down", "Confirm"}
 SAFE_CODES = {"Enter", "Escape", "Backspace", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"}
 SAFE_ACCEPTANCE = {"home", "screenshotDownload", "library", "epubOpen", "forwardPageTurn", "backwardPageTurn", "readerExit", "sdPersistenceAfterReload", "progressPersistenceAfterReload"}
@@ -90,9 +92,61 @@ def _safe_qom_value(value: object) -> bool | None:
         return value["value"]
     return None
 
+def _safe_reader_position(value: object) -> dict[str, int | str] | None:
+    if not isinstance(value, dict):
+        return None
+    reason, spine, page = value.get("reason"), value.get("spine"), value.get("page")
+    if not isinstance(reason, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", reason):
+        return None
+    if any(
+        isinstance(item, bool) or not isinstance(item, int) or item < -1 or item > 65535
+        for item in (spine, page)
+    ):
+        return None
+    return {"reason": reason, "spine": spine, "page": page}
+
+
+def _safe_display_trace(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list): return []
+    output: list[dict[str, object]] = []
+    samples = value if len(value) <= MAX_FRAME_SAMPLES else value[: MAX_FRAME_SAMPLES // 2] + value[-MAX_FRAME_SAMPLES // 2 :]
+    for sample in samples:
+        if not isinstance(sample, dict): continue
+        item: dict[str, object] = {"available": sample.get("available") is True}
+        elapsed = _bounded_int(sample.get("elapsedMs"), 120_000)
+        if elapsed is not None: item["elapsedMs"] = elapsed
+        difference = _screen_difference(sample)
+        if "differentFraction" in difference: item["differentFraction"] = difference["differentFraction"]
+        for field in ("differentPixels", "totalPixels"):
+            number = _bounded_int(sample.get(field), 5_000_000)
+            if number is not None: item[field] = number
+        output.append(item)
+    return output
+
+
+def _safe_guest_markers(serial: object) -> list[str]:
+    if not isinstance(serial, str): return []
+    patterns = (
+        re.compile(r"\bapp=1\.6\.6\+[0-9a-f]{8}\b", re.IGNORECASE),
+        re.compile(r"\brender_ready\b"), re.compile(r"\[SHELF\] stage=on_enter_view"),
+        re.compile(r"\bactivity=(?:FolioLibrary|EpubReader|RecentBooks)\b"),
+        re.compile(r"\bEntering activity:\s*(?:FolioLibrary|EpubReader|RecentBooks)\b"),
+        re.compile(r"\bboot_load=valid count=\d+\b"),
+        re.compile(r"\breader_quiescent reason=[A-Za-z0-9_-]+ spine=-?\d+ page=-?\d+\b"),
+        re.compile(r"\bstage=reader_return_deferred reason=survival_backoff remaining_ms=\d+\b"),
+        re.compile(r"\bstage=reader_survival_backoff_complete elapsed_ms=\d+\b"),
+    )
+    markers: list[str] = []
+    for line in serial.splitlines()[-400:]:
+        for pattern in patterns:
+            match = pattern.search(line)
+            if match: markers.append(match.group(0))
+    return list(dict.fromkeys(markers[-32:]))
+
+
 def sanitize_failure_context(path: Path, device: str) -> dict[str, object]:
-    """Select bounded action telemetry; never copy raw page state or serial data."""
-    base: dict[str, object] = {"schema": 1, "device": device, "contextAvailable": False}
+    """Select bounded telemetry and allowlisted guest markers; never copy raw serial."""
+    base: dict[str, object] = {"schema": 2, "device": device, "contextAvailable": False}
     if not path.is_file():
         base["reason"] = "missing"
         return base
@@ -111,6 +165,8 @@ def sanitize_failure_context(path: Path, device: str) -> dict[str, object]:
     if state.get("device") != device:
         base["reason"] = "device-mismatch"
         return base
+    firmware_hash = state.get("firmwareSha256")
+    base["firmwareIdentity"] = {"officialV1_6_6ChecksumMatch": firmware_hash == OFFICIAL_V166_SHA256, "sha256": OFFICIAL_V166_SHA256 if firmware_hash == OFFICIAL_V166_SHA256 else None}
     acceptance = state.get("acceptance")
     if isinstance(acceptance, dict):
         base["acceptance"] = {key: acceptance[key] is True for key in sorted(SAFE_ACCEPTANCE) if key in acceptance}
@@ -119,10 +175,14 @@ def sanitize_failure_context(path: Path, device: str) -> dict[str, object]:
         action = actions[-1]
         button = action.get("key")
         last: dict[str, object] = {"button": button if button in SAFE_BUTTONS else "unknown"}
-        for source, target in (("heldMs", "heldMs"), ("actualHeldMs", "actualHeldMs")):
+        for source, target in (("heldMs", "configuredHoldMs"), ("actualHeldMs", "browserPointerHeldMs")):
             value = _bounded_int(action.get(source), 1000)
-            if value is not None:
-                last[target] = value
+            if value is not None: last[target] = value
+        for source in ("readerPositionBefore", "readerPositionAfter"):
+            position = _safe_reader_position(action.get(source))
+            if position is not None: last[source] = position
+        display_trace = _safe_display_trace(action.get("displayFrameTrace"))
+        if display_trace: last["displayFrameTrace"] = display_trace
         qom = {}
         for source, target in (("qomStateBefore", "before"), ("qomStateWhilePressed", "whilePressed"), ("qomStateAfter", "after")):
             value = _safe_qom_value(action.get(source))
@@ -144,8 +204,9 @@ def sanitize_failure_context(path: Path, device: str) -> dict[str, object]:
                 if isinstance(code, str) and code in SAFE_CODES:
                     safe["code"] = code
                 for field in ("down", "held", "trusted"):
-                    if isinstance(event.get(field), bool):
-                        safe[field] = event[field]
+                    if isinstance(event.get(field), bool): safe[field] = event[field]
+                time_ms = _bounded_int(event.get("time"), 86_400_000)
+                if time_ms is not None: safe["timeMs"] = time_ms
                 safe_events.append(safe)
         last["inputEvents"] = safe_events
         last["screenDifference"] = _screen_difference(action.get("finalScreenDifference") or action.get("screenDifference"))
@@ -153,6 +214,8 @@ def sanitize_failure_context(path: Path, device: str) -> dict[str, object]:
     page_state = raw.get("pageState")
     wrapper = page_state.get("wrapper") if isinstance(page_state, dict) else None
     if isinstance(wrapper, dict):
+        markers = _safe_guest_markers(page_state.get("serial"))
+        base["guest"] = {"serialMarkers": markers, "serialAvailable": isinstance(page_state.get("serial"), str)}
         runtime: dict[str, object] = {}
         for field in ("engineLoaded", "crossOriginIsolated"):
             if isinstance(wrapper.get(field), bool):

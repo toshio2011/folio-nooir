@@ -218,6 +218,25 @@ class WebEmulatorContractTests(unittest.TestCase):
                 self.assertNotIn("Users", serial)
                 self.assertIn("render_ready", serial)
 
+            single_output = root / "x3-only-evidence"
+            x3_result_path = input_root / "x3" / "result.json"
+            x3_result = json.loads(x3_result_path.read_text(encoding="utf-8"))
+            x3_result["firmwareSha256"] = acceptance_evidence.OFFICIAL_V166_SHA256
+            x3_result_path.write_text(json.dumps(x3_result), encoding="utf-8")
+            acceptance_evidence.build_acceptance_evidence(input_root, single_output, devices=("x3",))
+            single_manifest = json.loads((single_output / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(set(single_manifest["devices"]), {"x3"})
+            self.assertTrue((single_output / "x3" / "result.json").is_file())
+            self.assertFalse((single_output / "x4").exists())
+            single_result = json.loads((single_output / "x3" / "result.json").read_text(encoding="utf-8"))
+            self.assertEqual(single_result["firmwareIdentity"], {
+                "release": "1.6.6",
+                "sha256": acceptance_evidence.OFFICIAL_V166_SHA256,
+                "checksumVerified": True,
+            })
+            single_files = [path.relative_to(single_output).as_posix() for path in single_output.rglob("*") if path.is_file()]
+            self.assertFalse(any(name.endswith((".bin", ".img", ".epub")) for name in single_files))
+
     def test_success_evidence_refuses_incomplete_acceptance_results(self):
         with tempfile.TemporaryDirectory(prefix="nooir-acceptance-negative-", dir=ROOT) as temporary:
             root = Path(temporary)
@@ -281,6 +300,14 @@ class WebEmulatorContractTests(unittest.TestCase):
         self.assertNotIn("NOOIR_INPUT_PROBE_KEY=Left", web_workflow)
         self.assertIn("scripts/prepare_nooir_browser_acceptance_evidence.py", web_workflow)
         self.assertIn("Upload successful X3/X4 browser acceptance evidence (separate artifact)", web_workflow)
+        self.assertIn("Upload passing per-device browser acceptance evidence", web_workflow)
+        self.assertIn("if: always() && hashFiles('build/nooir-browser-device-acceptance-evidence/**') != ''", web_workflow)
+        self.assertIn("if [ \"$smoke_status\" -eq 0 ]; then", web_workflow)
+        per_device_upload = web_workflow.split("name: nooir-browser-device-acceptance-evidence", 1)[1].split(
+            "      - name: Prepare successful X3/X4 acceptance evidence outside the package", 1
+        )[0]
+        self.assertNotIn("firmware", per_device_upload.lower())
+        self.assertNotIn("rom", per_device_upload.lower())
         self.assertLess(
             web_workflow.index("Prepare successful X3/X4 acceptance evidence outside the package"),
             web_workflow.index("Upload successful X3/X4 browser acceptance evidence (separate artifact)"),
@@ -350,6 +377,90 @@ class WebEmulatorContractTests(unittest.TestCase):
             self.assertEqual([event["event"] for event in data["lastAction"]["inputEvents"]], ["runtime-keydown", "runtime-keyup"])
             for omitted in ("private-firmware-hash", "firmware.bin", "private serial", "private path", "privateField", "private QEMU trace", "user data", "123,\"y\": 456"):
                 self.assertNotIn(omitted, sanitized)
+
+    def test_back_failure_context_records_bounded_sanitized_guest_and_display_state(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            tmp_path = Path(tmp)
+            context = tmp_path / "failure-context.json"
+            output = tmp_path / "diagnostics"
+            serial = "\n".join([
+                "app=1.6.6+b961c1f7",
+                "render_ready",
+                "[SHELF] stage=on_enter_view",
+                "activity=EpubReader",
+                "reader_quiescent reason=page_rendered spine=0 page=2",
+                "token=private-value /Users/private/book.epub",
+            ])
+            frame_trace = [
+                {"elapsedMs": i * 1000, "available": True, "differentPixels": i, "totalPixels": 1000,
+                 "differentFraction": i / 1000, "private": "omit"}
+                for i in range(24)
+            ]
+            context.write_text(json.dumps({
+                "state": {
+                    "device": "x4",
+                    "firmwareSha256": browser_diagnostics.OFFICIAL_V166_SHA256,
+                    "acceptance": {"home": True, "readerExit": False, "sdPersistenceAfterReload": False,
+                                   "progressPersistenceAfterReload": False},
+                    "actions": [{
+                        "key": "Back", "heldMs": 170, "actualHeldMs": 176,
+                        "readerPositionBefore": {"reason": "page_rendered", "spine": 0, "page": 2},
+                        "readerPositionAfter": {"reason": "page_rendered", "spine": 0, "page": 2},
+                        "qomStateBefore": {"value": False}, "qomStateWhilePressed": {"value": True},
+                        "qomStateAfter": {"value": False},
+                        "inputEvents": [
+                            {"event": "pointerdown", "key": "Back", "trusted": True, "time": 1000},
+                            {"event": "runtime-keydown", "code": "Backspace", "trusted": True, "time": 1010},
+                            {"event": "runtime-keyup", "code": "Backspace", "trusted": True, "time": 1170},
+                            {"event": "pointerup", "key": "Back", "trusted": True, "time": 1176},
+                        ],
+                        "displayFrameTrace": frame_trace,
+                        "finalScreenDifference": {"available": True, "differentPixels": 0,
+                                                  "totalPixels": 1000, "differentFraction": 0.0},
+                    }],
+                },
+                "pageState": {"serial": serial, "wrapper": {
+                    "engineLoaded": True, "crossOriginIsolated": True, "consoleLength": len(serial),
+                    "url": "http://127.0.0.1/private", "customFiles": [{"name": "firmware.bin"}],
+                    "engineSrc": "private path",
+                }},
+            }), encoding="utf-8")
+            log = tmp_path / "smoke.log"
+            log.write_text("Error: Back action failed\n", encoding="utf-8")
+            browser_diagnostics.record("x4", 1, log, output, context)
+            data = json.loads((output / "x4-context.json").read_text(encoding="utf-8"))
+            self.assertEqual(data["firmwareIdentity"], {
+                "officialV1_6_6ChecksumMatch": True,
+                "sha256": browser_diagnostics.OFFICIAL_V166_SHA256,
+            })
+            self.assertEqual(data["lastAction"]["browserPointerHeldMs"], 176)
+            self.assertEqual(data["lastAction"]["readerPositionBefore"]["page"], 2)
+            self.assertEqual(data["lastAction"]["readerPositionAfter"]["page"], 2)
+            self.assertFalse(data["acceptance"]["readerExit"])
+            self.assertFalse(data["acceptance"]["progressPersistenceAfterReload"])
+            self.assertEqual(data["lastAction"]["qomKeyState"], {"before": False, "whilePressed": True, "after": False})
+            events = data["lastAction"]["inputEvents"]
+            self.assertEqual([event["event"] for event in events],
+                             ["pointerdown", "runtime-keydown", "runtime-keyup", "pointerup"])
+            self.assertEqual(events[0]["timeMs"], 1000)
+            samples = data["lastAction"]["displayFrameTrace"]
+            self.assertEqual(len(samples), browser_diagnostics.MAX_FRAME_SAMPLES)
+            self.assertEqual(samples[0]["elapsedMs"], 0)
+            self.assertEqual(samples[-1]["elapsedMs"], 23000)
+            self.assertEqual(samples[-1]["differentFraction"], 0.023)
+            self.assertEqual(data["guest"]["serialMarkers"], [
+                "app=1.6.6+b961c1f7", "render_ready", "[SHELF] stage=on_enter_view",
+                "activity=EpubReader", "reader_quiescent reason=page_rendered spine=0 page=2",
+            ])
+            sanitized = (output / "x4-context.json").read_text(encoding="utf-8")
+            for omitted in ("private-value", "/Users/private", "book.epub", "private path", "firmware.bin", "privateField"):
+                self.assertNotIn(omitted, sanitized)
+
+    def test_smoke_records_pointer_timing_without_changing_configured_hold(self):
+        smoke = (ROOT / "scripts" / "nooir_browser_smoke.mjs").read_text(encoding="utf-8")
+        self.assertIn("pointerUp.time - pointerDown.time", smoke)
+        self.assertIn("heldMs: holdMs", smoke)
+        self.assertNotIn("NOOIR_BACK_HOLD_MS=", web_workflow)
 
     def test_screenshot_export_is_exact_file_not_only_preview_or_click(self):
         self.assertIn("waitForScreenshotDownload", (ROOT / "scripts" / "nooir_browser_smoke.mjs").read_text(encoding="utf-8"))

@@ -366,12 +366,39 @@ jobs:
               echo "$device: diagnostic collection failed; continuing to the other profile."
               browser_smoke_failed=1
             fi
+
+            if [ "$smoke_status" -eq 0 ]; then
+              staging_dir="build/nooir-browser-device-acceptance-staging/$device"
+              device_evidence_dir="build/nooir-browser-device-acceptance-evidence/$device"
+              if ! python3 scripts/prepare_nooir_browser_acceptance_evidence.py \
+                build/nooir-browser-evidence "$staging_dir" --device "$device"; then
+                echo "$device: sanitized acceptance evidence preparation failed."
+                browser_smoke_failed=1
+              elif [ -e "$device_evidence_dir" ]; then
+                echo "$device: refusing to overwrite existing evidence output."
+                browser_smoke_failed=1
+              else
+                mkdir -p "$(dirname "$device_evidence_dir")"
+                mv "$staging_dir/$device" "$device_evidence_dir"
+                mv "$staging_dir/manifest.json" "$device_evidence_dir/manifest.json"
+                echo "$device: independent sanitized acceptance evidence prepared."
+              fi
+            fi
           done
 
           if [ "$browser_smoke_failed" -ne 0 ]; then
             echo "X3/X4 browser smoke failed; see the separate failure-only diagnostics artifact."
             exit 1
           fi
+
+      - name: Upload passing per-device browser acceptance evidence
+        if: always() && hashFiles('build/nooir-browser-device-acceptance-evidence/**') != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nooir-browser-device-acceptance-evidence
+          path: build/nooir-browser-device-acceptance-evidence/
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Prepare successful X3/X4 acceptance evidence outside the package
         id: acceptance_evidence

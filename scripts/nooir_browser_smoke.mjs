@@ -97,7 +97,8 @@ async function setFile(selector, file, dispatchChange = false) {
   }
   return selection;
 }
-const state = {device, url, firmware: path.basename(firmware), sd: path.basename(sd), actions: [], screenshots: {}, acceptance: {
+const firmwareSha256 = createHash('sha256').update(fs.readFileSync(firmware)).digest('hex');
+const state = {device, firmwareSha256, url, firmware: path.basename(firmware), sd: path.basename(sd), actions: [], screenshots: {}, acceptance: {
   home: false, screenshotDownload: false, library: false, epubOpen: false,
   forwardPageTurn: false, backwardPageTurn: false, readerExit: false,
   sdPersistenceAfterReload: false, progressPersistenceAfterReload: false
@@ -288,10 +289,11 @@ async function press(label, expectation = {}, timeout = 30_000) {
   const b = await buttonPoint(label);
   const holdMs = holdFor(label);
   const action = {key: label, button: b.text, dataKey: b.code, keyboardCode: b.kbd, heldMs: holdMs, point: b};
+  action.readerPositionBefore = await readerPosition();
   if (expectation.readerPositionChange) {
-    action.readerPositionBefore = await readerPosition();
     if (!action.readerPositionBefore) throw new Error(`No EPUB quiescent-position marker exists before ${label}.`);
   }
+  if (label === "Back") action.displayFrameTrace = [];
   state.actions.push(action);
   await cdp("Input.dispatchMouseEvent", {type: "mouseMoved", x: b.x, y: b.y});
   await cdp("Input.dispatchMouseEvent", {type: "mousePressed", button: "left", clickCount: 1, x: b.x, y: b.y});
@@ -307,18 +309,37 @@ async function press(label, expectation = {}, timeout = 30_000) {
   await pause(50);
   if (['Back', 'Left', 'Confirm'].includes(label)) {
     action.qomStateAfter = await qomGetKey(label);
-    action.actualHeldMs = Date.now() - downAt;
   }
   const trace = await currentInputTrace();
-  action.inputEvents = trace.slice(-12);
+  action.inputEvents = trace.slice(-24);
+  const matchesButton = event => event.key === b.code || event.key === b.text || event.key === label;
+  const pointerDown = [...trace].reverse().find(event => event.event === 'pointerdown' && matchesButton(event));
+  const pointerUp = pointerDown ? trace.slice(trace.lastIndexOf(pointerDown) + 1).find(event => event.event === 'pointerup' && matchesButton(event)) : null;
+  if (pointerDown && pointerUp && Number.isFinite(pointerDown.time) && Number.isFinite(pointerUp.time)) {
+    action.actualHeldMs = Math.max(0, Math.round(pointerUp.time - pointerDown.time));
+  }
   const activityNeedle = expectation.activity ? `activity=${expectation.activity}` : null;
   const until = Date.now() + timeout;
+  let lastDisplaySampleAt = 0;
   while (Date.now() < until) {
     const now = await canvasPng();
+    const sampleAt = Date.now();
+    if (label === "Back" && sampleAt - lastDisplaySampleAt >= 1_000 && action.displayFrameTrace.length < 32) {
+      const difference = await canvasDifference(baseline);
+      action.displayFrameTrace.push({
+        elapsedMs: Math.max(0, sampleAt - downAt),
+        available: difference.available === true,
+        differentPixels: difference.differentPixels,
+        totalPixels: difference.totalPixels,
+        differentFraction: difference.differentFraction,
+      });
+      lastDisplaySampleAt = sampleAt;
+    }
     if (expectation.activity) {
       const consoleText = (await evalPage("document.querySelector('#emulator-engine')?.contentDocument?.querySelector('#console')?.textContent||''")).value;
       if (consoleText.slice(serialOffset).includes(activityNeedle)) {
         action.observedActivity = expectation.activity;
+        action.readerPositionAfter = await readerPosition();
         return stableCanvas();
       }
     } else if (expectation.readerPositionChange) {
@@ -337,8 +358,12 @@ async function press(label, expectation = {}, timeout = 30_000) {
     await pause(250);
   }
   action.finalInputEvents = (await currentInputTrace()).slice(-24);
+  action.readerPositionAfter = await readerPosition();
   action.finalSerial = (await evalPage("document.querySelector('#emulator-engine')?.contentDocument?.querySelector('#console')?.textContent||''")).value.slice(-5000);
   action.finalScreenDifference = await canvasDifference(baseline);
+  if (action.displayFrameTrace?.length > 16) {
+    action.displayFrameTrace = [...action.displayFrameTrace.slice(0, 8), ...action.displayFrameTrace.slice(-8)];
+  }
   throw new Error(`${label} virtual-button action did not meet its expected state (${expectation.activity || `screen change >= ${expectation.minimumDifference ?? 0.02}`}).`);
 }
 async function pressWhenSettled(label, expectation = {}, timeout = 30_000) {

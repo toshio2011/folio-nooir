@@ -2,6 +2,7 @@
 """Build a redacted X3/X4 acceptance evidence artifact outside the site package."""
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import re
@@ -13,6 +14,7 @@ from pathlib import Path
 
 MAX_SERIAL_LINES = 120
 MAX_SERIAL_BYTES = 16_000
+OFFICIAL_V166_SHA256 = "badcd6fb6cb4b5323f92714e893f9c488e887aa8f7b5d8e28cd0e6639aeae108"
 REQUIRED_ACCEPTANCE = (
     "home",
     "screenshotDownload",
@@ -49,7 +51,7 @@ SAFE_SERIAL_MARKERS = (
     re.compile(r"\[SHELF\] stage=on_enter_view"),
     re.compile(r"\bactivity=(?:FolioLibrary|EpubReader|RecentBooks)\b"),
     re.compile(r"\bboot_load=valid count=\d+\b"),
-    re.compile(r"\breader_quiescent\b"),
+    re.compile(r"\breader_quiescent reason=[A-Za-z0-9_-]+ spine=-?\d+ page=-?\d+\b"),
     re.compile(r"\bFAT32\b", re.IGNORECASE),
 )
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -89,10 +91,12 @@ def filtered_serial(source: Path) -> str:
     return output
 
 
-def build_acceptance_evidence(input_root: Path, output: Path) -> Path:
+def build_acceptance_evidence(input_root: Path, output: Path, devices: tuple[str, ...] = ("x3", "x4")) -> Path:
+    if not devices or len(set(devices)) != len(devices) or any(device not in {"x3", "x4"} for device in devices):
+        raise SystemExit("devices must be a non-empty unique subset of x3/x4")
     if output.exists():
         raise SystemExit(f"refusing to overwrite acceptance evidence directory: {output}")
-    inputs = {device: input_root / device for device in ("x3", "x4")}
+    inputs = {device: input_root / device for device in devices}
     results = {}
     for device, directory in inputs.items():
         result_path = directory / "result.json"
@@ -166,6 +170,8 @@ def build_acceptance_evidence(input_root: Path, output: Path) -> Path:
                 "acceptance": {key: True for key in REQUIRED_ACCEPTANCE},
                 "screenshots": copied,
             }
+            if result.get("firmwareSha256") == OFFICIAL_V166_SHA256:
+                safe_result["firmwareIdentity"] = {"release": "1.6.6", "sha256": OFFICIAL_V166_SHA256, "checksumVerified": True}
             (target / "result.json").write_text(json.dumps(safe_result, indent=2) + "\n", encoding="utf-8")
             (target / "serial-summary.txt").write_text(filtered_serial(inputs[device] / "serial.log"), encoding="utf-8")
             manifest["devices"][device] = {
@@ -181,10 +187,14 @@ def build_acceptance_evidence(input_root: Path, output: Path) -> Path:
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: prepare_nooir_browser_acceptance_evidence.py INPUT_EVIDENCE_DIR OUTPUT_EVIDENCE_DIR")
-    build_acceptance_evidence(Path(sys.argv[1]), Path(sys.argv[2]))
-    print("Prepared separate, filtered X3/X4 acceptance evidence (no firmware or SD image copied).")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("input_evidence_dir", type=Path)
+    parser.add_argument("output_evidence_dir", type=Path)
+    parser.add_argument("--device", action="append", choices=("x3", "x4"))
+    args = parser.parse_args()
+    devices = tuple(args.device) if args.device else ("x3", "x4")
+    build_acceptance_evidence(args.input_evidence_dir, args.output_evidence_dir, devices)
+    print(f"Prepared filtered acceptance evidence for {', '.join(devices)} (no firmware or SD image copied).")
     return 0
 
 
