@@ -14,7 +14,7 @@ Folio Nooir is a personal, experimental fork of [CrossPoint Reader](https://gith
 
 [**MihonNooir**](https://github.com/toshio2011/mihon-nooir) is a separate, optional **Android app built on Mihon** for preparing manga and other reading material. Select chapters, export **EPUB 2/3, XTC, XTCH or CBZ**, use **Panel by Panel** or **Row by Row** layouts, and send compatible books to XTEINK readers over Wi-Fi. It also has web and PDF-to-EPUB tools.
 
-[**Get MihonNooir for Android — v1.0.16**](https://github.com/toshio2011/mihon-nooir/releases/tag/v1.0.16) · The Windows version is still in development. Folio Nooir works independently.
+[**Get MihonNooir for Android — v1.0.18**](https://github.com/toshio2011/mihon-nooir/releases/tag/v1.0.18) · The Windows version is still in development. Folio Nooir works independently.
 
 ## Screenshots
 
