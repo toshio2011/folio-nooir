@@ -10,6 +10,8 @@ The source overlay manifest is `20261120_04_SOURCE_OVERLAY_MANIFEST.json` in thi
 
 FreeInk is pinned to reachable public commit `958720659ea289ae325e83db20049d0ea844800d`. Four semantic Nooir deltas to that SDK are carried as `patches/freeink-sdk/nooir-1.6.7_20261120_04.patch` and applied by `scripts/apply_nooir_freeink_patch.py`; the other 381 captured SDK files match that commit after line-ending normalization. The patch is based on the FreeInk MIT-licensed source and retains its attribution and license.
 
+NimBLE-Arduino is pinned to 2.5.1, the version used by the protected _04 build. A full SHA-256 comparison of the 1,445 cached dependency files found 1,444 identical files and only the generated `integrity.dat` metadata differing; the earlier unpinned resolution to 2.5.2 was excluded.
+
 ## Feature inventory
 
 | Area | Integrated source status | Evidence / remaining limits |
@@ -18,7 +20,7 @@ FreeInk is pinned to reachable public commit `958720659ea289ae325e83db20049d0ea8
 | Force Paragraph Indents | Present; existing setting and rendering path retained. | Source-level setting/data path present. Dedicated visual regression across all formats remains needed. |
 | SPI-array and byte fallback | Present; shared SPI-array transfer path plus SdFat allocation hints and byte-mode fallback remain selectable. | Original X4 _04 used the SPI-array profile. Physical X3 acceptance and stack-margin checks remain open; X3 default is unchanged. |
 | Adaptive BLE and generic HID | Present: generic descriptor/report-aware input learning, IINE support, exactly-once event handling, mappings, saved profiles, Device Info diagnostics and truthful BLE status UI. | Mapping contracts 22/22; BLE usability contracts 5/5; owner-reported X4 _04 observations. HID compatibility across untested devices remains open. |
-| Automatic EPUB BLE recovery | Present in _04 source: automatic stable-page admission, command retention, confirmed shutdown before risky rendering, bounded post-render recovery and automatic readmission. | Owner reports physical repeated turn/reconnect success. Full post-fix raw COM3 capture is not present here; the saved `physical_com3_20261120_full.txt` is the earlier pre-fix evidence and must not be attributed to _04. The 20-turn single-session goal remains unverified. |
+| Automatic EPUB BLE recovery | Present in _04 source: automatic stable-page admission, command retention, confirmed shutdown before risky rendering, bounded post-render recovery and automatic readmission. | Owner reports physical repeated turn/reconnect success. Full post-fix raw COM3 capture is not present here; the saved `physical_com3_20261120_full.txt` is the earlier pre-fix evidence and must not be attributed to _04. The 20-turn single-session goal remains unverified. The newly built ad0f269d image has not been flashed or physically validated. |
 | XTC / XTCH | XTC continuous BLE path is retained; XTCH path and streaming remain. | Owner reports two mapped XTC actions on _04. XTCH physical validation remains outstanding. |
 | Reader persistence and shelf state | Present: progress/state stores, validated atomic persistence, snapshot policy, authoritative recent-book completion/progress refresh and reset/reread semantics. | Shelf progress contract checks 5/5; persistence/recovery and full physical navigation tests remain. |
 | Memory and lifecycle improvements | Present: existing adaptive tiers, staged cleanup, phase-safe worker-owned teardown, confirmed shutdown acknowledgement, page-demand-aware BLE suspension and BLE-OFF early bypass. Thresholds and NimBLE pools are retained. | Lifecycle contracts 97/97 with pinned NimBLE path; separate no-device watchdog and partial NimBLE initialization rollback remain unresolved. No source test proves physical callback safety. |
@@ -39,7 +41,7 @@ FreeInk is pinned to reachable public commit `958720659ea289ae325e83db20049d0ea8
 - BLE memory-policy discovery: 40 tests passed; one module could not import because `lib/hal/NooirSdSpiDiagnostics.h` is absent from both the baseline and candidate snapshot.
 - Native GoogleTest/CMake fixtures were not run because CMake is not installed. These results are source/host checks, not device acceptance.
 
-A full integrated production build and final release-profile build are separate gates. Do not treat the _04 build as proof that a later integrated commit or final release image compiles identically.
+The complete original-X4 release-profile build linked successfully from source commit `ad0f269d13aed74d535c619588e1b3bde4f4ecbc`; PlatformIO completed the final unique-output copy successfully. The image header and checksum are valid ESP32-C3, and the ELF SHA recorded inside the BIN matches the delivered ELF. The build has not been flashed; this is compilation/link evidence only. See [the detailed build record](NOOIR_1.6.7_BUILD_RECORD_2026-11-20.md).
 
 ## Release blockers and limits
 

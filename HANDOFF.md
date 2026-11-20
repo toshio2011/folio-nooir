@@ -8,7 +8,11 @@ The isolated integration branch is `codex/folio-nooir-1.6.7-integrated-20261120`
 
 The _04 owner-reported physical session is meaningful progress, but the 20-turn single-session target, backward turns, XTCH, BLE-OFF performance, X3, full Main/Lite and long-duration validation remain open. The no-device watchdog and partial NimBLE initialization rollback remain release blockers. No firmware is flashed by this integration work.
 
-A separate `gh_release_nooir167_official_x4_20261120` profile is being prepared for a clean-labeled original-X4 build from a committed source revision. It preserves adaptive EPUB BLE behavior, SPI-array and IINE gestures while undefining diagnostic-only raw/lifecycle/resource/transition logging. The sequential EPUB behavior macro remains enabled because it activates the tested disconnect-render-reconnect behavior; it is not treated as a log-only flag. The build is not a public release and still requires final physical validation.
+A clean-label integrated original-X4 validation image is now built from source commit `ad0f269d13aed74d535c619588e1b3bde4f4ecbc` using `gh_release_nooir167_official_x4_20261120`. The exact output names, hashes, input provenance and size report are in [the 2026-11-20 build record](docs/integration/NOOIR_1.6.7_BUILD_RECORD_2026-11-20.md). The image is a validation candidate only: it has not been flashed and has no physical results. The `_04` hardware report cannot be attributed to this new image.
+
+The integrated branch pins NimBLE-Arduino 2.5.1, matching `_04`. A preliminary 2.5.2 resolution was preserved as a noncanonical intermediate and is explicitly excluded. The final image embeds `1.6.7+ad0f269d`; it targets ESP32-C3, 16 MB flash, SPI-array enabled, and is 6,158,320 bytes for a 6,553,600-byte app slot. Link usage is 65,980/327,680 B RAM and 6,144,165/6,553,600 B flash. No image is committed to Git.
+
+The raw post-fix `_04` COM3 capture is not in the workspace. The saved raw log is pre-fix `_03` evidence and contains runtime-floor faults; the `_04` results remain owner-reported as documented in the milestone. The no-device watchdog and partial NimBLE initialization rollback remain unresolved. No flash or release has been performed.
 
 ---
 

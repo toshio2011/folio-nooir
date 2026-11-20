@@ -14,3 +14,8 @@ Updated 2026-11-20. Read the current `HANDOFF.md` and the cumulative audit befor
 - Do not integrate the rejected EPUB cache probe, status bars, Classic/Pro, S3/Web Emulator, or MihonNooir into the original-X4 branch.
 - The `NooirSdSpiDiagnostics.h` memory-policy test import failure is a known missing-header coverage issue in both baseline and candidate. Do not report the entire suite as green. CMake/native tests were not run in the last isolated review because CMake was unavailable.
 - Keep EB4D, `_02`, `_03`, `_04`, SD/profile data and stable 1.6.6 artifacts untouched. No flash, tag, merge to main or public release without separate approval.
+
+- The final integrated validation image is based on source commit `ad0f269d13aed74d535c619588e1b3bde4f4ecbc`, not the `_04` manifest-only snapshot. It was compiled with NimBLE-Arduino 2.5.1; 2.5.2 was a preliminary unqualified resolution and must not be reused for parity claims.
+- Full PIO build succeeded after directing `NOOIR_FIRMWARE_OUTPUT` to a unique path. The default `artifacts/firmware.bin` collision guard intentionally refused overwrite; do not disable that guard or overwrite it. The final BIN/ELF hashes and image checks are in `docs/integration/NOOIR_1.6.7_BUILD_RECORD_2026-11-20.md`.
+- The new integrated BIN has not been flashed or physically tested. Do not transfer `_04` owner-reported hardware evidence to it; the post-fix raw `_04` COM3 capture remains unavailable.
+- No-device watchdog and partial NimBLE initialization rollback remain unresolved. Do not call the branch or image release-stable.
