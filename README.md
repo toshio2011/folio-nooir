@@ -1,10 +1,10 @@
 # Folio Nooir 📚
 
-**A bookshelf-first, reading-focused custom firmware for XTEINK X3/X4 devices.**
+**A bookshelf-first, reading-focused custom firmware for the original XTEINK X4.** Shared X3 source support remains, but the latest download is X4-only.
 
-[**Download v1.6.6**](https://github.com/toshio2011/folio-nooir/releases/tag/1.6.6) · [Releases](https://github.com/toshio2011/folio-nooir/releases) · [Installation](#installation) · [Full features](#complete-feature-list) · [Simulator](#native-simulator) · [MihonNooir](https://github.com/toshio2011/mihon-nooir)
+[**Download v1.6.7**](https://github.com/toshio2011/folio-nooir/releases/tag/1.6.7) · [Releases](https://github.com/toshio2011/folio-nooir/releases) · [Installation](#installation) · [Full features](#complete-feature-list) · [Simulator](#native-simulator) · [MihonNooir](https://github.com/toshio2011/mihon-nooir)
 
-**Latest release: v1.6.6 — 29 October 2026.**
+**Latest official release: v1.6.7 — 20 November 2026 (original X4 / ESP32-C3 only).**
 
 Folio Nooir is a personal, experimental fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader). It retains its reader and wireless foundations while adding a Folio-style bookshelf, more reading tools, comics, statistics, sleep screens, and optional Bluetooth page turners.
 
@@ -14,7 +14,7 @@ Folio Nooir is a personal, experimental fork of [CrossPoint Reader](https://gith
 
 [**MihonNooir**](https://github.com/toshio2011/mihon-nooir) is a separate, optional **Android app built on Mihon** for preparing manga and other reading material. Select chapters, export **EPUB 2/3, XTC, XTCH or CBZ**, use **Panel by Panel** or **Row by Row** layouts, and send compatible books to XTEINK readers over Wi-Fi. It also has web and PDF-to-EPUB tools.
 
-[**Get MihonNooir for Android — v1.0.16**](https://github.com/toshio2011/mihon-nooir/releases/tag/v1.0.16) · The Windows version is still in development. Folio Nooir works independently.
+[**Get MihonNooir for Android — v1.0.19**](https://github.com/toshio201/mihon-nooir/releases/tag/v1.0.19) · The Windows version is still in development. Folio Nooir works independently.
 
 ## Screenshots
 
@@ -40,7 +40,22 @@ Folio Nooir is a personal, experimental fork of [CrossPoint Reader](https://gith
 
 </details>
 
-## ✨ What's new in v1.6.6
+## ✨ What's new in v1.6.7
+
+Apparently “just one more Bluetooth fix” turned into a whole new release. HAHAHA. 🤣💜
+
+This one is about **smoother everyday reading, adaptive EPUB BLE page turning, and safer memory recovery** on the original X4. Reading comes first: when an EPUB needs extra RAM, Nooir can retain the requested page turn, stop Bluetooth before intensive rendering, and reconnect after safe cleanup.
+
+- **🕹️ Bluetooth:** more reliable EPUB turn/suspend/render/reconnect cycles, generic HID learning, IINE support, saved mapping profiles, and clearer BLE feedback.
+- **📖 Reader and storage:** EPUB cache/memory refinements, safer progress persistence and **SPI-array SD speed improvements**, with byte-mode fallback retained in source.
+- **📚 Home and Settings:** Main/Lite shelf and progress refinements, 30 reading achievements, Device Info diagnostics and mapping/profile screen polish.
+- **📱 MihonNooir:** our separate optional [Android v1.0.19 companion](https://github.com/toshio2011/mihon-nooir/releases/tag/v1.0.19) now has smarter panel detection and adjustable enlargement of oversized manga splits.
+
+**Important:** the published v1.6.7 `firmware.bin` targets the **original XTEINK X4 only**. The clean-label release image passed build/partition checks but has **not itself been flashed or physically smoke-tested**. An earlier experimental `_04` BIN showed repeated BLE recovery on the original X4; it is a *different binary*. Bluetooth remains experimental, and some watchdog/startup-failure cases need more work. [Read the full release notes and known limitations](https://github.com/toshio2011/folio-nooir/releases/tag/1.6.7).
+
+[**Download v1.6.7 firmware.bin**](https://github.com/toshio2011/folio-nooir/releases/download/1.6.7/firmware.bin) · [**SHA256SUMS.txt**](https://github.com/toshio2011/folio-nooir/releases/download/1.6.7/SHA256SUMS.txt) · [Friendly release story](docs/releases/1.6.7.md)
+
+## 📚 Previously in v1.6.6
 
 Another "just one more fix" that somehow became a big update. HAHAHA. 😆 This release is mostly about making Nooir's existing features work better without piling on heavy background work.
 
@@ -214,7 +229,7 @@ XTC/XTCH rendering does not use the EPUB font-prewarm pipeline.
 - Reader rendering remains higher priority than BLE.
 - BLE stays off when memory safety checks fail instead of forcing a risky start.
 - Configurable remote directional/button mapping with press, repeat, release and held-state handling, plus Yiser J6 input decoding.
-- In heavy EPUBs, a third actual memory-survival stop latches automatic BLE return until the book exits; XTC/XTCH readers do not inherit this EPUB-specific latch.
+- In v1.6.7, EPUB page-turn commands can be retained across proactively confirmed BLE shutdowns, with bounded recovery and automatic readmission after quiescent rendering when memory allows.
 - Further controller support and Bluetooth/Wi-Fi coexistence improvements are planned.
 
 ## Dictionary and text tools
@@ -289,7 +304,7 @@ Very large/high-resolution comic pages can still be slow on first decode. Fit Wi
 - Monochrome daily reading intensity.
 - Books statistics view with cached covers, synopsis, dates, reading time, sessions, pages, progress, and status.
 - Daily history retained for up to 730 days.
-- Twenty derived achievements with earned/locked state and progress.
+- Thirty derived achievements with earned/locked state and progress (expanded in v1.6.7).
 - Per-book Statistics from long-press actions.
 - Home/Library **Reading Summary**.
 - Reading Calendar.
@@ -452,7 +467,7 @@ Folio Nooir is a feature/interface layer on top of CrossPoint, not a replacement
 
 # Installation
 
-1. Download [v1.6.6 `firmware.bin`](https://github.com/toshio2011/folio-nooir/releases/download/1.6.6/firmware.bin), or choose another version from the [Releases](https://github.com/toshio2011/folio-nooir/releases) page.
+1. For the **original XTEINK X4 (ESP32-C3) only**, download [v1.6.7 `firmware.bin`](https://github.com/toshio2011/folio-nooir/releases/download/1.6.7/firmware.bin), or choose an earlier compatible version from [Releases](https://github.com/toshio2011/folio-nooir/releases). **Do not flash this BIN on X3, X4 Classic, X4 Pro or S3 hardware.**
 2. Keep a copy of your currently working firmware/recovery image.
 3. Open the CrossPoint web flasher and select the custom firmware option.
 4. Choose the Folio Nooir `firmware.bin` and flash only hardware you can recover if necessary.
@@ -473,11 +488,11 @@ in the SD-card root. Reading position/book data are stored separately from the f
 
 # Building
 
-Folio Nooir uses PlatformIO. **The current repository default branch is `codex/folio-nooir`; the v1.6.6 firmware source is on the [`1.6.6` release tag](https://github.com/toshio2011/folio-nooir/tree/1.6.6) and [`codex/nooir-x4-integration` branch](https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4-integration).** Check out the tag if you want to build the exact released source:
+Folio Nooir uses PlatformIO. **The repository default branch is `codex/folio-nooir`, which is not the v1.6.7 firmware source snapshot.** Use the [`1.6.7` tag](https://github.com/toshio2011/folio-nooir/tree/1.6.7) for the integrated release tree and documentation. The published X4 BIN was built from source commit [`ad0f269d`](https://github.com/toshio2011/folio-nooir/commit/ad0f269d13aed74d535c619588e1b3bde4f4ecbc); the release tag points to later documentation commit `5696a555`. For the source used to build the binary:
 
 ```bash
 git fetch --tags
-git checkout 1.6.6
+git checkout ad0f269d13aed74d535c619588e1b3bde4f4ecbc
 git submodule update --init --recursive
 ```
 
@@ -511,7 +526,8 @@ Release firmware:
 
 # Current known limitations / future work
 
-- **Bluetooth Page Turner remains Beta.** Heavy EPUB font prewarming may temporarily stop BLE. The three-survival-stop latch leaves BLE off until book exit when memory pressure keeps recurring. Wider controller and hardware validation remains necessary.
+- **Bluetooth Page Turner remains Beta.** EPUB can proactively stop BLE during memory-intensive rendering and retry safe reconnection afterward. Reconnection can be deferred by memory pressure; wider controller and hardware testing is still needed.
+- **The official v1.6.7 X4 image has not itself been physically smoke-tested.** The successful `_04` experimental hardware test used a different BIN. The no-device Interrupt-WDT and partial NimBLE initialization rollback remain unresolved; 20-turn, backward-turn, XTCH, BLE-OFF, sleep/wake and long-duration scenarios are incomplete.
 - Post-Wi-Fi BLE recovery remains under development and can be deferred while
   either memory safety floor is unmet.
 - CBZ is still experimental and high-resolution pages can be slow.
