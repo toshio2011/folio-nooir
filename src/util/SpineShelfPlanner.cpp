@@ -340,10 +340,11 @@ int threeRowBookWidth(const Book& book, const Rect& bounds) {
       stableHash(book, 37) % static_cast<uint32_t>(THREE_ROW_BOOK_MAX_WIDTH - THREE_ROW_BOOK_MIN_WIDTH + 1)));
 }
 
-ThreeRowPage threeRowPageAtStart(const Book* books, const size_t bookCount, const size_t start, const Rect& bounds) {
-  ThreeRowPage result{};
+void threeRowPageAtStartInto(const Book* books, const size_t bookCount, const size_t start, const Rect& bounds,
+                            ThreeRowPage& result) {
+  result = {};
   result.firstIndex = start;
-  if (books == nullptr || start >= bookCount) return result;
+  if (books == nullptr || start >= bookCount) return;
 
   const int left = bounds.x + kShelfInset;
   const int right = std::max(left + 1, bounds.x + bounds.width - kShelfInset);
@@ -374,20 +375,6 @@ ThreeRowPage threeRowPageAtStart(const Book* books, const size_t bookCount, cons
     const int offset = (left + right) / 2 - (groupLeft + groupRight) / 2;
     for (size_t slot = rowSlotStart; slot < result.itemCount; ++slot) result.slots[slot].rect.x += offset;
   }
-  return result;
-}
-
-size_t threeRowPageCountFor(const Book* books, const size_t bookCount, const Rect& bounds) {
-  if (books == nullptr) return 0;
-  size_t start = 0;
-  size_t pages = 0;
-  while (start < bookCount && pages < 255) {
-    const ThreeRowPage page = threeRowPageAtStart(books, bookCount, start, bounds);
-    if (page.itemCount == 0) break;
-    start += page.itemCount;
-    ++pages;
-  }
-  return pages;
 }
 
 }  // namespace
@@ -621,44 +608,72 @@ size_t twoRowPreviousPageStart(const Book* books, const size_t bookCount, const 
   return previous;
 }
 
-ThreeRowPage threeRowPageForSelection(const Book* books, const size_t bookCount, size_t selectedIndex,
-                                      const Rect& bounds) {
-  ThreeRowPage result{};
-  if (books == nullptr || bookCount == 0) return result;
+void threeRowPageForSelection(const Book* books, const size_t bookCount, size_t selectedIndex,
+                              const Rect& bounds, ThreeRowPage& result) {
+  result = {};
+  if (books == nullptr || bookCount == 0) return;
   selectedIndex = std::min(selectedIndex, bookCount - 1);
+
   size_t start = 0;
-  size_t pageNumber = 1;
-  while (start < bookCount && pageNumber <= 255) {
-    const ThreeRowPage candidate = threeRowPageAtStart(books, bookCount, start, bounds);
-    if (candidate.itemCount == 0) break;
-    if (selectedIndex >= candidate.firstIndex && selectedIndex < candidate.firstIndex + candidate.itemCount) {
-      result = candidate;
-      result.pageNumber = static_cast<uint8_t>(std::min<size_t>(pageNumber, 255));
+  size_t pages = 0;
+  size_t selectedPageStart = 0;
+  uint8_t selectedPageNumber = 0;
+  uint8_t selectedItemCount = 0;
+  while (start < bookCount && pages < 255) {
+    threeRowPageAtStartInto(books, bookCount, start, bounds, result);
+    if (result.itemCount == 0) {
+      result = {};
       break;
     }
-    start += candidate.itemCount;
-    ++pageNumber;
+    if (selectedPageNumber == 0 && selectedIndex >= result.firstIndex &&
+        selectedIndex < result.firstIndex + result.itemCount) {
+      selectedPageStart = result.firstIndex;
+      selectedPageNumber = static_cast<uint8_t>(pages + 1);
+      selectedItemCount = result.itemCount;
+    }
+    start += result.itemCount;
+    ++pages;
   }
-  result.pageCount = static_cast<uint8_t>(std::min<size_t>(255, threeRowPageCountFor(books, bookCount, bounds)));
+
+  if (selectedPageNumber != 0) {
+    threeRowPageAtStartInto(books, bookCount, selectedPageStart, bounds, result);
+    if (result.itemCount != selectedItemCount) {
+      result = {};
+    } else {
+      result.pageNumber = selectedPageNumber;
+    }
+  } else {
+    result = {};
+  }
+  result.pageCount = static_cast<uint8_t>(std::min<size_t>(255, pages));
+}
+
+ThreeRowPage threeRowPageForSelection(const Book* books, const size_t bookCount, const size_t selectedIndex,
+                                      const Rect& bounds) {
+  ThreeRowPage result{};
+  threeRowPageForSelection(books, bookCount, selectedIndex, bounds, result);
   return result;
 }
 
 size_t threeRowNextPageStart(const Book* books, const size_t bookCount, const size_t selectedIndex,
                              const Rect& bounds) {
-  const ThreeRowPage current = threeRowPageForSelection(books, bookCount, selectedIndex, bounds);
+  ThreeRowPage current{};
+  threeRowPageForSelection(books, bookCount, selectedIndex, bounds, current);
   if (current.itemCount == 0 || current.pageCount <= 1 || current.pageNumber >= current.pageCount) return 0;
   return current.firstIndex + current.itemCount;
 }
 
 size_t threeRowPreviousPageStart(const Book* books, const size_t bookCount, const size_t selectedIndex,
                                  const Rect& bounds) {
-  const ThreeRowPage current = threeRowPageForSelection(books, bookCount, selectedIndex, bounds);
+  ThreeRowPage current{};
+  threeRowPageForSelection(books, bookCount, selectedIndex, bounds, current);
   if (current.itemCount == 0 || current.pageCount <= 1) return 0;
   if (current.firstIndex == 0) {
     size_t start = 0;
     size_t last = 0;
+    ThreeRowPage page{};
     while (start < bookCount) {
-      const ThreeRowPage page = threeRowPageAtStart(books, bookCount, start, bounds);
+      threeRowPageAtStartInto(books, bookCount, start, bounds, page);
       if (page.itemCount == 0) break;
       last = start;
       start += page.itemCount;
@@ -667,8 +682,9 @@ size_t threeRowPreviousPageStart(const Book* books, const size_t bookCount, cons
   }
   size_t start = 0;
   size_t previous = 0;
+  ThreeRowPage page{};
   while (start < current.firstIndex) {
-    const ThreeRowPage page = threeRowPageAtStart(books, bookCount, start, bounds);
+    threeRowPageAtStartInto(books, bookCount, start, bounds, page);
     if (page.itemCount == 0) break;
     previous = start;
     start += page.itemCount;

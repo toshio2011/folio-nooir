@@ -445,3 +445,7 @@ STR_MARK_ON_HOLD: "Marca com a pendent"
 STR_THEME_FOLIO_NOOIR: "Folio Nooir"
 STR_READING_STATS: "Estadístiques de lectura"
 STR_BOOK_STATISTICS: "Estadístiques del llibre"
+
+STR_BT_WAITING_FOR_MEMORY: "Esperant memòria"
+STR_BT_SUSPENDED_FOR_READER: "Aturat per a la lectura"
+STR_BT_RECONNECT_PENDING: "Reconnexió pendent"

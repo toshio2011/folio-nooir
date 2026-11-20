@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <iterator>
 #include <mutex>
+#include <string_view>
 #include <utility>
 
 #include "HalClock.h"
@@ -242,8 +243,11 @@ bool RecentBooksStore::saveToFileLocked() const {
   }
   JsonDocument doc;
   toJson(doc);
-  const bool saved = loadResult.load() == RecentBooksLoadResult::Recovered
+  const RecentBooksLoadResult currentLoadResult = loadResult.load();
+  const bool saved = currentLoadResult == RecentBooksLoadResult::Recovered
                          ? PersistableStoreBase::writeRecoveredRecentBooksDocToFile(getFilePath(), doc)
+                     : currentLoadResult == RecentBooksLoadResult::Valid
+                         ? PersistableStoreBase::writeDocToFileWithKnownValidPrimary(getFilePath(), doc)
                          : PersistableStoreBase::writeDocToFile(getFilePath(), doc);
   if (saved) {
     loadResult.store(RecentBooksLoadResult::Valid);
@@ -266,6 +270,42 @@ bool RecentBooksStore::getBookAt(const size_t index, RecentBook& destination) co
   return true;
 }
 
+bool RecentBooksStore::getLibraryApiEntryAt(const size_t index, RecentBookLibraryApiEntry& destination) const {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  if (index >= recentBooks.size()) return false;
+  const RecentBook& book = recentBooks[index];
+  destination.path = book.path;
+  destination.title = book.title;
+  destination.author = book.author;
+  destination.coverBmpPath = book.coverBmpPath;
+  destination.progressPercent = book.progressPercent;
+  destination.readingSeconds = book.readingSeconds;
+  destination.readingSessions = book.readingSessions;
+  return true;
+}
+
+bool RecentBooksStore::getStatsApiEntryAt(const size_t index, RecentBookStatsApiEntry& destination) const {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  if (index >= recentBooks.size()) return false;
+  const RecentBook& book = recentBooks[index];
+  destination.path = book.path;
+  destination.title = book.title;
+  destination.author = book.author;
+  destination.synopsis = book.synopsis;
+  destination.progressPercent = book.progressPercent;
+  destination.readingSeconds = book.readingSeconds;
+  destination.readingSessions = book.readingSessions;
+  destination.pagesTurned = book.pagesTurned;
+  return true;
+}
+
+bool RecentBooksStore::containsPath(const std::string_view path) const {
+  std::lock_guard<std::mutex> lock(storeMutex);
+  return std::any_of(recentBooks.begin(), recentBooks.end(), [path](const RecentBook& book) {
+    return std::string_view(book.path) == path;
+  });
+}
+
 bool RecentBooksStore::rejectUnsafeMutation(const char* operation) const {
   if (automaticWritesAllowed()) return false;
   LOG_ERR("RBS", "mutation_blocked operation=%s load_result=%s", operation,
@@ -281,6 +321,61 @@ void RecentBooksStore::addBook(const std::string& path, const std::string& title
   // Remove existing entry if present
   auto it =
       std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
+  if (it != recentBooks.end()) {
+    // Reopening an existing book commonly supplies the same metadata (or
+    // empty values that mean "keep the stored value"). Compare bounded views
+    // before constructing a replacement RecentBook so this path does not
+    // allocate duplicate persistent strings.
+    const RecentBook& old = *it;
+    const BookMetadataOverride* overrideData = BOOK_METADATA_OVERRIDES.find(path);
+    const std::string_view requestedTitle = overrideData ? std::string_view(overrideData->title)
+                                                         : std::string_view(title);
+    const std::string_view requestedAuthor = overrideData ? std::string_view(overrideData->author)
+                                                          : std::string_view(author);
+    const std::string_view requestedSynopsis = overrideData
+                                                   ? std::string_view(overrideData->synopsis)
+                                                   : std::string_view(synopsis).substr(0, 384);
+    const std::string_view requestedCover = coverBmpPath;
+    const std::string_view requestedSeries = std::string_view(series).substr(0, 128);
+    const bool requestedChecked = FsHelpers::hasXtcExtension(path) && xtcMetadataChecked;
+    const bool unchangedMetadata =
+        (requestedTitle.empty() || requestedTitle == old.title) &&
+        (requestedAuthor.empty() || requestedAuthor == old.author) &&
+        (requestedCover.empty() || requestedCover == old.coverBmpPath) &&
+        (requestedSynopsis.empty() || requestedSynopsis == old.synopsis) &&
+        (requestedSeries.empty() || requestedSeries == old.series) &&
+        (old.xtcMetadataChecked || !requestedChecked);
+    if (unchangedMetadata) {
+      if (it == recentBooks.begin()) return;
+
+      const size_t oldIndex = static_cast<size_t>(std::distance(recentBooks.begin(), it));
+      // Rotate the existing object into MRU position. Its metadata strings and
+      // accumulated reading counters move together without replacement
+      // allocations. Reverse the same rotation if the durable save fails.
+      std::rotate(recentBooks.begin(), it, std::next(it));
+      const auto rollbackOrder = [&] {
+        std::rotate(recentBooks.begin(), std::next(recentBooks.begin()),
+                    recentBooks.begin() + static_cast<std::ptrdiff_t>(oldIndex + 1));
+      };
+      bool saved = false;
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND) || defined(_MSC_VER)
+      try {
+        saved = saveToFileLocked();
+      } catch (...) {
+        rollbackOrder();
+        lock.unlock();
+        throw;
+      }
+#else
+      saved = saveToFileLocked();
+#endif
+      if (!saved) {
+        rollbackOrder();
+        LOG_ERR("RBS", "add_book order rolled back after persistence failure: %s", path.c_str());
+      }
+      return;
+    }
+  }
   RecentBook entry{path, title, author, coverBmpPath, synopsis.substr(0, 384), series.substr(0, 128)};
   entry.xtcMetadataChecked = FsHelpers::hasXtcExtension(path) && xtcMetadataChecked;
   applyMetadataOverride(entry);
@@ -555,7 +650,9 @@ bool RecentBooksStore::resetReading(const std::string& path) {
   if (rejectUnsafeMutation("reset_reading")) return false;
   auto it = std::find_if(recentBooks.begin(), recentBooks.end(),
                          [&](const RecentBook& book) { return book.path == path; });
-  if (it == recentBooks.end()) return false;
+  // Reset Progress is also offered from Library, where a book may never have
+  // been added to Recent. Treat that absent row as an already-reset no-op.
+  if (it == recentBooks.end()) return true;
   const uint8_t oldProgress = it->progressPercent;
   const uint32_t oldReadingSeconds = it->readingSeconds;
   const uint32_t oldLastSessionSeconds = it->lastSessionSeconds;

@@ -300,7 +300,9 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
         } else if (xtcMode && value == MenuAction::PAGE_FIT) {
           return I18N.get(pageFitLabels[pendingXtcPageFitMode]);
         } else if (value == MenuAction::BLUETOOTH) {
-          return I18N.get(bleinput::bluetoothEnabled() ? StrId::STR_STATE_ON : StrId::STR_STATE_OFF);
+          // Sampled only when this existing menu is drawn; no Reader overlay,
+          // notification refresh, background poll, or page-turn redraw is added.
+          return bleinput::userFacingStatusText();
         } else {
           return "";
         }

@@ -396,8 +396,12 @@ bool MappedInputManager::bleIsNavigationPressed(const Button button) const {
 
 void MappedInputManager::setBleCaptureMode(const bool enabled) {
   bleCaptureMode = enabled;
+#if FREEINK_CAP_BLE_HID_HOST
+  BleHid.setGenericLearningCapture(enabled);
+#endif
   if (enabled) {
     bleCaptureSawUnsupportedInput = false;
+    bleCaptureRejectReasonValue = 0;
     blePendingShortcut = -1;
     for (uint8_t i = 0; i < bleinput::mapping::kMapCapacity; ++i) bleShortcutActive[i] = false;
   }
@@ -405,6 +409,7 @@ void MappedInputManager::setBleCaptureMode(const bool enabled) {
   bleCaptureQuietUntil = 0;
   bleCaptureStartedAt = 0;
   bleCapturedCount = 0;
+  if (!enabled) bleCaptureRejectReasonValue = 0;
   blePendingMap = -1;
   blePendingIndex = 0;
   blePendingLastEvent = 0;
@@ -416,6 +421,7 @@ void MappedInputManager::setBleCaptureMode(const bool enabled) {
     bleActiveBinding[i] = false;
     bleActiveKinds[i] = 0;
     bleActiveValues[i] = 0;
+    bleActiveLearnedIdentity[i] = false;
     bleLastDispatchAt[i] = 0;
   }
 }
@@ -446,6 +452,7 @@ bool MappedInputManager::takeCapturedBleSignature(uint8_t* kinds, uint8_t* value
   bleHasCaptured = false;
   bleCapturedCount = 0;
   bleCaptureSawUnsupportedInput = false;
+  bleCaptureRejectReasonValue = 0;
   return count > 0;
 }
 
@@ -460,6 +467,7 @@ void MappedInputManager::pollBle() {
       bleActiveBinding[i] = false;
       bleActiveKinds[i] = 0;
       bleActiveValues[i] = 0;
+      bleActiveLearnedIdentity[i] = false;
       bleLastDispatchAt[i] = 0;
     }
     for (uint8_t i = 0; i < bleinput::mapping::kShortcutCount; ++i) bleLastShortcutDispatchAt[i] = 0;
@@ -491,9 +499,21 @@ void MappedInputManager::pollBle() {
 
   freeink::KeyEvent event;
   while (BleHid.popKey(event)) {
+    if (event.captureRejectReason != 0) {
+      if (bleCaptureMode) {
+        bleCaptureRejectReasonValue = event.captureRejectReason;
+        bleCaptureSawUnsupportedInput = true;
+        LOG_INF("BLEMAP", "learn rejected reason=%u", static_cast<unsigned>(event.captureRejectReason));
+      }
+      continue;
+    }
     uint8_t legacyKind = 0xFF;
     uint8_t legacyValue = 0;
-    if (!bleinput::encodeKey(event, legacyKind, legacyValue)) {
+    const bool hasLegacyIdentity = bleinput::encodeKey(event, legacyKind, legacyValue);
+    uint8_t learnedKind = 0xFF;
+    uint8_t learnedValue = 0;
+    const bool hasSafeLearnIdentity = bleinput::encodeLearnedKey(event, learnedKind, learnedValue);
+    if (!hasLegacyIdentity && !hasSafeLearnIdentity) {
       if (bleCaptureMode) {
         if (!bleCaptureSawUnsupportedInput) {
           LOG_INF("BLEMAP", "unsupported learn event page=%02X usage=%02X special=%u normalized=%u phase=%u",
@@ -502,15 +522,14 @@ void MappedInputManager::pollBle() {
                   static_cast<unsigned>(event.phase));
         }
         bleCaptureSawUnsupportedInput = true;
+        if (bleCaptureRejectReasonValue == 0)
+          bleCaptureRejectReasonValue = static_cast<uint8_t>(freeink::CaptureRejectReason::UnsupportedReport);
       }
 #if FREEINK_CAP_BLE_HID_HOST
       bleinput::recordDecodedKey(event, legacyKind, legacyValue, 0xFF, bleinput::InputDisposition::Unusable, false);
 #endif
       continue;
     }
-    uint8_t learnedKind = 0xFF;
-    uint8_t learnedValue = 0;
-    const bool hasSafeLearnIdentity = bleinput::encodeLearnedKey(event, learnedKind, learnedValue);
     uint8_t kind = hasSafeLearnIdentity ? learnedKind : legacyKind;
     uint8_t value = hasSafeLearnIdentity ? learnedValue : legacyValue;
     uint8_t mappedButton = 0xFF;
@@ -530,6 +549,8 @@ void MappedInputManager::pollBle() {
                   static_cast<unsigned>(event.phase));
         }
         bleCaptureSawUnsupportedInput = true;
+        if (bleCaptureRejectReasonValue == 0)
+          bleCaptureRejectReasonValue = static_cast<uint8_t>(freeink::CaptureRejectReason::UnsupportedReport);
 #if FREEINK_CAP_BLE_HID_HOST
         bleinput::recordDecodedKey(event, legacyKind, legacyValue, 0xFC,
                                    bleinput::InputDisposition::Unusable, false);
@@ -569,7 +590,7 @@ void MappedInputManager::pollBle() {
 
     auto entryMatches = [&](const CrossPointSettings::BleKeyMapEntry& entry, const uint8_t index) {
       return (hasSafeLearnIdentity && bleinput::mapping::matchesAt(entry, learnedKind, learnedValue, index)) ||
-             bleinput::mapping::matchesAt(entry, legacyKind, legacyValue, index);
+             (hasLegacyIdentity && bleinput::mapping::matchesAt(entry, legacyKind, legacyValue, index));
     };
     auto applyButton = [&](const uint8_t button, const freeink::KeyPhase phase) {
       if (button >= kButtonCount) return;
@@ -604,12 +625,11 @@ void MappedInputManager::pollBle() {
       bleHeld[button] = true;
       bleHeldDuration[button].press(static_cast<uint32_t>(now));
       bleActiveBinding[button] = true;
-      // The learned map may use a typed usage-page identity, but active
-      // press/release tracking stays on encodeKey()'s legacy event identity.
-      // This matches the 1.6.5 runtime path and tolerates a host release report
-      // that carries the usage code without its usage-page classification.
-      bleActiveKinds[button] = legacyKind;
-      bleActiveValues[button] = legacyValue;
+      // Preserve the exact identity family that completed a learned sequence
+      // so its later release cannot be confused with a legacy keycode.
+      bleActiveKinds[button] = hasSafeLearnIdentity ? learnedKind : legacyKind;
+      bleActiveValues[button] = hasSafeLearnIdentity ? learnedValue : legacyValue;
+      bleActiveLearnedIdentity[button] = hasSafeLearnIdentity;
       blePressEdge[button] = true;
       bleActivityThisFrame = true;
       mappedButton = button;
@@ -654,8 +674,11 @@ void MappedInputManager::pollBle() {
         if (isRelease) bleShortcutActive[mapIndex] = false;
       }
       for (uint8_t button = 0; button < kButtonCount; ++button) {
-        const bool activeIdentityMatches =
-            bleActiveKinds[button] == legacyKind && bleActiveValues[button] == legacyValue;
+        const bool activeIdentityMatches = bleActiveLearnedIdentity[button]
+            ? (hasSafeLearnIdentity && bleActiveKinds[button] == learnedKind &&
+               bleActiveValues[button] == learnedValue)
+            : (hasLegacyIdentity && bleActiveKinds[button] == legacyKind &&
+               bleActiveValues[button] == legacyValue);
         if (!bleActiveBinding[button] || !activeIdentityMatches) continue;
         mappingFound = true;
         applyButton(button, event.phase);
@@ -691,7 +714,9 @@ void MappedInputManager::pollBle() {
     if (!isRelease && !isRepeat && blePendingMap < 0 && !mappingFound) {
       const int8_t mapIndex = bleinput::mapping::findFirstMatch(
           SETTINGS.bleKeyMap, hasSafeLearnIdentity ? learnedKind : legacyKind,
-          hasSafeLearnIdentity ? learnedValue : legacyValue, legacyKind, legacyValue, 0);
+          hasSafeLearnIdentity ? learnedValue : legacyValue,
+          hasLegacyIdentity ? legacyKind : (hasSafeLearnIdentity ? learnedKind : legacyKind),
+          hasLegacyIdentity ? legacyValue : (hasSafeLearnIdentity ? learnedValue : legacyValue), 0);
       if (mapIndex >= 0) {
         const auto& entry = SETTINGS.bleKeyMap[mapIndex];
         if (!entryMatches(entry, 0)) continue;

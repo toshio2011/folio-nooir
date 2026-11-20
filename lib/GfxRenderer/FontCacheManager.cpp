@@ -97,11 +97,21 @@ size_t FontCacheManager::releaseReaderScanStorage() {
 }
 
 uint32_t FontCacheManager::largestAllocationRequestBytes() const {
-  return fontDecompressor_ ? fontDecompressor_->getStats().largestAllocationRequestBytes : 0;
+  uint32_t largest = fontDecompressor_ ? fontDecompressor_->getStats().largestAllocationRequestBytes : 0;
+  for (const auto& [id, font] : sdCardFonts_) {
+    (void)id;
+    if (font) largest = std::max(largest, font->getStats().largestAllocationRequestBytes);
+  }
+  return largest;
 }
 
 uint32_t FontCacheManager::failedAllocationCount() const {
-  return fontDecompressor_ ? fontDecompressor_->getStats().failedAllocationCount : 0;
+  uint32_t failures = fontDecompressor_ ? fontDecompressor_->getStats().failedAllocationCount : 0;
+  for (const auto& [id, font] : sdCardFonts_) {
+    (void)id;
+    if (font) failures += font->getStats().failedAllocationCount;
+  }
+  return failures;
 }
 
 void FontCacheManager::prewarmCache(int fontId, const char* utf8Text, uint8_t styleMask) {
@@ -117,7 +127,8 @@ bool FontCacheManager::prewarmCacheForScope(int fontId, const char* utf8Text, ui
       LOG_ERR("FCM", "prewarmCache(SD): null font for fontId=%d; using normal fallback", fontId);
       return true;
     }
-    int missed = it->second->prewarm(utf8Text, styleMask);
+    int missed = it->second->prewarm(utf8Text, styleMask, false, admissionHook_, admissionContext_);
+    if (missed == -2) return false;
     EpubDiagnostics::record("font_prepare_end", -1, -1, 0, utf8Text ? strlen(utf8Text) : 0, styleMask, 0,
                             missed < 0 ? 0 : 1);
     if (missed < 0) {

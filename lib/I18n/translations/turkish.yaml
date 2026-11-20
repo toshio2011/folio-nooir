@@ -423,3 +423,7 @@ STR_THEME_FOLIO_NOOIR: "Folio Nooir"
 STR_READING_STATS: "Okuma istatistikleri"
 STR_BOOK_STATISTICS: "Kitap istatistikleri"
 STR_RESUME: "Devam et"
+
+STR_BT_WAITING_FOR_MEMORY: "Bellek bekleniyor"
+STR_BT_SUSPENDED_FOR_READER: "Okuma için duraklatıldı"
+STR_BT_RECONNECT_PENDING: "Yeniden bağlantı beklemede"

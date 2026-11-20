@@ -1,0 +1,3 @@
+add_executable(SdFontIntervalRegistryTest SdFontIntervalRegistryTest.cpp)
+target_link_libraries(SdFontIntervalRegistryTest PRIVATE crosspoint_test_common GTest::gtest_main)
+gtest_discover_tests(SdFontIntervalRegistryTest)

@@ -25,7 +25,9 @@
 #include <utility>
 
 #include "CrossPointSettings.h"
+#include "activities/ActivityManager.h"
 #include "BleInput.h"
+#include "BoundedWebJsonWriter.h"
 #include "ClockWeatherSyncService.h"
 #include "components/UITheme.h"
 #include "FontInstaller.h"
@@ -34,6 +36,7 @@
 #include "BookMetadataOverridesStore.h"
 #include "RecentBooksStore.h"
 #include "ReadingStatsStore.h"
+#include "BoundedWebChunkWriter.h"
 #include "HalClock.h"
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
@@ -53,6 +56,7 @@
 #include "html/ToDoPageHtml.generated.h"
 #include "html/js/jszip_minJs.generated.h"
 #include "util/BookCacheUtils.h"
+#include "util/BookProgressReset.h"
 #include <TaskWatchdog.h>
 
 namespace {
@@ -64,6 +68,26 @@ constexpr uint16_t LOCAL_UDP_PORT = 8134;
 
 // Static pointer for WebSocket callback (WebSocketsServer requires C-style callback)
 CrossPointWebServer* wsInstance = nullptr;
+
+bool sendBoundedJsonChunk(void* context, const char* bytes, const size_t length) {
+  auto* webServer = static_cast<WebServer*>(context);
+  return webServer && writeBoundedWebChunk(webServer->client(), bytes, length);
+}
+
+template <size_t BufferSize>
+bool finishBoundedJsonResponse(WebServer* webServer, BoundedWebJsonWriter<BufferSize>& writer) {
+  const bool complete = writer.finish();
+  if (!webServer) return false;
+  // chunkResponseBegin() owns an explicit lifecycle; close it here so the
+  // terminating chunk is emitted before WebServer finalizes the route.
+  webServer->chunkResponseEnd();
+  return complete && webServer->client().connected();
+}
+
+void beginBoundedJsonResponse(WebServer* webServer) {
+  if (!webServer) return;
+  webServer->chunkResponseBegin("application/json");
+}
 
 void closeFileIfOpen(HalFile& file) {
   // HalFile deliberately asserts on operations against a default-constructed
@@ -236,15 +260,18 @@ struct WebRouteTrace {
 
   WebRouteTrace(WebServer* server, const char* route, const char* strategy)
       : server(server), route(route), strategy(strategy), startedAt(millis()) {
-    LOG_INF("WEBRT", "route=%s phase=begin strategy=%s free=%lu largest=%lu min=%lu client=%d", route, strategy,
+    LOG_INF("WEBRT", "route=%s phase=begin strategy=%s free=%lu largest=%lu min=%lu stack_words=%u client=%d", route, strategy,
             static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()),
-            static_cast<unsigned long>(ESP.getMinFreeHeap()), server && server->client().connected() ? 1 : 0);
+            static_cast<unsigned long>(ESP.getMinFreeHeap()),
+            static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),
+            server && server->client().connected() ? 1 : 0);
   }
 
   ~WebRouteTrace() {
-    LOG_INF("WEBRT", "route=%s phase=complete strategy=%s elapsed=%lu free=%lu largest=%lu min=%lu client=%d",
+    LOG_INF("WEBRT", "route=%s phase=complete strategy=%s elapsed=%lu free=%lu largest=%lu min=%lu stack_words=%u client=%d",
             route, strategy, millis() - startedAt, static_cast<unsigned long>(ESP.getFreeHeap()),
             static_cast<unsigned long>(ESP.getMaxAllocHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
+            static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),
             server && server->client().connected() ? 1 : 0);
   }
 };
@@ -423,6 +450,22 @@ bool webSettingsMemoryAdmitted(WebServer* server, const size_t responseBytes) {
           static_cast<unsigned>(WebSettingsMemoryPolicy::kMinLargestBlock));
   if (!admitted && server) {
     server->send(503, "text/plain", "Web memory temporarily unavailable");
+  }
+  return admitted;
+}
+
+bool webStreamMemoryAdmitted(WebServer* server, const char* route) {
+  const size_t freeHeap = ESP.getFreeHeap();
+  const size_t largest = ESP.getMaxAllocHeap();
+  constexpr size_t responseBytes = 0;  // Routes stream through a fixed 256-byte writer.
+  const size_t requiredFree = WebSettingsMemoryPolicy::requiredFreeHeap(responseBytes);
+  const bool admitted = WebSettingsMemoryPolicy::admitted(freeHeap, largest, responseBytes);
+  LOG_INF("WEBMEM", "stage=stream_guard route=%.24s result=%s free=%u largest=%u required=%u largest_floor=%u",
+          route ? route : "?", admitted ? "allow" : "reject", static_cast<unsigned>(freeHeap),
+          static_cast<unsigned>(largest), static_cast<unsigned>(requiredFree),
+          static_cast<unsigned>(WebSettingsMemoryPolicy::kMinLargestBlock));
+  if (!admitted && server) {
+    server->send(503, "application/json", "{\"error\":\"temporarily_unavailable\"}");
   }
   return admitted;
 }
@@ -891,6 +934,7 @@ void CrossPointWebServer::handleLibrary() const {
 }
 
 void CrossPointWebServer::handleLibraryData() const {
+  if (!webStreamMemoryAdmitted(server.get(), "/api/library")) return;
   constexpr int WEB_LIBRARY_PAGE_SIZE = 10;
   WebRouteTrace routeTrace(server.get(), "/api/library", "streamed_bounded");
   const unsigned long requestStart = millis();
@@ -910,20 +954,19 @@ void CrossPointWebServer::handleLibraryData() const {
     limit = std::clamp(static_cast<int>(server->arg("limit").toInt()), 1, WEB_LIBRARY_PAGE_SIZE);
   }
 
-  server->setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server->send(200, "application/json", "");
-  server->sendContent("{\"books\":[");
+  beginBoundedJsonResponse(server.get());
+  BoundedWebJsonWriter<> writer(&sendBoundedJsonChunk, server.get());
+  writer.raw("{\"books\":[");
   bool first = true;
   size_t visibleIndex = 0;
   size_t emitted = 0;
   bool hasMore = false;
   const int storedBookCount = RECENT_BOOKS.getCount();
   const size_t rawBookCount = storedBookCount > 0 ? static_cast<size_t>(storedBookCount) : 0;
-  JsonDocument doc;
-  String row;
+  RecentBookLibraryApiEntry book;
+  std::string thumbnailPath;
   for (size_t rawIndex = 0; rawIndex < rawBookCount; ++rawIndex) {
-    RecentBook book;
-    if (!RECENT_BOOKS.getBookAt(rawIndex, book)) break;
+    if (!RECENT_BOOKS.getLibraryApiEntryAt(rawIndex, book)) break;
     if (visibleIndex < static_cast<size_t>(offset)) {
       ++visibleIndex;
       continue;
@@ -932,31 +975,28 @@ void CrossPointWebServer::handleLibraryData() const {
       hasMore = true;
       break;
     }
-    doc.clear();
-    doc["index"] = static_cast<uint32_t>(visibleIndex);
-    doc["path"] = book.path;
-    doc["title"] = book.title;
-    doc["author"] = book.author;
-    doc["progress"] = book.progressPercent;
-    doc["seconds"] = book.readingSeconds;
-    doc["sessions"] = book.readingSessions;
     // Only advertise an already-valid thumbnail. The web Bookshelf must not
     // trigger cover extraction while a Transfer upload is using the SD/SPI
     // bus; missing covers fall back to the title card in the browser.
     bool hasCover = false;
     if (!book.coverBmpPath.empty()) {
       const int coverHeight = UITheme::getInstance().getMetrics().homeCoverHeight;
-      const std::string thumbnailPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
+      UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight, thumbnailPath);
       ++thumbnailChecks;
       hasCover = checkWebThumbnail(thumbnailPath, "/api/library");
       if (hasCover) ++thumbnailHits;
     }
-    doc["hasCover"] = hasCover;
-    row.clear();
-    serializeJson(doc, row);
-    if (!first) server->sendContent(",");
+    if ((!first && !writer.raw(",")) || !writer.raw("{\"index\":") ||
+        !writer.unsignedNumber(static_cast<uint32_t>(visibleIndex)) || !writer.raw(",\"path\":") ||
+        !writer.string(book.path) || !writer.raw(",\"title\":") || !writer.string(book.title) ||
+        !writer.raw(",\"author\":") || !writer.string(book.author) || !writer.raw(",\"progress\":") ||
+        !writer.unsignedNumber(book.progressPercent) || !writer.raw(",\"seconds\":") ||
+        !writer.unsignedNumber(book.readingSeconds) || !writer.raw(",\"sessions\":") ||
+        !writer.unsignedNumber(book.readingSessions) || !writer.raw(",\"hasCover\":") ||
+        !writer.boolean(hasCover) || !writer.raw("}")) {
+      break;
+    }
     first = false;
-    server->sendContent(row);
     ++visibleIndex;
     ++emitted;
   }
@@ -969,8 +1009,8 @@ void CrossPointWebServer::handleLibraryData() const {
     // provide query parameters: return the complete library response.
     snprintf(footer, sizeof(footer), "]}");
   }
-  server->sendContent(footer);
-  server->sendContent("");
+  if (writer.good()) writer.raw(footer);
+  finishBoundedJsonResponse(server.get(), writer);
   LOG_DBG("WEB", "[THUMB] library response emitted=%lu checks=%lu hits=%lu elapsed=%lu free=%lu min=%lu largest=%lu",
           static_cast<unsigned long>(emitted), static_cast<unsigned long>(thumbnailChecks),
           static_cast<unsigned long>(thumbnailHits), millis() - requestStart,
@@ -1081,6 +1121,7 @@ void CrossPointWebServer::handleStatsExport() const {
 }
 
 void CrossPointWebServer::handleStatsData() const {
+  if (!webStreamMemoryAdmitted(server.get(), "/api/stats")) return;
   WebRouteTrace routeTrace(server.get(), "/api/stats", "streamed_bounded");
   LOG_DBG("WEB", "[STATS] request start free=%lu min=%lu largest=%lu", static_cast<unsigned long>(ESP.getFreeHeap()),
           static_cast<unsigned long>(ESP.getMinFreeHeap()), static_cast<unsigned long>(ESP.getMaxAllocHeap()));
@@ -1100,74 +1141,82 @@ void CrossPointWebServer::handleStatsData() const {
   const uint32_t totalSessions = std::max(bookSessions, READING_STATS.totalSessions());
   const uint32_t totalPages = std::max(bookPages, READING_STATS.totalPagesTurned());
 
-  // Stream the response in bounded pieces. The previous implementation kept
-  // the complete document in ArduinoJson and then serialized a second complete
-  // copy into String before WebServer copied it again for transmission. With
-  // unlimited Recent Books that transient triple-copy is what drives the X4
-  // heap into the 1-2KB largest-block failure seen during Web UI sessions.
-  server->setContentLength(CONTENT_LENGTH_UNKNOWN);
-  server->send(200, "application/json", "");
-  char summary[512];
-  snprintf(summary, sizeof(summary),
-           "{\"totalSeconds\":%lu,\"sessions\":%lu,\"pagesTurned\":%lu,\"pagesPerMinute\":%lu,"
-           "\"streak\":%u,\"bestStreak\":%u,\"today\":%lu,\"todaySeconds\":%lu,\"todayPages\":%lu,\"days\":[",
-           static_cast<unsigned long>(totalSeconds), static_cast<unsigned long>(totalSessions),
-           static_cast<unsigned long>(totalPages),
-           static_cast<unsigned long>(totalSeconds == 0 ? 0 : totalPages / std::max<uint32_t>(1, (totalSeconds + 30) / 60)),
-           static_cast<unsigned>(READING_STATS.currentStreakDays()), static_cast<unsigned>(READING_STATS.longestStreakDays()),
-           static_cast<unsigned long>(today), static_cast<unsigned long>(today == 0 ? 0 : READING_STATS.secondsForDate(today)),
-           static_cast<unsigned long>(today == 0 ? 0 : READING_STATS.pagesForDate(today)));
-  server->sendContent(summary);
+  // Stream rows through a fixed-size writer. This avoids growing a dynamic
+  // ArduinoJson arena and a second String while WebServer is already under
+  // pressure from active Wi-Fi clients.
+  beginBoundedJsonResponse(server.get());
+  BoundedWebJsonWriter<> writer(&sendBoundedJsonChunk, server.get());
+  const uint32_t pagesPerMinute = totalSeconds == 0
+      ? 0
+      : totalPages / std::max<uint32_t>(1, (totalSeconds + 30) / 60);
+  writer.raw("{\"totalSeconds\":");
+  writer.unsignedNumber(totalSeconds);
+  writer.raw(",\"sessions\":");
+  writer.unsignedNumber(totalSessions);
+  writer.raw(",\"pagesTurned\":");
+  writer.unsignedNumber(totalPages);
+  writer.raw(",\"pagesPerMinute\":");
+  writer.unsignedNumber(pagesPerMinute);
+  writer.raw(",\"streak\":");
+  writer.unsignedNumber(READING_STATS.currentStreakDays());
+  writer.raw(",\"bestStreak\":");
+  writer.unsignedNumber(READING_STATS.longestStreakDays());
+  writer.raw(",\"today\":");
+  writer.unsignedNumber(today);
+  writer.raw(",\"todaySeconds\":");
+  writer.unsignedNumber(today == 0 ? 0 : READING_STATS.secondsForDate(today));
+  writer.raw(",\"todayPages\":");
+  writer.unsignedNumber(today == 0 ? 0 : READING_STATS.pagesForDate(today));
+  writer.raw(",\"days\":[");
 
   const auto& dayRows = READING_STATS.getDays();
   const size_t firstDay = dayRows.size() > 90 ? dayRows.size() - 90 : 0;
-  char dayRow[160];
   for (size_t i = firstDay; i < dayRows.size(); ++i) {
-    if (i != firstDay) server->sendContent(",");
-    snprintf(dayRow, sizeof(dayRow), "{\"date\":%lu,\"seconds\":%lu,\"sessions\":%u,\"pages\":%lu}",
-             static_cast<unsigned long>(dayRows[i].dateKey), static_cast<unsigned long>(dayRows[i].seconds),
-             static_cast<unsigned>(dayRows[i].sessions), static_cast<unsigned long>(dayRows[i].pagesTurned));
-    server->sendContent(dayRow);
+    if ((i != firstDay && !writer.raw(",")) || !writer.raw("{\"date\":") ||
+        !writer.unsignedNumber(dayRows[i].dateKey) || !writer.raw(",\"seconds\":") ||
+        !writer.unsignedNumber(dayRows[i].seconds) || !writer.raw(",\"sessions\":") ||
+        !writer.unsignedNumber(dayRows[i].sessions) || !writer.raw(",\"pages\":") ||
+        !writer.unsignedNumber(dayRows[i].pagesTurned) || !writer.raw("}")) {
+      finishBoundedJsonResponse(server.get(), writer);
+      return;
+    }
   }
-  server->sendContent("],\"books\":[");
+  writer.raw("],\"books\":[");
 
-  JsonDocument rowDoc;
-  String rowJson;
   bool seenBook = false;
-  auto appendBook = [&](const std::string& path, const BookState* state, const RecentBook* recent, const int coverIndex) {
+  auto appendBook = [&](const std::string_view path, const BookState* state, const std::string_view title,
+                        const std::string_view author, const std::string_view synopsis,
+                        const uint8_t recentProgress, const uint32_t recentSeconds,
+                        const uint16_t recentSessions, const uint32_t recentPages, const int coverIndex) {
     const uint8_t progress = std::max<uint8_t>(state ? state->progressPercent : 0,
-                                                recent ? recent->progressPercent : 0);
+                                                recentProgress);
     const uint32_t seconds = std::max<uint32_t>(state ? state->readingSeconds : 0,
-                                                recent ? recent->readingSeconds : 0);
+                                                recentSeconds);
     const uint16_t sessions = std::max<uint16_t>(state ? state->readingSessions : 0,
-                                                 recent ? recent->readingSessions : 0);
+                                                 recentSessions);
     const uint32_t pages = std::max<uint32_t>(state ? state->pagesTurned : 0,
-                                               recent ? recent->pagesTurned : 0);
+                                               recentPages);
     uint8_t status = state ? static_cast<uint8_t>(state->status) : static_cast<uint8_t>(BookStatus::New);
     if (progress >= 100) status = static_cast<uint8_t>(BookStatus::Finished);
     else if (status == static_cast<uint8_t>(BookStatus::New) && progress > 0)
       status = static_cast<uint8_t>(BookStatus::Reading);
-    rowDoc.clear();
-    JsonObject row = rowDoc.to<JsonObject>();
-    row["path"] = path;
-    row["title"] = recent && !recent->title.empty() ? recent->title : path;
-    row["author"] = recent ? recent->author : "";
-    row["synopsis"] = recent ? recent->synopsis : "";
-    row["progress"] = progress;
-    row["status"] = status;
-    row["seconds"] = seconds;
-    row["sessions"] = sessions;
-    row["pagesTurned"] = pages;
-    row["pagesPerMinute"] = seconds == 0 ? 0 : pages / std::max<uint32_t>(1, (seconds + 30) / 60);
-    row["startDate"] = state ? state->startDate : 0;
-    row["finishDate"] = state ? state->finishDate : 0;
-    row["lastOpenedDate"] = state ? state->lastOpenedDate : 0;
-    row["coverIndex"] = coverIndex;
-    rowJson.clear();
-    serializeJson(rowDoc, rowJson);
-    if (seenBook) server->sendContent(",");
-    server->sendContent(rowJson);
+    if ((seenBook && !writer.raw(",")) || !writer.raw("{\"path\":") || !writer.string(path) ||
+        !writer.raw(",\"title\":") || !writer.string(title.empty() ? path : title) ||
+        !writer.raw(",\"author\":") || !writer.string(author) || !writer.raw(",\"synopsis\":") ||
+        !writer.string(synopsis) || !writer.raw(",\"progress\":") || !writer.unsignedNumber(progress) ||
+        !writer.raw(",\"status\":") || !writer.unsignedNumber(status) || !writer.raw(",\"seconds\":") ||
+        !writer.unsignedNumber(seconds) || !writer.raw(",\"sessions\":") || !writer.unsignedNumber(sessions) ||
+        !writer.raw(",\"pagesTurned\":") || !writer.unsignedNumber(pages) ||
+        !writer.raw(",\"pagesPerMinute\":") ||
+        !writer.unsignedNumber(seconds == 0 ? 0 : pages / std::max<uint32_t>(1, (seconds + 30) / 60)) ||
+        !writer.raw(",\"startDate\":") || !writer.unsignedNumber(state ? state->startDate : 0) ||
+        !writer.raw(",\"finishDate\":") || !writer.unsignedNumber(state ? state->finishDate : 0) ||
+        !writer.raw(",\"lastOpenedDate\":") || !writer.unsignedNumber(state ? state->lastOpenedDate : 0) ||
+        !writer.raw(",\"coverIndex\":") || !writer.signedNumber(coverIndex) || !writer.raw("}")) {
+      return false;
+    }
     seenBook = true;
+    return true;
   };
   // Walk Recent Books once, copying records without source-file probes, and
   // assign their cover indices. Keep every stored history
@@ -1175,22 +1224,22 @@ void CrossPointWebServer::handleStatsData() const {
   // covers are optional presentation data.
   int visibleIndex = 0;
   const int recentCount = RECENT_BOOKS.getCount();
+  RecentBookStatsApiEntry recent;
   for (int index = 0; index < recentCount; ++index) {
-    RecentBook recent;
-    if (!RECENT_BOOKS.getBookAt(static_cast<size_t>(index), recent)) break;
-    appendBook(recent.path, BOOK_STATES.find(recent.path), &recent, visibleIndex++);
+    if (!RECENT_BOOKS.getStatsApiEntryAt(static_cast<size_t>(index), recent)) break;
+    if (!appendBook(recent.path, BOOK_STATES.find(recent.path), recent.title, recent.author, recent.synopsis,
+                    recent.progressPercent, recent.readingSeconds, recent.readingSessions, recent.pagesTurned,
+                    visibleIndex++)) break;
   }
   // A book can exist in Book States without a Recent Books entry. Include it
   // too, preserving the full statistics feature without another SD scan.
   for (const auto& book : BOOK_STATES.getBooks()) {
-    bool inRecent = false;
-    RecentBook recent;
-    inRecent = copyRecentBookByPath(book.path, recent);
-    if (!inRecent) appendBook(book.path, &book, nullptr, -1);
+    if (!RECENT_BOOKS.containsPath(book.path) &&
+        !appendBook(book.path, &book, {}, {}, {}, 0, 0, 0, 0, -1)) break;
   }
 
-  server->sendContent("]}");
-  server->sendContent("");
+  if (writer.good()) writer.raw("]}");
+  finishBoundedJsonResponse(server.get(), writer);
   LOG_DBG("WEB", "[STATS] streamed response free=%lu min=%lu largest=%lu",
           static_cast<unsigned long>(ESP.getFreeHeap()), static_cast<unsigned long>(ESP.getMinFreeHeap()),
           static_cast<unsigned long>(ESP.getMaxAllocHeap()));
@@ -1310,8 +1359,16 @@ void CrossPointWebServer::handlePostBookUpdate() {
       server->send(404, "application/json", "{\"error\":\"Book has no reading state\"}");
       return;
     }
-    BOOK_STATES.reset(path);
-    RECENT_BOOKS.resetReading(path);
+    // A live reader can write its old in-memory position after this route
+    // returns. Reject the reset until that reader has exited safely.
+    if (activityManager.isReaderActivity()) {
+      server->send(409, "application/json", "{\"error\":\"Reader is active; close it before resetting progress\"}");
+      return;
+    }
+    if (!resetBookReadingProgress(path)) {
+      server->send(500, "application/json", "{\"error\":\"Could not reset reading progress\"}");
+      return;
+    }
     server->send(200, "application/json", "{\"ok\":true,\"action\":\"reset\"}");
     return;
   }

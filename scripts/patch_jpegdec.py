@@ -29,6 +29,16 @@ def patch_jpegdec(env):
     if not os.path.isdir(libdeps_dir):
         return
     patches = _patch_files()
+    # PlatformIO runs this hook once per active environment. Do not inspect or
+    # mutate stale dependency caches belonging to other environments: their
+    # source/patch state is unrelated to the image currently being built.
+    env_dir = env.get("PIOENV")
+    if not env_dir:
+        raise RuntimeError("PlatformIO did not provide PIOENV to the JPEGDEC patch hook")
+    jpeg_dir = os.path.join(libdeps_dir, env_dir, "JPEGDEC")
+    if not os.path.isdir(os.path.join(jpeg_dir, ".git")):
+        return
+
     component_patch = next(
         (patch for patch in patches if os.path.basename(patch) == "0003-honor-progressive-scan-components.patch"),
         None,
@@ -37,24 +47,19 @@ def patch_jpegdec(env):
         (patch for patch in patches if os.path.basename(patch) == "0004-select-progressive-chroma-tables.patch"),
         None,
     )
-    for env_dir in os.listdir(libdeps_dir):
-        jpeg_dir = os.path.join(libdeps_dir, env_dir, "JPEGDEC")
-        if not os.path.isdir(os.path.join(jpeg_dir, ".git")):
+    # 0004 edits the same small block as 0003. A previous build can therefore
+    # leave an intermediate active cache with 0003 applied but 0004 absent.
+    # Finish that stack before the normal lexical pass; otherwise the later
+    # patch's context would be removed by reversing 0003 first.
+    if (component_patch and table_patch and _has_legacy_component_guard(jpeg_dir) and
+            not _has_full_component_guard(jpeg_dir)):
+        _apply_one(jpeg_dir, table_patch)
+
+    for patch in patches:
+        if component_patch and patch == component_patch and _has_full_component_guard(jpeg_dir):
+            print("JPEGDEC progressive component fixes already applied: 0003 + 0004")
             continue
-
-        # 0004 edits the same small block as 0003.  A previous build can
-        # therefore leave an intermediate cache with 0003 applied but 0004
-        # absent.  Finish that stack before the normal lexical pass; otherwise
-        # the later patch's context would be removed by reversing 0003 first.
-        if (component_patch and table_patch and _has_legacy_component_guard(jpeg_dir) and
-                not _has_full_component_guard(jpeg_dir)):
-            _apply_one(jpeg_dir, table_patch)
-
-        for patch in patches:
-            if component_patch and patch == component_patch and _has_full_component_guard(jpeg_dir):
-                print("JPEGDEC progressive component fixes already applied: 0003 + 0004")
-                continue
-            _apply_one(jpeg_dir, patch)
+        _apply_one(jpeg_dir, patch)
 
 
 def _patch_files():
@@ -119,8 +124,8 @@ def _apply_one(jpeg_dir, patch_path):
             text=True,
         )
         sys.stderr.write(
-            "ERROR: JPEGDEC patch %s does not apply cleanly:\n%s%s\n"
-            % (name, result.stdout, result.stderr)
+            "ERROR: JPEGDEC patch %s does not apply cleanly in %s:\n%s%s\n"
+            % (name, jpeg_dir, result.stdout, result.stderr)
         )
         raise SystemExit(1)
     subprocess.run(["git", "apply", patch_path], cwd=jpeg_dir, check=True)

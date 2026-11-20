@@ -226,19 +226,75 @@ void clearBookCache(const std::string& path) {
   LOG_DBG("BookCache", "Done checking metadata cache for: %s", path.c_str());
 }
 
-void resetBookProgress(const std::string& path) {
-  if (!FsHelpers::hasCbzExtension(path)) return;
+namespace {
 
-  Cbz book(path, "/.crosspoint");
-  book.setupCacheDir();
-  const char* progressFiles[] = {"/progress.bin", "/progress.bin.tmp", "/progress.bin.bak"};
-  for (const char* suffix : progressFiles) {
-    const std::string progressPath = book.getCachePath() + suffix;
-    if (!Storage.exists(progressPath.c_str())) continue;
-    if (Storage.remove(progressPath.c_str())) {
-      LOG_DBG("BookCache", "Reset CBZ progress: %s", progressPath.c_str());
-    } else {
-      LOG_ERR("BookCache", "Could not reset CBZ progress: %s", progressPath.c_str());
+bool resetProgressInCache(const std::string& cachePath, const size_t length) {
+  // EPUB records contain spine, page, and cached page-count; the other readers
+  // use a four-byte page index. A zero record is the canonical first position.
+  const std::array<uint8_t, 6> firstPosition{};
+  if (!ProgressFile::writeAtomic(cachePath, firstPosition.data(), length)) {
+    LOG_ERR("BookCache", "Could not commit first-page progress: %s", cachePath.c_str());
+    return false;
+  }
+
+  // Verify the canonical record before deleting any recovery copy. If the
+  // card cannot read back the committed zero position, leave backups intact.
+  const std::string canonicalPath = cachePath + "/progress.bin";
+  HalFile verify;
+  std::array<uint8_t, 6> actual{};
+  if (!Storage.openFileForRead("BookCache", canonicalPath, verify)) {
+    LOG_ERR("BookCache", "Could not verify reset progress: %s", canonicalPath.c_str());
+    return false;
+  }
+  const uint64_t fileLength = verify.fileSize64();
+  const int bytesRead = fileLength == length ? verify.read(actual.data(), length) : -1;
+  const bool closed = verify.close();
+  if (bytesRead != static_cast<int>(length) || !closed ||
+      !std::equal(firstPosition.begin(), firstPosition.begin() + length, actual.begin())) {
+    LOG_ERR("BookCache", "Reset progress verification failed: %s", canonicalPath.c_str());
+    return false;
+  }
+
+  // A stale backup or interrupted-write temp could otherwise be selected by
+  // the reader's recovery path if the canonical file later becomes unreadable.
+  const std::array<std::string, 2> staleCandidates = {canonicalPath + ".bak", canonicalPath + ".tmp"};
+  for (const std::string& candidate : staleCandidates) {
+    if (Storage.exists(candidate.c_str()) && !Storage.remove(candidate.c_str())) {
+      LOG_ERR("BookCache", "Reset position is committed, but stale progress remains: %s", candidate.c_str());
+      return false;
+    }
+    if (Storage.exists(candidate.c_str())) {
+      LOG_ERR("BookCache", "Could not confirm stale progress was cleared: %s", candidate.c_str());
+      return false;
     }
   }
+
+  LOG_DBG("BookCache", "Reset progress to first page: %s", canonicalPath.c_str());
+  return true;
+}
+
+}  // namespace
+
+bool resetBookProgress(const std::string& path) {
+  if (FsHelpers::hasEpubExtension(path)) {
+    Epub book(path, "/.crosspoint");
+    book.setupCacheDir();
+    return resetProgressInCache(book.getCachePath(), 6);
+  }
+  if (FsHelpers::hasXtcExtension(path)) {
+    Xtc book(path, "/.crosspoint");
+    book.setupCacheDir();
+    return resetProgressInCache(book.getCachePath(), 4);
+  }
+  if (FsHelpers::hasTxtExtension(path)) {
+    Txt book(path, "/.crosspoint");
+    book.setupCacheDir();
+    return resetProgressInCache(book.getCachePath(), 4);
+  }
+  if (FsHelpers::hasCbzExtension(path)) {
+    Cbz book(path, "/.crosspoint");
+    book.setupCacheDir();
+    return resetProgressInCache(book.getCachePath(), 4);
+  }
+  return false;
 }

@@ -73,6 +73,16 @@ enum class StatisticsAchievementId : uint8_t {
   Streak7,
   Streak30,
   ActiveDays30,
+  Finished50,
+  Finished100,
+  ReadingHours250,
+  ReadingHours500,
+  Pages10000,
+  Pages25000,
+  Streak60,
+  ActiveDays100,
+  Sessions250,
+  Sessions500,
 };
 
 enum class StatisticsAchievementUnit : uint8_t { Count, Seconds, Days };

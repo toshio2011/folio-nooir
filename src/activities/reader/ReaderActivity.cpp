@@ -26,6 +26,7 @@
 #include "util/BookCacheUtils.h"
 #include "util/CbzDiagnostics.h"
 #include "util/LibraryBookPreparationPolicy.h"
+#include "util/ReaderMemoryDiagnostics.h"
 
 namespace {
 
@@ -109,6 +110,7 @@ std::unique_ptr<Epub> ReaderActivity::loadEpub(const std::string& path) {
 }
 
 std::unique_ptr<Xtc> ReaderActivity::loadXtc(const std::string& path) {
+  NOOIR_READER_MEMORY_CHECKPOINT("xtc_load_begin", "ReaderActivity path and loader");
   if (!Storage.exists(path.c_str())) {
     LOG_ERR("READER", "File does not exist: %s", path.c_str());
     return nullptr;
@@ -119,15 +121,23 @@ std::unique_ptr<Xtc> ReaderActivity::loadXtc(const std::string& path) {
     LOG_ERR("READER", "Failed to allocate XTC object");
     return nullptr;
   }
+  NOOIR_READER_MEMORY_CHECKPOINT("xtc_object_created", "Xtc wrapper/parser owner");
   const std::string thumbnail = xtc->getThumbBmpPath(FolioNooirTheme::COVER_HEIGHT);
   const bool thumbnailCached = isValidBookThumbnail(thumbnail);
+  NOOIR_READER_MEMORY_CHECKPOINT(thumbnailCached ? "xtc_cover_cache_hit" : "xtc_cover_cache_miss",
+                                 "thumbnail path and cache validation");
   {
     std::optional<GfxRenderer::FrameBufferLoan> loan;
     if (!thumbnailCached) loan.emplace(renderer);
     if (xtc->load()) {
-      if (!thumbnailCached && xtc->getPageCount() > 0 &&
-          !xtc->generateThumbBmp(FolioNooirTheme::COVER_HEIGHT)) {
-        LOG_DBG("READER", "First-open XTC cover preparation failed; reader will continue: %s", path.c_str());
+      NOOIR_READER_MEMORY_CHECKPOINT("xtc_parser_loaded", "Xtc parser and metadata");
+      if (!thumbnailCached && xtc->getPageCount() > 0) {
+        NOOIR_READER_MEMORY_CHECKPOINT("xtc_cover_generation_begin", "uncached XTC cover workspace");
+        const bool thumbnailGenerated = xtc->generateThumbBmp(FolioNooirTheme::COVER_HEIGHT);
+        NOOIR_READER_MEMORY_CHECKPOINT("xtc_cover_generation_end", "uncached XTC cover workspace released");
+        if (!thumbnailGenerated) {
+          LOG_DBG("READER", "First-open XTC cover preparation failed; reader will continue: %s", path.c_str());
+        }
       }
       if (thumbnailCached) xtc->noteCoverCacheState(xtc_metadata_cache::CoverState::Available);
       else if (xtc->getPageCount() == 0) xtc->noteCoverCacheState(xtc_metadata_cache::CoverState::NoCover);
@@ -135,10 +145,12 @@ std::unique_ptr<Xtc> ReaderActivity::loadXtc(const std::string& path) {
       // this book has never been added to RecentBooksStore.
       (void)xtc->getDescription();
       (void)xtc->getSeries();
+      NOOIR_READER_MEMORY_CHECKPOINT("xtc_metadata_ready", "Xtc description and series");
       return xtc;
     }
   }
 
+  NOOIR_READER_MEMORY_CHECKPOINT("xtc_parser_load_failed", "Xtc wrapper/parser failure path");
   LOG_ERR("READER", "Failed to load XTC");
   return nullptr;
 }
@@ -260,8 +272,10 @@ void ReaderActivity::onEnter() {
   // Preserve the enabled/wanted Reader return intent even when a previous
   // activity already left BLE off after a failed admission. The helper arms
   // that return path and remains safe when ActivityManager already yielded BLE.
-  bleinput::stopForReaderResourcePressure();
-  bleinput::signalReaderBleReturnLifecycleEvent("reader_enter");
+  if (bleinput::bluetoothEnabled()) {
+    bleinput::stopForReaderResourcePressure();
+    bleinput::signalReaderBleReturnLifecycleEvent("reader_enter");
+  }
   showOpeningBookFeedback(renderer, initialBookPath);
   // SD-font registration and cache release mutate renderer-owned maps and
   // font objects. Keep the transition serialized with the render task, while
@@ -288,6 +302,7 @@ void ReaderActivity::onEnter() {
     onGoToCbzReader(std::move(cbz));
   } else if (isXtcFile(initialBookPath)) {
     auto xtc = loadXtc(initialBookPath);
+    NOOIR_READER_MEMORY_CHECKPOINT("xtc_loader_returned", "XTC loader and cover loan released");
     if (!xtc) {
       onGoBack();
       return;

@@ -46,7 +46,7 @@ class ActivityManager {
   std::vector<std::unique_ptr<Activity>> stackActivities;
   std::unique_ptr<Activity> currentActivity;
 
-  void exitActivity(const RenderLock& lock);
+  bool exitActivity(const RenderLock& lock);
   bool prepareWebExclusiveExit();
 
   // Pending activity to be launched on next loop iteration
@@ -167,6 +167,9 @@ class ActivityManager {
   const char* currentActivityName() const;
   bool bluetoothShouldBeActive() const;
   bool bluetoothResourceSensitive() const;
+  // True while a queued activity transition or deferred Settings construction
+  // requires BLE to be fully stopped before the old/new activity can proceed.
+  bool bleShutdownRequiredForPendingTransition() const;
   bool bluetoothRenderSafe() const;
   // Notify the current activity only after a cold BLE admission succeeds.
   // Settings uses this to consume its explicit return transition; ordinary

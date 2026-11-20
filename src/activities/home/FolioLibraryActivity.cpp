@@ -35,6 +35,7 @@
 #include "activities/util/BmpViewerActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "util/BookCacheUtils.h"
+#include "util/BookProgressReset.h"
 #include "util/CbzDiagnostics.h"
 #include "util/LibraryBookPreparationPolicy.h"
 #include "util/SynopsisPreview.h"
@@ -1292,10 +1293,11 @@ void FolioLibraryActivity::showBookActions() {
       RECENT_BOOKS.recordReading(path, 100, 0);
       preview.progressPercent = 100;
     } else if (action == 4) {
-      BOOK_STATES.reset(path);
-      resetBookProgress(path);
-      RECENT_BOOKS.recordReading(path, 0, 0);
-      preview.progressPercent = 0;
+      if (resetBookReadingProgress(path)) {
+        preview.progressPercent = 0;
+      } else {
+        activityManager.postSettingsRecoveryNotification(tr(STR_SAVE_PROGRESS_FAILED));
+      }
     } else if (action == 5) {
       // Refresh the source metadata without deleting the reader cache. This
       // preserves progress, bookmarks, clippings, and cached reading pages.

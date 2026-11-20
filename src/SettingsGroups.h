@@ -101,7 +101,8 @@ inline SettingsGroupId settingsGroupIdForSettingKey(const char* key) {
 
   static constexpr const char* connectivityKeys[] = {
       "koUsername", "koPassword", "koServerUrl", "koDeviceName", "koMatchMethod", "koSendMetadata",
-      "koSyncBehavior", "bleControllerPreset", "bleKeyMap", "bluetoothEnabled", "bluetoothNoDeviceTimeoutSeconds",
+      "koSyncBehavior", "bleControllerPreset", "bleMappingProfileId", "bleKeyMap", "bluetoothEnabled",
+      "bluetoothNoDeviceTimeoutSeconds",
   };
   if (settingsKeyIn(key, connectivityKeys)) return SettingsGroupId::Connectivity;
 

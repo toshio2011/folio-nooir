@@ -209,6 +209,8 @@ Rect twoRowShelfRect(const TwoRowPage& page, const Rect& bounds, size_t row);
 
 ThreeRowPage threeRowPageForSelection(const Book* books, size_t bookCount, size_t selectedIndex,
                                       const Rect& bounds);
+void threeRowPageForSelection(const Book* books, size_t bookCount, size_t selectedIndex, const Rect& bounds,
+                              ThreeRowPage& result);
 size_t threeRowNextPageStart(const Book* books, size_t bookCount, size_t selectedIndex, const Rect& bounds);
 size_t threeRowPreviousPageStart(const Book* books, size_t bookCount, size_t selectedIndex, const Rect& bounds);
 Rect threeRowShelfRect(const ThreeRowPage& page, const Rect& bounds, size_t row);

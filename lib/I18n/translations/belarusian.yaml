@@ -335,3 +335,7 @@ STR_READING_STATS: "Статыстыка чытання"
 STR_BOOK_STATISTICS: "Статыстыка кнігі"
 STR_RESUME: "Працягнуць"
 STR_THEME_ROUNDEDRAFF: "RoundedRaff"
+
+STR_BT_WAITING_FOR_MEMORY: "Чаканне памяці"
+STR_BT_SUSPENDED_FOR_READER: "Прыпынена для чытання"
+STR_BT_RECONNECT_PENDING: "Паўторнае падключэнне чакае"

@@ -338,3 +338,7 @@ STR_READING_STATS: "Leesstatistieken"
 STR_BOOK_STATISTICS: "Boekstatistieken"
 STR_RESUME: "Hervatten"
 STR_THEME_ROUNDEDRAFF: "RoundedRaff"
+
+STR_BT_WAITING_FOR_MEMORY: "Wachten op geheugen"
+STR_BT_SUSPENDED_FOR_READER: "Gepauzeerd voor lezen"
+STR_BT_RECONNECT_PENDING: "Opnieuw verbinden in afwachting"

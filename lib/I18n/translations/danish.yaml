@@ -339,3 +339,7 @@ STR_READING_STATS: "Læsningsstatistik"
 STR_BOOK_STATISTICS: "Bogstatistik"
 STR_RESUME: "Fortsæt"
 STR_THEME_ROUNDEDRAFF: "RoundedRaff"
+
+STR_BT_WAITING_FOR_MEMORY: "Venter på hukommelse"
+STR_BT_SUSPENDED_FOR_READER: "Sat på pause under læsning"
+STR_BT_RECONNECT_PENDING: "Genforbindelse afventer"

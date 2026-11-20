@@ -69,6 +69,24 @@ struct RenderBudget {
   std::size_t largestBlock;
 };
 
+constexpr std::size_t saturatingAdd(const std::size_t left, const std::size_t right) {
+  return left > static_cast<std::size_t>(-1) - right ? static_cast<std::size_t>(-1) : left + right;
+}
+
+// A measured cached-page turn has already paid the Section-build cost and
+// observes the Page load, font scan/prewarm, and render work of a real turn.
+// Keep this separate from the cold/unknown-page arena budget below; callers
+// must prove the adjacent page is cached and the Reader is quiescent.
+constexpr RenderBudget observedCachedPageTurnBudget(const std::size_t observedPeakBytes,
+                                                    const std::size_t largestRequestBytes,
+                                                    const std::size_t recoveryFreeFloorBytes,
+                                                    const std::size_t recoveryLargestFloorBytes,
+                                                    const std::size_t freeMarginBytes,
+                                                    const std::size_t largestMarginBytes) {
+  return {saturatingAdd(saturatingAdd(recoveryFreeFloorBytes, observedPeakBytes), freeMarginBytes),
+          saturatingAdd(saturatingAdd(recoveryLargestFloorBytes, largestRequestBytes), largestMarginBytes)};
+}
+
 // Call only at render entry/completion. The page-load and font scan arenas are
 // rebuildable; the measured largest request carries forward the real font
 // group sizes seen on this device. A per-prewarm admission gate checks the

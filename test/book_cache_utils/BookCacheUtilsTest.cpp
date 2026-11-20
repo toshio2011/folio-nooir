@@ -2,12 +2,14 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <string>
 #include <vector>
 
 #include <HalStorage.h>
 #include <BookCacheStub.h>
+#include "activities/reader/ProgressFile.h"
 
 namespace {
 
@@ -212,6 +214,77 @@ TEST_F(BookCacheUtilsTest, PartialDirectoryClearFailureRestoresEveryValidatedPro
   EXPECT_EQ(Storage.files.at(temporaryPath), bytes(kTemporary));
   EXPECT_EQ(Storage.files.at(kBookmarkPath), kBookmark);
   EXPECT_EQ(Storage.files.at(kStatsPath), kStats);
+}
+
+TEST_F(BookCacheUtilsTest, ResetWritesFirstPositionForEverySupportedReaderAndClearsRecoveryCopies) {
+  const std::vector<std::pair<std::string, size_t>> cases = {
+      {"/books/Reset.epub", 6}, {"/books/Reset.xtc", 4}, {"/books/Reset.xtch", 4},
+      {"/books/Reset.txt", 4},  {"/books/Reset.cbz", 4},
+  };
+
+  for (const auto& [bookPath, recordLength] : cases) {
+    Storage.reset();
+    const std::string cachePath = testCachePath(bookPath.ends_with(".epub") ? "epub"
+                                                 : bookPath.ends_with(".txt") ? "txt"
+                                                 : bookPath.ends_with(".cbz") ? "cbz"
+                                                                               : "xtc",
+                                                bookPath);
+    Storage.mkdir(cachePath.c_str());
+    const std::string canonical = cachePath + "/progress.bin";
+    Storage.files[canonical] = std::string(recordLength, '\x7f');
+    Storage.files[canonical + ".bak"] = std::string(recordLength, '\x55');
+    Storage.files[canonical + ".tmp"] = std::string(recordLength, '\x33');
+    Storage.files[cachePath + "/page_0.bmp"] = "keep cached page";
+
+    SCOPED_TRACE(bookPath);
+    ASSERT_TRUE(resetBookProgress(bookPath));
+    EXPECT_EQ(Storage.files.at(canonical), std::string(recordLength, '\0'));
+    EXPECT_FALSE(Storage.exists((canonical + ".bak").c_str()));
+    EXPECT_FALSE(Storage.exists((canonical + ".tmp").c_str()));
+    EXPECT_EQ(Storage.files.at(cachePath + "/page_0.bmp"), "keep cached page");
+
+    HalFile reopened;
+    ASSERT_TRUE(ProgressFile::openForRead("TEST", cachePath, reopened));
+    std::array<uint8_t, 6> reopenedPosition{};
+    ASSERT_EQ(reopened.read(reopenedPosition.data(), recordLength), static_cast<int>(recordLength));
+    ASSERT_TRUE(reopened.close());
+    EXPECT_TRUE(std::all_of(reopenedPosition.begin(), reopenedPosition.begin() + recordLength,
+                            [](const uint8_t value) { return value == 0; }));
+  }
+}
+
+TEST_F(BookCacheUtilsTest, FailedResetWritePreservesExistingCanonicalAndRecoveryFiles) {
+  const std::string canonical = std::string(kCachePath) + "/progress.bin";
+  const std::string backup = canonical + ".bak";
+  const std::string temporary = canonical + ".tmp";
+  Storage.mkdir(kCachePath);
+  Storage.files[canonical] = bytes(kCanonical);
+  Storage.files[backup] = bytes(kBackup);
+  Storage.files[temporary] = bytes(kTemporary);
+  Storage.failWrites = true;
+
+  EXPECT_FALSE(resetBookProgress(kBookPath));
+  EXPECT_EQ(Storage.files.at(canonical), bytes(kCanonical));
+  EXPECT_EQ(Storage.files.at(backup), bytes(kBackup));
+  EXPECT_EQ(Storage.files.at(temporary), bytes(kTemporary));
+}
+
+TEST_F(BookCacheUtilsTest, ResetReportsStaleBackupRemovalFailure) {
+  const std::string canonical = std::string(kCachePath) + "/progress.bin";
+  const std::string backup = canonical + ".bak";
+  Storage.mkdir(kCachePath);
+  Storage.files[backup] = bytes(kBackup);
+  Storage.removeFailurePaths.insert(backup);
+
+  EXPECT_FALSE(resetBookProgress(kBookPath));
+  EXPECT_EQ(Storage.files.at(canonical), std::string(4, '\0'));
+  EXPECT_EQ(Storage.files.at(backup), bytes(kBackup));
+}
+
+TEST_F(BookCacheUtilsTest, ResetRejectsUnsupportedBookTypes) {
+  EXPECT_FALSE(resetBookProgress("/books/Manual.pdf"));
+  EXPECT_TRUE(Storage.files.empty());
+  EXPECT_TRUE(Storage.directories.empty());
 }
 
 }  // namespace

@@ -335,3 +335,7 @@ STR_READING_STATS: "Skaitymo statistika"
 STR_BOOK_STATISTICS: "Knygos statistika"
 STR_RESUME: "Tęsti"
 STR_THEME_ROUNDEDRAFF: "RoundedRaff"
+
+STR_BT_WAITING_FOR_MEMORY: "Laukiama atminties"
+STR_BT_SUSPENDED_FOR_READER: "Pristabdyta skaitymui"
+STR_BT_RECONNECT_PENDING: "Laukiama pakartotinio ryšio"

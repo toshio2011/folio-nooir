@@ -165,15 +165,32 @@ void BookStateStore::setStatus(const std::string& path, const BookStatus status)
   saveToFile();
 }
 
-void BookStateStore::reset(const std::string& path) {
+bool BookStateStore::reset(const std::string& path) {
+  if (path.empty()) return false;
+  const auto existing = std::find_if(books.begin(), books.end(), [&](const BookState& state) {
+    return state.path == path;
+  });
+  const bool hadState = existing != books.end();
+  const BookState previous = hadState ? *existing : BookState{};
   BookState& state = ensure(path);
-  const std::string savedPath = state.path;
   // Reading progress can be reset without discarding the user's book rating.
-  const uint8_t savedRating = state.rating;
   state = BookState{};
-  state.path = savedPath;
-  state.rating = savedRating;
-  saveToFile();
+  state.path = path;
+  state.rating = previous.rating;
+  if (saveToFile()) return true;
+
+  const auto updated = std::find_if(books.begin(), books.end(), [&](const BookState& item) {
+    return item.path == path;
+  });
+  if (updated != books.end()) {
+    if (hadState) {
+      *updated = previous;
+    } else {
+      books.erase(updated);
+    }
+  }
+  LOG_ERR("BST", "Failed to reset book state: %s", path.c_str());
+  return false;
 }
 
 bool BookStateStore::removeByPath(const std::string& path) {

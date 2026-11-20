@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include "BleButtonMapActivity.h"
+#include "BleMappingProfilesActivity.h"
 #include "BleInput.h"
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
@@ -18,6 +19,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "SdCardFontSystem.h"
+#include "util/BluetoothSettingsNavigationPolicy.h"
 #include "util/BleMemoryPolicy.h"
 
 namespace {
@@ -58,6 +60,9 @@ void BluetoothSettingsActivity::onEnter() {
   failureIndex.store(0, std::memory_order_release);
   menuIndex = 0;
   rebuildMenuRows();
+  lastRuntimeRunning = BleHid.isRunning();
+  lastRuntimeConnected = BleHid.isConnected();
+  lastPreferenceEnabled = SETTINGS.bluetoothEnabled != 0;
   const bool wanted = SETTINGS.bluetoothEnabled != 0;
   if (wanted && !BleHid.isRunning()) beginPreparation(false);
   else requestUpdate();
@@ -101,6 +106,25 @@ void BluetoothSettingsActivity::beginPreparation(const bool controlledRetry) {
   requestUpdate();
 }
 
+void BluetoothSettingsActivity::disableBluetoothFromSettings() {
+  // The shared OFF path persists the user's choice and fully ends NimBLE,
+  // cancelling an in-flight scan or connection attempt.
+  if (BleHid.isScanning()) BleHid.stopScan();
+  bleinput::setBluetoothEnabled(false);
+  activityManager.setBluetoothSettingsActivationFailed(false);
+  activationResult.store(-1, std::memory_order_release);
+  activationState.store(ActivationState::Ready, std::memory_order_release);
+  controlledRetryUsed.store(false, std::memory_order_release);
+  failureIndex.store(0, std::memory_order_release);
+  awaitingConnect = false;
+  pairedScanActive = false;
+  pairedFallbackAttempted = false;
+  connectOrigin = ConnectOrigin::None;
+  view = View::Menu;
+  rebuildMenuRows();
+  requestUpdate();
+}
+
 void BluetoothSettingsActivity::onBluetoothActivationResult(const bool started) {
   if (activationState.load(std::memory_order_acquire) != ActivationState::Preparing) return;
   activityManager.setBluetoothSettingsActivationFailed(!started);
@@ -109,14 +133,18 @@ void BluetoothSettingsActivity::onBluetoothActivationResult(const bool started) 
 }
 
 void BluetoothSettingsActivity::rebuildMenuRows() {
+  const Action selectedAction = menuIndex >= 0 && menuIndex < static_cast<int>(menuRows.size())
+                                    ? menuRows[static_cast<std::size_t>(menuIndex)].action
+                                    : Action::ToggleBt;
   menuRows.clear();
-  menuRows.reserve(mode == Mode::ReaderControl ? 1 : 12);
+  menuRows.reserve(mode == Mode::ReaderControl ? 1 : 10);
   menuRows.push_back({Action::ToggleBt, StrId::STR_BLUETOOTH});
   if (mode == Mode::ReaderControl) {
     menuIndex = 0;
     return;
   }
   menuRows.push_back({Action::NoDeviceTimeout, StrId::STR_BT_NO_DEVICE_TIMEOUT});
+  menuRows.push_back({Action::MappingProfiles, StrId::STR_SETTINGS_PROFILES});
   if (SETTINGS.bluetoothEnabled) {
     menuRows.push_back({Action::Scan, StrId::STR_BT_SCAN_PAIR});
     if (BleHid.isConnected()) menuRows.push_back({Action::Disconnect, StrId::STR_BT_DISCONNECT});
@@ -127,57 +155,10 @@ void BluetoothSettingsActivity::rebuildMenuRows() {
     // does not require regenerating every language resource.
     menuRows.push_back({Action::Diagnostics, StrId::STR_BLUETOOTH});
 #endif
-    menuRows.push_back({Action::PresetFree2, StrId::STR_BT_PRESET_FREE2});
-    menuRows.push_back({Action::PresetFree3, StrId::STR_BT_PRESET_FREE3});
-    menuRows.push_back({Action::PresetYiser, StrId::STR_BT_PRESET_YISER});
     menuRows.push_back({Action::ResetDefaults, StrId::STR_BT_RESET_MAP_DEFAULTS});
     menuRows.push_back({Action::ClearMap, StrId::STR_BT_CLEAR_MAP});
   }
-  if (menuIndex >= static_cast<int>(menuRows.size())) menuIndex = 0;
-}
-
-void BluetoothSettingsActivity::applyPreset(bool free3) {
-  // Starter presets. Page-turner remotes commonly emit PageUp/PageDown (and a
-  // center key on the 3-button Free3); the user can re-map via "Map Remote
-  // Buttons" if their device sends different codes.
-  using Btn = MappedInputManager::Button;
-  SETTINGS.bleControllerPreset = CrossPointSettings::BLE_CONTROLLER_PRESET_GENERIC;
-  BleHid.setInputPreset(freeink::InputPreset::GenericHid);
-  for (auto& e : SETTINGS.bleKeyMap) e = CrossPointSettings::BleKeyMapEntry{};
-  auto set = [&](int slot, freeink::SpecialKey key, Btn button) {
-    SETTINGS.bleKeyMap[slot].keyKind = 0;  // SpecialKey
-    SETTINGS.bleKeyMap[slot].keyValue = static_cast<uint8_t>(key);
-    SETTINGS.bleKeyMap[slot].button = static_cast<uint8_t>(button);
-    SETTINGS.bleKeyMap[slot].signatureCount = 1;
-    SETTINGS.bleKeyMap[slot].signature[0] =
-        static_cast<uint16_t>(static_cast<uint8_t>(key)) | (static_cast<uint16_t>(0) << 8);
-  };
-  set(0, freeink::SpecialKey::PageDown, Btn::PageForward);
-  set(1, freeink::SpecialKey::PageUp, Btn::PageBack);
-  if (free3) set(2, freeink::SpecialKey::Enter, Btn::Confirm);
-  SETTINGS.saveToFile();
-}
-
-void BluetoothSettingsActivity::applyYiserPreset() {
-  using Btn = MappedInputManager::Button;
-  SETTINGS.bleControllerPreset = CrossPointSettings::BLE_CONTROLLER_PRESET_YISER_J6_RING;
-  BleHid.setInputPreset(freeink::InputPreset::YiserJ6Ring);
-  for (auto& e : SETTINGS.bleKeyMap) e = CrossPointSettings::BleKeyMapEntry{};
-  auto set = [&](int slot, freeink::SpecialKey key, Btn button) {
-    SETTINGS.bleKeyMap[slot].keyKind = 0;  // normalized SpecialKey
-    SETTINGS.bleKeyMap[slot].keyValue = static_cast<uint8_t>(key);
-    SETTINGS.bleKeyMap[slot].button = static_cast<uint8_t>(button);
-    SETTINGS.bleKeyMap[slot].signatureCount = 1;
-    SETTINGS.bleKeyMap[slot].signature[0] =
-        static_cast<uint16_t>(static_cast<uint8_t>(key));
-  };
-  set(0, freeink::SpecialKey::Up, Btn::Up);
-  set(1, freeink::SpecialKey::Down, Btn::Down);
-  set(2, freeink::SpecialKey::Left, Btn::Left);
-  set(3, freeink::SpecialKey::Right, Btn::Right);
-  set(4, freeink::SpecialKey::Enter, Btn::Confirm);
-  set(5, freeink::SpecialKey::Escape, Btn::Back);
-  SETTINGS.saveToFile();
+  menuIndex = bluetooth_settings::selectionIndexForAction(menuRows, selectedAction, Action::ToggleBt);
 }
 
 void BluetoothSettingsActivity::resetMappingsToDefaults() {
@@ -218,6 +199,7 @@ void BluetoothSettingsActivity::startScanView() {
   }
   view = View::Scan;
   scanIndex = 0;
+  lastScanDataCount = BleHid.deviceCount();
   awaitingConnect = false;
   pairedScanActive = false;
   connectOrigin = ConnectOrigin::None;
@@ -286,13 +268,11 @@ void BluetoothSettingsActivity::handleMenuConfirm() {
   const Action action = menuRows[menuIndex].action;
   switch (action) {
     case Action::ToggleBt:
-      bleinput::setBluetoothEnabled(!SETTINGS.bluetoothEnabled);
-      if (SETTINGS.bluetoothEnabled && !BleHid.isRunning()) beginPreparation(false);
+      if (SETTINGS.bluetoothEnabled) disableBluetoothFromSettings();
       else {
-        activityManager.setBluetoothSettingsActivationFailed(false);
-        activationState.store(ActivationState::Ready, std::memory_order_release);
-        rebuildMenuRows();
-        requestUpdate();
+        bleinput::setBluetoothEnabled(true);
+        if (!BleHid.isRunning()) beginPreparation(false);
+        else requestUpdate();
       }
       break;
     case Action::NoDeviceTimeout:
@@ -318,6 +298,7 @@ void BluetoothSettingsActivity::handleMenuConfirm() {
     case Action::PairedDevices:
       view = View::Paired;
       pairedIndex = 0;
+      lastPairedDataCount = BleHid.pairedCount();
       requestUpdate();
       break;
     case Action::Diagnostics:
@@ -325,33 +306,33 @@ void BluetoothSettingsActivity::handleMenuConfirm() {
       requestUpdate();
       break;
     case Action::MapButtons:
-      startActivityForResult(std::make_unique<BleButtonMapActivity>(renderer, mappedInput),
+      startActivityForResult(std::make_unique<BleButtonMapActivity>(
+                                 renderer, mappedInput, BleMappingProfileStore::isFactory(BleMappingProfileStore::activeId()),
+                                 BleMappingProfileStore::isFactory(BleMappingProfileStore::activeId())
+                                     ? BleMappingProfileStore::factoryName(BleMappingProfileStore::activeId())
+                                     : "Active profile"),
                              [this](const ActivityResult&) {
                                rebuildMenuRows();
                                requestUpdate();
                              });
       break;
-    case Action::PresetFree2:
-      applyPreset(false);
-      setBanner(tr(STR_BT_PRESET_FREE2));
-      requestUpdate();
-      break;
-    case Action::PresetFree3:
-      applyPreset(true);
-      setBanner(tr(STR_BT_PRESET_FREE3));
-      requestUpdate();
-      break;
-    case Action::PresetYiser:
-      applyYiserPreset();
-      setBanner(tr(STR_BT_PRESET_YISER));
-      requestUpdate();
+    case Action::MappingProfiles:
+      startActivityForResult(std::make_unique<BleMappingProfilesActivity>(renderer, mappedInput),
+                             [this](const ActivityResult&) {
+                               rebuildMenuRows();
+                               requestUpdate();
+                             });
       break;
     case Action::ResetDefaults:
+      if (BleMappingProfileStore::isFactory(BleMappingProfileStore::activeId()))
+        BleMappingProfileStore::switchTo(bleinput::profiles::kDefaultProfileId);
       resetMappingsToDefaults();
       setBanner("Default remote mappings restored");
       requestUpdate();
       break;
     case Action::ClearMap:
+      if (BleMappingProfileStore::isFactory(BleMappingProfileStore::activeId()))
+        BleMappingProfileStore::switchTo(bleinput::profiles::kDefaultProfileId);
       for (auto& e : SETTINGS.bleKeyMap) e = CrossPointSettings::BleKeyMapEntry{};
       SETTINGS.saveToFile();
       setBanner(tr(STR_BT_CLEAR_MAP));
@@ -361,9 +342,54 @@ void BluetoothSettingsActivity::handleMenuConfirm() {
 }
 
 void BluetoothSettingsActivity::loop() {
+  const bool userInputEdgePending = mappedInput.wasAnyPressed() || mappedInput.wasAnyReleased();
+  const bool runtimeRunning = BleHid.isRunning();
+  const bool runtimeConnected = BleHid.isConnected();
+  const bool preferenceEnabled = SETTINGS.bluetoothEnabled != 0;
+  const bool preferenceTurnedOff = bluetooth_settings::preferenceOffTransitionRequiresMenuRebuild(
+      lastPreferenceEnabled, preferenceEnabled);
+  if (runtimeRunning != lastRuntimeRunning || runtimeConnected != lastRuntimeConnected ||
+      preferenceEnabled != lastPreferenceEnabled) {
+    lastRuntimeRunning = runtimeRunning;
+    lastRuntimeConnected = runtimeConnected;
+    lastPreferenceEnabled = preferenceEnabled;
+    if (preferenceTurnedOff) {
+      // A no-device timeout can change the saved preference from outside this
+      // screen. Rebuild the enabled-only rows immediately and discard async
+      // connect state. Do not reinterpret the same button edge against the new
+      // menu model; OFF is already applied by the timeout owner.
+      if (BleHid.isScanning()) BleHid.stopScan();
+      awaitingConnect = false;
+      pairedScanActive = false;
+      pairedFallbackAttempted = false;
+      connectOrigin = ConnectOrigin::None;
+      activationState.store(ActivationState::Ready, std::memory_order_release);
+      activationResult.store(-1, std::memory_order_release);
+      view = View::Menu;
+      rebuildMenuRows();
+    }
+    requestUpdate();
+    if (preferenceTurnedOff && userInputEdgePending) return;
+  }
+
   if (noDeviceTimeoutPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
 
-  const int8_t activationEvent = activationResult.exchange(-1, std::memory_order_acq_rel);
+  // Keep a button edge on the screen the user saw. Apply queued BLE status
+  // changes on the next idle frame instead of reinterpreting that edge after
+  // a row/view rebuild.
+  int scanDataCount = lastScanDataCount;
+  int pairedDataCount = lastPairedDataCount;
+  if (view == View::Scan) {
+    scanDataCount = BleHid.deviceCount();
+    scanIndex = bluetooth_settings::selectionAfterDataCountChange(scanIndex, lastScanDataCount, scanDataCount);
+    lastScanDataCount = scanDataCount;
+  } else if (view == View::Paired) {
+    pairedDataCount = BleHid.pairedCount();
+    pairedIndex = bluetooth_settings::selectionAfterDataCountChange(pairedIndex, lastPairedDataCount, pairedDataCount);
+    lastPairedDataCount = pairedDataCount;
+  }
+
+  const int8_t activationEvent = userInputEdgePending ? -1 : activationResult.exchange(-1, std::memory_order_acq_rel);
   if (activationEvent >= 0 && activationState.load(std::memory_order_acquire) == ActivationState::Preparing) {
     if (activationEvent == 1 && BleHid.isRunning()) {
       activationState.store(ActivationState::Ready, std::memory_order_release);
@@ -372,7 +398,10 @@ void BluetoothSettingsActivity::loop() {
               mode == Mode::ReaderControl ? "reader" : "settings", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     } else {
       activationState.store(ActivationState::Failed, std::memory_order_release);
-      failureIndex.store(0, std::memory_order_release);
+      const bool retryAvailable = !controlledRetryUsed.load(std::memory_order_acquire);
+      failureIndex.store(bluetooth_settings::failureSelectionAfterPreparation(
+                             failureIndex.load(std::memory_order_acquire), retryAvailable),
+                         std::memory_order_release);
       LOG_ERR("BLEMEM", "stage=bluetooth_settings_failed mode=%s retry_used=%d free=%u largest=%u",
               mode == Mode::ReaderControl ? "reader" : "settings",
               controlledRetryUsed.load(std::memory_order_acquire) ? 1 : 0, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
@@ -390,25 +419,19 @@ void BluetoothSettingsActivity::loop() {
     const int contentTop = screen.y + metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight +
                            metrics.verticalSpacing;
     const int contentHeight = screen.height - contentTop - metrics.verticalSpacing;
-    int selectedOption = std::clamp(failureIndex.load(std::memory_order_acquire), 0, 1);
+    int selectedOption = std::clamp(failureIndex.load(std::memory_order_acquire), 0, 2);
     failureIndex.store(selectedOption, std::memory_order_release);
     const auto activateOption = [this] {
-      if (failureIndex.load(std::memory_order_acquire) == 0) {
-        // Keep an explicit escape hatch while admission or NimBLE startup is
-        // pending. OFF cancels startup/reconnect through the same idempotent
-        // path used by the normal Settings toggle.
-        bleinput::setBluetoothEnabled(false);
-        activityManager.setBluetoothSettingsActivationFailed(false);
-        activationResult.store(-1, std::memory_order_release);
-        activationState.store(ActivationState::Ready, std::memory_order_release);
-        failureIndex.store(0, std::memory_order_release);
-        rebuildMenuRows();
-        requestUpdate();
-      } else {
+      const int selected = failureIndex.load(std::memory_order_acquire);
+      if (selected == 1) {
+        // OFF cancels startup/reconnect through the same idempotent path used
+        // by the normal Settings toggle.
+        disableBluetoothFromSettings();
+      } else if (selected == 2) {
         finishCancelled();
       }
     };
-    const auto touchResult = handleListTouch(selectedOption, 2, contentTop, contentHeight, false);
+    const auto touchResult = handleListTouch(selectedOption, 3, contentTop, contentHeight, false);
     failureIndex.store(selectedOption, std::memory_order_release);
     if (touchResult == ListTouchResult::Activated) {
       activateOption();
@@ -416,12 +439,12 @@ void BluetoothSettingsActivity::loop() {
     }
     if (touchResult == ListTouchResult::Consumed) return;
     buttonNavigator.onNext([this] {
-      failureIndex.store(ButtonNavigator::nextIndex(failureIndex.load(std::memory_order_acquire), 2),
+      failureIndex.store(ButtonNavigator::nextIndex(failureIndex.load(std::memory_order_acquire), 3),
                          std::memory_order_release);
       requestUpdate();
     });
     buttonNavigator.onPrevious([this] {
-      failureIndex.store(ButtonNavigator::previousIndex(failureIndex.load(std::memory_order_acquire), 2),
+      failureIndex.store(ButtonNavigator::previousIndex(failureIndex.load(std::memory_order_acquire), 3),
                          std::memory_order_release);
       requestUpdate();
     });
@@ -453,13 +476,7 @@ void BluetoothSettingsActivity::loop() {
       if (selected == offOptionIndex) {
         // An explicit OFF choice updates the shared preference and stops the
         // host, even when activation failed or is still pending.
-        bleinput::setBluetoothEnabled(false);
-        activityManager.setBluetoothSettingsActivationFailed(false);
-        activationResult.store(-1, std::memory_order_release);
-        activationState.store(ActivationState::Ready, std::memory_order_release);
-        failureIndex.store(0, std::memory_order_release);
-        rebuildMenuRows();
-        requestUpdate();
+        disableBluetoothFromSettings();
         return;
       }
       finishCancelled();
@@ -497,7 +514,7 @@ void BluetoothSettingsActivity::loop() {
   }
 
   // Watch for an async connect result (from either the scan list or the paired list).
-  if (awaitingConnect) {
+  if (awaitingConnect && !userInputEdgePending) {
     if (!bleinput::connectionAdmissionAllowed()) {
       if (BleHid.isScanning()) BleHid.stopScan();
       awaitingConnect = false;
@@ -552,8 +569,17 @@ void BluetoothSettingsActivity::loop() {
     if (BleHid.isConnected()) {
       awaitingConnect = false;
       BleHid.releaseScanResults();
-      view = View::Menu;
-      rebuildMenuRows();
+      if (view == View::Scan) {
+        const int previousDataCount = lastScanDataCount;
+        scanDataCount = BleHid.deviceCount();
+        scanIndex = bluetooth_settings::selectionAfterDataCountChange(scanIndex, previousDataCount, scanDataCount);
+        lastScanDataCount = scanDataCount;
+      }
+      // Connection state is asynchronous. Keep the list the user is
+      // navigating, including its stable trailing OFF row, until they choose
+      // to leave it. Refresh the menu model in place only when the menu is the
+      // visible view; Back rebuilds it when leaving Scan or Paired.
+      if (view == View::Menu) rebuildMenuRows();
       char buf[64];
       snprintf(buf, sizeof(buf), tr(STR_BT_CONNECTED_TO), BleHid.connectedName());
       setBanner(buf);
@@ -600,13 +626,13 @@ void BluetoothSettingsActivity::loop() {
   // Navigation within the active list.
 #if FREEINK_CAP_BLE_HID_HOST
   const int count = view == View::Menu        ? static_cast<int>(menuRows.size())
-                    : view == View::Scan      ? BleHid.deviceCount()
-                    : view == View::Paired    ? BleHid.pairedCount()
+                    : view == View::Scan      ? scanDataCount + 1
+                    : view == View::Paired    ? pairedDataCount + 1
                                               : bleinput::diagnosticCount();
 #else
   const int count = view == View::Menu      ? static_cast<int>(menuRows.size())
-                    : view == View::Scan    ? BleHid.deviceCount()
-                                            : BleHid.pairedCount();
+                    : view == View::Scan    ? scanDataCount + 1
+                                            : pairedDataCount + 1;
 #endif
   int* idx = view == View::Menu ? &menuIndex : view == View::Scan ? &scanIndex : &pairedIndex;
   buttonNavigator.onNext([this, count, idx] {
@@ -632,7 +658,8 @@ void BluetoothSettingsActivity::loop() {
 
   if (view == View::Paired) {
     if (mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
-      if (!pairedActionTaken && mappedInput.getHeldTime() >= kForgetHoldMs && pairedIndex < BleHid.pairedCount()) {
+      if (!pairedActionTaken && pairedIndex < pairedDataCount &&
+          mappedInput.getHeldTime() >= kForgetHoldMs) {
         const auto& p = BleHid.paired(static_cast<uint8_t>(pairedIndex));
         bleinput::suppressNextDisconnectNotice();
         BleHid.forget(p.addr);
@@ -643,7 +670,9 @@ void BluetoothSettingsActivity::loop() {
         requestUpdate();
       }
     } else if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-      if (!pairedActionTaken && !awaitingConnect && pairedIndex < BleHid.pairedCount()) {
+      if (!pairedActionTaken && pairedIndex == pairedDataCount) {
+        disableBluetoothFromSettings();
+      } else if (!pairedActionTaken && !awaitingConnect && pairedIndex < pairedDataCount) {
         beginPairedConnect();
       }
       pairedActionTaken = false;
@@ -655,7 +684,11 @@ void BluetoothSettingsActivity::loop() {
     if (view == View::Menu) {
       handleMenuConfirm();
     } else if (view == View::Scan) {
-      if (!awaitingConnect && scanIndex < BleHid.deviceCount()) {
+      if (scanIndex == scanDataCount) {
+        disableBluetoothFromSettings();
+        return;
+      }
+      if (!awaitingConnect && scanIndex < scanDataCount) {
         if (!bleinput::connectionAdmissionAllowed()) {
           setBanner(tr(STR_BT_START_FAILED));
           requestUpdate();
@@ -716,11 +749,12 @@ void BluetoothSettingsActivity::render(RenderLock&&) {
   if (state == ActivationState::Preparing) {
     GUI.drawSubHeader(renderer, Rect{0, metrics.topPadding + metrics.headerHeight, pageWidth, metrics.tabBarHeight},
                       tr(STR_BT_PREPARING));
-    const int selectedOption = std::clamp(failureIndex.load(std::memory_order_acquire), 0, 1);
-    GUI.drawList(renderer, listRect, 2, selectedOption,
+    const int selectedOption = std::clamp(failureIndex.load(std::memory_order_acquire), 0, 2);
+    GUI.drawList(renderer, listRect, 3, selectedOption,
                  [](int index) {
-                   return index == 0 ? std::string(tr(STR_BLUETOOTH)) + " " + tr(STR_STATE_OFF)
-                                     : std::string(tr(STR_BACK));
+                   if (index == 0) return std::string(tr(STR_CONNECTING));
+                   if (index == 1) return std::string(tr(STR_BLUETOOTH)) + " " + tr(STR_STATE_OFF);
+                   return std::string(tr(STR_BACK));
                  },
                  nullptr, nullptr, nullptr, false);
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), "", "");
@@ -773,7 +807,7 @@ void BluetoothSettingsActivity::render(RenderLock&&) {
   }
 
   // Sub-header: connection status.
-  const char* status = BleHid.isConnected() ? BleHid.connectedName() : tr(STR_BT_NOT_CONNECTED);
+  const char* status = bleinput::userFacingStatusText();
   GUI.drawSubHeader(renderer, Rect{0, metrics.topPadding + metrics.headerHeight, pageWidth, metrics.tabBarHeight},
                     status);
 
@@ -789,8 +823,12 @@ void BluetoothSettingsActivity::render(RenderLock&&) {
         }, nullptr, nullptr,
         [this](int i) -> std::string {
           if (menuRows[i].action == Action::ToggleBt) {
-            const bool enabled = SETTINGS.bluetoothEnabled != 0;
-            return enabled ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+            if (!SETTINGS.bluetoothEnabled) return tr(STR_STATE_OFF);
+#if FREEINK_CAP_BLE_HID_HOST
+            return BleHid.isRunning() ? tr(STR_STATE_ON) : tr(STR_BT_PAUSED);
+#else
+            return tr(STR_STATE_OFF);
+#endif
           }
           if (menuRows[i].action == Action::NoDeviceTimeout)
             return noDeviceTimeoutLabel(SETTINGS.bluetoothNoDeviceTimeoutSeconds);
@@ -798,24 +836,32 @@ void BluetoothSettingsActivity::render(RenderLock&&) {
         },
         true);
   } else if (view == View::Scan) {
-    const int count = BleHid.deviceCount();
+    const int count = lastScanDataCount;
+    Rect scanListRect = listRect;
     if (count == 0) {
       GUI.drawHelpText(renderer, Rect{0, topOffset + metrics.verticalSpacing, pageWidth, 24},
                        BleHid.isScanning() ? tr(STR_SCANNING) : tr(STR_BT_NO_DEVICES));
-    } else {
-      GUI.drawList(
-          renderer, listRect, count, scanIndex, [this](int i) { return deviceLabel(i); }, nullptr, nullptr, nullptr,
-          false);
+      scanListRect.y += 26;
+      scanListRect.height = std::max(0, scanListRect.height - 26);
     }
+    GUI.drawList(renderer, scanListRect, count + 1, scanIndex,
+                 [this, count](int i) {
+                   return i == count ? std::string(tr(STR_BLUETOOTH)) + " " + tr(STR_STATE_OFF) : deviceLabel(i);
+                 },
+                 nullptr, nullptr, nullptr, false);
   } else if (view == View::Paired) {
-    const int count = BleHid.pairedCount();
+    const int count = lastPairedDataCount;
+    Rect pairedListRect = listRect;
     if (count == 0) {
       GUI.drawHelpText(renderer, Rect{0, topOffset + metrics.verticalSpacing, pageWidth, 24}, tr(STR_BT_NO_PAIRED));
-    } else {
-      GUI.drawList(
-          renderer, listRect, count, pairedIndex, [this](int i) { return pairedLabel(i); }, nullptr, nullptr, nullptr,
-          false);
+      pairedListRect.y += 26;
+      pairedListRect.height = std::max(0, pairedListRect.height - 26);
     }
+    GUI.drawList(renderer, pairedListRect, count + 1, pairedIndex,
+                 [this, count](int i) {
+                   return i == count ? std::string(tr(STR_BLUETOOTH)) + " " + tr(STR_STATE_OFF) : pairedLabel(i);
+                 },
+                 nullptr, nullptr, nullptr, false);
   }
 #if FREEINK_CAP_BLE_HID_HOST
   else {  // Diagnostics

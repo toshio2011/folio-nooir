@@ -75,7 +75,7 @@ bool sanitizeLogHead();
 
 class MySerialImpl : public Print {
  public:
-  void begin(unsigned long baud) { logSerial.begin(baud); }
+  void begin(unsigned long baud);
 
   // Support boolean conversion for compatibility with code like:
   //   if (Serial) or while (!Serial)

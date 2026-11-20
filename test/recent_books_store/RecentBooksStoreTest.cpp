@@ -354,6 +354,106 @@ TEST(RecentBooksStore, RejectsInvalidPresentFieldsWithoutReplacingLoadedHistory)
   EXPECT_EQ(loaded.pagesTurned, UINT32_MAX);
 }
 
+TEST(RecentBooksStore, ReopeningExistingBookReusesMetadataStringsAndRollsBackOrderOnSaveFailure) {
+  Storage.reset();
+  RecentBooksStore& store = RECENT_BOOKS;
+  Storage.files[kPrimary] =
+      R"json({"books":[{"path":"/manga/OtherBook.xtch","title":"Other Book Title"},{"path":"/manga/OriginalLongTitle.xtch","title":"Original title with a long allocation","author":"Original author with a long allocation","coverBmpPath":"/.crosspoint/original/cover-with-long-name.bmp","synopsis":"Original synopsis with enough text to allocate on the heap","series":"Original series with a long allocation","xtcMetadataChecked":true,"progressPercent":73,"readingSeconds":12345,"lastSessionSeconds":321,"dailyReadingSeconds":987,"dailyReadingDateKey":20261023,"readingSessions":42,"pagesTurned":333}]})json";
+  ASSERT_TRUE(store.loadFromFile());
+  ASSERT_EQ(store.getLoadResult(), RecentBooksLoadResult::Valid);
+
+  struct StringStorage {
+    const char* path;
+    const char* title;
+    const char* author;
+    const char* cover;
+    const char* synopsis;
+    const char* series;
+  } originalStorage{};
+  {
+    auto books = store.getBooks();
+    ASSERT_EQ(books.size(), 2U);
+    ASSERT_EQ(books[1].path, "/manga/OriginalLongTitle.xtch");
+    originalStorage = {books[1].path.data(), books[1].title.data(), books[1].author.data(),
+                       books[1].coverBmpPath.data(), books[1].synopsis.data(), books[1].series.data()};
+  }
+  const size_t writesBeforeReopen = Storage.writeCount;
+  store.addBook("/manga/OriginalLongTitle.xtch", "", "", "", "", "", false);
+  ASSERT_EQ(Storage.writeCount, writesBeforeReopen + 1);
+  {
+    auto books = store.getBooks();
+    ASSERT_EQ(books.size(), 2U);
+    ASSERT_EQ(books[0].path, "/manga/OriginalLongTitle.xtch");
+    EXPECT_EQ(books[0].path.data(), originalStorage.path);
+    EXPECT_EQ(books[0].title.data(), originalStorage.title);
+    EXPECT_EQ(books[0].author.data(), originalStorage.author);
+    EXPECT_EQ(books[0].coverBmpPath.data(), originalStorage.cover);
+    EXPECT_EQ(books[0].synopsis.data(), originalStorage.synopsis);
+    EXPECT_EQ(books[0].series.data(), originalStorage.series);
+    EXPECT_EQ(books[0].title, "Original title with a long allocation");
+    EXPECT_EQ(books[0].author, "Original author with a long allocation");
+    EXPECT_EQ(books[0].coverBmpPath, "/.crosspoint/original/cover-with-long-name.bmp");
+    EXPECT_EQ(books[0].synopsis, "Original synopsis with enough text to allocate on the heap");
+    EXPECT_EQ(books[0].series, "Original series with a long allocation");
+    EXPECT_TRUE(books[0].xtcMetadataChecked);
+    EXPECT_EQ(books[0].progressPercent, 73);
+    EXPECT_EQ(books[0].readingSeconds, 12345U);
+    EXPECT_EQ(books[0].lastSessionSeconds, 321U);
+    EXPECT_EQ(books[0].dailyReadingSeconds, 987U);
+    EXPECT_EQ(books[0].dailyReadingDateKey, 20261023U);
+    EXPECT_EQ(books[0].readingSessions, 42U);
+    EXPECT_EQ(books[0].pagesTurned, 333U);
+    EXPECT_EQ(books[1].path, "/manga/OtherBook.xtch");
+  }
+
+  // Once the same book is already first, the no-op path must not persist.
+  const size_t writesBeforeNoOp = Storage.writeCount;
+  store.addBook("/manga/OriginalLongTitle.xtch", "", "", "", "", "", false);
+  EXPECT_EQ(Storage.writeCount, writesBeforeNoOp);
+
+  // Reordering another existing entry still uses the transaction: failed
+  // persistence must restore the exact prior order and retain the good file.
+  const std::string committedPrimary = Storage.files[kPrimary];
+  Storage.failWrite = true;
+  store.addBook("/manga/OtherBook.xtch", "", "", "", "", "", false);
+  {
+    auto books = store.getBooks();
+    ASSERT_EQ(books.size(), 2U);
+    EXPECT_EQ(books[0].path, "/manga/OriginalLongTitle.xtch");
+    EXPECT_EQ(books[1].path, "/manga/OtherBook.xtch");
+  }
+  EXPECT_EQ(Storage.files[kPrimary], committedPrimary);
+}
+
+TEST(RecentBooksStore, ReopeningExistingBookRestoresOrderAfterPowerLoss) {
+  Storage.reset();
+  RecentBooksStore& store = RECENT_BOOKS;
+  Storage.files[kPrimary] =
+      R"json({"books":[{"path":"/manga/OtherBook.xtch","title":"Other Book Title"},{"path":"/manga/OriginalLongTitle.xtch","title":"Original title","author":"Original author","progressPercent":73,"readingSeconds":12345,"lastSessionSeconds":321,"dailyReadingSeconds":987,"dailyReadingDateKey":20261023,"readingSessions":42,"pagesTurned":333}]})json";
+  ASSERT_TRUE(store.loadFromFile());
+  ASSERT_EQ(store.getCount(), 2);
+  Storage.armCrash(TestStorage::CrashPoint::AfterFirstRename);
+  EXPECT_THROW(store.addBook("/manga/OriginalLongTitle.xtch", "", "", "", "", "", false),
+               SimulatedPowerLoss);
+  {
+    auto books = store.getBooks();
+    ASSERT_EQ(books.size(), 2U);
+    EXPECT_EQ(books[0].path, "/manga/OtherBook.xtch");
+    EXPECT_EQ(books[1].path, "/manga/OriginalLongTitle.xtch");
+  }
+  ASSERT_TRUE(store.loadFromFile());
+  EXPECT_EQ(store.getLoadResult(), RecentBooksLoadResult::Recovered);
+  {
+    auto books = store.getBooks();
+    ASSERT_EQ(books.size(), 2U);
+    EXPECT_EQ(books[0].path, "/manga/OtherBook.xtch");
+    EXPECT_EQ(books[1].path, "/manga/OriginalLongTitle.xtch");
+    EXPECT_EQ(books[1].progressPercent, 73);
+    EXPECT_EQ(books[1].readingSeconds, 12345U);
+    EXPECT_EQ(books[1].pagesTurned, 333U);
+  }
+}
+
 TEST(RecentBooksStore, RecoversPreviousHistoryAfterPowerLossMovingPrimaryToBackup) {
   Storage.reset();
   RecentBooksStore& store = RECENT_BOOKS;
@@ -424,7 +524,7 @@ TEST(RecentBooksStore, LoadsCommittedHistoryAfterPowerLossPromotingStagedTempora
   EXPECT_EQ(Storage.files[kBackup], original);
 }
 
-TEST(RecentBooksStore, BackupRotationDoesNotScanLegacyOrphanSiblingNames) {
+TEST(RecentBooksStore, TrustedPrimaryBackupRotationDoesNotScanLegacyOrphanSiblingNames) {
   Storage.reset();
   RecentBooksStore& store = RECENT_BOOKS;
   const std::string original = makeDurableHistory();
@@ -439,8 +539,9 @@ TEST(RecentBooksStore, BackupRotationDoesNotScanLegacyOrphanSiblingNames) {
   const size_t existsBeforeSave = Storage.existsCount;
   store.addBook("/manga/Added.xtch", "Added title", "Added author", "", "", "", true);
 
-  // The old linear allocator made up to 1,000 exists() calls as orphaned
-  // .previous-N files accumulated. Rotation now probes only its nonce name.
+  // A trusted primary is the newest validated generation, so the fast path
+  // replaces the stale backup directly instead of allocating a .previous-N
+  // name. Legacy orphan siblings are left untouched and are never scanned.
   EXPECT_LT(Storage.existsCount - existsBeforeSave, 10u);
   EXPECT_EQ(Storage.files[kBackup], original);
   EXPECT_EQ(Storage.files[std::string(kBackup) + ".previous-999"], "preserved");
@@ -451,8 +552,46 @@ TEST(RecentBooksStore, BackupRotationDoesNotScanLegacyOrphanSiblingNames) {
       break;
     }
   }
-  EXPECT_TRUE(foundPriorBackup);
-  EXPECT_EQ(Storage.files.size(), 1003u);
+  EXPECT_FALSE(foundPriorBackup);
+  EXPECT_EQ(Storage.files.size(), 1002u);
+}
+
+TEST(RecentBooksStore, ResetReadingClearsProgressAndStatisticsAndMissingRecentIsNoOp) {
+  Storage.reset();
+  RecentBooksStore& store = RECENT_BOOKS;
+  Storage.files[kPrimary] = makeDurableHistory();
+  ASSERT_TRUE(store.loadFromFile());
+
+  ASSERT_TRUE(store.resetReading("/manga/Original.xtch"));
+  RecentBook reset;
+  ASSERT_TRUE(store.getBookAt(0, reset));
+  EXPECT_EQ(reset.progressPercent, 0);
+  EXPECT_EQ(reset.readingSeconds, 0U);
+  EXPECT_EQ(reset.lastSessionSeconds, 0U);
+  EXPECT_EQ(reset.dailyReadingSeconds, 0U);
+  EXPECT_EQ(reset.dailyReadingDateKey, 0U);
+  EXPECT_EQ(reset.readingSessions, 0U);
+  EXPECT_EQ(reset.pagesTurned, 0U);
+
+  EXPECT_TRUE(store.resetReading("/manga/OnlyInLibrary.epub"));
+}
+
+TEST(RecentBooksStore, FailedResetReadingRestoresInMemoryHistory) {
+  Storage.reset();
+  RecentBooksStore& store = RECENT_BOOKS;
+  Storage.files[kPrimary] = makeDurableHistory();
+  ASSERT_TRUE(store.loadFromFile());
+  Storage.failWrite = true;
+
+  EXPECT_FALSE(store.resetReading("/manga/Original.xtch"));
+  RecentBook unchanged;
+  ASSERT_TRUE(store.getBookAt(0, unchanged));
+  EXPECT_EQ(unchanged.progressPercent, 73);
+  EXPECT_EQ(unchanged.readingSeconds, 12345U);
+  EXPECT_EQ(unchanged.lastSessionSeconds, 321U);
+  EXPECT_EQ(unchanged.dailyReadingSeconds, 987U);
+  EXPECT_EQ(unchanged.readingSessions, 42U);
+  EXPECT_EQ(unchanged.pagesTurned, 333U);
 }
 
 const BookMetadataOverride* BookMetadataOverridesStore::find(const std::string&) const { return nullptr; }

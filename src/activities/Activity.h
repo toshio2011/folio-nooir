@@ -62,6 +62,9 @@ class Activity {
   // suspended while BLE owns memory).
   virtual bool bluetoothRenderSafe() const { return false; }
   virtual bool handleHomeGesture() { return false; }
+  // BLE reader shortcuts use existing reader action dispatchers. Non-reader
+  // activities ignore these context-specific actions by default.
+  virtual bool handleBleMappedAction(uint8_t) { return false; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
 
   // Start a new activity without destroying the current one

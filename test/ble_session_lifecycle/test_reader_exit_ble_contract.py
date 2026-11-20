@@ -23,16 +23,22 @@ def function_body(source: str, signature: str) -> str:
 
 
 class ReaderExitBleContract(unittest.TestCase):
-    def test_active_ble_is_stopped_once_before_reader_exit_cleanup(self):
-        body = function_body(MANAGER, "void ActivityManager::exitActivity(")
-        guarded_stop = body.index("if (readerActivity && BleHid.isRunning())")
+    def test_resource_owner_exit_refuses_to_destroy_state_before_stop_ack(self):
+        body = function_body(MANAGER, "bool ActivityManager::exitActivity(")
+        guard = body.index("currentActivity->isReaderActivity() || currentActivity->bluetoothResourceSensitive()")
         reader_exit = body.index("currentActivity->onExit();")
-        self.assertLess(guarded_stop, reader_exit)
-        stop_section = body[guarded_stop:reader_exit]
-        self.assertIn("bleinput::clearReaderBleReturnPending();", stop_section)
-        self.assertIn("bleinput::stop();", stop_section)
-        self.assertIn("stage=reader_exit_ble_stopped", stop_section)
-        self.assertNotIn("stopForReaderResourcePressure", stop_section)
+        self.assertLess(guard, reader_exit)
+        self.assertIn("return false;", body[guard:reader_exit])
+        self.assertNotIn("bleinput::stop();", body[guard:reader_exit])
+        self.assertIn("BleHid.isRunning() || bleinput::stopPending()", body[guard:reader_exit])
+        self.assertNotIn("stage=reader_exit_ble_stopped", body)
+
+    def test_reader_transition_waits_for_completion_ack_before_destroying_activity(self):
+        loop = function_body(MANAGER, "void ActivityManager::loop()")
+        gate = loop.index("bleShutdownRequiredForPendingTransition() && (BleHid.isRunning() || bleinput::stopPending())")
+        self.assertLess(gate, loop.index("currentActivity->loop();"))
+        self.assertIn("if (BleHid.isRunning() && !bleinput::stopPending())", loop[gate:])
+        self.assertIn("bleinput::stop();", loop[gate:])
 
 
 if __name__ == "__main__":

@@ -2,11 +2,22 @@
 
 #include <BoardConfig.h>
 #include <esp_rom_sys.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 #include <string>
 
 #define MAX_ENTRY_LEN 256
 #define MAX_LOG_LINES 16
+
+namespace {
+SemaphoreHandle_t logPrintfMutex = nullptr;
+}
+
+// The compatibility Serial proxy is declared in Logging.h, but only its
+// begin() implementation existed here. Define the singleton and its Print
+// forwarding methods so the gh_release link has a complete vtable.
+MySerialImpl MySerialImpl::instance;
 
 // Simple ring buffer log, useful for error reporting when we encounter a crash
 RTC_NOINIT_ATTR char logMessages[MAX_LOG_LINES][MAX_ENTRY_LEN];
@@ -50,18 +61,29 @@ void logPrintf(const char* level, const char* origin, const char* format, ...) {
       va_end(args);
       return;
     }
-    // clamp c to be in buffer range
-    c += std::min(len, MAX_ENTRY_LEN);
+    // Keep one byte for the terminating NUL so the user message always has a
+    // valid destination, even if the prefix formatter ever fills its buffer.
+    c += std::min(len, MAX_ENTRY_LEN - 1);
   }
   // add the user message
   {
-    int len = vsnprintf(c, sizeof(buf) - (c - buf), format, args);
+    const size_t remaining = sizeof(buf) - static_cast<size_t>(c - buf);
+    const int len = vsnprintf(c, remaining, format, args);
     if (len < 0) {
       va_end(args);
       return;
     }
+    // A truncated log must still end its physical serial line. Without this,
+    // the next task's complete record can be concatenated onto the clipped
+    // tail, making timing fields and errors appear interleaved or corrupted.
+    if (static_cast<size_t>(len) >= remaining) {
+      buf[sizeof(buf) - 2] = '\n';
+      buf[sizeof(buf) - 1] = '\0';
+    }
   }
   va_end(args);
+  const SemaphoreHandle_t mutex = logPrintfMutex;
+  if (mutex) xSemaphoreTake(mutex, portMAX_DELAY);
 #if FREEINK_LOG_TRANSPORT == FREEINK_LOG_TRANSPORT_ROM_PRINTF
   // IDF/ROM console path for boards monitored over USB-Serial-JTAG, where the
   // HWCDC `operator bool` reads false under `pio device monitor` and logs would
@@ -73,6 +95,48 @@ void logPrintf(const char* level, const char* origin, const char* format, ...) {
   }
 #endif
   addToLogRingBuffer(buf);
+  if (mutex) xSemaphoreGive(mutex);
+}
+
+void MySerialImpl::begin(const unsigned long baud) {
+  // setup() calls begin before starting application tasks; allocate the lock
+  // there so complete LOG_* records and RTC-ring updates stay indivisible.
+  if (!logPrintfMutex) logPrintfMutex = xSemaphoreCreateMutex();
+  logSerial.begin(baud);
+}
+
+size_t MySerialImpl::printf(const char* format, ...) {
+  const SemaphoreHandle_t mutex = logPrintfMutex;
+  if (mutex) xSemaphoreTake(mutex, portMAX_DELAY);
+  va_list args;
+  va_start(args, format);
+  const int written = logSerial.vprintf(format, args);
+  va_end(args);
+  if (mutex) xSemaphoreGive(mutex);
+  return written > 0 ? static_cast<size_t>(written) : 0;
+}
+
+size_t MySerialImpl::write(const uint8_t byte) {
+  const SemaphoreHandle_t mutex = logPrintfMutex;
+  if (mutex) xSemaphoreTake(mutex, portMAX_DELAY);
+  const size_t written = logSerial.write(byte);
+  if (mutex) xSemaphoreGive(mutex);
+  return written;
+}
+
+size_t MySerialImpl::write(const uint8_t* buffer, const size_t size) {
+  const SemaphoreHandle_t mutex = logPrintfMutex;
+  if (mutex) xSemaphoreTake(mutex, portMAX_DELAY);
+  const size_t written = logSerial.write(buffer, size);
+  if (mutex) xSemaphoreGive(mutex);
+  return written;
+}
+
+void MySerialImpl::flush() {
+  const SemaphoreHandle_t mutex = logPrintfMutex;
+  if (mutex) xSemaphoreTake(mutex, portMAX_DELAY);
+  logSerial.flush();
+  if (mutex) xSemaphoreGive(mutex);
 }
 
 std::string getLastLogs() {

@@ -110,8 +110,15 @@ void DeviceInfoActivity::onEnter() {
   snapshot_.wifi = !wifiActive ? LinkState::Off
                                : (WiFi.status() == WL_CONNECTED ? LinkState::Connected : LinkState::On);
 #if FREEINK_CAP_BLE_HID_HOST
-  snapshot_.bluetooth = BleHid.isConnected() ? LinkState::Connected
-                                             : (BleHid.isRunning() ? LinkState::On : LinkState::Off);
+  if (BleHid.isConnected()) {
+    snapshot_.bluetooth = LinkState::Connected;
+  } else if (BleHid.isConnecting()) {
+    snapshot_.bluetooth = LinkState::Connecting;
+  } else if (bleinput::readerBleReturnPending()) {
+    snapshot_.bluetooth = LinkState::ReaderReturnPending;
+  } else {
+    snapshot_.bluetooth = BleHid.isRunning() ? LinkState::On : LinkState::Off;
+  }
 #endif
   snapshot_.uptimeSeconds = millis() / 1000U;
   snapshot_.resetReason = static_cast<int>(esp_reset_reason());
@@ -164,6 +171,8 @@ std::string DeviceInfoActivity::rowValue(const Row row) const {
     case Row::Bluetooth: {
       const LinkState state = row == Row::Wifi ? snapshot_.wifi : snapshot_.bluetooth;
       if (state == LinkState::Connected) return tr(STR_CONNECTED);
+      if (state == LinkState::Connecting) return tr(STR_CONNECTING);
+      if (state == LinkState::ReaderReturnPending) return tr(STR_DEVICE_BLE_READER_PENDING);
       return state == LinkState::On ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
     }
     case Row::Uptime: {

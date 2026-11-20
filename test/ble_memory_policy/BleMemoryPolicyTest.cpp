@@ -6,7 +6,37 @@
 TEST(BleMemoryPolicy, RequiresBothGlobalColdStartFloors) {
   EXPECT_TRUE(bleinput::readerBleStartMemoryAdmitted(96 * 1024, 36 * 1024));
   EXPECT_FALSE(bleinput::readerBleStartMemoryAdmitted(96 * 1024 - 1, 36 * 1024));
-  EXPECT_FALSE(bleinput::readerBleStartMemoryAdmitted(96 * 1024, 36 * 1024 - 1));
+  EXPECT_FALSE(bleinput::readerBleStartMemoryAdmitted(96 * 1024, bleinput::kReaderBleStartMinLargestBlock - 1));
+}
+
+TEST(BleMemoryPolicy, XtcStreamingUsesItsOwnMeasuredColdStartBudget) {
+  // Supplied 20261119.1 X4 sample: the general 96 KiB gate missed by 144 B
+  // despite a single 65,524 B block. The isolated XTC/XTCH experiment lowers
+  // only the measured free-heap floor by 144 B and retains the same block floor.
+  EXPECT_FALSE(bleinput::readerBleStartMemoryAdmitted(98160, 65524));
+  EXPECT_TRUE(bleinput::readerBleXtcStartMemoryAdmitted(98160, 65524));
+  EXPECT_FALSE(bleinput::readerBleXtcStartMemoryAdmitted(98160 - 1, 65524));
+  EXPECT_FALSE(bleinput::readerBleXtcStartMemoryAdmitted(95 * 1024, bleinput::kReaderBleStartMinLargestBlock - 1));
+}
+
+TEST(BleMemoryPolicy, RuntimeStateDistinguishesOffFromAStoppedHost) {
+  EXPECT_STREQ(bleinput::bleRuntimeStateName(false, false, false), "runtime_off");
+  EXPECT_STREQ(bleinput::bleRuntimeStateName(false, false, true), "disabled_after_use");
+  EXPECT_STREQ(bleinput::bleRuntimeStateName(true, false, false), "enabled_not_started");
+  EXPECT_STREQ(bleinput::bleRuntimeStateName(true, false, true), "stopped_after_use");
+  EXPECT_STREQ(bleinput::bleRuntimeStateName(false, true, true), "running");
+}
+
+TEST(BleMemoryPolicy, EpubRuntimeFloorFaultClearsOnlyAfterCompletedRenderAndConfirmedTeardown) {
+  using bleinput::readerBleEpubRuntimeFloorFaultCanClear;
+  EXPECT_TRUE(readerBleEpubRuntimeFloorFaultCanClear(true, true, true, true, false, false, true));
+  EXPECT_FALSE(readerBleEpubRuntimeFloorFaultCanClear(false, true, true, true, false, false, true));
+  EXPECT_FALSE(readerBleEpubRuntimeFloorFaultCanClear(true, false, true, true, false, false, true));
+  EXPECT_FALSE(readerBleEpubRuntimeFloorFaultCanClear(true, true, false, true, false, false, true));
+  EXPECT_FALSE(readerBleEpubRuntimeFloorFaultCanClear(true, true, true, false, false, false, true));
+  EXPECT_FALSE(readerBleEpubRuntimeFloorFaultCanClear(true, true, true, true, true, false, true));
+  EXPECT_FALSE(readerBleEpubRuntimeFloorFaultCanClear(true, true, true, true, false, true, true));
+  EXPECT_FALSE(readerBleEpubRuntimeFloorFaultCanClear(true, true, true, true, false, false, false));
 }
 
 TEST(BleMemoryPolicy, LifecycleRetryRequiresPreferenceAndNoExclusiveOrTimeoutGate) {
@@ -82,6 +112,141 @@ TEST(BleMemoryPolicy, QuiescentEpubMarginStillRejectsLowOrFragmentedHeap) {
       bleinput::kReaderBleQuiescentReturnMinLargestBlock, true));
   EXPECT_FALSE(bleinput::readerBleStartMemoryAdmittedForQuiescentEpubReturn(97756, 50000, true));
   EXPECT_FALSE(bleinput::readerBleStartMemoryAdmittedForQuiescentEpubReturn(109420, 26612, true));
+}
+
+TEST(BleMemoryPolicy, QuiescentReadmissionReservesHostAndObservedPageDemand) {
+  constexpr std::size_t renderPeak = 8 * 1024;
+  constexpr std::size_t largestRequest = 4 * 1024;
+  constexpr std::size_t requiredFree = bleinput::kReaderBleHostStartFreeReserve +
+                                       bleinput::kReaderBleRenderMinFreeHeap + renderPeak;
+  constexpr std::size_t requiredLargest = bleinput::kReaderBleHostStartLargestReserve +
+                                          bleinput::kReaderBleRenderMinLargestBlock + largestRequest;
+
+  EXPECT_TRUE(bleinput::readerBleQuiescentReadmissionAdmitted(
+      requiredFree, requiredLargest, true, renderPeak, largestRequest));
+  EXPECT_FALSE(bleinput::readerBleQuiescentReadmissionAdmitted(
+      requiredFree - 1, requiredLargest, true, renderPeak, largestRequest));
+  EXPECT_FALSE(bleinput::readerBleQuiescentReadmissionAdmitted(
+      requiredFree, requiredLargest - 1, true, renderPeak, largestRequest));
+}
+
+TEST(BleMemoryPolicy, ReaderReadmissionDefersWhenHostStartWouldCrowdTheNextRender) {
+  EXPECT_FALSE(bleinput::readerBleQuiescentReadmissionAdmitted(
+      100 * 1024, 65524, true, 12 * 1024, 4096));
+  EXPECT_FALSE(bleinput::readerBleQuiescentReadmissionAdmitted(
+      130 * 1024, 56 * 1024 + 4095, true, 12 * 1024, 4096));
+}
+
+TEST(BleMemoryPolicy, EpubPageAwareReadmissionUsesKnownCachedPageBudgetAndMargins) {
+  constexpr std::size_t nextRenderFree = 20 * 1024;
+  constexpr std::size_t nextRenderLargest = 6 * 1024;
+  constexpr std::size_t requiredFree = bleinput::kReaderBleHostStartFreeReserve +
+                                      bleinput::kReaderBleEpubPageAwareRecoveryFreeFloor + nextRenderFree +
+                                      bleinput::kReaderBleEpubPageAwareFreeMargin;
+  constexpr std::size_t requiredLargest = bleinput::kReaderBleHostStartLargestReserve +
+                                          bleinput::kReaderBleEpubPageAwareRecoveryLargestFloor +
+                                          nextRenderLargest +
+                                          bleinput::kReaderBleEpubPageAwareLargestMargin;
+  EXPECT_TRUE(bleinput::readerBleEpubPageAwareReadmissionAdmitted(
+      requiredFree, requiredLargest, true, true, nextRenderFree, nextRenderLargest));
+  EXPECT_FALSE(bleinput::readerBleEpubPageAwareReadmissionAdmitted(
+      requiredFree - 1, requiredLargest, true, true, nextRenderFree, nextRenderLargest));
+  EXPECT_FALSE(bleinput::readerBleEpubPageAwareReadmissionAdmitted(
+      requiredFree, requiredLargest - 1, true, true, nextRenderFree, nextRenderLargest));
+}
+
+TEST(BleMemoryPolicy, EpubPageAwareReadmissionRejectsUnknownOrActiveWork) {
+  EXPECT_FALSE(bleinput::readerBleEpubPageAwareReadmissionAdmitted(
+      200 * 1024, 100 * 1024, false, true, 1, 1));
+  EXPECT_FALSE(bleinput::readerBleEpubPageAwareReadmissionAdmitted(
+      200 * 1024, 100 * 1024, true, false, 1, 1));
+  constexpr std::size_t zeroDemandFree = bleinput::kReaderBleHostStartFreeReserve +
+                                         bleinput::kReaderBleEpubPageAwareRecoveryFreeFloor +
+                                         bleinput::kReaderBleEpubPageAwareFreeMargin;
+  constexpr std::size_t zeroDemandLargest = bleinput::kReaderBleHostStartLargestReserve +
+                                           bleinput::kReaderBleEpubPageAwareRecoveryLargestFloor +
+                                           bleinput::kReaderBleEpubPageAwareLargestMargin;
+  EXPECT_TRUE(bleinput::readerBleEpubPageAwareReadmissionAdmitted(
+      zeroDemandFree, zeroDemandLargest, true, true, 0, 0));
+  EXPECT_FALSE(bleinput::readerBleEpubPageAwareReadmissionAdmitted(
+      zeroDemandFree - 1, zeroDemandLargest, true, true, 0, 0));
+}
+
+TEST(BleMemoryPolicy, EpubIdleStartAndPostStartUseSeparateLargestBlockPhases) {
+  EXPECT_EQ(bleinput::kReaderBleEpubIdleOnlyRequiredFree, 102 * 1024u);
+  EXPECT_EQ(bleinput::kReaderBleEpubIdleOnlyRequiredLargest, bleinput::kReaderBleStartMinLargestBlock);
+  EXPECT_EQ(bleinput::kReaderBleEpubIdleOnlyRequiredLargest,
+            36 * 1024u - bleinput::kHeapPoisonLargestBlockOverhead);
+
+  // The automatic sequential-mode COM3 reached 106,332 B free / 53,236 B
+  // largest after cleanup. This is not a 12-byte exception: pre-start uses
+  // the existing cold-start block floor, and begin()/runtime use a separate
+  // fail-closed 32 KiB / 16 KiB post-start floor.
+  EXPECT_TRUE(bleinput::readerBleEpubIdleOnlyPostStartSafe(32 * 1024, 16 * 1024));
+  EXPECT_FALSE(bleinput::readerBleEpubIdleOnlyPostStartSafe(32 * 1024 - 1, 16 * 1024));
+  EXPECT_FALSE(bleinput::readerBleEpubIdleOnlyPostStartSafe(32 * 1024, 16 * 1024 - 1));
+}
+
+TEST(ReaderRenderBudget, KnownCachedPageUsesObservedTurnDemandAndBoundedMargins) {
+  constexpr std::size_t observedPeak = 6'676;
+  constexpr std::size_t largestRequest = 2'048;
+  constexpr auto budget = reader_memory::observedCachedPageTurnBudget(
+      observedPeak, largestRequest,
+      bleinput::kReaderBleEpubPageAwareRecoveryFreeFloor,
+      bleinput::kReaderBleEpubPageAwareRecoveryLargestFloor,
+      bleinput::kReaderBleEpubPageAwareFreeMargin,
+      bleinput::kReaderBleEpubPageAwareLargestMargin);
+  EXPECT_EQ(budget.freeBytes, bleinput::kReaderBleEpubPageAwareRecoveryFreeFloor + observedPeak +
+                                  bleinput::kReaderBleEpubPageAwareFreeMargin);
+  EXPECT_EQ(budget.largestBlock, bleinput::kReaderBleEpubPageAwareRecoveryLargestFloor + largestRequest +
+                                     bleinput::kReaderBleEpubPageAwareLargestMargin);
+  EXPECT_EQ(reader_memory::saturatingAdd(static_cast<std::size_t>(-1), 1),
+            static_cast<std::size_t>(-1));
+}
+
+TEST(BleMemoryPolicy, EpubPageAwareRetryStartsAsSoonAsMeasuredAdmissionPasses) {
+  EXPECT_TRUE(bleinput::readerBleEpubPageAwareRetryAllowed(
+      true, true, false, true, true, false, false, true));
+  EXPECT_FALSE(bleinput::readerBleEpubPageAwareRetryAllowed(
+      false, true, false, true, true, false, false, true));
+  EXPECT_FALSE(bleinput::readerBleEpubPageAwareRetryAllowed(
+      true, false, false, true, true, false, false, true));
+  EXPECT_FALSE(bleinput::readerBleEpubPageAwareRetryAllowed(
+      true, true, true, true, true, false, false, true));
+  EXPECT_FALSE(bleinput::readerBleEpubPageAwareRetryAllowed(
+      true, true, false, false, true, false, false, true));
+  EXPECT_FALSE(bleinput::readerBleEpubPageAwareRetryAllowed(
+      true, true, false, true, false, false, false, true));
+  EXPECT_FALSE(bleinput::readerBleEpubPageAwareRetryAllowed(
+      true, true, false, true, true, true, false, true));
+  EXPECT_FALSE(bleinput::readerBleEpubPageAwareRetryAllowed(
+      true, true, false, true, true, false, true, true));
+  EXPECT_FALSE(bleinput::readerBleEpubPageAwareRetryAllowed(
+      true, true, false, true, true, false, false, false));
+}
+
+TEST(BleMemoryPolicy, EpubImmediateAdmissionRequiresQuiescenceAndBothHeapBudgets) {
+  EXPECT_TRUE(bleinput::readerBleEpubImmediateReadmissionAllowed(
+      true, true, false, true, true, false, false, true));
+  EXPECT_FALSE(bleinput::readerBleEpubImmediateReadmissionAllowed(
+      true, true, false, true, true, false, false, false));  // low or fragmented heap
+  EXPECT_FALSE(bleinput::readerBleEpubImmediateReadmissionAllowed(
+      true, true, false, false, true, false, false, true));  // render/build still active
+  EXPECT_FALSE(bleinput::readerBleEpubImmediateReadmissionAllowed(
+      true, true, false, true, false, false, false, true));  // no usable demand estimate
+  EXPECT_FALSE(bleinput::readerBleEpubImmediateReadmissionAllowed(
+      true, true, false, true, true, true, false, true));   // pending page turn
+  EXPECT_FALSE(bleinput::readerBleEpubImmediateReadmissionAllowed(
+      true, true, false, true, true, false, true, true));   // per-book safety latch
+}
+
+TEST(BleMemoryPolicy, NonReaderColdAdmissionKeepsItsExistingFloors) {
+  EXPECT_TRUE(bleinput::readerBleQuiescentReadmissionAdmitted(
+      bleinput::kReaderBleStartMinFreeHeap, bleinput::kReaderBleStartMinLargestBlock,
+      false, 64 * 1024, 16 * 1024));
+  EXPECT_FALSE(bleinput::readerBleQuiescentReadmissionAdmitted(
+      bleinput::kReaderBleStartMinFreeHeap - 1, bleinput::kReaderBleStartMinLargestBlock,
+      false, 0, 0));
 }
 
 TEST(BleMemoryPolicy, StrictReaderAdmissionIsUnchangedByQuiescentMargin) {

@@ -414,6 +414,54 @@ TEST_F(SettingsPersistenceTest, GenericReaderStateSavePromotesValidatedTempAndRe
   EXPECT_FALSE(Storage.exists((std::string(kBookStatePath) + ".tmp").c_str()));
 }
 
+TEST_F(SettingsPersistenceTest, KnownValidPrimarySaveKeepsTheValidatedPriorPrimaryAsBackup) {
+  Storage.files[kBookStatePath] = R"({"progress":3})";
+  Storage.files[std::string(kBookStatePath) + ".bak"] = R"({"progress":2})";
+  JsonDocument replacement;
+  replacement["progress"] = 9;
+
+  ASSERT_TRUE(PersistableStoreBase::writeDocToFileWithKnownValidPrimary(kBookStatePath, replacement));
+  EXPECT_EQ(Storage.files[kBookStatePath], R"({"progress":9})");
+  EXPECT_EQ(Storage.files[std::string(kBookStatePath) + ".bak"], R"({"progress":3})");
+  EXPECT_FALSE(Storage.exists((std::string(kBookStatePath) + ".tmp").c_str()));
+  EXPECT_FALSE(Storage.exists((std::string(kBookStatePath) + ".previous-0").c_str()));
+}
+
+TEST_F(SettingsPersistenceTest, FailedKnownValidPrimaryRenamePreservesTheExistingBackup) {
+  const std::string current = R"({"progress":3})";
+  const std::string previous = R"({"progress":2})";
+  const std::string backupPath = std::string(kBookStatePath) + ".bak";
+  Storage.files[kBookStatePath] = current;
+  Storage.files[backupPath] = previous;
+  Storage.failRenameFrom[kBookStatePath] = true;
+  JsonDocument replacement;
+  replacement["progress"] = 9;
+
+  EXPECT_FALSE(PersistableStoreBase::writeDocToFileWithKnownValidPrimary(kBookStatePath, replacement));
+
+  EXPECT_EQ(Storage.files[kBookStatePath], current);
+  EXPECT_EQ(Storage.files[backupPath], previous);
+  EXPECT_TRUE(Storage.exists((std::string(kBookStatePath) + ".tmp").c_str()));
+  for (const auto& [path, contents] : Storage.files) {
+    (void)contents;
+    EXPECT_EQ(path.find(std::string(kBookStatePath) + ".previous-"), std::string::npos);
+  }
+}
+
+TEST_F(SettingsPersistenceTest, KnownValidRecentPrimarySaveKeepsTheValidatedPriorPrimaryAsBackup) {
+  const std::string current = serializedRecent(25).c_str();
+  Storage.files[kRecentPath] = current;
+  Storage.files[std::string(kRecentPath) + ".bak"] = serializedRecent(9).c_str();
+  JsonDocument replacement;
+  replacement["progress"] = 42;
+
+  ASSERT_TRUE(PersistableStoreBase::writeDocToFileWithKnownValidPrimary(kRecentPath, replacement));
+  EXPECT_EQ(Storage.files[kRecentPath], R"({"progress":42})");
+  EXPECT_EQ(Storage.files[std::string(kRecentPath) + ".bak"], current);
+  EXPECT_FALSE(Storage.exists((std::string(kRecentPath) + ".tmp").c_str()));
+  EXPECT_FALSE(Storage.exists((std::string(kRecentPath) + ".previous-0").c_str()));
+}
+
 TEST_F(SettingsPersistenceTest, FailedGenericTempPromotionRestoresThePreviousReaderState) {
   const std::string original = R"({"progress":3})";
   Storage.files[kBookStatePath] = original;

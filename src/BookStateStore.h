@@ -45,7 +45,7 @@ class BookStateStore : public PersistableStore<BookStateStore> {
   bool updateDates(const std::string& path, uint32_t startDate, uint32_t finishDate, uint32_t lastReadDate);
   bool updateRating(const std::string& path, uint8_t rating);
   void setStatus(const std::string& path, BookStatus status);
-  void reset(const std::string& path);
+  bool reset(const std::string& path);
   bool removeByPath(const std::string& path);
   bool clearAll();
   void updatePath(const std::string& oldPath, const std::string& newPath);

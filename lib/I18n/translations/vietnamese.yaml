@@ -429,3 +429,7 @@ STR_MARK_ON_HOLD: "Đánh dấu tạm dừng"
 STR_THEME_FOLIO_NOOIR: "Folio Nooir"
 STR_READING_STATS: "Thống kê đọc"
 STR_BOOK_STATISTICS: "Thống kê sách"
+
+STR_BT_WAITING_FOR_MEMORY: "Đang chờ bộ nhớ"
+STR_BT_SUSPENDED_FOR_READER: "Tạm dừng để đọc"
+STR_BT_RECONNECT_PENDING: "Đang chờ kết nối lại"

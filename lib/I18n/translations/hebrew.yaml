@@ -425,3 +425,7 @@ STR_THEME_FOLIO_NOOIR: "Folio Nooir"
 STR_READING_STATS: "סטטיסטיקות קריאה"
 STR_BOOK_STATISTICS: "סטטיסטיקת הספר"
 STR_RESUME: "המשך"
+
+STR_BT_WAITING_FOR_MEMORY: "ממתין לזיכרון"
+STR_BT_SUSPENDED_FOR_READER: "מושהה עבור הקריאה"
+STR_BT_RECONNECT_PENDING: "ממתין להתחברות מחדש"

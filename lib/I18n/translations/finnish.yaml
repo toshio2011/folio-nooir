@@ -308,3 +308,7 @@ STR_READING_STATS: "Lukutilastot"
 STR_BOOK_STATISTICS: "Kirjan tilastot"
 STR_RESUME: "Jatka"
 STR_THEME_ROUNDEDRAFF: "RoundedRaff"
+
+STR_BT_WAITING_FOR_MEMORY: "Odotetaan muistia"
+STR_BT_SUSPENDED_FOR_READER: "Keskeytetty lukemista varten"
+STR_BT_RECONNECT_PENDING: "Uudelleenyhdistys odottaa"

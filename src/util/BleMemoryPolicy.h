@@ -3,11 +3,31 @@
 #include <cstddef>
 #include <cstdint>
 
+#ifndef NOOIR_EPUB_BLE_PAGE_AWARE_EXPERIMENT
+#define NOOIR_EPUB_BLE_PAGE_AWARE_EXPERIMENT 0
+#endif
+
+#ifndef NOOIR_EPUB_BLE_IDLE_ADMISSION_DIAGNOSTIC
+#define NOOIR_EPUB_BLE_IDLE_ADMISSION_DIAGNOSTIC 0
+#endif
+
 #if __has_include(<sdkconfig.h>)
 #include <sdkconfig.h>
 #endif
 
 namespace bleinput {
+
+// Increment when the Reader's projected-demand admission gate changes so a
+// physical serial capture can identify which readmission policy produced it.
+inline constexpr uint8_t kReaderBleReadmissionPolicyVersion = 2;
+
+// Distinguish a host that has never initialized this boot from a NimBLE host
+// that was initialized and later stopped to return memory to Reader work.
+constexpr const char* bleRuntimeStateName(const bool enabled, const bool running, const bool everStarted) {
+  if (running) return "running";
+  if (enabled) return everStarted ? "stopped_after_use" : "enabled_not_started";
+  return everStarted ? "disabled_after_use" : "runtime_off";
+}
 
 // Measured candidate for the finished lifecycle: lightweight Reader/UI idle
 // baselines are about 99--100 KiB, while contaminated 70--85 KiB states stay
@@ -15,6 +35,13 @@ namespace bleinput {
 // lightweight UI retains high-20s/low-30s KiB. This remains one global cold
 // start floor, not an activity-specific exception or a NimBLE minimum.
 inline constexpr std::size_t kReaderBleStartMinFreeHeap = 96 * 1024;
+// XTC/XTCH are streamed one page at a time and do not own the EPUB section,
+// font-prewarm, or image-layout working set. The supplied X4 run was denied at
+// 98,160 B despite a 65,524 B largest block; the normal 98,304 B floor is a
+// universal cold-start floor, not an XTC rendering requirement. Relax only the observed 144-byte miss and retain the same contiguous-block
+// requirement. This is an isolated experiment, not evidence that lower XTC
+// memory levels are safe.
+inline constexpr std::size_t kXtcBleStartMinFreeHeap = kReaderBleStartMinFreeHeap - 144;
 inline constexpr std::size_t kReaderBleLogicalMinLargestBlock = 36 * 1024;
 
 // ESP-IDF heap poisoning reports the largest user payload after subtracting
@@ -60,6 +87,57 @@ inline constexpr std::size_t kReaderBleQuiescentReturnMinFreeHeap =
 inline constexpr std::size_t kReaderBleQuiescentReturnLogicalMinLargestBlock = 56 * 1024;
 inline constexpr std::size_t kReaderBleQuiescentReturnMinLargestBlock =
     kReaderBleQuiescentReturnLogicalMinLargestBlock - kHeapPoisonLargestBlockOverhead;
+
+// A quiescent Reader return is only useful if the host can start and leave
+// room for the next measured page render. X4 captures show NimBLE start uses
+// about 66-69 KiB and reduces the largest block by about 36 KiB. Round the
+// total reserve upward; retain the existing connected-render floors and add
+// demand observed in this Reader session. These estimates gate readmission
+// only; they do not change cold Home/Settings admission or render safeguards.
+inline constexpr std::size_t kReaderBleHostStartFreeReserve = 70 * 1024;
+inline constexpr std::size_t kReaderBleHostStartLargestReserve = 36 * 1024;
+// The isolated EPUB cached-page experiment keeps the existing 32 KiB / 16 KiB
+// recovery floors and adds a small measured-operation margin. Unknown work
+// continues to use the stricter book-wide predictor above.
+inline constexpr std::size_t kReaderBleEpubPageAwareRecoveryFreeFloor = 32 * 1024;
+inline constexpr std::size_t kReaderBleEpubPageAwareRecoveryLargestFloor = 16 * 1024;
+inline constexpr std::size_t kReaderBleEpubPageAwareFreeMargin = 4 * 1024;
+inline constexpr std::size_t kReaderBleEpubPageAwareLargestMargin = 4 * 1024;
+
+// Compile-gated sequential experiment: admission is for a stable displayed EPUB
+// page and HID reception, not for a future render that will be preceded by a
+// confirmed BLE teardown. The largest-block requirements are phase-specific:
+// use the existing cold-start floor before begin(), then enforce the recovery
+// floor after host startup and while BLE is running. Adding the pre-start and
+// post-start block floors double-counts two different heap snapshots and can
+// reject a start that the existing post-start guard would safely roll back.
+// Keep the free-heap reserve additive because it represents total bytes needed
+// across startup plus the post-start reserve. The experiment activates
+// automatically after a stable page; post-start floors and confirmed shutdown
+// remain mandatory. This does not replace the simultaneous-render predictor.
+inline constexpr std::size_t kReaderBleEpubIdleOnlyRequiredFree =
+    kReaderBleHostStartFreeReserve + kReaderBleEpubPageAwareRecoveryFreeFloor;
+inline constexpr std::size_t kReaderBleEpubIdleOnlyRequiredLargest =
+    kReaderBleStartMinLargestBlock;
+
+constexpr bool readerBleEpubIdleOnlyPostStartSafe(const std::size_t freeHeap,
+                                                   const std::size_t largestBlock) {
+  return freeHeap >= kReaderBleEpubPageAwareRecoveryFreeFloor &&
+         largestBlock >= kReaderBleEpubPageAwareRecoveryLargestFloor;
+}
+
+constexpr bool readerBleEpubIdleOnlyAdmissionAdmitted(const std::size_t freeHeap,
+                                                       const std::size_t largestBlock,
+                                                       const bool experimentActive,
+                                                       const bool stableIdlePage) {
+  return NOOIR_EPUB_BLE_IDLE_ADMISSION_DIAGNOSTIC && experimentActive && stableIdlePage &&
+         freeHeap >= kReaderBleEpubIdleOnlyRequiredFree &&
+         largestBlock >= kReaderBleEpubIdleOnlyRequiredLargest;
+}
+
+constexpr std::size_t readerBleSaturatingAdd(const std::size_t left, const std::size_t right) {
+  return left > static_cast<std::size_t>(-1) - right ? static_cast<std::size_t>(-1) : left + right;
+}
 
 // Connected Reader renders need a separate, lower runtime policy than cold BLE
 // admission. Physical traces put connected idle around 29--32 KiB free, while a
@@ -133,6 +211,10 @@ constexpr bool readerBleStartMemoryAdmitted(const std::size_t freeHeap, const st
   return freeHeap >= kReaderBleStartMinFreeHeap && largestBlock >= kReaderBleStartMinLargestBlock;
 }
 
+constexpr bool readerBleXtcStartMemoryAdmitted(const std::size_t freeHeap, const std::size_t largestBlock) {
+  return freeHeap >= kXtcBleStartMinFreeHeap && largestBlock >= kReaderBleStartMinLargestBlock;
+}
+
 constexpr bool lifecycleReevaluationAllowed(const bool bluetoothEnabled, const bool webExclusive,
                                              const bool noDeviceTimeoutStoppedHost) {
   return bluetoothEnabled && !webExclusive && !noDeviceTimeoutStoppedHost;
@@ -169,6 +251,78 @@ constexpr bool readerBleStartMemoryAdmittedForQuiescentEpubReturn(
           largestBlock >= kReaderBleQuiescentReturnMinLargestBlock);
 }
 
+// A return after a Reader resource stop predicts both NimBLE's measured
+// initialization cost and the strongest page-render demand observed so far.
+// The allocation request is kept separate from total render peak because a
+// fragmented heap can have ample free bytes and still fail one glyph buffer.
+// If no render demand has been sampled yet, only host cost plus the normal
+// connected-render safety floors are reserved.
+constexpr bool readerBleQuiescentReadmissionAdmitted(const std::size_t freeHeap,
+                                                      const std::size_t largestBlock,
+                                                      const bool quiescentEpubReturn,
+                                                      const std::size_t expectedRenderPeakBytes,
+                                                      const std::size_t largestRenderRequestBytes) {
+  if (!quiescentEpubReturn) return readerBleStartMemoryAdmitted(freeHeap, largestBlock);
+  const std::size_t requiredFree = readerBleSaturatingAdd(
+      readerBleSaturatingAdd(kReaderBleHostStartFreeReserve, kReaderBleRenderMinFreeHeap),
+      expectedRenderPeakBytes);
+  const std::size_t requiredLargest = readerBleSaturatingAdd(
+      readerBleSaturatingAdd(kReaderBleHostStartLargestReserve, kReaderBleRenderMinLargestBlock),
+      largestRenderRequestBytes);
+  return freeHeap >= requiredFree && largestBlock >= requiredLargest;
+}
+
+// Experimental EPUB-only projection. The caller must prove that the Reader
+// is idle and the next operation is a known cached page in a completed Section.
+// Unknown work must use the existing conservative book-peak predictor.
+constexpr bool readerBleEpubPageAwareReadmissionAdmitted(const std::size_t freeHeap,
+                                                          const std::size_t largestBlock,
+                                                          const bool quiescentEpubReturn,
+                                                          const bool nextCachedPageKnown,
+                                                          const std::size_t nextRenderFreeBytes,
+                                                          const std::size_t nextRenderLargestBytes) {
+  if (!quiescentEpubReturn || !nextCachedPageKnown) return false;
+  const std::size_t requiredFree = readerBleSaturatingAdd(
+      readerBleSaturatingAdd(
+          readerBleSaturatingAdd(kReaderBleHostStartFreeReserve, kReaderBleEpubPageAwareRecoveryFreeFloor),
+          nextRenderFreeBytes),
+      kReaderBleEpubPageAwareFreeMargin);
+  const std::size_t requiredLargest = readerBleSaturatingAdd(
+      readerBleSaturatingAdd(
+          readerBleSaturatingAdd(kReaderBleHostStartLargestReserve, kReaderBleEpubPageAwareRecoveryLargestFloor),
+          nextRenderLargestBytes),
+      kReaderBleEpubPageAwareLargestMargin);
+  return freeHeap >= requiredFree && largestBlock >= requiredLargest;
+}
+
+// A completed EPUB boundary can request a fresh asynchronous admission attempt as soon
+// as its existing predictive budget passes. This does not waive the budget or require
+// a wall-clock wait; the cleanup path rechecks heap headroom immediately before starting.
+constexpr bool readerBleEpubImmediateReadmissionAllowed(const bool bluetoothEnabled,
+                                                        const bool returnPending,
+                                                        const bool bleRunning,
+                                                        const bool readerQuiescent,
+                                                        const bool demandEstimateAvailable,
+                                                        const bool pageTurnPending,
+                                                        const bool bookReadmissionBlocked,
+                                                        const bool admissionPasses) {
+  return bluetoothEnabled && returnPending && !bleRunning && readerQuiescent &&
+         demandEstimateAvailable && !pageTurnPending && !bookReadmissionBlocked && admissionPasses;
+}
+
+constexpr bool readerBleEpubPageAwareRetryAllowed(const bool bluetoothEnabled,
+                                                   const bool returnPending,
+                                                   const bool bleRunning,
+                                                   const bool readerQuiescent,
+                                                   const bool nextCachedPageKnown,
+                                                   const bool pageTurnPending,
+                                                   const bool bookReadmissionBlocked,
+                                                   const bool admissionPasses) {
+  return readerBleEpubImmediateReadmissionAllowed(
+      bluetoothEnabled, returnPending, bleRunning, readerQuiescent, nextCachedPageKnown,
+      pageTurnPending, bookReadmissionBlocked, admissionPasses);
+}
+
 // The Reader-return purge is deliberately narrower than ordinary BLE
 // admission. Every lifecycle/cache condition must already be true; this
 // helper is kept pure so the one-shot policy can be tested off-device.
@@ -203,6 +357,21 @@ constexpr bool readerBleDeepCacheReclaimEligible(const bool explicitRescue,
 constexpr bool readerBleDeepCacheReclaimAllowed(const bool eligible, const bool deepSafe,
                                                 const bool admissionNeeded) {
   return eligible && deepSafe && admissionNeeded;
+}
+
+// A connected-idle floor trip is recoverable only after a complete EPUB render
+// has reached quiescence and worker-owned BLE teardown is confirmed. Startup
+// failures use a separate hard fault and must not be cleared by this path.
+constexpr bool readerBleEpubRuntimeFloorFaultCanClear(const bool renderComplete,
+                                                       const bool readerQuiescent,
+                                                       const bool bluetoothEnabled,
+                                                       const bool diagnosticArmed,
+                                                       const bool runtimeFloorFault,
+                                                       const bool bleRunning,
+                                                       const bool teardownPending,
+                                                       const bool readerReturnPending) {
+  return renderComplete && readerQuiescent && bluetoothEnabled && diagnosticArmed && runtimeFloorFault &&
+         !bleRunning && !teardownPending && readerReturnPending;
 }
 
 }  // namespace bleinput

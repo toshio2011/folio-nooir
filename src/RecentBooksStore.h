@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -39,6 +40,27 @@ struct RecentBook {
   bool xtcMetadataChecked = false;
 
   bool operator==(const RecentBook& other) const { return path == other.path; }
+};
+
+struct RecentBookLibraryApiEntry {
+  std::string path;
+  std::string title;
+  std::string author;
+  std::string coverBmpPath;
+  uint8_t progressPercent = 0;
+  uint32_t readingSeconds = 0;
+  uint16_t readingSessions = 0;
+};
+
+struct RecentBookStatsApiEntry {
+  std::string path;
+  std::string title;
+  std::string author;
+  std::string synopsis;
+  uint8_t progressPercent = 0;
+  uint32_t readingSeconds = 0;
+  uint16_t readingSessions = 0;
+  uint32_t pagesTurned = 0;
 };
 
 class RecentBooksStore : public PersistableStore<RecentBooksStore> {
@@ -146,6 +168,8 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
   void markXtcMetadataChecked(const std::string& path);
   bool updateMetadata(const std::string& path, const std::string& title, const std::string& author,
                       const std::string& synopsis);
+  // Resets progress and reading totals. An absent row is a successful no-op
+  // because the Library can reset books that were never added to Recent.
   bool resetReading(const std::string& path);
 
   // Persist one completed reader session. This is called only when leaving a
@@ -180,6 +204,9 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
   // caller performs SD/network work. This keeps long-running web responses
   // from blocking Recent mutations without allocating a full-list snapshot.
   bool getBookAt(size_t index, RecentBook& destination) const;
+  bool getLibraryApiEntryAt(size_t index, RecentBookLibraryApiEntry& destination) const;
+  bool getStatsApiEntryAt(size_t index, RecentBookStatsApiEntry& destination) const;
+  bool containsPath(std::string_view path) const;
 
   // Get the count of recent books
   int getCount() const;

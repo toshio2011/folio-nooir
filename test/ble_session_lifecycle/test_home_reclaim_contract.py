@@ -41,7 +41,8 @@ class HomeBleReclaimContract(unittest.TestCase):
         lifecycle = function_body(MAIN, "void updateBluetoothLifecycle()")
         self.assertIn("static bool homeBleReclaimAttempted = false;", lifecycle)
         self.assertIn("if (!homeActivity) homeBleReclaimAttempted = false;", lifecycle)
-        self.assertIn("if (!wanted) {\n    homeBleReclaimAttempted = false;", lifecycle)
+        not_wanted = lifecycle.index("if (!wanted) {")
+        self.assertLess(not_wanted, lifecycle.index("homeBleReclaimAttempted = false;", not_wanted))
         self.assertIn("homeBleReclaimAttempted = true;\n      const auto reclaim", lifecycle)
         self.assertIn("static_cast<size_t>(ESP.getMaxAllocHeap()), homeBleReclaimAttempted)", lifecycle)
 

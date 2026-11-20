@@ -12,7 +12,7 @@
 #include "util/ButtonNavigator.h"
 
 // Bluetooth page-turner settings. One screen with three views:
-//   Menu   — enable/disable BT, scan & pair, disconnect, map buttons, presets,
+//   Menu   — enable/disable BT, scan & pair, disconnect, profile and map buttons,
 //            and the bounded input diagnostic ring.
 //   Scan   — live list of discovered BLE HID devices; Confirm connects.
 //   Paired — bonded devices; Confirm forgets the selected one.
@@ -45,11 +45,9 @@ class BluetoothSettingsActivity final : public Activity {
     Scan,
     Disconnect,
     MapButtons,
+    MappingProfiles,
     PairedDevices,
     Diagnostics,
-    PresetFree2,
-    PresetFree3,
-    PresetYiser,
     ResetDefaults,
     ClearMap
   };
@@ -70,6 +68,11 @@ class BluetoothSettingsActivity final : public Activity {
   int menuIndex = 0;
   int scanIndex = 0;
   int pairedIndex = 0;
+  int lastScanDataCount = 0;
+  int lastPairedDataCount = 0;
+  bool lastRuntimeRunning = false;
+  bool lastRuntimeConnected = false;
+  bool lastPreferenceEnabled = false;
 
   ButtonNavigator buttonNavigator;
   OptionPopup noDeviceTimeoutPopup;
@@ -93,10 +96,9 @@ class BluetoothSettingsActivity final : public Activity {
   void finishCancelled();
   void handleMenuConfirm();
   void beginPreparation(bool controlledRetry);
+  void disableBluetoothFromSettings();
   void startScanView();
   void beginPairedConnect();
-  void applyPreset(bool free3);
-  void applyYiserPreset();
   void resetMappingsToDefaults();
   void setBanner(const char* text);
 

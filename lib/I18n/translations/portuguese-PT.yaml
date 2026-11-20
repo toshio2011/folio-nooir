@@ -416,3 +416,7 @@ STR_THEME_FOLIO_NOOIR: "Folio Nooir"
 STR_READING_STATS: "Estatísticas de leitura"
 STR_BOOK_STATISTICS: "Estatísticas do livro"
 STR_RESUME: "Retomar"
+
+STR_BT_WAITING_FOR_MEMORY: "A aguardar memória"
+STR_BT_SUSPENDED_FOR_READER: "Suspenso para leitura"
+STR_BT_RECONNECT_PENDING: "Reconexão pendente"

@@ -75,6 +75,51 @@ class ReaderReturnCleanupContract(unittest.TestCase):
         self.assertIn("readerSurvivalBookAdmissionBlocked.store(true", stop)
         self.assertIn("readerSurvivalBookAdmissionBlocked.load(std::memory_order_acquire)", cleanup)
 
+    def test_predictor_skips_healthy_cleanup_but_miss_reaches_existing_tiers_once(self):
+        survival = function_body(READER, "void EpubReaderActivity::checkReaderSurvival()")
+        cleanup = function_body(READER, "void EpubReaderActivity::runBleReturnCleanupIfNeeded()")
+        admission = function_body(BLE_INPUT, "bool connectionAdmissionAllowed()")
+        self.assertIn("setReaderBleExpectedRenderDemand(cachedRenderObservedPeakBytes", survival)
+        self.assertIn("readerBleQuiescentReadmissionAdmitted(", admission)
+        self.assertIn("readerBleQuiescentReadmissionAdmitted(", cleanup)
+        attempt = cleanup.index("readerBleReturnCleanupAttempted = true;")
+        first_tier = cleanup.index("releaseSdFontCaches()")
+        self.assertLess(attempt, first_tier)
+        self.assertIn("if (admissionBeforeCleanup)", cleanup[:first_tier])
+        miss_path = cleanup.index("stage=reader_ble_return_prediction_cleanup")
+        self.assertLess(miss_path, first_tier)
+        self.assertLess(cleanup.index("bleinput::blockReaderBleReturnRetry()", attempt), first_tier)
+        self.assertLess(miss_path, first_tier)
+        recheck = cleanup.index("freeBeforeFirstTier = ESP.getFreeHeap()")
+        self.assertLess(recheck, first_tier)
+        self.assertIn("admit_before_first_tier", cleanup)
+        self.assertIn("attempt_limit=one_per_generation", cleanup)
+        self.assertNotIn("reader_ble_return_prediction_deferred", cleanup)
+        miss = cleanup[cleanup.index("bleinput::blockReaderBleReturnRetry()", attempt):first_tier]
+        self.assertNotIn("return;", miss[:miss.index("freeBeforeFirstTier = ESP.getFreeHeap()")])
+        self.assertIn("readerBleReturnAdmitted(freeBeforeFirstTier, largestBeforeFirstTier)", miss)
+
+    def test_progressive_cleanup_checks_both_requirements_between_ordered_tiers(self):
+        cleanup = function_body(READER, "void EpubReaderActivity::runBleReturnCleanupIfNeeded()")
+        ordered = [
+            "releaseSdFontCaches()",
+            "releaseUiFallbackCaches()",
+            "releaseCssParserRetainedStorage()",
+            "std::vector<BookmarkEntry>().swap(cachedBookmarks)",
+            "releaseReaderScanStorage()",
+            "releaseGrayscaleStripScratch()",
+            "releaseReaderCaches()",
+        ]
+        positions = [cleanup.index(item) for item in ordered]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("readerBleReturnAdmitted(freeAfter, largestAfter)", cleanup)
+        self.assertIn('admitReaderBleIfReady(1, "ui_fallback_font_caches"', cleanup)
+        self.assertIn('admitReaderBleIfReady(1, "empty_css_capacity"', cleanup)
+        self.assertIn('admitReaderBleIfReady(1, "empty_bookmark_capacity"', cleanup)
+        self.assertIn('admitReaderBleIfReady(1, "reader_scan_capacity"', cleanup)
+        self.assertIn("if (level2Admitted)", cleanup)
+        self.assertIn("readerBleReturnAdmitted(deepAfterFree, deepAfterLargest)", cleanup)
+        self.assertIn("readerBleDeepCacheReclaimAllowed(deepEligible, deepSafe, deepAdmissionNeeded)", cleanup)
 
 if __name__ == "__main__":
     unittest.main()

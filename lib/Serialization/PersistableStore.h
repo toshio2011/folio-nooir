@@ -45,6 +45,9 @@ class PersistableStoreBase {
   bool resaveRequested = false;
   mutable uint64_t lastSettingsFingerprint = 0;
   mutable bool hasLastSettingsFingerprint = false;
+  // True only when this store parsed its current primary successfully or
+  // committed a byte-validated replacement during this boot.
+  mutable bool primaryFileKnownValid = false;
 
  public:
   // Public so non-store JSON files (e.g. per-book bookmarks) can reuse them
@@ -53,6 +56,11 @@ class PersistableStoreBase {
 
   // Serializes doc and writes it to path (ensures /.crosspoint exists). Logs on failure.
   static bool writeDocToFile(const char* path, const JsonDocument& doc);
+
+  // For a live store whose primary was validated during load or a prior
+  // atomic commit. The temporary file is still fully validated before the
+  // current primary is moved into the rollback path.
+  static bool writeDocToFileWithKnownValidPrimary(const char* path, const JsonDocument& doc);
 
   // Recent history recovered from its backup must keep that validated backup
   // while replacing a damaged primary. The temporary candidate is preserved
@@ -70,7 +78,8 @@ class PersistableStoreBase {
   // Reads path and parses it into doc. Returns false silently when the file
   // does not exist (expected on first boot); logs on read/parse failure.
   static bool readDocFromFile(const char* path, JsonDocument& doc,
-                              persistable::SettingsLoadReport* settingsReport = nullptr);
+                              persistable::SettingsLoadReport* settingsReport = nullptr,
+                              bool* primaryCandidateSelected = nullptr);
 
   // Recover only after every existing settings candidate was completely read
   // and found malformed. Originals are renamed to unique non-overwriting
@@ -145,7 +154,10 @@ class PersistableStore : public PersistableStoreBase {
     }
 
     const bool saved = settingsStore ? writeSettingsDocToFile(T::getFilePath(), doc)
-                                     : writeDocToFile(T::getFilePath(), doc);
+                         : primaryFileKnownValid
+                             ? writeDocToFileWithKnownValidPrimary(T::getFilePath(), doc)
+                             : writeDocToFile(T::getFilePath(), doc);
+    if (!settingsStore) primaryFileKnownValid = saved;
     if (settingsStore) {
       if (saved) {
         lastSettingsFingerprint = fingerprint;
@@ -166,12 +178,14 @@ class PersistableStore : public PersistableStoreBase {
     bool doResave;
     persistable::SettingsLoadReport localSettingsReport;
     persistable::SettingsLoadReport* report = settingsReport ? settingsReport : &localSettingsReport;
+    bool primaryCandidateSelected = false;
     {
       std::lock_guard<std::mutex> lock(storeMutex);
       resaveRequested = false;
       hasLastSettingsFingerprint = false;
+      primaryFileKnownValid = false;
       JsonDocument doc;
-      if (!readDocFromFile(T::getFilePath(), doc, report)) {
+      if (!readDocFromFile(T::getFilePath(), doc, report, &primaryCandidateSelected)) {
         if (std::strcmp(T::getFilePath(), "/.crosspoint/settings.json") == 0) {
           observeSettingsLoad(*report, false);
         }
@@ -186,6 +200,7 @@ class PersistableStore : public PersistableStoreBase {
           (report->selected == 0 && report->candidates[0] == persistable::SettingsCandidateResult::Valid &&
            !report->hasReadError() && !report->hasIncompatibleCandidate());
       if (settingsStore) observeSettingsLoad(*report, ok);
+      primaryFileKnownValid = ok && !doResave && primaryCandidateSelected;
       if (ok && !doResave && trustedSettingsSource) {
         JsonDocument canonical;
         static_cast<T*>(this)->toJson(canonical);
@@ -211,6 +226,7 @@ class PersistableStore : public PersistableStoreBase {
   void invalidatePersistenceCache() const {
     std::lock_guard<std::mutex> lock(storeMutex);
     hasLastSettingsFingerprint = false;
+    primaryFileKnownValid = false;
     if (std::strcmp(T::getFilePath(), "/.crosspoint/settings.json") == 0) {
       invalidateSettingsValidationCache();
     }

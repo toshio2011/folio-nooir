@@ -6,6 +6,7 @@
 #include <Logging.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <memory>
 
 #include "MappedInputManager.h"
@@ -137,12 +138,22 @@ Rect UITheme::getScreenSafeArea(const GfxRenderer& renderer, bool hasFrontButton
   return safeArea;
 }
 
-std::string UITheme::getCoverThumbPath(std::string coverBmpPath, int coverHeight) {
-  size_t pos = coverBmpPath.find("[HEIGHT]", 0);
+std::string UITheme::getCoverThumbPath(const std::string& coverBmpPath, int coverHeight) {
+  std::string result;
+  getCoverThumbPath(coverBmpPath, coverHeight, result);
+  return result;
+}
+
+void UITheme::getCoverThumbPath(const std::string& coverBmpPath, int coverHeight, std::string& destination) {
+  destination.assign(coverBmpPath);
+  size_t pos = destination.find("[HEIGHT]", 0);
   if (pos != std::string::npos) {
-    coverBmpPath.replace(pos, 8, std::to_string(coverHeight));
+    char heightText[12];
+    const int length = snprintf(heightText, sizeof(heightText), "%d", coverHeight);
+    if (length > 0 && static_cast<size_t>(length) < sizeof(heightText)) {
+      destination.replace(pos, 8, heightText, static_cast<size_t>(length));
+    }
   }
-  return coverBmpPath;
 }
 
 UIIcon UITheme::getFileIcon(const std::string& filename) {

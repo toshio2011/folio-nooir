@@ -424,3 +424,7 @@ STR_THEME_FOLIO_NOOIR: "Folio Nooir"
 STR_READING_STATS: "Olvasási statisztikák"
 STR_BOOK_STATISTICS: "Könyvstatisztika"
 STR_RESUME: "Folytatás"
+
+STR_BT_WAITING_FOR_MEMORY: "Memóriára vár"
+STR_BT_SUSPENDED_FOR_READER: "Olvasás miatt szünetel"
+STR_BT_RECONNECT_PENDING: "Újracsatlakozás függőben"

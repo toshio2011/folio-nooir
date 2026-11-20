@@ -34,6 +34,14 @@
 #define NOOIR_BLE_READER_COEXISTENCE 0
 #endif
 
+#ifndef NOOIR_EPUB_BLE_IDLE_ADMISSION_DIAGNOSTIC
+#define NOOIR_EPUB_BLE_IDLE_ADMISSION_DIAGNOSTIC 0
+#endif
+
+#ifndef NOOIR_BLE_IINE_TOUCH_GESTURES
+#define NOOIR_BLE_IINE_TOUCH_GESTURES 0
+#endif
+
 namespace bleinput {
 
 // Advertised central name shown to peripherals during pairing.
@@ -48,19 +56,31 @@ bool ensureStarted();
 // its callback without depending on Nooir activity or rendering classes.
 bool connectionAdmissionAllowed();
 
-// Shared Bluetooth preference transition. Disabling synchronously tears down
-// NimBLE; enabling only records intent and lets the centralized lifecycle gate
-// decide when startup is safe.
-void setBluetoothEnabled(bool enabled);
+// Shared Bluetooth preference transition. Disabling requests teardown (which
+// may be completed by the connection worker after an in-flight call unwinds);
+// enabling only records intent for the centralized lifecycle gate.
+bool setBluetoothEnabled(bool enabled);
 void toggleBluetooth();
 // Clear a no-device timeout pause after an explicit retry action.
 void clearNoDeviceTimeoutSuppression();
 
 // Read the saved Bluetooth preference used by startup, Home, and all readers.
 bool bluetoothEnabled();
+// Human-readable, boot-scoped host state used by allocation lifecycle logs.
+// This distinguishes BLE that was never initialized from a host stopped after use.
+const char* runtimeStateName();
+// Derived from existing host/Reader lifecycle values; no extra poll or task.
+const char* userFacingStatusText();
+// True only after the quiescent Reader heap-admission predictor rejects readmission.
+bool readerWaitingForMemory();
+void setReaderWaitingForMemory(bool waiting);
 
 // Drop the active link (e.g. before deep sleep or when the user disables BT).
 void stop();
+// True after one stop request has been issued and until pollLifecycle observes
+// the host's fully stopped state. Callers must treat this as pending teardown,
+// not as proof that NimBLE memory has already been reclaimed.
+bool stopPending();
 
 // Stop BLE for allocation-heavy Reader work, remembering an eligible connected
 // session so the centralized lifecycle can return it after Reader quiesces.
@@ -74,6 +94,26 @@ void stopForReaderResourcePressure();
 bool readerBleReturnPending();
 void clearReaderBleReturnPending();
 uint32_t readerBleReturnGeneration();
+// Compile-gated sequential EPUB/BLE experiment. The X4 experiment is latched
+// automatically at a stable EPUB page; the helpers are inert in normal builds
+// and BLE-OFF mode. Serial status/disarm commands remain optional diagnostics.
+bool armEpubIdleBleDiagnostic();
+void disarmEpubIdleBleDiagnostic(const char* reason);
+bool epubIdleBleDiagnosticArmed();
+bool epubIdleBleDiagnosticStarting();
+bool epubIdleBleDiagnosticFaulted();
+// Clear only a connected-idle runtime floor trip after a completed render and
+// confirmed worker teardown. Host-start/post-start initialization faults stay
+// latched until the diagnostic is explicitly re-armed.
+bool clearEpubIdleBleRuntimeFloorFaultAfterRender(bool renderComplete, bool readerQuiescent);
+bool epubIdleBleDiagnosticPermitPending();
+void grantEpubIdleBleDiagnosticPermit();
+bool consumeEpubIdleBleDiagnosticPermit();
+// Publish the strongest recent EPUB render demand for predictive BLE
+// readmission. Values reset at Reader entry/exit and are read atomically by
+// the lifecycle gate; this does not allocate or trigger a retry.
+void setReaderBleExpectedRenderDemand(std::size_t peakBytes, std::size_t largestRequestBytes);
+void setReaderBlePageAwareRenderDemand(std::size_t freeBytes, std::size_t largestBytes, bool known);
 // Mark one genuine Reader memory-lifecycle boundary. This unblocks a failed
 // one-shot cleanup attempt without creating a polling retry loop.
 void signalReaderBleReturnLifecycleEvent(const char* reason);
@@ -116,6 +156,8 @@ bool encodeKey(const freeink::KeyEvent& ev, uint8_t& kind, uint8_t& value);
 // usages are learnable only when FreeInk identified the HID Keyboard page.
 // Unclassified/synthetic report bytes are rejected instead of persisted.
 bool encodeLearnedKey(const freeink::KeyEvent& ev, uint8_t& kind, uint8_t& value);
+// Drop only partial/queued IINE gestures at a BLE-enabled Reader boundary.
+void clearPendingIineGesture();
 
 // Human-readable name for a stored (kind, value) identity, for the mapping UI.
 // Writes a null-terminated string into out (e.g. "Page Down", "Key 0x4B").

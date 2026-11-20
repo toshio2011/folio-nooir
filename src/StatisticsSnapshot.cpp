@@ -161,7 +161,7 @@ StatisticsSnapshot StatisticsSnapshot::build(const StatisticsSnapshotOptions& op
   result.overview.trackedSessions = std::max(bookSessions, result.overview.retainedSessions);
   result.overview.trackedPages = std::max(bookPages, result.overview.retainedPages);
   if (options.evaluateAchievements) {
-    result.achievements.reserve(20);
+    result.achievements.reserve(30);
     addAchievement(result.achievements, StatisticsAchievementId::FirstSession, StatisticsAchievementUnit::Count,
                    result.overview.trackedSessions, 1);
     addAchievement(result.achievements, StatisticsAchievementId::FirstStartedBook,
@@ -202,6 +202,26 @@ StatisticsSnapshot StatisticsSnapshot::build(const StatisticsSnapshotOptions& op
                    result.overview.longestStreak, 30);
     addAchievement(result.achievements, StatisticsAchievementId::ActiveDays30, StatisticsAchievementUnit::Days,
                    result.overview.activeDays, 30);
+    addAchievement(result.achievements, StatisticsAchievementId::Finished50, StatisticsAchievementUnit::Count,
+                   result.overview.booksFinished, 50);
+    addAchievement(result.achievements, StatisticsAchievementId::Finished100, StatisticsAchievementUnit::Count,
+                   result.overview.booksFinished, 100);
+    addAchievement(result.achievements, StatisticsAchievementId::ReadingHours250,
+                   StatisticsAchievementUnit::Seconds, result.overview.trackedSeconds, 250UL * 60UL * 60UL);
+    addAchievement(result.achievements, StatisticsAchievementId::ReadingHours500,
+                   StatisticsAchievementUnit::Seconds, result.overview.trackedSeconds, 500UL * 60UL * 60UL);
+    addAchievement(result.achievements, StatisticsAchievementId::Pages10000, StatisticsAchievementUnit::Count,
+                   result.overview.trackedPages, 10000);
+    addAchievement(result.achievements, StatisticsAchievementId::Pages25000, StatisticsAchievementUnit::Count,
+                   result.overview.trackedPages, 25000);
+    addAchievement(result.achievements, StatisticsAchievementId::Streak60, StatisticsAchievementUnit::Days,
+                   result.overview.longestStreak, 60);
+    addAchievement(result.achievements, StatisticsAchievementId::ActiveDays100, StatisticsAchievementUnit::Days,
+                   result.overview.activeDays, 100);
+    addAchievement(result.achievements, StatisticsAchievementId::Sessions250, StatisticsAchievementUnit::Count,
+                   result.overview.trackedSessions, 250);
+    addAchievement(result.achievements, StatisticsAchievementId::Sessions500, StatisticsAchievementUnit::Count,
+                   result.overview.trackedSessions, 500);
   }
   return result;
 }

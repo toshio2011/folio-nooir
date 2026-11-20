@@ -143,6 +143,68 @@ TEST(HomeSnapshotPolicy, RequiresFullThreeRowRebuildWhenShelfStructureChanges) {
       true, false, savedPaths.size(), currentPaths.size(), savedPaths, currentPaths, savedRects, currentRects));
 }
 
+TEST(HomeSnapshotPolicy, ReportsLiteThreeRowIdentityAndGeometryMismatchesSeparately) {
+  using HomeSnapshotPolicy::SnapshotRect;
+  constexpr std::array<uint64_t, 2> savedPaths{11, 22};
+  constexpr std::array<uint64_t, 2> samePaths{11, 22};
+  constexpr std::array<uint64_t, 2> reorderedPaths{22, 11};
+  constexpr std::array<SnapshotRect, 2> savedRects{{{10, 20, 30, 40}, {44, 20, 30, 40}}};
+  constexpr std::array<SnapshotRect, 2> sameRects = savedRects;
+  constexpr std::array<SnapshotRect, 2> movedRects{{{12, 20, 30, 40}, {44, 20, 30, 40}}};
+  EXPECT_TRUE(HomeSnapshotPolicy::threeRowPageIdentitySequenceMatches(2, 2, savedPaths, samePaths));
+  EXPECT_FALSE(HomeSnapshotPolicy::threeRowPageIdentitySequenceMatches(2, 2, savedPaths, reorderedPaths));
+  EXPECT_TRUE(HomeSnapshotPolicy::threeRowPageGeometryMatches(2, 2, savedRects, sameRects));
+  EXPECT_FALSE(HomeSnapshotPolicy::threeRowPageGeometryMatches(2, 2, savedRects, movedRects));
+}
+
+TEST(HomeSnapshotPolicy, NooirCarouselPatchesOnlyAValidatedCenterSlot) {
+  using HomeSnapshotPolicy::CarouselPatchAction;
+  constexpr uint8_t centerSlotMask = 1U << 4;
+  constexpr uint8_t sideSlotMask = 1U << 2;
+  EXPECT_EQ(HomeSnapshotPolicy::classifyNooirMainCarouselPatch(true, true, true, centerSlotMask),
+            CarouselPatchAction::PatchCenter);
+  EXPECT_EQ(HomeSnapshotPolicy::classifyNooirMainCarouselPatch(true, true, true, 0),
+            CarouselPatchAction::ReuseShelf);
+  EXPECT_EQ(HomeSnapshotPolicy::classifyNooirMainCarouselPatch(true, true, true, sideSlotMask),
+            CarouselPatchAction::Rebuild);
+  EXPECT_EQ(HomeSnapshotPolicy::classifyNooirMainCarouselPatch(true, false, true, centerSlotMask),
+            CarouselPatchAction::Rebuild);
+  EXPECT_EQ(HomeSnapshotPolicy::classifyNooirMainCarouselPatch(true, true, false, centerSlotMask),
+            CarouselPatchAction::Rebuild);
+  EXPECT_EQ(HomeSnapshotPolicy::classifyNooirMainCarouselPatch(false, true, true, centerSlotMask),
+            CarouselPatchAction::Rebuild);
+}
+
+TEST(HomeSnapshotPolicy, ReusesSpinePageOnlyWhenVisibleIdentitiesAndGeometryStillMatch) {
+  using HomeSnapshotPolicy::SnapshotRect;
+  constexpr std::array<uint64_t, 3> savedPaths{11, 22, 33};
+  constexpr std::array<uint64_t, 3> samePaths{11, 22, 33};
+  constexpr std::array<uint64_t, 3> reorderedPaths{22, 11, 33};
+  constexpr std::array<SnapshotRect, 3> savedRects{{{10, 20, 30, 40}, {44, 20, 30, 40}, {78, 20, 30, 40}}};
+  constexpr std::array<SnapshotRect, 3> sameRects = savedRects;
+  constexpr std::array<SnapshotRect, 3> movedRects{{{12, 20, 30, 40}, {44, 20, 30, 40}, {78, 20, 30, 40}}};
+
+  EXPECT_TRUE(HomeSnapshotPolicy::spinePageStructureMatches(
+      true, 3, 3, savedPaths, samePaths, false, savedRects, sameRects));
+  EXPECT_FALSE(HomeSnapshotPolicy::spinePageStructureMatches(
+      false, 3, 3, savedPaths, samePaths, false, savedRects, sameRects));
+  EXPECT_FALSE(HomeSnapshotPolicy::spinePageStructureMatches(
+      true, 3, 3, savedPaths, reorderedPaths, false, savedRects, sameRects));
+  EXPECT_FALSE(HomeSnapshotPolicy::spinePageStructureMatches(
+      true, 3, 2, savedPaths, samePaths, false, savedRects, sameRects));
+  EXPECT_FALSE(HomeSnapshotPolicy::spinePageStructureMatches(
+      true, 3, 3, savedPaths, samePaths, true, savedRects, movedRects));
+}
+
+TEST(HomeSnapshotPolicy, LegacyProgressKeyMismatchNeedsCachedStructureAndMatchingPage) {
+  EXPECT_TRUE(HomeSnapshotPolicy::canPatchLegacySpineDynamicMismatch(false, true, true, true, true));
+  EXPECT_FALSE(HomeSnapshotPolicy::canPatchLegacySpineDynamicMismatch(true, true, true, true, true));
+  EXPECT_FALSE(HomeSnapshotPolicy::canPatchLegacySpineDynamicMismatch(false, false, true, true, true));
+  EXPECT_FALSE(HomeSnapshotPolicy::canPatchLegacySpineDynamicMismatch(false, true, false, true, true));
+  EXPECT_FALSE(HomeSnapshotPolicy::canPatchLegacySpineDynamicMismatch(false, true, true, false, true));
+  EXPECT_FALSE(HomeSnapshotPolicy::canPatchLegacySpineDynamicMismatch(false, true, true, true, false));
+}
+
 TEST(HomeSnapshotPolicy, SeparatesVisualSettingsAndIgnoresUnrepresentedSystemPreferences) {
   HomeSnapshotPolicy::VisualSettingsSignature saved{};
   auto same = saved;

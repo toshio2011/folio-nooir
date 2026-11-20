@@ -83,7 +83,11 @@ class TestStorage {
     return files.contains(path) || directories.contains(path);
   }
 
-  bool remove(const char* rawPath) { return files.erase(rawPath ? rawPath : "") != 0; }
+  bool remove(const char* rawPath) {
+    const std::string path = rawPath ? rawPath : "";
+    if (removeFailurePaths.contains(path)) return false;
+    return files.erase(path) != 0;
+  }
 
   bool rename(const char* oldRawPath, const char* newRawPath) {
     const std::string oldPath = oldRawPath ? oldRawPath : "";
@@ -127,6 +131,7 @@ class TestStorage {
     readLimits.clear();
     writeLimits.clear();
     closeFailurePaths.clear();
+    removeFailurePaths.clear();
     renameFailures.clear();
     checkedReadStatuses.clear();
     writeFailurePaths.clear();
@@ -143,6 +148,7 @@ class TestStorage {
   std::map<std::string, size_t> readLimits;
   std::map<std::string, size_t> writeLimits;
   std::set<std::string> closeFailurePaths;
+  std::set<std::string> removeFailurePaths;
   std::set<std::string> renameFailures;
   std::map<std::string, HalStorageReadStatus> checkedReadStatuses;
   std::set<std::string> writeFailurePaths;

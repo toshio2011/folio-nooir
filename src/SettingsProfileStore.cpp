@@ -132,6 +132,10 @@ bool SettingsProfileStore::saveCurrent(const std::string& name) {
   // This flag describes the current clock state, not a user preference. Do
   // not let applying an old profile make the clock look unsynchronised.
   doc.remove("clockHasBeenSynced");
+  // Mapping-profile selection is local catalog state; the settings profile
+  // still carries its existing active key map, but must not point to another
+  // device's profile ID when applied later.
+  doc.remove("bleMappingProfileId");
 
   const bool ok = PersistableStoreBase::writeDocToFile(path.c_str(), doc);
   if (!ok) LOG_ERR("PROF", "Failed to save profile: %s", safe.c_str());

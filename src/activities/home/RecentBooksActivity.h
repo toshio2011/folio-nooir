@@ -155,10 +155,13 @@ class RecentBooksActivity final : public Activity {
   const char* renderDiagnosticReason = "queued";
   const char* snapshotRestoreFailureReason = "not_attempted";
   uint64_t snapshotPresentationKeyValue = 0;
+  uint64_t snapshotStructuralKeyValue = 0;
+  uint64_t snapshotDynamicKeyValue = 0;
   std::array<uint64_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> snapshotBookPathKeys{};
   std::array<uint64_t, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> snapshotBookVisualKeys{};
   std::array<HomeSnapshotPolicy::SnapshotRect, SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY> snapshotBookRects{};
   bool snapshotBookGeometryAvailable = false;
+  bool snapshotCarouselSlotMetadataAvailable = false;
   bool snapshotDynamicNeedsPatch = false;
   bool snapshotRewriteAfterRestore = false;
   size_t snapshotPageStart = SIZE_MAX;
@@ -294,7 +297,7 @@ class RecentBooksActivity final : public Activity {
   CarouselSourceCacheEntry* getCarouselSource(const std::string& path, CarouselSourceTiming& timing,
                                               CarouselSourceFrame* frame = nullptr);
   void prepareCarouselSourceFrame(const std::array<CoverStackSlot, CAROUSEL_FRAME_SLOT_COUNT>& stackSlots,
-                                  CarouselSourceFrame& frame);
+                                  CarouselSourceFrame& frame, int onlySlot = -1);
   uint64_t carouselCoverIdentity(const RecentBook& book) const;
   CarouselHqProbe& carouselHqProbe(const RecentBook& book);
   void rebuildVisibleBooks();
@@ -319,7 +322,8 @@ class RecentBooksActivity final : public Activity {
   bool generateCarouselHqThumbnail(const RecentBook& book, bool force);
   void showMenu();
   void showBookActions();
-  uint64_t snapshotKey(bool exactThemeKey = false) const;
+  uint64_t snapshotKey(bool exactThemeKey = false, bool includeSpineDynamic = true) const;
+  uint64_t snapshotStructuralKey() const;
   HomeSnapshotPolicy::VisualSettingsSignature visualSettingsSignature() const;
   uint64_t snapshotPresentationKey() const;
   uint64_t bookDynamicKey(const RecentBook& book) const;
@@ -349,7 +353,7 @@ class RecentBooksActivity final : public Activity {
   size_t moveTwoRowSpinePage(const FolioShelfLayout& layout, bool next);
   size_t moveThreeRowSpinePage(const FolioShelfLayout& layout, bool next);
   bool renderCarousel(bool threeCover);
-  void renderFolioCarouselShelf(int shelfTop, int shelfHeight, bool threeCover);
+  void renderFolioCarouselShelf(int shelfTop, int shelfHeight, bool threeCover, bool centerOnly = false);
 
   // Show an OK/Cancel prompt to remove the given book from the Recent Books list.
   void promptRemoveBook(const std::string& path, const std::string& title);

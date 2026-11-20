@@ -1,4 +1,7 @@
-add_executable(EpubPageTurnQueueTest EpubPageTurnQueueTest.cpp)
+add_executable(EpubPageTurnQueueTest
+  EpubPageTurnQueueTest.cpp
+  ReaderBuildProgressPolicyTest.cpp
+)
 
 target_link_libraries(EpubPageTurnQueueTest PRIVATE
   crosspoint_test_common

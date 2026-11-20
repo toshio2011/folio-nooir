@@ -162,6 +162,7 @@ class EpubReaderActivity final : public Activity {
   // A render request received while the host is being reclaimed is replayed
   // only after the centralized lifecycle reports NimBLE fully stopped.
   bool readerRenderWaitingForBleStop = false;
+  bool readerRenderWaitingForBleStart = false;
   std::atomic<bool> readerSurvivalStopRequested{false};
   std::atomic<bool> readerSurvivalReturnHeld{false};
   std::atomic<uint32_t> readerSurvivalBackoffStartedMs{0};
@@ -174,11 +175,21 @@ class EpubReaderActivity final : public Activity {
   std::atomic<bool> readerSurvivalBackoffRetryBlocked{false};
   size_t cachedRenderObservedPeakBytes = 0;
   size_t cachedRenderLargestRequestThisRender = 0;
+  std::atomic<size_t> cachedRenderRecentPeakBytes{0};
+  std::atomic<size_t> cachedRenderRecentLargestRequestBytes{0};
+  std::atomic<int> cachedRenderRecentSpine{-1};
+  std::atomic<int> cachedRenderRecentPage{-1};
+  std::atomic<bool> cachedRenderRecentValid{false};
+  std::atomic<uint8_t> readerBlePageAwareSafeRenderCount{0};
+  std::atomic<uint32_t> readerBlePageAwareLastAdmissionSignalMs{0};
   size_t cachedRenderHighlightBytes = 0;
   size_t cachedRenderStartFree = 0;
   size_t cachedRenderLowestFree = 0;
   bool cachedRenderTracking = false;
   reader_memory::RenderBudget cachedRenderBudget(size_t highlightBytes, bool pageLoaded = false) const;
+  bool canUseRecentCachedPageDemand() const;
+  bool hasExactRecentCachedPageDemand() const;
+  bool hasKnownNextCachedPage() const;
   bool cachedRenderPreflight(size_t highlightBytes, bool pageLoaded = false);
   bool cachedRenderFinalPassPreflight(bool hasHighlights);
   static bool admitReaderFontPrewarm(void* context, size_t requiredFreeBytes, size_t requiredLargestBlock);
@@ -312,6 +323,7 @@ class EpubReaderActivity final : public Activity {
   void openDictionaryWordSelect();
   void requestExitToHome(HomeMenuItem item = HomeMenuItem::NONE);
   void executeQuickAction(int action);
+  bool handleBleMappedAction(uint8_t action) override;
   // Returns true if sync acted (launched, or surfaced a save error); false if it was a no-op
   // because no KOReader credentials are stored.
   bool launchKOReaderSync();

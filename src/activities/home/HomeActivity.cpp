@@ -29,6 +29,7 @@
 #include "activities/reader/EpubReaderBookmarksActivity.h"
 #include "activities/reader/EpubReaderClippingListActivity.h"
 #include "util/BookCacheUtils.h"
+#include "util/BookProgressReset.h"
 #include "util/CbzDiagnostics.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -208,10 +209,18 @@ void HomeActivity::showBookActions() {
       recentBooks[selectorIndex].progressPercent = 100;
       RECENT_BOOKS.recordReading(selected.path, 100, 0);
     } else if (action == 4) {
-      BOOK_STATES.reset(selected.path);
-      resetBookProgress(selected.path);
-      recentBooks[selectorIndex].progressPercent = 0;
-      RECENT_BOOKS.recordReading(selected.path, 0, 0);
+      if (resetBookReadingProgress(selected.path)) {
+        RecentBook& resetBook = recentBooks[selectorIndex];
+        resetBook.progressPercent = 0;
+        resetBook.readingSeconds = 0;
+        resetBook.lastSessionSeconds = 0;
+        resetBook.dailyReadingSeconds = 0;
+        resetBook.dailyReadingDateKey = 0;
+        resetBook.readingSessions = 0;
+        resetBook.pagesTurned = 0;
+      } else {
+        activityManager.postSettingsRecoveryNotification(tr(STR_SAVE_PROGRESS_FAILED));
+      }
     } else if (action == 5) {
       const int coverHeight = UITheme::getInstance().getMetrics().homeCoverHeight;
       if (!selected.coverBmpPath.empty()) {
@@ -229,7 +238,6 @@ void HomeActivity::showBookActions() {
       clearBookCache(selected.path);
     } else if (action == 7) {
       RECENT_BOOKS.removeByPath(selected.path);
-      BOOK_STATES.removeByPath(selected.path);
       loadRecentBooks(UITheme::getInstance().getMetrics().homeRecentBooksCount);
       selectorIndex = 0;
       nextRecentCover = 0;

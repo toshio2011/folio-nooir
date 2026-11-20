@@ -4,6 +4,8 @@
 #include <HalPowerManager.h>
 #include <Arduino.h>
 #include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #include <algorithm>
 #include <cstring>
@@ -35,6 +37,8 @@
 #include "util/EpubDiagnostics.h"
 #include "util/FullScreenMessageActivity.h"
 #include "util/CbzDiagnostics.h"
+#include "util/HeapLifetimeDiagnostics.h"
+#include "util/ReaderMemoryDiagnostics.h"
 
 static portMUX_TYPE activityManagerSpinlock = portMUX_INITIALIZER_UNLOCKED;
 #if NOOIR_EPUB_DIAGNOSTICS
@@ -53,8 +57,9 @@ static bool isSdIndependentUiActivityName(const std::string& name) {
 static constexpr unsigned long BLUETOOTH_NOTIFICATION_DURATION_MS = 2400;
 
 static void logActivityHeapShape(const char* stage) {
-  LOG_INF("HEAPSHAPE", "stage=%s free=%u largest=%u min=%u internal8=%u/%u dma8=%u/%u",
-          stage ? stage : "unknown", static_cast<unsigned>(ESP.getFreeHeap()),
+  LOG_INF("HEAPSHAPE", "stage=%s ble_runtime=%s ble_enabled=%u free=%u largest=%u min=%u internal8=%u/%u dma8=%u/%u",
+          stage ? stage : "unknown", bleinput::runtimeStateName(), bleinput::bluetoothEnabled() ? 1U : 0U,
+          static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(ESP.getMaxAllocHeap()), static_cast<unsigned>(ESP.getMinFreeHeap()),
           static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
           static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
@@ -86,6 +91,7 @@ void ActivityManager::renderTaskTrampoline(void* param) {
 }
 
 void ActivityManager::renderTaskLoop() {
+  static UBaseType_t lastReportedStackHighWaterBytes = static_cast<UBaseType_t>(-1);
   while (true) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     // Move the notification into the in-flight state while holding the same
@@ -129,7 +135,22 @@ void ActivityManager::renderTaskLoop() {
       const bool modalOverlayBeforeRender = currentActivity->hasModalOverlay();
       const bool modalOverlayClosed = modalOverlayWasDisplayed && !modalOverlayBeforeRender;
       const uint32_t displayUpdateSequenceBeforeRender = renderer.getDisplayUpdateSequence();
+#if NOOIR_HEAP_LIFETIME_TRACE
+      const bool renderingHome = currentActivity->isHomeActivity() || currentActivity->name == "RecentBooks";
+      if (renderingHome) heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::HomeRender);
+#endif
       currentActivity->render(std::move(lock));
+#if NOOIR_HEAP_LIFETIME_TRACE
+      if (renderingHome) heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::HomeActivity);
+#endif
+      if (currentActivity->name == "RecentBooks") {
+        const UBaseType_t stackHighWaterBytes = uxTaskGetStackHighWaterMark(nullptr);
+        if (stackHighWaterBytes < lastReportedStackHighWaterBytes) {
+          lastReportedStackHighWaterBytes = stackHighWaterBytes;
+          LOG_INF("STACK", "activity=RecentBooks render_stack_high_water_bytes=%u",
+                  static_cast<unsigned>(stackHighWaterBytes));
+        }
+      }
 #if NOOIR_SD_FONT_DIAGNOSTICS
       if (currentActivity->isReaderActivity()) {
         sdFontSystem.diagnosticCheckpoint("reader_first_render");
@@ -363,6 +384,21 @@ void ActivityManager::loop() {
     }
   }
 #endif
+  // A queued transition must not process more input or let the destination
+  // allocate while the asynchronous BLE owner is still releasing NimBLE.
+#if FREEINK_CAP_BLE_HID_HOST
+  if (bleShutdownRequiredForPendingTransition() && (BleHid.isRunning() || bleinput::stopPending())) {
+    const bool exitingReader = currentActivity && currentActivity->isReaderActivity() &&
+                               (pendingAction == PendingAction::Replace || pendingAction == PendingAction::Pop);
+    if (exitingReader) bleinput::clearReaderBleReturnPending();
+    if (BleHid.isRunning() && !bleinput::stopPending()) {
+      LOG_INF("BLELC", "stage=activity_transition_stop_request target=%.20s",
+              pendingActivity ? pendingActivity->name.c_str() : (pendingSettingsConstruction ? "Settings" : "stack"));
+      bleinput::stop();
+    }
+    return;
+  }
+#endif
   const bool sleepTransitionPending = pendingActivity && pendingActivity->name == "Sleep";
   if (suppressRestoredReaderInput && !sleepTransitionPending) {
     const auto button = [this](const MappedInputManager::Button input) {
@@ -396,6 +432,10 @@ void ActivityManager::loop() {
         goToClippings();
         break;
       default:
+        if (currentActivity && bleinput::mapping::isReaderActionShortcut(bleShortcut)) {
+          currentActivity->handleBleMappedAction(
+              static_cast<uint8_t>(bleShortcut - bleinput::mapping::kReaderShortcutBase));
+        }
         break;
     }
     return;
@@ -416,6 +456,19 @@ void ActivityManager::loop() {
   }
 
   while (pendingAction != PendingAction::None) {
+#if FREEINK_CAP_BLE_HID_HOST
+    if (bleShutdownRequiredForPendingTransition() && (BleHid.isRunning() || bleinput::stopPending())) {
+      const bool exitingReader = currentActivity && currentActivity->isReaderActivity() &&
+                                 (pendingAction == PendingAction::Replace || pendingAction == PendingAction::Pop);
+      if (exitingReader) bleinput::clearReaderBleReturnPending();
+      if (BleHid.isRunning() && !bleinput::stopPending()) {
+        LOG_INF("BLELC", "stage=activity_transition_stop_request target=%.20s",
+                pendingActivity ? pendingActivity->name.c_str() : (pendingSettingsConstruction ? "Settings" : "stack"));
+        bleinput::stop();
+      }
+      return;
+    }
+#endif
     if (pendingAction == PendingAction::Pop) {
       RenderLock lock;
 
@@ -430,7 +483,13 @@ void ActivityManager::loop() {
       ActivityResult pendingResult = std::move(currentActivity->result);
 
       // Destroy the current activity
-      exitActivity(lock);
+      if (!exitActivity(lock)) {
+        currentActivity->result = std::move(pendingResult);
+        lock.unlock();
+        if (currentActivity->isReaderActivity()) bleinput::clearReaderBleReturnPending();
+        if (!bleinput::stopPending()) bleinput::stop();
+        return;
+      }
       pendingAction = PendingAction::None;
 
       if (stackActivities.empty()) {
@@ -514,9 +573,20 @@ void ActivityManager::loop() {
                                       pendingAction == PendingAction::Push;
       const bool readerShellToConcrete = currentActivity && pendingActivity && currentActivity->name == "Reader" &&
                                          pendingActivity->name == "EpubReader" && pendingAction == PendingAction::Replace;
+#if NOOIR_READER_TRANSITION_DIAGNOSTICS
+      const bool readerShellToConcreteReader = currentActivity && pendingActivity && currentActivity->name == "Reader" &&
+                                               pendingActivity->isReaderActivity() &&
+                                               pendingActivity->name != "Reader" &&
+                                               pendingAction == PendingAction::Replace;
+#endif
 #if FREEINK_CAP_BLE_HID_HOST
       if (recentBooksToReader) logActivityHeapShape("reader_transition_before_recentbooks_exit");
       if (readerShellToConcrete) logActivityHeapShape("reader_transition_before_reader_shell_exit");
+#endif
+#if NOOIR_READER_TRANSITION_DIAGNOSTICS
+      if (readerShellToConcreteReader) {
+        NOOIR_READER_MEMORY_CHECKPOINT("reader_shell_exit_begin", "Reader activity shell");
+      }
 #endif
       // Current activity has requested a new activity to be launched
       RenderLock lock;
@@ -531,7 +601,12 @@ void ActivityManager::loop() {
 
       if (pendingAction == PendingAction::Replace) {
         // Destroy the current activity
-        exitActivity(lock);
+        if (!exitActivity(lock)) {
+          lock.unlock();
+          if (currentActivity && currentActivity->isReaderActivity()) bleinput::clearReaderBleReturnPending();
+          if (!bleinput::stopPending()) bleinput::stop();
+          return;
+        }
         // Clear the stack
         while (!stackActivities.empty()) {
           stackActivities.back()->onExit();
@@ -561,9 +636,24 @@ void ActivityManager::loop() {
       if (recentBooksToReader) logActivityHeapShape("reader_transition_after_recentbooks_destroyed");
       if (readerShellToConcrete) logActivityHeapShape("reader_transition_after_reader_shell_destroyed");
 #endif
+#if NOOIR_READER_TRANSITION_DIAGNOSTICS
+      if (readerShellToConcreteReader) {
+        NOOIR_READER_MEMORY_CHECKPOINT("reader_shell_destroyed", "Reader activity shell");
+      }
+#endif
       pendingAction = PendingAction::None;
       currentActivity = std::move(pendingActivity);
       bleinput::clearNoDeviceTimeoutSuppression();
+#if NOOIR_HEAP_LIFETIME_TRACE
+      if (currentActivity && (currentActivity->isHomeActivity() || currentActivity->name == "RecentBooks")) {
+        heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::HomeActivity);
+        heap_lifetime_trace::checkpoint("home_after_old_activity_destroy");
+      } else if (currentActivity && (currentActivity->name == "Reader" || currentActivity->isReaderActivity())) {
+        heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::ReaderEntry);
+      } else if (currentActivity && currentActivity->name == "Sleep") {
+        heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::SleepCleanup);
+      }
+#endif
       // These screens do not use the SD-backed UI font and may need the heap
       // immediately. Release its complete asset set while the transition lock
       // is still held, before the activity's onEnter() starts its own work.
@@ -597,7 +687,23 @@ void ActivityManager::loop() {
         }
       }
 #endif
+#if NOOIR_READER_TRANSITION_DIAGNOSTICS
+      if (readerShellToConcreteReader) {
+        NOOIR_READER_MEMORY_CHECKPOINT("concrete_reader_pre_onEnter", currentActivity->name.c_str());
+      }
+#endif
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_IINE_TOUCH_GESTURES
+      if (bleinput::bluetoothEnabled() && currentActivity &&
+          (currentActivity->isReaderActivity() || currentActivity->name == "Reader"))
+        bleinput::clearPendingIineGesture();
+#endif
       currentActivity->onEnter();
+#if NOOIR_HEAP_LIFETIME_TRACE
+      if (currentActivity && (currentActivity->isHomeActivity() || currentActivity->name == "RecentBooks")) {
+        heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::HomeActivity);
+        heap_lifetime_trace::checkpoint("home_activity_enter_complete");
+      }
+#endif
 #if FREEINK_CAP_BLE_HID_HOST
       if (leavingWebExclusive) {
         // CrossPointWebServerActivity has already torn down HTTP, WebSocket,
@@ -613,6 +719,11 @@ void ActivityManager::loop() {
 #if FREEINK_CAP_BLE_HID_HOST
       if (recentBooksToReader) logActivityHeapShape("reader_transition_after_reader_activity_enter");
       if (readerShellToConcrete) logActivityHeapShape("reader_transition_after_epub_reader_enter");
+#endif
+#if NOOIR_READER_TRANSITION_DIAGNOSTICS
+      if (readerShellToConcreteReader) {
+        NOOIR_READER_MEMORY_CHECKPOINT("concrete_reader_post_onEnter", currentActivity->name.c_str());
+      }
 #endif
       bleinput::requestLifecycleReevaluation();
 #if NOOIR_EPUB_DIAGNOSTICS
@@ -663,26 +774,35 @@ void ActivityManager::loop() {
   }
 }
 
-void ActivityManager::exitActivity(const RenderLock& lock) {
+bool ActivityManager::exitActivity(const RenderLock& lock) {
   // Note: lock must be held by the caller
+#if FREEINK_CAP_BLE_HID_HOST
+  if (currentActivity && (currentActivity->isReaderActivity() || currentActivity->bluetoothResourceSensitive()) &&
+      (BleHid.isRunning() || bleinput::stopPending())) {
+    LOG_ERR("BLELC", "stage=activity_exit_refused activity=%.20s host_running=%u stop_pending=%u",
+            currentActivity->name.c_str(), BleHid.isRunning() ? 1U : 0U,
+            bleinput::stopPending() ? 1U : 0U);
+    return false;
+  }
+#endif
   if (currentActivity) {
     const bool readerActivity = currentActivity->isReaderActivity();
     const bool readingStatsActivity = currentActivity->name == "ReadingStats" || currentActivity->name == "ReadingCalendar";
     const bool epubReaderActivity = currentActivity->name == "EpubReader";
     const bool wifiSelectionActivity = currentActivity->name == "WifiSelection";
-#if FREEINK_CAP_BLE_HID_HOST
-    // Direct Home shortcuts can replace a stable Reader before the main BLE
-    // lifecycle gets another tick. If the host still owns heap, stop it once
-    // before synchronous progress persistence and cache teardown. The shared
-    // Home render gate controls any later cold reconnect.
-    if (readerActivity && BleHid.isRunning()) {
-      const uint32_t bleStopStartedUs = micros();
-      bleinput::clearReaderBleReturnPending();
-      bleinput::stop();
-      LOG_INF("BLEMEM", "stage=reader_exit_ble_stopped stop_us=%lu free=%u largest=%u",
-              static_cast<unsigned long>(micros() - bleStopStartedUs),
-              static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+#if NOOIR_HEAP_LIFETIME_TRACE
+    const bool homeActivity = currentActivity->isHomeActivity() || currentActivity->name == "RecentBooks";
+    const bool readerActivityForTrace = currentActivity->name == "Reader" || currentActivity->isReaderActivity();
+    if (homeActivity) {
+      heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::HomeDestroy);
+      heap_lifetime_trace::checkpoint("home_destroy_begin");
+    } else if (readerActivityForTrace) {
+      heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::ReaderExit);
+      heap_lifetime_trace::checkpoint("reader_destroy_begin");
     }
+#endif
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_IINE_TOUCH_GESTURES
+    if (bleinput::bluetoothEnabled() && readerActivity) bleinput::clearPendingIineGesture();
 #endif
     currentActivity->onExit();
     transientNotificationBacking.reset();
@@ -690,6 +810,10 @@ void ActivityManager::exitActivity(const RenderLock& lock) {
     transientNotificationBackingOwner = nullptr;
     transientNotificationBackingValid = false;
     currentActivity.reset();
+#if NOOIR_HEAP_LIFETIME_TRACE
+    if (homeActivity) heap_lifetime_trace::checkpoint("home_destroy_complete");
+    if (readerActivityForTrace) heap_lifetime_trace::checkpoint("reader_destroy_complete");
+#endif
     if (readingStatsActivity) {
       LOG_INF("RSDIAG", "stage=child_destroyed free=%u largest=%u",
               static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
@@ -710,10 +834,20 @@ void ActivityManager::exitActivity(const RenderLock& lock) {
 #endif
     bleinput::requestLifecycleReevaluation();
   }
+  return true;
 }
 
 void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
   pendingSettingsConstruction = false;
+#if NOOIR_HEAP_LIFETIME_TRACE
+  if (newActivity && (newActivity->isHomeActivity() || newActivity->name == "RecentBooks")) {
+    // Start only once, before Home onEnter/render allocations. The diagnostic
+    // capture then spans Reader and sleep transitions without resetting owners.
+    heap_lifetime_trace::start();
+    heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::HomeActivity);
+    heap_lifetime_trace::checkpoint("home_before_activity_enter");
+  }
+#endif
   // Note: no lock here, this is usually called by loop() and we may run into deadlock
   if (currentActivity) {
     const bool recentBooksToReader = currentActivity->name == "RecentBooks" && newActivity && newActivity->name == "Reader";
@@ -725,6 +859,15 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
     pendingActivity = std::move(newActivity);
     pendingAction = PendingAction::Replace;
   } else {
+    if (BleHid.isRunning() && newActivity &&
+        (newActivity->isReaderActivity() || newActivity->bluetoothResourceSensitive() ||
+         newActivity->name == "Sleep" || newActivity->name == "CrossPointWebServer")) {
+      // Even the initial launch path must defer resource-sensitive onEnter()
+      // until the asynchronous host teardown has been acknowledged.
+      pendingActivity = std::move(newActivity);
+      pendingAction = PendingAction::Replace;
+      return;
+    }
     // No current activity, safe to launch immediately
     currentActivity = std::move(newActivity);
     bleinput::clearNoDeviceTimeoutSuppression();
@@ -740,7 +883,25 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
       }
     }
 #endif
+#if NOOIR_HEAP_LIFETIME_TRACE
+    if (currentActivity->name == "Reader" || currentActivity->isReaderActivity()) {
+      heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::ReaderEntry);
+    } else if (currentActivity->name == "Sleep") {
+      heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::SleepCleanup);
+    }
+#endif
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_IINE_TOUCH_GESTURES
+    if (bleinput::bluetoothEnabled() && currentActivity &&
+        (currentActivity->isReaderActivity() || currentActivity->name == "Reader"))
+      bleinput::clearPendingIineGesture();
+#endif
     currentActivity->onEnter();
+#if NOOIR_HEAP_LIFETIME_TRACE
+    if (currentActivity && (currentActivity->isHomeActivity() || currentActivity->name == "RecentBooks")) {
+      heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::HomeActivity);
+      heap_lifetime_trace::checkpoint("home_activity_enter_complete");
+    }
+#endif
     bleinput::requestLifecycleReevaluation();
 #if NOOIR_EPUB_DIAGNOSTICS
     if (!lifecycleHomeConstructionRecorded &&
@@ -929,6 +1090,30 @@ const char* ActivityManager::currentActivityName() const {
 
 bool ActivityManager::bluetoothShouldBeActive() const {
   return currentActivity && currentActivity->acceptsBluetoothInput();
+}
+
+bool ActivityManager::bleShutdownRequiredForPendingTransition() const {
+  if (pendingSettingsConstruction) return true;
+  const auto requiresStoppedHost = [](const Activity* activity) {
+    return activity && (activity->isReaderActivity() || activity->bluetoothResourceSensitive() ||
+                        activity->name == "Sleep" || activity->name == "CrossPointWebServer");
+  };
+  const bool outgoingResourceOwner = requiresStoppedHost(currentActivity.get()) ||
+                                     std::any_of(stackActivities.begin(), stackActivities.end(),
+                                                 [&requiresStoppedHost](const auto& activity) {
+                                                   return requiresStoppedHost(activity.get());
+                                                 });
+  if (pendingAction == PendingAction::Replace) {
+    return outgoingResourceOwner || requiresStoppedHost(pendingActivity.get());
+  }
+  if (pendingAction == PendingAction::Push) {
+    return requiresStoppedHost(currentActivity.get()) || requiresStoppedHost(pendingActivity.get());
+  }
+  if (pendingAction == PendingAction::Pop) {
+    return requiresStoppedHost(currentActivity.get()) ||
+           (!stackActivities.empty() && requiresStoppedHost(stackActivities.back().get()));
+  }
+  return false;
 }
 
 bool ActivityManager::bluetoothResourceSensitive() const {

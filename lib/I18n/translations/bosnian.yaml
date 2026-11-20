@@ -409,3 +409,7 @@ STR_THEME_FOLIO_NOOIR: "Folio Nooir"
 STR_READING_STATS: "Statistika čitanja"
 STR_BOOK_STATISTICS: "Statistika knjige"
 STR_RESUME: "Nastavi"
+
+STR_BT_WAITING_FOR_MEMORY: "Čeka se memorija"
+STR_BT_SUSPENDED_FOR_READER: "Pauzirano za čitanje"
+STR_BT_RECONNECT_PENDING: "Ponovno povezivanje na čekanju"

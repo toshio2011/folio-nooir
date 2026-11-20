@@ -13,6 +13,7 @@
 #include <HalTiltSensor.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <SdFat.h>
 #include <SPI.h>
 #include <WiFi.h>
 #include <esp_system.h>
@@ -44,6 +45,7 @@
 #include "util/ButtonNavigator.h"
 #include "util/BleMemoryPolicy.h"
 #include "util/EpubDiagnostics.h"
+#include "util/HeapLifetimeDiagnostics.h"
 #include "util/ScreenshotUtil.h"
 #include "util/SleepScreenMode.h"
 #include "activities/reader/ReaderUtils.h"
@@ -137,6 +139,9 @@ enum class BootResume : uint8_t {
 // device back up against the user's sleep gesture. Never cleared:
 // startDeepSleep() does not return, so a set latch only ends at the wakeup reset.
 static bool deepSleepInProgress = false;
+static bool sleepBleTeardownPending = false;
+static bool sleepPendingFromTimeout = false;
+static bool sleepRequestLogged = false;
 
 void silentRestart() {
   if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
@@ -195,13 +200,47 @@ static bool loadSleepFrameBuffer() {
 
 // Enter deep sleep mode
 void enterDeepSleep(bool fromTimeout = false) {
+  bool asynchronousBleStopWaited = false;
+#if FREEINK_CAP_BLE_HID_HOST
+  if (BleHid.isRunning()) {
+    if (!sleepBleTeardownPending) {
+      // Sleep is a two-step main-loop transition: request asynchronous teardown,
+      // then continue only after pollLifecycle acknowledges full deinit.
+      sleepBleTeardownPending = true;
+      sleepPendingFromTimeout = fromTimeout;
+      deepSleepInProgress = true;
+      if (!sleepRequestLogged) {
+        EpubDiagnostics::startPhase();
+        EpubDiagnostics::phaseRecord("sleep_request", fromTimeout ? 2 : 1);
+        LOG_INF("SLEEP", "sleep_requested timeout=%d free=%u largest=%u", fromTimeout ? 1 : 0,
+                static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+        sleepRequestLogged = true;
+      }
+      bleinput::clearReaderBleReturnPending();
+      bleinput::clearReAdmissionPending();
+      bleinput::stop();
+      LOG_INF("SLEEP", "ble_stop_requested running=%u pending=%u free=%u largest=%u",
+              BleHid.isRunning() ? 1U : 0U, bleinput::stopPending() ? 1U : 0U,
+              static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    }
+    return;
+  }
+#endif
+  if (sleepBleTeardownPending) {
+    asynchronousBleStopWaited = true;
+    fromTimeout = sleepPendingFromTimeout;
+    sleepBleTeardownPending = false;
+  }
   // Latch before selecting/persisting the final mode so no lifecycle service
   // can admit new BLE work while sleep state is being committed.
   deepSleepInProgress = true;
-  EpubDiagnostics::startPhase();
-  EpubDiagnostics::phaseRecord("sleep_request", fromTimeout ? 2 : 1);
-  LOG_INF("SLEEP", "sleep_requested timeout=%d free=%u largest=%u", fromTimeout ? 1 : 0,
-          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  if (!sleepRequestLogged) {
+    EpubDiagnostics::startPhase();
+    EpubDiagnostics::phaseRecord("sleep_request", fromTimeout ? 2 : 1);
+    LOG_INF("SLEEP", "sleep_requested timeout=%d free=%u largest=%u", fromTimeout ? 1 : 0,
+            static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    sleepRequestLogged = true;
+  }
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
   APP_STATE.selectFirstHomeBookAfterWake = true;
@@ -238,11 +277,11 @@ void enterDeepSleep(bool fromTimeout = false) {
           static_cast<unsigned>(ESP.getMaxAllocHeap()));
   if (SETTINGS.bluetoothEnabled || BleHid.isRunning()) {
     bleinput::clearReaderBleReturnPending();
-    if (BleHid.isRunning()) {
-      bleinput::stop();
-      LOG_INF("SLEEP", "ble_stopped free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
-              static_cast<unsigned>(ESP.getMaxAllocHeap()));
-    }
+    bleinput::clearReAdmissionPending();
+    LOG_INF("SLEEP", "ble_quiesced runtime=%s pending=%u async_waited=%u free=%u largest=%u",
+            BleHid.isRunning() ? "running" : "stopped", bleinput::stopPending() ? 1U : 0U,
+            asynchronousBleStopWaited ? 1U : 0U,
+            static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
   }
 
   activityManager.goToSleep(fromTimeout);
@@ -474,6 +513,31 @@ void setup() {
   // Emit the exact source identity in diagnostic builds so a serial capture
   // remains attributable even when monitoring starts after the boot banner.
   LOG_INF("BUILD", "source_sha=%s app=%s", NOOIR_BUILD_SHA, NOOIR_APP_VERSION);
+  const auto& sdPins = BoardConfig::ACTIVE.sd;
+  const auto& displayPins = BoardConfig::ACTIVE.display;
+  const int8_t sdSclk = sdPins.sclk >= 0 ? sdPins.sclk : (sdPins.separateSpi ? -1 : displayPins.sclk);
+  const int8_t sdMosi = sdPins.mosi >= 0 ? sdPins.mosi : (sdPins.separateSpi ? -1 : displayPins.mosi);
+  const uint32_t sdSpiHz = sdPins.spiHz != 0 ? sdPins.spiHz : 40000000UL;
+#if defined(USE_SPI_ARRAY_TRANSFER) && USE_SPI_ARRAY_TRANSFER == 1
+  const char* sdTransferMode = "array";
+#elif !defined(USE_SPI_ARRAY_TRANSFER) || USE_SPI_ARRAY_TRANSFER == 0
+  const char* sdTransferMode = "byte";
+#else
+  const char* sdTransferMode = "unsupported";
+#endif
+#if defined(NOOIR_SDFAT_RECENT_FREE_HINT)
+  constexpr unsigned fatHintEnabled = 1;
+#else
+  constexpr unsigned fatHintEnabled = 0;
+#endif
+#if defined(NOOIR_BLE_READER_COEXISTENCE) && NOOIR_BLE_READER_COEXISTENCE
+  constexpr unsigned blePolicyVersion = bleinput::kReaderBleReadmissionPolicyVersion;
+#else
+  constexpr unsigned blePolicyVersion = 0;
+#endif
+  LOG_INF("BUILD", "device=%s sd_spi=%s %luHz pins=%d/%d/%d/%d fat_hint=%u ble_policy=%u",
+          BoardConfig::ACTIVE.name, sdTransferMode, static_cast<unsigned long>(sdSpiHz), sdSclk,
+          sdPins.miso, sdMosi, sdPins.cs, fatHintEnabled, blePolicyVersion);
 #endif
   LOG_DBG("MAIN", "Starting CrossPoint version " CROSSPOINT_VERSION);
 
@@ -588,7 +652,26 @@ void updateBluetoothLifecycle() {
   static bool bluetoothSettingsRenderDeferReported = false;
   static bool settingsBleReturnFloorDeferReported = false;
   static bool homeBleReclaimAttempted = false;
+  // Sleep owns one teardown request and will resume this function only after
+  // the main loop acknowledges the stopped state. Do not emit repeated stop
+  // requests while the worker is finishing.
+  if (sleepBleTeardownPending) return;
+  // Pending activity transitions own shutdown ordering. Do not admit or
+  // restart BLE between the stop acknowledgement and destination onEnter().
+  if (activityManager.bleShutdownRequiredForPendingTransition() || bleinput::stopPending()) {
+    if (BleHid.isRunning() && !bleinput::stopPending()) {
+      LOG_INF("BLELC", "stage=transition_stop_request activity=%.20s free=%u largest=%u",
+              activityManager.currentActivityName(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      bleinput::stop();
+    }
+    return;
+  }
+  // The worker may already have deinitialized NimBLE while the main loop has
+  // not yet consumed its completion edge. Wait for pollLifecycle() to publish
+  // that acknowledgement before evaluating admission again.
+  if (bleinput::stopPending()) return;
   if (bleinput::webExclusiveActive()) {
+    bleinput::setReaderWaitingForMemory(false);
     resourceDeferReported = false;
     bluetoothSettingsRenderDeferReported = false;
     settingsBleReturnFloorDeferReported = false;
@@ -619,6 +702,7 @@ void updateBluetoothLifecycle() {
   const bool blocked = resourceSensitive;
 
   if (!wanted) {
+    bleinput::setReaderWaitingForMemory(false);
     homeBleReclaimAttempted = false;
     // A Bluetooth control screen can remain open while Wi-Fi is active. Report
     // the admission outcome so its Preparing state cannot wait forever; the
@@ -644,6 +728,9 @@ void updateBluetoothLifecycle() {
   }
 
   if (blocked) {
+    // This is an active Reader resource phase, not a completed-page heap
+    // admission failure. The Reader status must not call it a memory wait.
+    bleinput::setReaderWaitingForMemory(false);
     const bool settingsContext = strcmp(activityManager.currentActivityName(), "Settings") == 0;
     if (settingsContext) settingsBleReturnFloorDeferReported = false;
     if (BleHid.isRunning()) {
@@ -698,6 +785,7 @@ void updateBluetoothLifecycle() {
     return;
   }
   if (BleHid.isRunning()) {
+    bleinput::setReaderWaitingForMemory(false);
     activityManager.notifyBluetoothActivationResult(true);
     bleinput::clearReAdmissionPending();
     return;
@@ -705,13 +793,24 @@ void updateBluetoothLifecycle() {
   if (!bleinput::reAdmissionPending()) return;
   if (!bleinput::takeLifecycleReevaluation()) return;
 
-  LOG_INF("BLEMEM", "stage=before_cold_admission activity=%.20s free=%u largest=%u floors=%u/%u",
-          activityManager.currentActivityName(), ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
-          static_cast<unsigned>(bleinput::kReaderBleStartMinFreeHeap),
+  const bool xtcStreamingAdmission = strcmp(activityManager.currentActivityName(), "XtcReader") == 0;
+  const size_t coldAdmissionMinFree = xtcStreamingAdmission ? bleinput::kXtcBleStartMinFreeHeap
+                                                            : bleinput::kReaderBleStartMinFreeHeap;
+  LOG_INF("BLEMEM", "stage=before_cold_admission activity=%.20s rule=%s runtime=%s enabled=%u free=%u largest=%u floors=%u/%u",
+          activityManager.currentActivityName(), xtcStreamingAdmission ? "xtc_stream" : "default",
+          bleinput::runtimeStateName(),
+          bleinput::bluetoothEnabled() ? 1U : 0U, ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
+          static_cast<unsigned>(coldAdmissionMinFree),
           static_cast<unsigned>(bleinput::kReaderBleStartMinLargestBlock));
   bool admitted = bleinput::connectionAdmissionAllowed();
 
   if (!admitted) {
+    const bool quiescentReaderHeapDefer = readerContext && activityManager.isCurrentReaderActivity() &&
+        bleinput::readerBleReturnPending() && !resourceSensitive && !RenderLock::peek() &&
+        !activityManager.hasPendingRenderWork() && WiFi.getMode() == WIFI_MODE_NULL;
+    // At this point intent/activity/Wi-Fi/render/resource gates are clear;
+    // the rejected result is from the existing memory admission predictor.
+    bleinput::setReaderWaitingForMemory(quiescentReaderHeapDefer);
     const bool renderBusy = RenderLock::peek() || activityManager.hasPendingRenderWork();
     const bool reclaimAllowed =
         homeActivity && bleinput::homeBleStartReclaimAllowed(
@@ -762,8 +861,10 @@ void updateBluetoothLifecycle() {
     return;
   }
 
-  LOG_INF("BLEMEM", "stage=cold_admission result=allow activity=%.20s free=%u largest=%u",
-          activityManager.currentActivityName(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  LOG_INF("BLEMEM", "stage=cold_admission result=allow activity=%.20s runtime=%s enabled=%u free=%u largest=%u",
+          activityManager.currentActivityName(), bleinput::runtimeStateName(),
+          bleinput::bluetoothEnabled() ? 1U : 0U, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  bleinput::setReaderWaitingForMemory(false);
   if (strcmp(activityManager.currentActivityName(), "Settings") == 0) {
     settingsBleReturnFloorDeferReported = false;
     LOG_INF("BLEMEM", "stage=settings_ble_return_admit free=%u largest=%u", ESP.getFreeHeap(),
@@ -798,9 +899,24 @@ void loop() {
 
   gpio.setSharedConfirmPowerShortPressEmitsPower(SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
   gpio.update();
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_EPUB_BLE_IDLE_ADMISSION_DIAGNOSTIC
+  bool bleInputDrainedBeforeLifecycle = false;
+  // In the compile-gated sequential experiment, deliver any already received
+  // mapped command before lifecycle policy can request a stop and clear host
+  // input state. The ordinary path retains its existing ordering.
+  if (bleinput::epubIdleBleDiagnosticArmed() && SETTINGS.bluetoothEnabled && BleHid.isRunning()) {
+    BleHid.poll();
+    mappedInputManager.pollBle();
+    bleInputDrainedBeforeLifecycle = true;
+  }
+#endif
   updateBluetoothLifecycle();
   ClockWeatherSyncService::processPendingWifiConnection();
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_EPUB_BLE_IDLE_ADMISSION_DIAGNOSTIC
+  if (BleHid.isRunning() && !bleInputDrainedBeforeLifecycle) BleHid.poll();
+#else
   if (BleHid.isRunning()) BleHid.poll();
+#endif
 #if FREEINK_CAP_BLE_HID_HOST
   bleinput::pollLifecycle();
   char bleNotification[64];
@@ -811,7 +927,21 @@ void loop() {
 #if NOOIR_BLE_DIAGNOSTICS
   bleinput::setActivityContext(activityManager.currentActivityName());
 #endif
+  if (sleepBleTeardownPending) {
+#if FREEINK_CAP_BLE_HID_HOST
+    if (BleHid.isRunning()) {
+      vTaskDelay(pdMS_TO_TICKS(1));
+      return;
+    }
+#endif
+    enterDeepSleep(sleepPendingFromTimeout);
+    return;
+  }
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_EPUB_BLE_IDLE_ADMISSION_DIAGNOSTIC
+  if (!bleInputDrainedBeforeLifecycle) mappedInputManager.pollBle();
+#else
   mappedInputManager.pollBle();
+#endif
   // Let Reader classify the resulting action before changing BLE state. A
   // cached page turn is not resource-sensitive; heavy Reader work requests
   // lifecycle reevaluation through the centralized admission path below.
@@ -829,6 +959,9 @@ void loop() {
 
   // Handle incoming serial commands,
   // nb: we use logSerial from logging to avoid deprecation warnings
+#if NOOIR_HEAP_LIFETIME_TRACE
+  bool heapTraceDumpRequested = false;
+#endif
   if (logSerial.available() > 0) {
     String line = logSerial.readStringUntil('\n');
     if (line.startsWith("CMD:")) {
@@ -841,8 +974,38 @@ void loop() {
         logSerial.write(buf, bufferSize);
         logSerial.printf("SCREENSHOT_END\n");
       }
+#if NOOIR_EPUB_BLE_IDLE_ADMISSION_DIAGNOSTIC
+      else if (cmd == "EPUB_IDLE_BLE_ARM") {
+        const bool armed = bleinput::armEpubIdleBleDiagnostic();
+        logSerial.printf("EPUB_IDLE_BLE_ARM:%s\n", armed ? "ARMED" : "REJECTED_CHECK_LOG");
+      } else if (cmd == "EPUB_IDLE_BLE_DISARM") {
+        bleinput::disarmEpubIdleBleDiagnostic("serial_command");
+        logSerial.printf("EPUB_IDLE_BLE_DISARM:DONE\n");
+      } else if (cmd == "EPUB_IDLE_BLE_STATUS") {
+        logSerial.printf("EPUB_IDLE_BLE_STATUS:armed=%u fault=%u permit=%u starting=%u running=%u pending=%u free=%u largest=%u required=%u/%u\n",
+                         bleinput::epubIdleBleDiagnosticArmed() ? 1U : 0U,
+                         bleinput::epubIdleBleDiagnosticFaulted() ? 1U : 0U,
+                         bleinput::epubIdleBleDiagnosticPermitPending() ? 1U : 0U,
+                         bleinput::epubIdleBleDiagnosticStarting() ? 1U : 0U,
+                         BleHid.isRunning() ? 1U : 0U, bleinput::stopPending() ? 1U : 0U,
+                         static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()),
+                         static_cast<unsigned>(bleinput::kReaderBleEpubIdleOnlyRequiredFree),
+                         static_cast<unsigned>(bleinput::kReaderBleEpubIdleOnlyRequiredLargest));
+      }
+#endif
+#if NOOIR_HEAP_LIFETIME_TRACE
+      else if (cmd == "HEAPTRACE_DUMP") {
+        heapTraceDumpRequested = true;
+      }
+#endif
     }
   }
+#if NOOIR_HEAP_LIFETIME_TRACE
+  if (heapTraceDumpRequested) {
+    heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::TraceControl);
+    heap_lifetime_trace::stopAndDump();
+  }
+#endif
 
   // Check for any user activity (button press or release) or active background work
   static unsigned long lastActivityTime = millis();

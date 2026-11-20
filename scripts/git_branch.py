@@ -80,10 +80,19 @@ def inject_version(env):
     project_dir = env['PROJECT_DIR']
     build_sha = run_git_value(project_dir, ['rev-parse', 'HEAD'], 'build SHA')
     env.Append(CPPDEFINES=[('NOOIR_BUILD_SHA', f'\\"{build_sha}\\"')])
-    app_version = f'{get_base_version(project_dir)}+{build_sha[:8]}'
+    # Release profiles may set a custom `nooir_version` option so the
+    # embedded app descriptor does not inherit an experimental workspace label.
+    base_version = get_base_version(project_dir)
+    get_project_option = getattr(env, 'GetProjectOption', None)
+    if callable(get_project_option):
+        try:
+            base_version = get_project_option('nooir_version') or base_version
+        except Exception:  # Keep older/fake build environments compatible.
+            pass
+    app_version = f'{base_version}+{build_sha[:8]}'
     if len(app_version.encode('ascii', errors='ignore')) > 31:
         short_sha = build_sha[:8]
-        app_version = f'{get_base_version(project_dir)[:22]}+{short_sha}'
+        app_version = f'{base_version[:22]}+{short_sha}'
     env.Append(CPPDEFINES=[('NOOIR_APP_VERSION', f'\\"{app_version}\\"')])
     print(f'Nooir build SHA: {build_sha}')
     print(f'Nooir app descriptor version: {app_version}')

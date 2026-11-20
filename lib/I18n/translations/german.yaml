@@ -549,3 +549,7 @@ STR_SET_FAVORITE_SLEEP: "Standby-Cover als Favorit"
 STR_CLEAR_FAVORITE_SLEEP: "Standby-Favorit löschen"
 STR_PERCENT_VALUE_FORMAT: "%u%%"
 STR_OPDS_SD_ROOT: "SD-Hauptverzeichnis"
+
+STR_BT_WAITING_FOR_MEMORY: "Warten auf Speicher"
+STR_BT_SUSPENDED_FOR_READER: "Für den Reader pausiert"
+STR_BT_RECONNECT_PENDING: "Wiederverbindung ausstehend"

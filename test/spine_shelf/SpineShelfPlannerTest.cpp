@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <vector>
 
 #include "src/util/HomeSnapshotPolicy.h"
 #include "src/util/SpineShelfPlanner.h"
@@ -564,6 +565,92 @@ TEST(SpineShelfPlanner, ThreeRowShelfUsesThreeBoundedRowsAndPaginates) {
   EXPECT_EQ(SpineShelfPlanner::threeRowPreviousPageStart(input.data(), input.size(), next, bounds), 0u);
   EXPECT_EQ(SpineShelfPlanner::threeRowNextPageStart(input.data(), input.size(), nextPage.firstIndex, bounds),
             nextPage.pageNumber < nextPage.pageCount ? nextPage.firstIndex + nextPage.itemCount : 0u);
+}
+
+TEST(SpineShelfPlanner, ThreeRowSelectionPreservesFirstMiddleLastPartialAndClampedPages) {
+  std::array<Book, 100> input{};
+  for (auto& book : input) book = {"three-row-page-book", "Title", 25, "Author"};
+  const Rect bounds{4, 0, 480, 300};
+  const auto capacityProbe = SpineShelfPlanner::threeRowPageForSelection(input.data(), input.size(), 0, bounds);
+  ASSERT_GT(capacityProbe.itemCount, 0);
+
+  const size_t bookCount = static_cast<size_t>(capacityProbe.itemCount) * 2 + 1;
+  ASSERT_LE(bookCount, input.size());
+  const auto first = SpineShelfPlanner::threeRowPageForSelection(input.data(), bookCount, 0, bounds);
+  ASSERT_EQ(first.firstIndex, 0u);
+  EXPECT_EQ(first.pageNumber, 1);
+  EXPECT_EQ(first.itemCount, capacityProbe.itemCount);
+
+  const auto middle = SpineShelfPlanner::threeRowPageForSelection(input.data(), bookCount, first.itemCount, bounds);
+  ASSERT_EQ(middle.firstIndex, first.itemCount);
+  EXPECT_EQ(middle.pageNumber, 2);
+  ASSERT_EQ(middle.itemCount, first.itemCount);
+
+  const size_t lastStart = static_cast<size_t>(first.itemCount) + middle.itemCount;
+  ASSERT_EQ(bookCount, lastStart + 1);
+  const auto last = SpineShelfPlanner::threeRowPageForSelection(input.data(), bookCount, bookCount - 1, bounds);
+  ASSERT_EQ(last.firstIndex, lastStart);
+  EXPECT_EQ(last.itemCount, 1);
+  EXPECT_EQ(last.pageNumber, 3);
+  EXPECT_EQ(last.pageCount, 3);
+
+  const auto clamped = SpineShelfPlanner::threeRowPageForSelection(input.data(), bookCount, bookCount + 10, bounds);
+  EXPECT_EQ(clamped.firstIndex, last.firstIndex);
+  EXPECT_EQ(clamped.itemCount, last.itemCount);
+  EXPECT_EQ(clamped.pageNumber, last.pageNumber);
+  EXPECT_EQ(clamped.pageCount, last.pageCount);
+  ASSERT_EQ(clamped.itemCount, last.itemCount);
+  for (size_t slot = 0; slot < last.itemCount; ++slot) {
+    EXPECT_EQ(clamped.slots[slot].itemIndex, last.slots[slot].itemIndex);
+    EXPECT_EQ(clamped.slots[slot].rect.x, last.slots[slot].rect.x);
+    EXPECT_EQ(clamped.slots[slot].rect.y, last.slots[slot].rect.y);
+    EXPECT_EQ(clamped.slots[slot].rect.width, last.slots[slot].rect.width);
+    EXPECT_EQ(clamped.slots[slot].rect.height, last.slots[slot].rect.height);
+    EXPECT_EQ(clamped.slots[slot].cover, last.slots[slot].cover);
+  }
+
+  SpineShelfPlanner::ThreeRowPage reused{};
+  reused.firstIndex = 17;
+  reused.itemCount = 42;
+  reused.pageNumber = 90;
+  reused.pageCount = 91;
+  SpineShelfPlanner::threeRowPageForSelection(input.data(), bookCount, bookCount - 1, bounds, reused);
+  EXPECT_EQ(reused.firstIndex, last.firstIndex);
+  EXPECT_EQ(reused.itemCount, last.itemCount);
+  EXPECT_EQ(reused.pageNumber, last.pageNumber);
+  EXPECT_EQ(reused.pageCount, last.pageCount);
+}
+
+TEST(SpineShelfPlanner, ThreeRowEmptyAndPageLimitSelectionsKeepEmptyResultSemantics) {
+  const Rect bounds{4, 0, 480, 300};
+  SpineShelfPlanner::ThreeRowPage reused{};
+  reused.firstIndex = 17;
+  reused.itemCount = 8;
+  reused.pageNumber = 3;
+  reused.pageCount = 4;
+  reused.slots[0].itemIndex = 9;
+  reused.slots[0].cover = true;
+  SpineShelfPlanner::threeRowPageForSelection(nullptr, 4, 0, bounds, reused);
+  EXPECT_EQ(reused.firstIndex, 0u);
+  EXPECT_EQ(reused.itemCount, 0);
+  EXPECT_EQ(reused.pageNumber, 0);
+  EXPECT_EQ(reused.pageCount, 0);
+  EXPECT_EQ(reused.slots[0].itemIndex, 0u);
+  EXPECT_FALSE(reused.slots[0].cover);
+
+  const auto empty = SpineShelfPlanner::threeRowPageForSelection(nullptr, 0, 0, bounds);
+  EXPECT_EQ(empty.itemCount, 0);
+  EXPECT_EQ(empty.pageNumber, 0);
+  EXPECT_EQ(empty.pageCount, 0);
+
+  std::vector<Book> manyBooks(SpineShelfPlanner::THREE_ROW_SLOT_CAPACITY * 255 + 1,
+                              Book{"many-three-row-books", "Title", 25, "Author"});
+  const auto beyondPageLimit = SpineShelfPlanner::threeRowPageForSelection(
+      manyBooks.data(), manyBooks.size(), manyBooks.size() - 1, bounds);
+  EXPECT_EQ(beyondPageLimit.firstIndex, 0u);
+  EXPECT_EQ(beyondPageLimit.itemCount, 0);
+  EXPECT_EQ(beyondPageLimit.pageNumber, 0);
+  EXPECT_EQ(beyondPageLimit.pageCount, 255);
 }
 
 TEST(SpineShelfPlanner, OneRowAppearanceModesKeepSpineAndCoverGeometrySeparate) {

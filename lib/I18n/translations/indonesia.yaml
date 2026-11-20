@@ -438,3 +438,7 @@ STR_MARK_ON_HOLD: "Tandai Ditahan"
 STR_THEME_FOLIO_NOOIR: "Folio Nooir"
 STR_READING_STATS: "Statistik Membaca"
 STR_BOOK_STATISTICS: "Statistik Buku"
+
+STR_BT_WAITING_FOR_MEMORY: "Menunggu memori"
+STR_BT_SUSPENDED_FOR_READER: "Ditangguhkan untuk membaca"
+STR_BT_RECONNECT_PENDING: "Menunggu sambungan ulang"

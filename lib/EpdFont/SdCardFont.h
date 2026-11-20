@@ -29,6 +29,11 @@ class SdCardFont {
  public:
   static constexpr uint16_t MAX_PAGE_GLYPHS = 512;
   static constexpr uint8_t MAX_STYLES = 4;
+  using PrewarmAdmissionHook = bool (*)(void* context, size_t requiredFreeBytes, size_t requiredLargestBlock);
+  // Keep this existing render-adjacent reserve available after each SD-font
+  // prewarm allocation. Reader BLE admission thresholds and lifecycle remain
+  // owned by EpubReaderActivity.
+  static constexpr size_t PREWARM_HEAP_RESERVE_BYTES = 24 * 1024;
 
   SdCardFont() = default;
   ~SdCardFont();
@@ -52,14 +57,16 @@ class SdCardFont {
   // Default 0x0F = all present styles.
   // When metadataOnly=true, only glyph metrics are loaded (no bitmap data).
   // Returns number of glyphs that couldn't be loaded (0 on full success).
-  int prewarm(const char* utf8Text, uint8_t styleMask = 0x0F, bool metadataOnly = false);
+  int prewarm(const char* utf8Text, uint8_t styleMask = 0x0F, bool metadataOnly = false,
+              PrewarmAdmissionHook admissionHook = nullptr, void* admissionContext = nullptr);
 
   // Build a compact advance-only table for layout measurement.
   // Extracts ALL unique codepoints from words (no MAX_PAGE_GLYPHS cap),
   // batch-reads advanceX from SD, stores in a sorted per-style table.
   // extraText: optional additional codepoints to warm in the same SD pass
   // (e.g. shaped Arabic presentation forms the measurement path will look up).
-  // Returns number of codepoints not found in font coverage.
+  // Returns a bounded missing-codepoint diagnostic count (up to the scratch
+  // capacity per requested style); advance-table contents are independent.
   int buildAdvanceTable(const char* utf8Text, uint8_t styleMask = 0x0F, const char* extraText = nullptr);
   int buildAdvanceTable(const std::deque<std::string>& words, bool includeHyphen, uint8_t styleMask = 0x0F,
                         const char* extraText = nullptr);
@@ -143,6 +150,8 @@ class SdCardFont {
     uint32_t seekCount = 0;
     uint32_t uniqueGlyphs = 0;
     uint32_t bitmapBytes = 0;
+    uint32_t largestAllocationRequestBytes = 0;
+    uint32_t failedAllocationCount = 0;
   };
   void logStats(const char* label = "SDCF");
   void resetStats();
@@ -347,10 +356,13 @@ class SdCardFont {
   // PerStyle comment). Storage is released only by explicit lifecycle owners.
   void resetStyleMiniData(PerStyle& s);
   void freeStyleAll(PerStyle& s);
+  static void releaseIntervals(PerStyle& s);
   void freeStyleKernLigatureData(PerStyle& s);
   void freeStyleMiniKern(PerStyle& s);
-  bool loadStyleKernLigatureData(PerStyle& s, uint8_t styleIdx);
-  bool buildMiniKernMatrix(PerStyle& s, uint8_t styleIdx, const uint32_t* codepoints, uint32_t cpCount);
+  bool loadStyleKernLigatureData(PerStyle& s, uint8_t styleIdx, PrewarmAdmissionHook admissionHook,
+                                 void* admissionContext, bool* admissionDenied);
+  bool buildMiniKernMatrix(PerStyle& s, uint8_t styleIdx, const uint32_t* codepoints, uint32_t cpCount,
+                           PrewarmAdmissionHook admissionHook, void* admissionContext, bool* admissionDenied);
   void applyKernLigaturePointers(PerStyle& s, EpdFontData& data) const;
   void applyGlyphMissCallback(uint8_t styleIdx);
   int32_t findGlobalGlyphIndex(const PerStyle& s, uint32_t codepoint) const;
@@ -358,7 +370,11 @@ class SdCardFont {
   template <typename Iter>
   int buildAdvanceTableRange(Iter begin, Iter end, bool includeSpace, bool includeHyphen, uint8_t styleMask,
                              const char* extraText = nullptr);
-  int prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint32_t cpCount, bool metadataOnly);
+  int prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint32_t cpCount, bool metadataOnly,
+                   PrewarmAdmissionHook admissionHook, void* admissionContext);
+  bool admitPrewarmAllocation(size_t requestedBytes, PrewarmAdmissionHook admissionHook, void* admissionContext,
+                              const char* stage);
+  void recordAllocationRequest(size_t requestedBytes);
 
   // Global helpers
   void freeAll();

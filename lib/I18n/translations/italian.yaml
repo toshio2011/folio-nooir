@@ -445,3 +445,7 @@ STR_MARK_ON_HOLD: "Metti in sospeso"
 STR_THEME_FOLIO_NOOIR: "Folio Nooir"
 STR_READING_STATS: "Statistiche di lettura"
 STR_BOOK_STATISTICS: "Statistiche del libro"
+
+STR_BT_WAITING_FOR_MEMORY: "In attesa di memoria"
+STR_BT_SUSPENDED_FOR_READER: "Sospeso per la lettura"
+STR_BT_RECONNECT_PENDING: "Riconnessione in attesa"

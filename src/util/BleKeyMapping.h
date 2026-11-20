@@ -6,19 +6,49 @@
 namespace bleinput::mapping {
 
 // Persisted kind 0 is a normalized SpecialKey and kind 1 is the pre-existing
-// untyped usage identity. New learned keyboard usages use kind 2 so they cannot
-// collide with synthetic/unclassified generic report codes.
+// untyped usage identity. Kinds 2 and 3 are typed Keyboard and Consumer Control
+// usages so equal byte values on different HID pages do not collide.
 constexpr uint8_t kButtonAction = 0;
 constexpr uint8_t kShortcutAction = 1;
 constexpr uint8_t kShortcutHome = 0;
 constexpr uint8_t kShortcutLibrary = 1;
 constexpr uint8_t kShortcutRecent = 2;
 constexpr uint8_t kShortcutClippings = 3;
-constexpr uint8_t kShortcutCount = 4;
+constexpr uint8_t kGlobalShortcutCount = 4;
+constexpr uint8_t kReaderShortcutBase = kGlobalShortcutCount;
+constexpr uint8_t kReaderQuickActionCount = 12;
+constexpr uint8_t kReaderExtraActionNextChapter = 12;
+constexpr uint8_t kReaderExtraActionPreviousChapter = 13;
+constexpr uint8_t kReaderExtraActionFootnotes = 14;
+constexpr uint8_t kReaderShortcutCount = 15;
+constexpr uint8_t kShortcutCount = kGlobalShortcutCount + kReaderShortcutCount;
+constexpr uint8_t readerShortcutTarget(const uint8_t readerAction) {
+  return readerAction < kReaderShortcutCount ? static_cast<uint8_t>(kReaderShortcutBase + readerAction) : 0xFF;
+}
+constexpr bool isReaderActionShortcut(const uint8_t target) {
+  return target >= kReaderShortcutBase && target < kShortcutCount;
+}
 constexpr uint8_t kPhysicalButtonCount = 6;
 constexpr uint8_t kLegacyButtonCount = 11;
 constexpr uint8_t kSignatureMaxEvents = 8;
 constexpr uint8_t kMapCapacity = 10;
+constexpr uint8_t kInputLabelBytes = 16;
+constexpr uint8_t kIineGestureIdentityKind = 4;
+constexpr uint8_t kIineGestureTap = 1;
+constexpr uint8_t kIineGestureSwipeLeft = 2;
+constexpr uint8_t kIineGestureSwipeRight = 3;
+constexpr uint8_t kIineGestureSwipeUp = 4;
+constexpr uint8_t kIineGestureSwipeDown = 5;
+// Standard HID Button-page usages. The historical kind number is retained for
+// SD compatibility; identities are semantic Button usages, not device labels.
+constexpr uint8_t kIineMouseButtonIdentityKind = 5;
+
+constexpr bool validIdentity(const uint8_t kind, const uint8_t value) {
+  return kind <= 3 ||
+         (kind == kIineGestureIdentityKind && value >= kIineGestureTap && value <= kIineGestureSwipeDown) ||
+         (kind == kIineMouseButtonIdentityKind && value >= 1) ||
+         (kind >= 6 && kind <= 12);  // descriptor/report/field/state components
+}
 
 enum class InputPhase : uint8_t { Press, Repeat, Release };
 enum class ButtonTransition : uint8_t { Ignored, Pressed, Repeated, Released, Debounced };
@@ -63,7 +93,8 @@ inline ButtonTransition transition(const InputPhase phase, const bool held, cons
 
 inline CaptureResult addCapturedIdentity(uint8_t* kinds, uint8_t* values, const uint8_t capacity, uint8_t& count,
                                          const uint8_t kind, const uint8_t value) {
-  if (!kinds || !values || capacity == 0 || capacity > kSignatureMaxEvents || count > capacity || kind > 2)
+  if (!kinds || !values || capacity == 0 || capacity > kSignatureMaxEvents || count > capacity ||
+      !validIdentity(kind, value))
     return CaptureResult::Invalid;
   for (uint8_t i = 0; i < count; ++i) {
     if (kinds[i] == kind && values[i] == value) return CaptureResult::Duplicate;
@@ -75,10 +106,16 @@ inline CaptureResult addCapturedIdentity(uint8_t* kinds, uint8_t* values, const 
   return CaptureResult::Added;
 }
 
-inline bool encodeKeyboardUsageForLearning(const uint8_t usagePage, const uint8_t usage, uint8_t& kind,
-                                           uint8_t& value) {
-  if (usage == 0 || usagePage != 0x07) return false;
-  kind = 2;
+inline bool encodeHidUsageForLearning(const uint8_t usagePage, const uint8_t usage, uint8_t& kind,
+                                      uint8_t& value) {
+  if (usage == 0) return false;
+  if (usagePage == 0x07) kind = 2;
+  else if (usagePage == 0x0C) kind = 3;
+  else if (usagePage == 0x0D && usage >= kIineGestureTap && usage <= kIineGestureSwipeDown)
+    kind = kIineGestureIdentityKind;
+  else if (usagePage == 0x09 && usage >= 1)
+    kind = kIineMouseButtonIdentityKind;
+  else return false;
   value = usage;
   return true;
 }
@@ -104,6 +141,9 @@ struct KeyMapEntry {
   uint8_t shortcut = 0xFF;
   uint8_t signatureCount = 0;
   uint16_t signature[kSignatureMaxEvents] = {};
+  // Optional presentation-only label. It is deliberately excluded from all
+  // identity matching so renaming never changes a learned HID signature.
+  char inputLabel[kInputLabelBytes] = {};
 };
 
 struct CapturedIdentity {
@@ -126,7 +166,32 @@ struct PersistedEntry {
   uint8_t shortcut = 0xFF;
   uint8_t signatureCount = 0;
   uint16_t signature[kSignatureMaxEvents] = {};
+  char inputLabel[kInputLabelBytes] = {};
 };
+
+inline bool validInputLabel(const char* label) {
+  if (!label) return false;
+  for (uint8_t i = 0; i < kInputLabelBytes; ++i) {
+    const uint8_t c = static_cast<uint8_t>(label[i]);
+    if (c == 0) return true;
+    if (c < 0x20 || c == 0x7F) return false;
+  }
+  return false;  // bounded labels must always be terminated
+}
+
+inline bool setInputLabel(KeyMapEntry& entry, const char* label) {
+  if (!label) return false;
+  uint8_t length = 0;
+  while (length < kInputLabelBytes && label[length]) {
+    const uint8_t c = static_cast<uint8_t>(label[length]);
+    if (c < 0x20 || c == 0x7F) return false;
+    ++length;
+  }
+  if (length >= kInputLabelBytes) return false;
+  for (uint8_t i = 0; i < kInputLabelBytes; ++i) entry.inputLabel[i] = 0;
+  for (uint8_t i = 0; i < length; ++i) entry.inputLabel[i] = label[i];
+  return true;
+}
 
 enum class AssignResult : uint8_t { Added, Replaced, Removed, Full, Invalid, NotFound };
 
@@ -147,12 +212,15 @@ constexpr bool sameCodeIdentity(const uint8_t leftKind, const uint8_t leftValue,
 }
 
 constexpr bool entryIsValid(const KeyMapEntry& entry) {
-  if (entry.keyKind > 2 || !validTarget(entry.actionType, entry.actionType == kButtonAction ? entry.button
+  if (!validIdentity(entry.keyKind, entry.keyValue) ||
+      !validTarget(entry.actionType, entry.actionType == kButtonAction ? entry.button
                                                                                            : entry.shortcut))
     return false;
   if (entry.signatureCount > kSignatureMaxEvents) return false;
+  if (!validInputLabel(entry.inputLabel)) return false;
   for (uint8_t i = 0; i < entry.signatureCount; ++i) {
-    if ((entry.signature[i] >> 8) > 2) return false;
+    if (!validIdentity(static_cast<uint8_t>(entry.signature[i] >> 8),
+                       static_cast<uint8_t>(entry.signature[i] & 0xFF))) return false;
   }
   return entry.signatureCount == 0 ||
          (static_cast<uint8_t>(entry.signature[0] >> 8) == entry.keyKind &&
@@ -204,13 +272,37 @@ inline bool sameCaptured(const KeyMapEntry& entry, const CapturedIdentity* captu
 }
 
 template <size_t Capacity>
+bool preservesExistingMappings(const KeyMapEntry (&existing)[Capacity],
+                               const KeyMapEntry (&candidate)[Capacity]) {
+  for (const auto& saved : existing) {
+    if (!entryIsValid(saved)) continue;
+    CapturedIdentity identity[kSignatureMaxEvents]{};
+    const uint8_t count = entryCount(saved);
+    for (uint8_t i = 0; i < count; ++i) {
+      const uint16_t encoded = saved.signatureCount ? saved.signature[i]
+          : (static_cast<uint16_t>(saved.keyKind) << 8) | saved.keyValue;
+      identity[i] = {static_cast<uint8_t>(encoded >> 8), static_cast<uint8_t>(encoded & 0xFF)};
+    }
+    bool retained = false;
+    for (const auto& current : candidate) {
+      if (sameCaptured(current, identity, count)) {
+        retained = true;
+        break;
+      }
+    }
+    if (!retained) return false;
+  }
+  return true;
+}
+
+template <size_t Capacity>
 AssignResult assign(KeyMapEntry (&entries)[Capacity], const CapturedIdentity* captured, const uint8_t count,
                     const uint8_t actionType, const uint8_t target) {
   if (!captured || count == 0 || count > kSignatureMaxEvents || actionType > kShortcutAction ||
       !validTarget(actionType, target))
     return AssignResult::Invalid;
   for (uint8_t i = 0; i < count; ++i) {
-    if (captured[i].kind > 2) return AssignResult::Invalid;
+    if (!validIdentity(captured[i].kind, captured[i].value)) return AssignResult::Invalid;
     for (uint8_t j = 0; j < i; ++j) {
       if (captured[i].kind == captured[j].kind && captured[i].value == captured[j].value)
         return AssignResult::Invalid;
@@ -236,7 +328,12 @@ AssignResult assign(KeyMapEntry (&entries)[Capacity], const CapturedIdentity* ca
   }
   if (!destination) return AssignResult::Full;
 
+  char preservedLabel[kInputLabelBytes] = {};
+  if (replaced) {
+    for (uint8_t i = 0; i < kInputLabelBytes; ++i) preservedLabel[i] = destination->inputLabel[i];
+  }
   *destination = KeyMapEntry{};
+  for (uint8_t i = 0; i < kInputLabelBytes; ++i) destination->inputLabel[i] = preservedLabel[i];
   destination->keyKind = captured[0].kind;
   destination->keyValue = captured[0].value;
   destination->actionType = actionType;
@@ -264,7 +361,8 @@ template <size_t Capacity>
 bool resetToDefaults(KeyMapEntry (&entries)[Capacity], const DefaultBinding* defaults, const uint8_t count) {
   if ((!defaults && count != 0) || count > Capacity) return false;
   for (uint8_t i = 0; i < count; ++i) {
-    if (defaults[i].identity.kind > 2 || defaults[i].actionType > kShortcutAction ||
+    if (!validIdentity(defaults[i].identity.kind, defaults[i].identity.value) ||
+        defaults[i].actionType > kShortcutAction ||
         !validTarget(defaults[i].actionType, defaults[i].target))
       return false;
   }
@@ -279,7 +377,8 @@ bool resetToDefaults(KeyMapEntry (&entries)[Capacity], const DefaultBinding* def
 inline bool fromPersisted(const PersistedEntry& source, KeyMapEntry& output) {
   output = KeyMapEntry{};
   const uint8_t actionType = source.actionType == 0xFF ? kButtonAction : source.actionType;
-  if (source.keyKind > 2 || source.signatureCount > kSignatureMaxEvents || actionType > kShortcutAction) return false;
+  if (!validIdentity(source.keyKind, source.keyValue) || source.signatureCount > kSignatureMaxEvents ||
+      actionType > kShortcutAction) return false;
   const uint8_t target = actionType == kButtonAction ? source.button : source.shortcut;
   if (!validTarget(actionType, target)) return false;
 
@@ -292,7 +391,7 @@ inline bool fromPersisted(const PersistedEntry& source, KeyMapEntry& output) {
     if (source.signatureCount < 2) return false;
     for (uint8_t i = 0; i < source.signatureCount; ++i) {
       const uint16_t encoded = source.signature[i];
-      if ((encoded >> 8) > 2) return false;
+      if (!validIdentity(static_cast<uint8_t>(encoded >> 8), static_cast<uint8_t>(encoded & 0xFF))) return false;
       output.signature[i] = encoded;
     }
     if (static_cast<uint8_t>(output.signature[0] >> 8) != output.keyKind ||
@@ -300,6 +399,8 @@ inline bool fromPersisted(const PersistedEntry& source, KeyMapEntry& output) {
       return false;
     output.signatureCount = source.signatureCount;
   }
+  if (!validInputLabel(source.inputLabel)) return false;
+  for (uint8_t i = 0; i < kInputLabelBytes; ++i) output.inputLabel[i] = source.inputLabel[i];
   return entryIsValid(output);
 }
 
@@ -313,6 +414,7 @@ inline PersistedEntry toPersisted(const KeyMapEntry& source) {
   output.shortcut = source.shortcut;
   output.signatureCount = source.signatureCount;
   for (uint8_t i = 0; i < source.signatureCount; ++i) output.signature[i] = source.signature[i];
+  for (uint8_t i = 0; i < kInputLabelBytes; ++i) output.inputLabel[i] = source.inputLabel[i];
   return output;
 }
 

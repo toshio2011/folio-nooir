@@ -409,3 +409,7 @@ STR_THEME_FOLIO_NOOIR: "Folio Nooir"
 STR_READING_STATS: "Lesestatistikk"
 STR_BOOK_STATISTICS: "Bokstatistikk"
 STR_RESUME: "Fortsett"
+
+STR_BT_WAITING_FOR_MEMORY: "Venter på minne"
+STR_BT_SUSPENDED_FOR_READER: "Pauset for lesing"
+STR_BT_RECONNECT_PENDING: "Venter på ny tilkobling"

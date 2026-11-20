@@ -457,6 +457,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   static constexpr uint8_t BLE_CONTROLLER_PRESET_GENERIC = 0;
   static constexpr uint8_t BLE_CONTROLLER_PRESET_YISER_J6_RING = 1;
   uint8_t bleControllerPreset = BLE_CONTROLLER_PRESET_GENERIC;
+  // Active saved BLE mapping profile. Zero is the protected migrated Default.
+  uint8_t bleMappingProfileId = 0;
   // Remote-button mapping table: each slot binds a compact decoded HID identity
   // to an existing physical logical button or a safe navigation shortcut.
   // Fixed-capacity POD storage keeps lookup allocation-free and bounded.

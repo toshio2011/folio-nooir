@@ -134,6 +134,7 @@ class MappedInputManager {
   static constexpr uint8_t kBleSignatureMaxEvents = 8;
   void setBleCaptureMode(bool enabled);
   bool bleCaptureSawUnsupported() const { return bleCaptureSawUnsupportedInput; }
+  uint8_t bleCaptureRejectReason() const { return bleCaptureRejectReasonValue; }
   bool takeCapturedBleKey(uint8_t& kind, uint8_t& value);
   bool takeCapturedBleSignature(uint8_t* kinds, uint8_t* values, uint8_t capacity, uint8_t& count);
 
@@ -178,11 +179,13 @@ class MappedInputManager {
   bool bleActiveBinding[kButtonCount] = {};
   uint8_t bleActiveKinds[kButtonCount] = {};
   uint8_t bleActiveValues[kButtonCount] = {};
+  bool bleActiveLearnedIdentity[kButtonCount] = {};
   bool bleActivityThisFrame = false;
   int8_t blePendingShortcut = -1;
   bool bleShortcutActive[bleinput::mapping::kMapCapacity] = {};
   bool bleCaptureMode = false;
   bool bleCaptureSawUnsupportedInput = false;
+  uint8_t bleCaptureRejectReasonValue = 0;
   bool bleHasCaptured = false;
   unsigned long bleCaptureQuietUntil = 0;
   unsigned long bleCaptureStartedAt = 0;

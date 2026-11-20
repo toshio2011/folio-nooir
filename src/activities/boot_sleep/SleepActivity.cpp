@@ -38,6 +38,7 @@
 #include "images/NooirLogo360.h"
 #include "util/ClipFile.h"
 #include "util/HomeSnapshotPolicy.h"
+#include "util/HeapLifetimeDiagnostics.h"
 #include "util/SleepScreenMode.h"
 #include "util/EpubDiagnostics.h"
 #include "util/StatisticsCover.h"
@@ -116,6 +117,10 @@ void releaseSleepOwner(const char* owner, Release&& release) {
 }
 
 void releaseSleepBoundaryCaches(GfxRenderer& renderer) {
+#if NOOIR_HEAP_LIFETIME_TRACE
+  heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::SleepCleanup);
+  heap_lifetime_trace::checkpoint("sleep_cleanup_begin");
+#endif
   const size_t startFree = ESP.getFreeHeap();
   const size_t startLargest = ESP.getMaxAllocHeap();
   LOG_INF("SLPMEM", "stage=boundary_begin free=%u largest=%u", static_cast<unsigned>(startFree),
@@ -132,6 +137,11 @@ void releaseSleepBoundaryCaches(GfxRenderer& renderer) {
   releaseSleepOwner("image_render_cache", [] { ImageBlock::releaseRenderCache(); });
   releaseSleepOwner("reader_grayscale_scratch", [&renderer] { renderer.releaseGrayscaleStripScratch(); });
 
+#if NOOIR_HEAP_LIFETIME_TRACE
+  renderLock.unlock();
+  heap_lifetime_trace::checkpoint("sleep_cleanup_complete");
+  heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::Unknown);
+#endif
   LOG_INF("SLPMEM", "stage=boundary_ready free=%u->%u largest=%u->%u",
           static_cast<unsigned>(startFree), static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(startLargest), static_cast<unsigned>(ESP.getMaxAllocHeap()));
@@ -847,6 +857,10 @@ void SleepActivity::onEnter() {
     return;
   }
 
+#if NOOIR_HEAP_LIFETIME_TRACE
+  heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::SleepCleanup);
+  heap_lifetime_trace::checkpoint("sleep_activity_enter");
+#endif
 #if FREEINK_CAP_BLE_HID_HOST
   const bool bleWasRunning = BleHid.isRunning();
   const bool bleWasConnecting = BleHid.isConnecting();

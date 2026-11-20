@@ -204,6 +204,31 @@ constexpr bool canPatchLiteThreeRowPage(const bool liteThreeRowLayout, const boo
          currentSlots <= SPINE_THREE_ROW_MAX_PAGE_ITEMS;
 }
 
+template <size_t Capacity>
+constexpr bool threeRowPageIdentitySequenceMatches(
+    const size_t savedSlots, const size_t currentSlots,
+    const std::array<uint64_t, Capacity>& savedPathKeys,
+    const std::array<uint64_t, Capacity>& currentPathKeys) {
+  if (savedSlots == 0 || savedSlots != currentSlots || currentSlots > Capacity) return false;
+  for (size_t slot = 0; slot < currentSlots; ++slot) {
+    if (savedPathKeys[slot] == 0 || savedPathKeys[slot] != currentPathKeys[slot]) return false;
+  }
+  return true;
+}
+
+template <size_t Capacity>
+constexpr bool threeRowPageGeometryMatches(
+    const size_t savedSlots, const size_t currentSlots,
+    const std::array<SnapshotRect, Capacity>& savedRects,
+    const std::array<SnapshotRect, Capacity>& currentRects) {
+  if (savedSlots == 0 || savedSlots != currentSlots || currentSlots > Capacity) return false;
+  for (size_t slot = 0; slot < currentSlots; ++slot) {
+    if (!savedRects[slot].valid() || !currentRects[slot].valid() ||
+        !rectMatches(savedRects[slot], currentRects[slot])) return false;
+  }
+  return true;
+}
+
 // Face-only updates are safe only when the packed page structure is unchanged.
 // A moved identity, page start, slot count, or rectangle can also move centered
 // row groups and shelf furniture, which requires a full framebuffer rebuild.
@@ -218,14 +243,51 @@ constexpr bool threeRowPageStructureMatches(
       currentSlots > Capacity) {
     return false;
   }
+  return threeRowPageIdentitySequenceMatches(savedSlots, currentSlots, savedPathKeys, currentPathKeys) &&
+         threeRowPageGeometryMatches(savedSlots, currentSlots, savedRects, currentRects);
+}
+
+enum class CarouselPatchAction : uint8_t { Rebuild, ReuseShelf, PatchCenter };
+
+constexpr CarouselPatchAction classifyNooirMainCarouselPatch(
+    const bool nooirMainCarousel, const bool savedSlotMetadataAvailable,
+    const bool sameSlotStructure, const uint8_t changedSlotMask) {
+  if (!nooirMainCarousel || !savedSlotMetadataAvailable || !sameSlotStructure) {
+    return CarouselPatchAction::Rebuild;
+  }
+  if (changedSlotMask == 0) return CarouselPatchAction::ReuseShelf;
+  return changedSlotMask == (1U << 4) ? CarouselPatchAction::PatchCenter
+                                      : CarouselPatchAction::Rebuild;
+}
+
+// A progress-only update can reuse a spine snapshot when the visible page is
+// still the same sequence of books. Three-row shelves also supply saved and
+// current rectangles; one- and two-row planner geometry is stable when the
+// book identities, order, and page boundaries match.
+template <size_t Capacity>
+constexpr bool spinePageStructureMatches(
+    const bool samePageStart, const size_t savedSlots, const size_t currentSlots,
+    const std::array<uint64_t, Capacity>& savedPathKeys,
+    const std::array<uint64_t, Capacity>& currentPathKeys,
+    const bool geometryAvailable,
+    const std::array<SnapshotRect, Capacity>& savedRects,
+    const std::array<SnapshotRect, Capacity>& currentRects) {
+  if (!samePageStart || savedSlots == 0 || savedSlots != currentSlots || currentSlots > Capacity) return false;
   for (size_t slot = 0; slot < currentSlots; ++slot) {
-    if (savedPathKeys[slot] == 0 || savedPathKeys[slot] != currentPathKeys[slot] ||
-        !savedRects[slot].valid() || !currentRects[slot].valid() ||
-        !rectMatches(savedRects[slot], currentRects[slot])) {
+    if (savedPathKeys[slot] == 0 || savedPathKeys[slot] != currentPathKeys[slot]) return false;
+    if (geometryAvailable &&
+        (!savedRects[slot].valid() || !currentRects[slot].valid() ||
+         !rectMatches(savedRects[slot], currentRects[slot]))) {
       return false;
     }
   }
   return true;
+}
+
+constexpr bool canPatchLegacySpineDynamicMismatch(
+    const bool keyMatches, const bool cachedStructureMatches, const bool dynamicChanged,
+    const bool sameVisiblePage, const bool pageRangeValid) {
+  return !keyMatches && cachedStructureMatches && dynamicChanged && sameVisiblePage && pageRangeValid;
 }
 
 constexpr bool slotNeedsPatch(const uint64_t savedPath, const uint64_t currentPath,

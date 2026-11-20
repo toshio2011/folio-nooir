@@ -115,8 +115,123 @@ StrId achievementTitleId(const StatisticsAchievementId id) {
       return StrId::STR_ACH_STREAK_III;
     case StatisticsAchievementId::ActiveDays30:
       return StrId::STR_ACH_ACTIVE_DAYS;
+    case StatisticsAchievementId::Finished50:
+      return StrId::STR_ACH_FINISHED_50;
+    case StatisticsAchievementId::Finished100:
+      return StrId::STR_ACH_FINISHED_100;
+    case StatisticsAchievementId::ReadingHours250:
+      return StrId::STR_ACH_READING_HOURS_250;
+    case StatisticsAchievementId::ReadingHours500:
+      return StrId::STR_ACH_READING_HOURS_500;
+    case StatisticsAchievementId::Pages10000:
+      return StrId::STR_ACH_PAGES_10000;
+    case StatisticsAchievementId::Pages25000:
+      return StrId::STR_ACH_PAGES_25000;
+    case StatisticsAchievementId::Streak60:
+      return StrId::STR_ACH_STREAK_60;
+    case StatisticsAchievementId::ActiveDays100:
+      return StrId::STR_ACH_ACTIVE_DAYS_100;
+    case StatisticsAchievementId::Sessions250:
+      return StrId::STR_ACH_SESSIONS_250;
+    case StatisticsAchievementId::Sessions500:
+      return StrId::STR_ACH_SESSIONS_500;
   }
   return StrId::STR_ACH_FIRST_SESSION;
+}
+
+enum class AchievementCategory : uint8_t { Books, ReadingTime, Pages, Sessions, Streak, ActiveDays };
+
+AchievementCategory achievementCategory(const StatisticsAchievementId id) {
+  switch (id) {
+    case StatisticsAchievementId::FirstStartedBook:
+    case StatisticsAchievementId::FirstFinishedBook:
+    case StatisticsAchievementId::Finished5:
+    case StatisticsAchievementId::Finished10:
+    case StatisticsAchievementId::Finished25:
+    case StatisticsAchievementId::Finished50:
+    case StatisticsAchievementId::Finished100:
+      return AchievementCategory::Books;
+    case StatisticsAchievementId::ReadingHour1:
+    case StatisticsAchievementId::ReadingHours10:
+    case StatisticsAchievementId::ReadingHours50:
+    case StatisticsAchievementId::ReadingHours100:
+    case StatisticsAchievementId::ReadingHours250:
+    case StatisticsAchievementId::ReadingHours500:
+      return AchievementCategory::ReadingTime;
+    case StatisticsAchievementId::Pages500:
+    case StatisticsAchievementId::Pages1000:
+    case StatisticsAchievementId::Pages5000:
+    case StatisticsAchievementId::Pages10000:
+    case StatisticsAchievementId::Pages25000:
+      return AchievementCategory::Pages;
+    case StatisticsAchievementId::FirstSession:
+    case StatisticsAchievementId::Sessions10:
+    case StatisticsAchievementId::Sessions50:
+    case StatisticsAchievementId::Sessions100:
+    case StatisticsAchievementId::Sessions250:
+    case StatisticsAchievementId::Sessions500:
+      return AchievementCategory::Sessions;
+    case StatisticsAchievementId::Streak3:
+    case StatisticsAchievementId::Streak7:
+    case StatisticsAchievementId::Streak30:
+    case StatisticsAchievementId::Streak60:
+      return AchievementCategory::Streak;
+    case StatisticsAchievementId::ActiveDays30:
+    case StatisticsAchievementId::ActiveDays100:
+      return AchievementCategory::ActiveDays;
+  }
+  return AchievementCategory::Books;
+}
+
+void drawAchievementCategoryIcon(const GfxRenderer& renderer, const int x, const int y,
+                                 const AchievementCategory category, const bool earned) {
+  const bool black = !earned;
+  const int left = x + 7;
+  const int top = y + 7;
+  const int right = x + 27;
+  const int bottom = y + 27;
+  if (category == AchievementCategory::Sessions) {
+    // Calendar/session: frame, binding, and two day marks.
+    renderer.drawRoundedRect(left + 1, top + 3, 18, 16, 1, 3, black);
+    renderer.drawLine(left + 1, top + 8, right - 1, top + 8, 1, black);
+    renderer.drawLine(left + 6, top + 1, left + 6, top + 5, 1, black);
+    renderer.drawLine(left + 14, top + 1, left + 14, top + 5, 1, black);
+    renderer.drawRect(left + 5, top + 11, 2, 2, black);
+    renderer.drawRect(left + 12, top + 11, 2, 2, black);
+  } else if (category == AchievementCategory::Books) {
+    // Open book: two leaves and a central spine.
+    renderer.drawLine(left + 1, top + 5, left + 9, top + 7, 1, black);
+    renderer.drawLine(left + 9, top + 7, left + 9, bottom - 2, 1, black);
+    renderer.drawLine(left + 9, top + 7, right - 1, top + 5, 1, black);
+    renderer.drawLine(left + 9, bottom - 2, right - 1, bottom, 1, black);
+    renderer.drawLine(left + 1, top + 5, left + 1, bottom - 1, 1, black);
+    renderer.drawLine(left + 1, bottom - 1, left + 9, bottom - 2, 1, black);
+    renderer.drawLine(right - 1, top + 5, right - 1, bottom, 1, black);
+  } else if (category == AchievementCategory::ReadingTime) {
+    // Clock: circular frame and clock hands.
+    renderer.drawRoundedRect(left + 2, top + 2, 16, 16, 1, 8, black);
+    renderer.drawLine(left + 10, top + 5, left + 10, top + 10, 1, black);
+    renderer.drawLine(left + 10, top + 10, left + 14, top + 12, 1, black);
+  } else if (category == AchievementCategory::Pages) {
+    // Page: sheet with three text strokes.
+    renderer.drawRoundedRect(left + 3, top + 1, 14, 19, 1, 2, black);
+    renderer.drawLine(left + 6, top + 7, left + 14, top + 7, 1, black);
+    renderer.drawLine(left + 6, top + 11, left + 14, top + 11, 1, black);
+    renderer.drawLine(left + 6, top + 15, left + 12, top + 15, 1, black);
+  } else if (category == AchievementCategory::Streak) {
+    // Reading streak: compact rising spark/chevron.
+    renderer.drawLine(left + 2, bottom - 2, left + 7, top + 12, 2, black);
+    renderer.drawLine(left + 7, top + 12, left + 11, top + 16, 2, black);
+    renderer.drawLine(left + 11, top + 16, left + 18, top + 4, 2, black);
+  } else {
+    // Active reading days: calendar grid, avoiding a second persistence-based tracker.
+    renderer.drawRoundedRect(left + 2, top + 2, 16, 17, 1, 3, black);
+    renderer.drawLine(left + 2, top + 7, right - 2, top + 7, 1, black);
+    renderer.drawRect(left + 6, top + 10, 2, 2, black);
+    renderer.drawRect(left + 12, top + 10, 2, 2, black);
+    renderer.drawRect(left + 6, top + 14, 2, 2, black);
+    renderer.drawRect(left + 12, top + 14, 2, 2, black);
+  }
 }
 
 std::string achievementProgress(const StatisticsAchievementSnapshot& achievement) {
@@ -428,13 +543,18 @@ void ReadingStatsActivity::handleTap(const int x, const int y) {
   if (activeTab == Tab::Achievements && !snapshot.achievements.empty()) {
     const int side = UITheme::getInstance().getMetrics().contentSidePadding;
     const int gap = 10;
-    const int cardWidth = (pageWidth - side * 2 - gap) / 2;
+    const int listWidth = pageWidth - side * 2;
+    const int cardWidth = (listWidth - gap) / 2;
     const int cardHeight = 100;
-    const int rows = std::max(1, (contentBottom() - contentTop()) / cardHeight);
+    const int cardsTop = contentTop() + 30;
+    const int rows = std::max(1, (contentBottom() - cardsTop) / cardHeight);
     const size_t perPage = static_cast<size_t>(rows * 2);
     const size_t first = selectedAchievement / perPage * perPage;
-    const int col = x < side + cardWidth ? 0 : 1;
-    const int row = (y - contentTop()) / cardHeight;
+    if (x < side || x >= side + listWidth || y < cardsTop || y >= cardsTop + rows * cardHeight) return;
+    const int localX = x - side;
+    if (localX >= cardWidth && localX < cardWidth + gap) return;
+    const int col = localX < cardWidth ? 0 : 1;
+    const int row = (y - cardsTop) / cardHeight;
     if (row >= 0 && row < rows) {
       const size_t tapped = first + static_cast<size_t>(row * 2 + col);
       if (tapped < snapshot.achievements.size()) {
@@ -835,7 +955,25 @@ void ReadingStatsActivity::renderAchievements() {
   const int gap = 10;
   const int cardWidth = (width - gap) / 2;
   const int cardHeight = 100;
-  const int rows = std::max(1, (contentBottom() - contentTop()) / cardHeight);
+  const int summaryTop = contentTop();
+  const size_t earnedCount = static_cast<size_t>(std::count_if(
+      snapshot.achievements.begin(), snapshot.achievements.end(),
+      [](const StatisticsAchievementSnapshot& achievement) { return achievement.earned; }));
+  char earnedText[40];
+  snprintf(earnedText, sizeof(earnedText), "%u / %u %s", static_cast<unsigned>(earnedCount),
+           static_cast<unsigned>(snapshot.achievements.size()), tr(STR_STATS_EARNED));
+  renderer.drawText(SMALL_FONT_ID, side, summaryTop + 1, earnedText, true, EpdFontFamily::BOLD);
+  const int overallBarY = summaryTop + 16;
+  const int overallBarWidth = std::max(1, width);
+  renderer.drawRect(side, overallBarY, overallBarWidth, 7);
+  if (!snapshot.achievements.empty() && earnedCount > 0) {
+    const int innerWidth = std::max(0, overallBarWidth - 4);
+    const int fillWidth = static_cast<int>((static_cast<uint64_t>(innerWidth) * earnedCount) /
+                                           snapshot.achievements.size());
+    if (fillWidth > 0) renderer.fillRect(side + 2, overallBarY + 2, fillWidth, 3);
+  }
+  const int cardsTop = summaryTop + 30;
+  const int rows = std::max(1, (contentBottom() - cardsTop) / cardHeight);
   const size_t perPage = static_cast<size_t>(rows * 2);
   const size_t first = selectedAchievement / perPage * perPage;
   for (size_t offset = 0; offset < perPage; ++offset) {
@@ -845,18 +983,16 @@ void ReadingStatsActivity::renderAchievements() {
     const int row = static_cast<int>(offset / 2);
     const int col = static_cast<int>(offset % 2);
     const int x = side + col * (cardWidth + gap);
-    const int y = contentTop() + row * cardHeight;
+    const int y = cardsTop + row * cardHeight;
     if (index == selectedAchievement) renderer.drawRoundedRect(x, y + 2, cardWidth, cardHeight - 5, 2, 8, true);
     const int badgeX = x + 8;
     const int badgeY = y + 12;
     if (achievement.earned) {
       renderer.fillRoundedRect(badgeX, badgeY, 34, 34, 8, Color::Black);
-      renderer.drawLine(badgeX + 9, badgeY + 17, badgeX + 15, badgeY + 24, 2, false);
-      renderer.drawLine(badgeX + 15, badgeY + 24, badgeX + 26, badgeY + 11, 2, false);
     } else {
       renderer.drawRoundedRect(badgeX, badgeY, 34, 34, 1, 8, true);
-      renderer.drawLine(badgeX + 13, badgeY + 17, badgeX + 21, badgeY + 17, 1, true);
     }
+    drawAchievementCategoryIcon(renderer, badgeX, badgeY, achievementCategory(achievement.id), achievement.earned);
     const int textX = badgeX + 42;
     const int textWidth = cardWidth - 58;
     renderer.drawText(SMALL_FONT_ID, textX, y + 10,

@@ -235,6 +235,7 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["bluetoothEnabled"] = bluetoothEnabled;
   doc["bluetoothNoDeviceTimeoutSeconds"] = bluetoothNoDeviceTimeoutSeconds;
   doc["bleControllerPreset"] = bleControllerPreset;
+  doc["bleMappingProfileId"] = bleMappingProfileId;
   JsonArray bleMap = doc["bleKeyMap"].to<JsonArray>();
   for (const auto& entry : bleKeyMap) {
     if (!bleinput::mapping::entryIsValid(entry)) continue;
@@ -253,6 +254,7 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
       JsonArray signature = item["s"].to<JsonArray>();
       for (uint8_t i = 0; i < entry.signatureCount; ++i) signature.add(entry.signature[i]);
     }
+    if (entry.inputLabel[0]) item["n"] = entry.inputLabel;
   }
   // Font family — uses dynamic getter/setter in SettingsList so the generic loop skips it.
   doc["fontFamily"] = fontFamily;
@@ -602,6 +604,7 @@ bool CrossPointSettings::fromJsonForProfile(JsonVariantConst doc, const bool pre
                                   (preserveMissingManualFields ? s.bleControllerPreset
                                                                : BLE_CONTROLLER_PRESET_GENERIC),
                               BLE_CONTROLLER_PRESET_YISER_J6_RING + 1, BLE_CONTROLLER_PRESET_GENERIC);
+  bleMappingProfileId = doc["bleMappingProfileId"] | s.bleMappingProfileId;
   JsonArrayConst storedBleMap = doc["bleKeyMap"];
   if (!storedBleMap.isNull()) {
     for (auto& entry : bleKeyMap) entry = BleKeyMapEntry{};
@@ -614,7 +617,7 @@ bool CrossPointSettings::fromJsonForProfile(JsonVariantConst doc, const bool pre
       persisted.button = item["b"] | (uint8_t)0xFF;
       persisted.actionType = item["t"] | (uint8_t)0xFF;
       persisted.shortcut = item["a"] | (uint8_t)0xFF;
-      if (persisted.keyKind > 2 ||
+      if (!bleinput::mapping::validIdentity(persisted.keyKind, persisted.keyValue) ||
           (persisted.actionType != 0xFF && persisted.actionType != bleinput::mapping::kButtonAction &&
            persisted.actionType != bleinput::mapping::kShortcutAction)) {
         needsResave = true;
@@ -630,7 +633,8 @@ bool CrossPointSettings::fromJsonForProfile(JsonVariantConst doc, const bool pre
             break;
           }
           const uint16_t value = encoded | (uint16_t)0xFFFF;
-          if (value == 0xFFFF || (value >> 8) > 2) {
+          if (value == 0xFFFF ||
+              !bleinput::mapping::validIdentity(static_cast<uint8_t>(value >> 8), static_cast<uint8_t>(value))) {
             valid = false;
             break;
           }
@@ -644,6 +648,12 @@ bool CrossPointSettings::fromJsonForProfile(JsonVariantConst doc, const bool pre
         persisted.signatureCount = count;
       }
       if (!bleinput::mapping::fromPersisted(persisted, bleKeyMap[slot])) {
+        needsResave = true;
+        continue;
+      }
+      const char* inputLabel = item["n"] | "";
+      if (!bleinput::mapping::setInputLabel(bleKeyMap[slot], inputLabel)) {
+        bleKeyMap[slot] = BleKeyMapEntry{};
         needsResave = true;
         continue;
       }

@@ -52,6 +52,7 @@ class XtcReaderActivity final : public Activity {
   void openReaderMenu();
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action, int quickAction);
   void executeQuickAction(int actionValue);
+  bool handleBleMappedAction(uint8_t action) override;
   void launchKOReaderSync();
   void toggleCurrentBookmark();
   void updateAutoPageTurn(uint8_t pageTurnOption);

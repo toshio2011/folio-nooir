@@ -23,7 +23,7 @@ class DeviceInfoActivity final : public Activity {
     LargestFreeBlock,
   };
 
-  enum class LinkState : uint8_t { Off, On, Connected };
+  enum class LinkState : uint8_t { Off, On, Connecting, Connected, ReaderReturnPending };
 
   struct Snapshot {
     bool modelIsX3 = false;

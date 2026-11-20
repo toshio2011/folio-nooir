@@ -413,3 +413,7 @@ STR_THEME_FOLIO_NOOIR: "Folio Nooir"
 STR_READING_STATS: "Štatistiky čítania"
 STR_BOOK_STATISTICS: "Štatistiky knihy"
 STR_RESUME: "Pokračovať"
+
+STR_BT_WAITING_FOR_MEMORY: "Čaká sa na pamäť"
+STR_BT_SUSPENDED_FOR_READER: "Pozastavené pre čítanie"
+STR_BT_RECONNECT_PENDING: "Opätovné pripojenie čaká"

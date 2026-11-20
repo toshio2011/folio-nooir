@@ -442,3 +442,7 @@ STR_MARK_ON_HOLD: "Markera som pausad"
 STR_THEME_FOLIO_NOOIR: "Folio Nooir"
 STR_READING_STATS: "Lässtatistik"
 STR_BOOK_STATISTICS: "Bokstatistik"
+
+STR_BT_WAITING_FOR_MEMORY: "Väntar på minne"
+STR_BT_SUSPENDED_FOR_READER: "Pausad för läsning"
+STR_BT_RECONNECT_PENDING: "Återanslutning väntar"

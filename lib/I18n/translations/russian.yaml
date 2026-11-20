@@ -417,3 +417,7 @@ STR_THEME_FOLIO_NOOIR: "Folio Nooir"
 STR_READING_STATS: "Статистика чтения"
 STR_BOOK_STATISTICS: "Статистика книги"
 STR_RESUME: "Продолжить"
+
+STR_BT_WAITING_FOR_MEMORY: "Ожидание памяти"
+STR_BT_SUSPENDED_FOR_READER: "Приостановлено для чтения"
+STR_BT_RECONNECT_PENDING: "Ожидание переподключения"

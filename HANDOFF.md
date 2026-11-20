@@ -1,5 +1,18 @@
 # Folio Nooir Handoff
 
+## CURRENT — 2026-11-20 cumulative integration and protected _04 milestone
+
+The protected _04 BIN/ELF remain unchanged. The owner reports physical repeated EPUB BLE recovery on the original X4; the detailed results and provenance boundary are recorded in [the _04 milestone](docs/milestones/FOLIO_NOOIR_1.6.7_X4_BLE_MILESTONE_2026-11-20.md). The raw COM3 file currently saved in the _04 archive is the earlier pre-fix capture with runtime-floor faults; it is not the post-fix _04 capture. Do not conflate those records.
+
+The isolated integration branch is `codex/folio-nooir-1.6.7-integrated-20261120`. It integrates the cumulative _04 source, pins FreeInk at `958720659ea289ae325e83db20049d0ea844800d`, and carries the four semantic Nooir SDK changes as a reviewable patch applied by a build hook. See [the cumulative audit](docs/integration/NOOIR_1.6.7_CUMULATIVE_AUDIT_2026-11-20.md) and [Do Not Repeat](DO_NOT_REPEAT.md).
+
+The _04 owner-reported physical session is meaningful progress, but the 20-turn single-session target, backward turns, XTCH, BLE-OFF performance, X3, full Main/Lite and long-duration validation remain open. The no-device watchdog and partial NimBLE initialization rollback remain release blockers. No firmware is flashed by this integration work.
+
+A separate `gh_release_nooir167_official_x4_20261120` profile is being prepared for a clean-labeled original-X4 build from a committed source revision. It preserves adaptive EPUB BLE behavior, SPI-array and IINE gestures while undefining diagnostic-only raw/lifecycle/resource/transition logging. The sequential EPUB behavior macro remains enabled because it activates the tested disconnect-render-reconnect behavior; it is not treated as a log-only flag. The build is not a public release and still requires final physical validation.
+
+---
+
+
 ## CURRENT — 2026-11-01: Folio Nooir 1.6.7 focused refinement roadmap
 
 **This is the authoritative current work order.** Read the updated [1.6.7 performance/memory audit and roadmap](docs/NOOIR_1.6.7_PERFORMANCE_MEMORY_AUDIT_2026-11-01.md) for evidence, historical version comparisons, concrete tests and release gates. The older 2026-11-01 audit order (advance allocations first) is superseded. Historical notes below remain intact for provenance, not as concurrent work orders.

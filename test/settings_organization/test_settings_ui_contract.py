@@ -64,8 +64,22 @@ class SettingsUiContractTest(unittest.TestCase):
         loop = DEVICE_CPP[DEVICE_CPP.index("void DeviceInfoActivity::loop()"):
                           DEVICE_CPP.index("void DeviceInfoActivity::render")]
         for getter in ("powerManager.getBatteryPercentage", "Storage.ready", "cardCapacityBytes", "WiFi.getMode",
-                       "BleHid.isConnected", "ESP.getFreeHeap", "millis()"):
+                       "BleHid.isConnected", "BleHid.isConnecting", "readerBleReturnPending",
+                       "ESP.getFreeHeap", "millis()"):
             self.assertNotIn(getter, loop)
+
+    def test_device_info_shows_only_observed_ble_state_and_existing_heap_snapshot(self):
+        enter = function_body(DEVICE_CPP, "void DeviceInfoActivity::onEnter()", "const char* DeviceInfoActivity::rowTitle")
+        self.assertIn("BleHid.isConnected()", enter)
+        self.assertIn("BleHid.isConnecting()", enter)
+        self.assertIn("bleinput::readerBleReturnPending()", enter)
+        self.assertIn("BleHid.isRunning() ? LinkState::On : LinkState::Off", enter)
+        self.assertIn("snapshot_.freeHeap = ESP.getFreeHeap()", enter)
+        self.assertIn("snapshot_.largestFreeBlock = ESP.getMaxAllocHeap()", enter)
+        self.assertIn("STR_DEVICE_BLE_READER_PENDING", DEVICE_CPP)
+        self.assertIn("STR_CONNECTING", DEVICE_CPP)
+        self.assertIn("snapshot_.freeHeap / 1024U", DEVICE_CPP)
+        self.assertIn("snapshot_.largestFreeBlock / 1024U", DEVICE_CPP)
 
 
 if __name__ == "__main__":

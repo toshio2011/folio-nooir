@@ -335,3 +335,7 @@ STR_READING_STATS: "Statistika branja"
 STR_BOOK_STATISTICS: "Statistika knjige"
 STR_RESUME: "Nadaljuj"
 STR_THEME_ROUNDEDRAFF: "RoundedRaff"
+
+STR_BT_WAITING_FOR_MEMORY: "Čakanje na pomnilnik"
+STR_BT_SUSPENDED_FOR_READER: "Začasno ustavljeno med branjem"
+STR_BT_RECONNECT_PENDING: "Ponovna povezava čaka"

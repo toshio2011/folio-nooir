@@ -156,7 +156,10 @@ class JsonDocumentFileCompareWriter {
   }
 
   HalFile& file;
-  std::array<uint8_t, 256> buffer{};
+  // SD-card read calls carry enough latency that validating a staged save in
+  // tiny chunks is expensive. Keep the exact byte-for-byte comparison while
+  // limiting the per-call overhead with a bounded buffer.
+  std::array<uint8_t, 512> buffer{};
   size_t offset = 0;
   size_t available = 0;
   size_t compared = 0;
@@ -364,7 +367,8 @@ bool PersistableStoreBase::isSemanticallyValidSettingsDocument(JsonVariantConst 
 
 static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
                                    const bool useCachedSettingsValidation,
-                                   const bool preserveRecoveredRecentBooks) {
+                                   const bool preserveRecoveredRecentBooks,
+                                   const bool useKnownValidPrimary) {
   PersistableSaveProfile profile;
   const uint32_t saveStartedUs = micros();
   const bool settingsPath = isSettingsPath(path);
@@ -411,6 +415,7 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
   const bool recentRecoveryWrite = recentPath && preserveRecoveredRecentBooks;
   const bool fastSettingsWrite = settingsPath && useCachedSettingsValidation &&
                                  settingsValidationCacheState != SettingsValidationCacheState::Unknown;
+  const bool fastTrustedPrimaryWrite = !settingsPath && useKnownValidPrimary;
 
   SettingsFileState mainState = SettingsFileState::Missing;
   SettingsFileState backupState = SettingsFileState::Missing;
@@ -604,12 +609,30 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
   if (hadOriginal) {
     if (fastSettingsWrite) {
       // The validated primary is the strongest known-good copy. Removing an
-      // older backup before moving it into place is safe: if this removal or
-      // the following rename fails, the still-live primary remains untouched.
+      // older backup is safe only after the replacement temp passed exact
+      // byte validation: if this removal or the following rename fails, the
+      // still-live primary remains untouched.
       // Do not probe for the backup first; remove() returning false for an
       // absent backup is expected and the rename below is the authoritative
       // operation result.
+      const uint32_t backupPrepareStartedUs = micros();
       Storage.remove(backupPath.c_str());
+      profile.backupPrepareUs += micros() - backupPrepareStartedUs;
+    } else if (fastTrustedPrimaryWrite) {
+      // Keep an older recovery generation until the validated primary has
+      // been moved into .bak successfully. If that rename fails, the current
+      // primary and this older backup must both remain recoverable.
+      const uint32_t backupPrepareStartedUs = micros();
+      const uint32_t probeStartedUs = micros();
+      const bool backupExists = Storage.exists(backupPath.c_str());
+      profile.backupProbeUs += micros() - probeStartedUs;
+      ++profile.backupProbeCount;
+      if (backupExists &&
+          !moveBackupToUniqueSibling(backupPath.c_str(), ".previous-", displacedBackup, profile)) {
+        LOG_ERR("PERSIST", "Failed to preserve existing backup %s", backupPath.c_str());
+        return false;
+      }
+      profile.backupPrepareUs += micros() - backupPrepareStartedUs;
     }
     if (recentRecoveryWrite) {
       // The primary was rejected during Recent recovery. Preserve it for
@@ -623,19 +646,21 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
     } else {
       // Keep the old backup until the primary has been moved safely. If that
       // rename fails, both original files remain recoverable.
-      const uint32_t backupPrepareStartedUs = micros();
-      bool backupExists = backupState != SettingsFileState::Missing;
-      if (!settingsPath) {
-        const uint32_t probeStartedUs = micros();
-        backupExists = Storage.exists(backupPath.c_str());
-        profile.backupProbeUs += micros() - probeStartedUs;
-        ++profile.backupProbeCount;
+      if (!fastSettingsWrite && !fastTrustedPrimaryWrite) {
+        const uint32_t backupPrepareStartedUs = micros();
+        bool backupExists = backupState != SettingsFileState::Missing;
+        if (!settingsPath) {
+          const uint32_t probeStartedUs = micros();
+          backupExists = Storage.exists(backupPath.c_str());
+          profile.backupProbeUs += micros() - probeStartedUs;
+          ++profile.backupProbeCount;
+        }
+        if (backupExists && !moveBackupToUniqueSibling(backupPath.c_str(), ".previous-", displacedBackup, profile)) {
+          LOG_ERR("PERSIST", "Failed to preserve existing backup %s", backupPath.c_str());
+          return false;
+        }
+        profile.backupPrepareUs += micros() - backupPrepareStartedUs;
       }
-      if (backupExists && !moveBackupToUniqueSibling(backupPath.c_str(), ".previous-", displacedBackup, profile)) {
-        LOG_ERR("PERSIST", "Failed to preserve existing backup %s", backupPath.c_str());
-        return false;
-      }
-      profile.backupPrepareUs += micros() - backupPrepareStartedUs;
       const uint32_t primaryRenameStartedUs = micros();
       if (!Storage.rename(path, backupPath.c_str())) {
         LOG_ERR("PERSIST", "Failed to preserve %s as %s", path, backupPath.c_str());
@@ -702,20 +727,24 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
     LOG_INF("PERSIST", "settings_save_phase=primary_promoted_from_validated_temp");
   }
 
-  // The new document is complete; the backup is no longer needed for this
-  // write. It is recreated on the next save.
+  // The new document is complete. Trusted-primary writes keep the just-rotated
+  // validated primary as a recovery generation; ordinary generic writes keep
+  // their existing cleanup behavior.
   // If the original primary was missing, .bak may be the only recoverable
   // user settings. Keep it until a later save starts from a validated main.
-  if (fastSettingsWrite) {
+  if (fastSettingsWrite || fastTrustedPrimaryWrite) {
     // Keep the prior validated primary as the backup until the next changed
-    // save. This both avoids a post-commit existence probe and leaves a useful
-    // recovery copy if the new file is later damaged.
+    // save. This leaves a useful recovery copy if the new file is later
+    // damaged, while the staged temp was byte-validated before promotion.
+    if (fastTrustedPrimaryWrite && !displacedBackup.empty()) {
+      Storage.remove(displacedBackup.c_str());
+    }
   } else {
     // Recent history retains the prior committed primary as one recovery
     // generation. If the primary was missing, keep an existing .bak as the
     // only copy while the new main is promoted.
     const uint32_t cleanupStartedUs = micros();
-    if (!recentPath && ((!settingsPath) || hadOriginal)) {
+    if (!recentPath && !fastTrustedPrimaryWrite && ((!settingsPath) || hadOriginal)) {
       Storage.remove(backupPath.c_str());
     }
     if (!recentPath && !displacedBackup.empty()) Storage.remove(displacedBackup.c_str());
@@ -735,13 +764,18 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
     // encode_us includes the serializer's buffered writes; write_call_us is
     // nested time spent inside HalFile::write. Do not add those two fields.
     LOG_INF(recentPath ? "RBS" : "PERSIST",
-            "save_profile file=%.24s bytes=%u encode_us=%lu probe_us=%lu open_us=%lu write_call_us=%lu "
-            "sync_flush_us=%lu close_us=%lu validation_us=%lu backup_us=%lu primary_rename_us=%lu "
-            "temp_rename_us=%lu cleanup_us=%lu total_us=%lu",
-            fileName, static_cast<unsigned>(expectedBytes), static_cast<unsigned long>(profile.encodeUs),
+            "save_profile file=%.24s bytes=%u backup_mode=%s encode_us=%lu probe_us=%lu open_us=%lu "
+            "write_call_us=%lu sync_flush_us=%lu close_us=%lu",
+            fileName, static_cast<unsigned>(expectedBytes),
+            fastTrustedPrimaryWrite ? "validated_primary" : (fastSettingsWrite ? "validated_settings" : "checked"),
+            static_cast<unsigned long>(profile.encodeUs),
             static_cast<unsigned long>(profile.probeUs), static_cast<unsigned long>(profile.openUs),
             static_cast<unsigned long>(profile.fileWriteUs), static_cast<unsigned long>(profile.storageFlushUs),
-            static_cast<unsigned long>(profile.closeUs), static_cast<unsigned long>(profile.validationUs),
+            static_cast<unsigned long>(profile.closeUs));
+    LOG_INF(recentPath ? "RBS" : "PERSIST",
+            "save_profile_detail file=%.24s validation_us=%lu backup_us=%lu primary_rename_us=%lu "
+            "temp_rename_us=%lu cleanup_us=%lu total_us=%lu",
+            fileName, static_cast<unsigned long>(profile.validationUs),
             static_cast<unsigned long>(profile.backupPrepareUs), static_cast<unsigned long>(profile.primaryRenameUs),
             static_cast<unsigned long>(profile.tempRenameUs), static_cast<unsigned long>(profile.cleanupUs),
             static_cast<unsigned long>(profile.totalUs));
@@ -751,28 +785,34 @@ static bool writeDocToFileInternal(const char* path, const JsonDocument& doc,
               static_cast<unsigned>(profile.backupCollisionCount),
               static_cast<unsigned long>(profile.backupProbeUs),
               static_cast<unsigned long>(profile.backupRenameUs));
-      LOG_INF("RBS", "save_io file=%.24s write_calls=%u write_bytes=%u write_max=%u read_calls=%u read_bytes=%u read_max=%u",
-              fileName, static_cast<unsigned>(profile.fileWriteCalls),
-              static_cast<unsigned>(profile.fileWriteBytes), static_cast<unsigned>(profile.fileWriteMaxBytes),
-              static_cast<unsigned>(profile.fileReadCalls), static_cast<unsigned>(profile.fileReadBytes),
-              static_cast<unsigned>(profile.fileReadMaxBytes));
     }
+    LOG_INF(recentPath ? "RBS" : "PERSIST",
+            "save_io file=%.24s write_calls=%u write_bytes=%u write_max=%u read_calls=%u read_bytes=%u read_max=%u",
+            fileName, static_cast<unsigned>(profile.fileWriteCalls),
+            static_cast<unsigned>(profile.fileWriteBytes), static_cast<unsigned>(profile.fileWriteMaxBytes),
+            static_cast<unsigned>(profile.fileReadCalls), static_cast<unsigned>(profile.fileReadBytes),
+            static_cast<unsigned>(profile.fileReadMaxBytes));
   }
   return true;
 }
 
 bool PersistableStoreBase::writeDocToFile(const char* path, const JsonDocument& doc) {
-  const bool saved = writeDocToFileInternal(path, doc, false, false);
+  const bool saved = writeDocToFileInternal(path, doc, false, false, false);
   if (isSettingsPath(path) && saved) settingsValidationCacheState = SettingsValidationCacheState::Valid;
   return saved;
 }
 
+bool PersistableStoreBase::writeDocToFileWithKnownValidPrimary(const char* path, const JsonDocument& doc) {
+  if (isSettingsPath(path)) return false;
+  return writeDocToFileInternal(path, doc, false, false, true);
+}
+
 bool PersistableStoreBase::writeRecoveredRecentBooksDocToFile(const char* path, const JsonDocument& doc) {
-  return writeDocToFileInternal(path, doc, false, true);
+  return writeDocToFileInternal(path, doc, false, true, false);
 }
 
 bool PersistableStoreBase::writeSettingsDocToFile(const char* path, const JsonDocument& doc) {
-  const bool saved = writeDocToFileInternal(path, doc, true, false);
+  const bool saved = writeDocToFileInternal(path, doc, true, false, false);
   if (isSettingsPath(path)) {
     settingsValidationCacheState = saved ? SettingsValidationCacheState::Valid : SettingsValidationCacheState::Unknown;
   }
@@ -802,13 +842,15 @@ void PersistableStoreBase::invalidateSettingsValidationCache() {
 }
 
 bool PersistableStoreBase::readDocFromFile(const char* path, JsonDocument& doc,
-                                           persistable::SettingsLoadReport* settingsReport) {
+                                           persistable::SettingsLoadReport* settingsReport,
+                                           bool* primaryCandidateSelected) {
   const bool settingsPath = isSettingsPath(path);
   const String backupPath = String(path) + ".bak";
   const String tmpPath = String(path) + ".tmp";
   const String candidates[] = {String(path), backupPath, tmpPath};
   std::array<persistable::SettingsCandidateResult, 3> candidateResults{};
   if (settingsReport) *settingsReport = {};
+  if (primaryCandidateSelected) *primaryCandidateSelected = false;
 
   for (size_t i = 0; i < (sizeof(candidates) / sizeof(candidates[0])); ++i) {
     const String& candidate = candidates[i];
@@ -897,6 +939,7 @@ bool PersistableStoreBase::readDocFromFile(const char* path, JsonDocument& doc,
         if (settingsReport) settingsReport->selected = i;
         logSettingsCandidateSummary(candidateResults, settingsCandidateName(i));
       }
+      if (primaryCandidateSelected) *primaryCandidateSelected = i == 0;
       return true;
     }
     parsed = false;

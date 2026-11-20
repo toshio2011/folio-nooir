@@ -338,3 +338,7 @@ STR_READING_STATS: "Statistici de lectură"
 STR_BOOK_STATISTICS: "Statistici carte"
 STR_RESUME: "Reluare"
 STR_THEME_ROUNDEDRAFF: "RoundedRaff"
+
+STR_BT_WAITING_FOR_MEMORY: "Se așteaptă memoria"
+STR_BT_SUSPENDED_FOR_READER: "Suspendat pentru citire"
+STR_BT_RECONNECT_PENDING: "Reconectare în așteptare"

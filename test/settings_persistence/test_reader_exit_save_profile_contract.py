@@ -19,6 +19,33 @@ class ReaderExitSaveProfileContract(unittest.TestCase):
         self.assertIn("temporaryFileMatches(tmpPath.c_str(), doc, expectedBytes, &profile)", body)
         self.assertIn("Storage.rename(tmpPath.c_str(), path)", body)
 
+    def test_staged_file_validation_keeps_exact_comparison_with_bounded_larger_reads(self):
+        compare_writer = STORE.split("class JsonDocumentFileCompareWriter", 1)[1].split(
+            "bool writeJsonDocumentToFile", 1
+        )[0]
+        self.assertIn("std::array<uint8_t, 512> buffer{}", compare_writer)
+        self.assertIn("memcmp(buffer.data() + offset, data, chunk)", compare_writer)
+        self.assertIn("file.read(buffer.data(), buffer.size())", compare_writer)
+
+    def test_known_valid_reader_stores_skip_only_stale_backup_rotation_work(self):
+        body = STORE.split("static bool writeDocToFileInternal", 1)[1]
+        template = (ROOT / "lib/Serialization/PersistableStore.h").read_text(encoding="utf-8")
+        self.assertIn("fastTrustedPrimaryWrite = !settingsPath && useKnownValidPrimary", body)
+        self.assertIn("if (fastSettingsWrite || fastTrustedPrimaryWrite)", body)
+        self.assertIn("writeDocToFileWithKnownValidPrimary(T::getFilePath(), doc)", template)
+        self.assertIn("primaryFileKnownValid = ok && !doResave && primaryCandidateSelected", template)
+        self.assertIn("primaryCandidateSelected = i == 0", STORE)
+        self.assertIn("if (isSettingsPath(path)) return false", STORE)
+        recent_store = (ROOT / "src/RecentBooksStore.cpp").read_text(encoding="utf-8")
+        self.assertIn("currentLoadResult == RecentBooksLoadResult::Recovered", recent_store)
+        self.assertIn("currentLoadResult == RecentBooksLoadResult::Valid", recent_store)
+        self.assertIn("writeDocToFileWithKnownValidPrimary(getFilePath(), doc)", recent_store)
+        self.assertIn("temporaryFileMatches(tmpPath.c_str(), doc, expectedBytes, &profile)", body)
+        self.assertLess(body.index("temporaryFileMatches(tmpPath.c_str(), doc, expectedBytes, &profile)"),
+                        body.index("if (hadOriginal)"))
+        self.assertIn("if (!recentPath && !fastTrustedPrimaryWrite", body)
+        self.assertIn("if (fastSettingsWrite || fastTrustedPrimaryWrite)", body)
+
     def test_profile_reports_write_validation_and_each_promotion_phase(self):
         for field in (
             "open_us",
@@ -31,6 +58,8 @@ class ReaderExitSaveProfileContract(unittest.TestCase):
             "temp_rename_us",
             "cleanup_us",
             "total_us",
+            "save_io file=",
+            "read_calls=%u",
         ):
             self.assertIn(field, STORE)
 

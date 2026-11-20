@@ -334,3 +334,7 @@ STR_READING_STATS: "Оқу статистикасы"
 STR_BOOK_STATISTICS: "Кітап статистикасы"
 STR_RESUME: "Жалғастыру"
 STR_THEME_ROUNDEDRAFF: "RoundedRaff"
+
+STR_BT_WAITING_FOR_MEMORY: "Жадты күту"
+STR_BT_SUSPENDED_FOR_READER: "Оқу үшін тоқтатылды"
+STR_BT_RECONNECT_PENDING: "Қайта қосылу күтілуде"

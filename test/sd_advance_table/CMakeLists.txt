@@ -1,0 +1,3 @@
+add_executable(SdAdvanceTablePolicyTest SdAdvanceTablePolicyTest.cpp)
+target_link_libraries(SdAdvanceTablePolicyTest PRIVATE crosspoint_test_common GTest::gtest_main)
+gtest_discover_tests(SdAdvanceTablePolicyTest)

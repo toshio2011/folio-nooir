@@ -8,6 +8,8 @@
 #include "XtcReaderActivity.h"
 
 #include <Arduino.h>
+#include <Epub/blocks/ImageBlock.h>
+#include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalClock.h>
@@ -37,10 +39,13 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/BookmarkFile.h"
+#include "util/HeapLifetimeDiagnostics.h"
 #include "util/QuickActions.h"
 #include "util/ScreenshotUtil.h"
 #include "activities/reader/XtcRenderMemoryPolicy.h"
 #include <XtcFrameGeometry.h>
+
+#include "util/ReaderMemoryDiagnostics.h"
 
 namespace {
 enum class XtchRenderPass { Base, Lsb, Msb };
@@ -157,7 +162,12 @@ void XtcReaderActivity::requestExitToHome() {
 }
 
 void XtcReaderActivity::onEnter() {
+#if NOOIR_HEAP_LIFETIME_TRACE
+  heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::XtcReader);
+  heap_lifetime_trace::checkpoint("xtc_reader_enter_begin");
+#endif
   Activity::onEnter();
+  NOOIR_READER_MEMORY_CHECKPOINT("xtc_reader_enter_begin", "XtcReaderActivity state");
   mappedInput.setReaderMappingMode(true);
   readingSessionStartedMs = millis();
   exitHomePending = false;
@@ -168,9 +178,11 @@ void XtcReaderActivity::onEnter() {
   }
 
   xtc->setupCacheDir();
+  NOOIR_READER_MEMORY_CHECKPOINT("xtc_cache_dir_ready", "Xtc cache paths and directory");
 
   // Load saved progress
   loadProgress();
+  NOOIR_READER_MEMORY_CHECKPOINT("xtc_progress_loaded", "progress and bookmark state");
   if (initialBookmarkPage && xtc->getPageCount() > 0) {
     setCurrentPage(*initialBookmarkPage < xtc->getPageCount() ? *initialBookmarkPage : xtc->getPageCount() - 1);
   }
@@ -179,12 +191,14 @@ void XtcReaderActivity::onEnter() {
   // Save current XTC as last opened book and add to recent books
   APP_STATE.openEpubPath = xtc->getPath();
   APP_STATE.saveToFile();
+  NOOIR_READER_MEMORY_CHECKPOINT("xtc_app_state_saved", "current-book state persistence");
   // Reuse a checked Recent metadata result before touching the optional XTC
   // trailer. Otherwise resolve it once from the already-open parser and let
   // Recent persist the result for Home/Spine and the next reader visit.
   std::string xtcSynopsis;
   std::string xtcSeries;
   bool xtcMetadataChecked = false;
+  NOOIR_READER_MEMORY_CHECKPOINT("xtc_recent_lookup_begin", "temporary RecentBooks snapshot");
   {
     const auto recentBooks = RECENT_BOOKS.getBooks();
     const auto cached = std::find_if(recentBooks.begin(), recentBooks.end(), [this](const RecentBook& book) {
@@ -196,19 +210,29 @@ void XtcReaderActivity::onEnter() {
       xtcMetadataChecked = true;
     }
   }
+  NOOIR_READER_MEMORY_CHECKPOINT("xtc_recent_lookup_released", "temporary RecentBooks snapshot released");
   if (!xtcMetadataChecked) {
+    NOOIR_READER_MEMORY_CHECKPOINT("xtc_extended_metadata_begin", "Xtc optional trailer metadata");
     xtcSynopsis = xtc->getDescription();
     xtcSeries = xtc->getSeries();
     xtcMetadataChecked = xtc->hasLoadedExtendedMetadata();
+    NOOIR_READER_MEMORY_CHECKPOINT("xtc_extended_metadata_end", "Xtc optional trailer metadata");
   }
+  NOOIR_READER_MEMORY_CHECKPOINT("xtc_recent_add_begin", "RecentBooksStore update");
   RECENT_BOOKS.addBook(xtc->getPath(), xtc->getTitle(), xtc->getAuthor(), xtc->getThumbBmpPath(), xtcSynopsis,
                        xtcSeries, xtcMetadataChecked);
+  NOOIR_READER_MEMORY_CHECKPOINT("xtc_recent_add_end", "RecentBooksStore update complete");
 
   // Trigger first update
   requestUpdate();
+  NOOIR_READER_MEMORY_CHECKPOINT("xtc_reader_enter_ready", "XtcReaderActivity resident state");
 }
 
 void XtcReaderActivity::onExit() {
+#if NOOIR_HEAP_LIFETIME_TRACE
+  heap_lifetime_trace::setContext(heap_lifetime_trace::CallerId::XtcReaderExit);
+  heap_lifetime_trace::checkpoint("xtc_reader_exit_begin");
+#endif
   Activity::onExit();
   mappedInput.setReaderMappingMode(false);
   renderer.setDarkMode(false);
@@ -235,7 +259,35 @@ void XtcReaderActivity::onExit() {
   }
   // Flush only if the visible position changed since the last progress write.
   saveProgress();
+  NOOIR_READER_MEMORY_CHECKPOINT("xtc_exit_before_reset", "XTC parser and cache");
   xtc.reset();
+  NOOIR_READER_MEMORY_CHECKPOINT("xtc_exit_after_reset", "XTC parser and cache");
+#if NOOIR_HEAP_LIFETIME_TRACE
+  heap_lifetime_trace::checkpoint("xtc_parser_destroyed");
+#endif
+
+  // These rebuildable cache releases were added to help Home BLE readmission.
+  // Keep them out of the explicitly BLE-off path so a BLE-disabled reading
+  // session retains warm caches and pays no BLE-only reclamation cost.
+  if (bleinput::bluetoothEnabled()) {
+    auto* fontCache = renderer.getFontCacheManager();
+    if (fontCache) fontCache->releaseSdFontCaches();
+    NOOIR_READER_MEMORY_CHECKPOINT("xtc_exit_disposable_font", "SD-font disposable cache");
+
+    ImageBlock::releaseRenderCache();
+    renderer.releaseGrayscaleStripScratch();
+    NOOIR_READER_MEMORY_CHECKPOINT("xtc_exit_render_cache", "renderer shared caches");
+
+    sdFontSystem.releaseReaderCaches();
+    sdFontSystem.releaseReaderFontOwner(renderer);
+    NOOIR_READER_MEMORY_CHECKPOINT("xtc_exit_sd_font_state", "reader SD-font state");
+
+    if (fontCache) fontCache->releaseReaderPressureState();
+    NOOIR_READER_MEMORY_CHECKPOINT("xtc_exit_pressure_state", "reader pressure workspace");
+  }
+#if NOOIR_HEAP_LIFETIME_TRACE
+  heap_lifetime_trace::checkpoint("xtc_reader_exit_cleanup_complete");
+#endif
 }
 
 void XtcReaderActivity::openReaderMenu() {
@@ -475,6 +527,37 @@ void XtcReaderActivity::executeQuickAction(const int actionValue) {
     case QuickActions::ActionId::None:
       break;
   }
+}
+
+bool XtcReaderActivity::handleBleMappedAction(const uint8_t action) {
+  if (action < bleinput::mapping::kReaderQuickActionCount) {
+    executeQuickAction(action);
+    return true;
+  }
+  if (!xtc || (action != bleinput::mapping::kReaderExtraActionNextChapter &&
+               action != bleinput::mapping::kReaderExtraActionPreviousChapter) ||
+      !xtc->hasChapters())
+    return false;
+
+  const auto& chapters = xtc->getChapters();
+  if (chapters.empty()) return false;
+  size_t chapterIndex = chapters.size();
+  for (size_t index = 0; index < chapters.size(); ++index) {
+    if (currentPage >= chapters[index].startPage && currentPage <= chapters[index].endPage) {
+      chapterIndex = index;
+      break;
+    }
+  }
+  if (chapterIndex == chapters.size()) return false;
+  if (action == bleinput::mapping::kReaderExtraActionNextChapter) {
+    if (chapterIndex + 1 >= chapters.size()) return false;
+    setCurrentPage(chapters[chapterIndex + 1].startPage);
+  } else {
+    if (chapterIndex == 0) return false;
+    setCurrentPage(chapters[chapterIndex - 1].startPage);
+  }
+  requestUpdate();
+  return true;
 }
 
 void XtcReaderActivity::launchKOReaderSync() {
