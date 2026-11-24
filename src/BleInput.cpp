@@ -1230,6 +1230,7 @@ void suppressNextDisconnectNotice() {
 }
 
 bool encodeKey(const freeink::KeyEvent& ev, uint8_t& kind, uint8_t& value) {
+#if FREEINK_CAP_BLE_HID_HOST
   // Generic descriptor tokens only participate in their full learned
   // signature; never let them alias a legacy keycode binding.
   if (ev.learnedIdentityValid) return false;
@@ -1254,10 +1255,25 @@ bool encodeKey(const freeink::KeyEvent& ev, uint8_t& kind, uint8_t& value) {
     value = ev.keycode;
     return true;
   }
+#else
+  // The pinned S3 BLE no-op interface predates generic HID metadata. BLE is
+  // compiled out for these experiments, so retain only its legacy key shape.
+  if (ev.special != freeink::SpecialKey::None) {
+    kind = 0;
+    value = static_cast<uint8_t>(ev.special);
+    return true;
+  }
+  if (ev.keycode != 0) {
+    kind = 1;
+    value = ev.keycode;
+    return true;
+  }
+#endif
   return false;
 }
 
 bool encodeLearnedKey(const freeink::KeyEvent& ev, uint8_t& kind, uint8_t& value) {
+#if FREEINK_CAP_BLE_HID_HOST
   if (ev.learnedIdentityValid && mapping::validIdentity(ev.learnedIdentityKind, ev.learnedIdentityValue)) {
     kind = ev.learnedIdentityKind;
     value = ev.learnedIdentityValue;
@@ -1267,6 +1283,12 @@ bool encodeLearnedKey(const freeink::KeyEvent& ev, uint8_t& kind, uint8_t& value
                                                   static_cast<uint8_t>(ev.special), kind, value))
     return true;
   return mapping::encodeHidUsageForLearning(ev.usagePage, ev.keycode, kind, value);
+#else
+  (void)ev;
+  (void)kind;
+  (void)value;
+  return false;
+#endif
 }
 
 void clearPendingIineGesture() {

@@ -163,7 +163,9 @@ void BluetoothSettingsActivity::rebuildMenuRows() {
 
 void BluetoothSettingsActivity::resetMappingsToDefaults() {
   SETTINGS.bleControllerPreset = CrossPointSettings::BLE_CONTROLLER_PRESET_GENERIC;
+#if FREEINK_CAP_BLE_HID_HOST
   BleHid.setInputPreset(freeink::InputPreset::GenericHid);
+#endif
   const bleinput::mapping::DefaultBinding defaults[] = {
       {{0, static_cast<uint8_t>(freeink::SpecialKey::Right)}, bleinput::mapping::kButtonAction,
        static_cast<uint8_t>(MappedInputManager::Button::Right)},

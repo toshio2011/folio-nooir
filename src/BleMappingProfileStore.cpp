@@ -299,7 +299,9 @@ bool BleMappingProfileStore::switchTo(const uint8_t profileId) {
   const uint8_t oldPreset = SETTINGS.bleControllerPreset;
   if (profileId == oldId && sameMap(candidate, SETTINGS.bleKeyMap) &&
       (candidatePreset == 0xFF || candidatePreset == oldPreset)) {
+#if FREEINK_CAP_BLE_HID_HOST
     BleHid.setInputPreset(static_cast<freeink::InputPreset>(oldPreset));
+#endif
     return true;  // Already loaded; avoid another settings write on screen entry.
   }
   // Mapping edits are atomically saved as they are assigned. Do not snapshot
@@ -312,7 +314,9 @@ bool BleMappingProfileStore::switchTo(const uint8_t profileId) {
   }
   SETTINGS.bleMappingProfileId = profileId;
   if (candidatePreset != 0xFF) SETTINGS.bleControllerPreset = candidatePreset;
+#if FREEINK_CAP_BLE_HID_HOST
   BleHid.setInputPreset(static_cast<freeink::InputPreset>(SETTINGS.bleControllerPreset));
+#endif
   if (SETTINGS.saveToFile()) return true;
 
   for (uint8_t i = 0; i < CrossPointSettings::BLE_MAP_CAPACITY; ++i) {
@@ -322,7 +326,9 @@ bool BleMappingProfileStore::switchTo(const uint8_t profileId) {
   }
   SETTINGS.bleMappingProfileId = oldId;
   SETTINGS.bleControllerPreset = oldPreset;
+#if FREEINK_CAP_BLE_HID_HOST
   BleHid.setInputPreset(static_cast<freeink::InputPreset>(oldPreset));
+#endif
   LOG_ERR("BLEPROF", "switch settings commit failed; active map restored");
   return false;
 }
