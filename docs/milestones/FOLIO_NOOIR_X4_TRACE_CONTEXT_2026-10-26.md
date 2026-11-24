@@ -1,0 +1,9 @@
+# Historical X4 BLE, image, and watchdog trace (2026-10-26)
+
+This note summarizes one read-only X4 trace analysis at source commit `75633ab43cebe6da77657192c965410f674e17b1`, with a source-level comparison to RC2 `3a66ef9b8b88c538e96ac763878fa899e72a53b1`. It does not include the raw capture. Treat all measurements as specific to that build and session. The [1.6.7 continuation record](FOLIO_NOOIR_1.6.7_DEV_CONTINUATION_2026-11-24.md) remains the current policy and validation record.
+
+- **BLE admission:** a boot/wake attempt showed 84,600 B free and a 65,524 B largest block, below the 98,304 B free-heap floor while above the 36,852 B largest-block floor. A Settings-return boundary later showed 101,600 / 65,524 B and admitted BLE. This supports an admission-timing explanation for that path; it does not mean users should visit Settings to reconnect.
+- **XTC:** the sample showed 100,628 B free but a 32,756 B largest block, below the unchanged contiguous-block floor. The observed BLE stop was the Reader lifecycle suspension. The capture did not establish that a remote control delivered XTC page turns.
+- **EPUB PNG:** an expected missing optional `.pxc` cache was followed by a PNG decoder allocation failure. The sample had 94,100 B free and a 32,756 B largest block, below the roughly 42 KiB decoder allocation described in that source. A separate later 1.6.6 trace recorded a 59,456 B contiguous request in the [1.6.6 resume notes](../1.6.6-RESUME.md); keep those source- and capture-specific measurements distinct.
+- **Watchdog:** the older stack passed through a FreeRTOS semaphore wait and `__cxa_guard_acquire` while BLE lifecycle reevaluation read the settings singleton under `g_noDeviceTimeoutMux`. The trace did not show a `no_device_timeout stopped=1` event. This is a historical blocking path from that capture, not a confirmed root cause or resolution of the currently open no-device Interrupt-WDT or partial NimBLE initialization rollback.
+
