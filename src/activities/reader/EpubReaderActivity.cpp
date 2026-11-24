@@ -1304,6 +1304,7 @@ void EpubReaderActivity::reportReaderQuiescent(const char* reason) {
   }
 #endif
   if (bluetoothResourceSensitive()) return;
+#if FREEINK_CAP_BLE_HID_HOST && NOOIR_BLE_READER_COEXISTENCE
   if (completedRender) {
     const bool readerQuiescent = firstStableRenderComplete.load(std::memory_order_acquire) && section &&
         !section->isBuilding() && !exitHomePending && !pendingPageTurns.hasPending() &&
@@ -1315,6 +1316,7 @@ void EpubReaderActivity::reportReaderQuiescent(const char* reason) {
               currentSpineIndex, section ? section->currentPage : nextPageNumber);
     }
   }
+#endif
   LOG_INF("ERS", "reader_quiescent reason=%.20s spine=%d page=%d free=%u largest=%u", reason ? reason : "stable",
           currentSpineIndex, section ? section->currentPage : nextPageNumber,
           static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
