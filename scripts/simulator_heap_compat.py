@@ -11,6 +11,8 @@ SIMULATOR_ENVS = {
     "simulator_x3",
     "simulator_x4pro",
     "simulator_x4classic",
+    "simulator_nooir167_x4pro",
+    "simulator_nooir167_x4classic",
 }
 
 if str(env.get("PIOENV") or "") in SIMULATOR_ENVS:

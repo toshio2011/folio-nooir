@@ -77,7 +77,10 @@ def patch_png_header(text):
 
 
 simulator_env = str(env.get("PIOENV") or "")
-if simulator_env in ("simulator_x4", "simulator_x3", "simulator_x4pro", "simulator_x4classic"):
+if simulator_env in (
+    "simulator_x4", "simulator_x3", "simulator_x4pro", "simulator_x4classic",
+    "simulator_nooir167_x4pro", "simulator_nooir167_x4classic",
+):
     project_dir = Path(env.subst("$PROJECT_DIR"))
     png_path = project_dir / ".pio" / "libdeps" / simulator_env / "simulator" / "src" / "PNGdec.h"
 

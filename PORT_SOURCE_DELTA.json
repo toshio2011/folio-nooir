@@ -235,7 +235,7 @@
     }
   },
   "commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
-  "handoff_sha256": "cb7bcfca418949fbcc25974bcbea48824b5709045fa0ce83a085665ffba6233e",
+  "handoff_sha256": "e625b58d772bd3e4c7ad4bb3cb57f2e5b950dd0c35945758253d63dfdbfa9beb",
   "limitations": [
     "Classic SDL2 simulator uses folder-backed host storage and does not validate physical SDMMC, PSRAM, panel, GPIO, power, or touch hardware.",
     "No physical validation or flash is claimed.",
@@ -772,7 +772,7 @@
       "build_status": "SUCCESS",
       "exit_code": 0,
       "duration_seconds": 119.6,
-      "build_log": "D:\\fatiha\\side\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4pro-attempt-03-utf8.log",
+      "build_log": "${NOOIR_D_ROOT}\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4pro-attempt-03-utf8.log",
       "build_log_sha256": "ed32d1a71b09411251e8a192392025654c94948a40cb6f32834670a3369c4b5a",
       "manifest": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4pro-EXPERIMENTAL.bin.manifest.json",
       "manifest_sha256": "1c3e0cddacbaf8cd0b841669dab0f38482f4e36ac12d77472a5de6a4f4363792",
@@ -819,7 +819,7 @@
       "build_status": "SUCCESS",
       "exit_code": 0,
       "duration_seconds": 145.68,
-      "build_log": "D:\\fatiha\\side\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4classic-attempt-02-serial.log",
+      "build_log": "${NOOIR_D_ROOT}\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4classic-attempt-02-serial.log",
       "build_log_sha256": "642efa96b0a295f7387c42da764766ac1bd67bc46e505fd6f9e447df52babe53",
       "manifest": "artifacts/fresh-20261111/folio-nooir-v1.6.6-x4classic-EXPERIMENTAL.bin.manifest.json",
       "manifest_sha256": "f81c6a9cf462c7fcb0a52e02265438e040b93ff0000a8d99cb99fa033708953b",
@@ -830,42 +830,42 @@
     },
     "toolchain": {
       "platformio_core": "6.1.19",
-      "pio_cli": "D:\\fatiha\\side\\.venv\\Scripts\\pio.exe",
-      "pio_home": "D:\\fatiha\\side\\.pio-home",
+      "pio_cli": "${NOOIR_D_ROOT}\\.venv\\Scripts\\pio.exe",
+      "pio_home": "${NOOIR_D_ROOT}\\.pio-home",
       "platform": "pioarduino/espressif32 55.03.37",
       "arduino_esp32": "3.3.7",
       "esp_idf": "5.5.2",
       "xtensa": "14.2.0+20251107",
       "esptool": "5.1.2",
-      "project_build_cache": "D:\\fatiha\\side\\_c-side-migration-20261110\\_isolated_nooir_x4_pro_classic_v166\\.cache"
+      "project_build_cache": "${NOOIR_D_ROOT}\\_c-side-migration-20261110\\_isolated_nooir_x4_pro_classic_v166\\.cache"
     },
     "build_attempts": [
       {
         "target": "Pro",
-        "log": "D:\\fatiha\\side\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4pro.log",
+        "log": "${NOOIR_D_ROOT}\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4pro.log",
         "result": "Failed before build: command ran from C: conversation directory, no platformio.ini.",
         "log_sha256": "9ff2eb8960ea5fedb55444b4df7d465f3c15cac058ecb55e1563206ed8b77e37"
       },
       {
         "target": "Pro",
-        "log": "D:\\fatiha\\side\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4pro-attempt-02.log",
+        "log": "${NOOIR_D_ROOT}\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4pro-attempt-02.log",
         "result": "CP1252 logger UnicodeEncodeError; interrupted and preserved; no toolchain change.",
         "log_sha256": "fc54614bd70e64f1f10c774ba5b2f17923150628f183df993fd5b666d49ae892"
       },
       {
         "target": "Pro",
-        "log": "D:\\fatiha\\side\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4pro-attempt-03-utf8.log",
+        "log": "${NOOIR_D_ROOT}\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4pro-attempt-03-utf8.log",
         "result": "Success; UTF-8 scoped to this process; exit 0."
       },
       {
         "target": "Classic",
-        "log": "D:\\fatiha\\side\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4classic-utf8.log",
+        "log": "${NOOIR_D_ROOT}\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4classic-utf8.log",
         "result": "Parallel build failed on Windows object-file lock; warning-only wolfSSL macro redefinitions in that attempt.",
         "log_sha256": "aeb2e79d2b264518c3ea9b51ccd7f70f8a67df83e365af03a94035482702540d"
       },
       {
         "target": "Classic",
-        "log": "D:\\fatiha\\side\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4classic-attempt-02-serial.log",
+        "log": "${NOOIR_D_ROOT}\\logs\\x4-s3-firmware-build-20261111-run01\\build-x4classic-attempt-02-serial.log",
         "result": "Serial retry succeeded; exit 0."
       }
     ],
@@ -1272,5 +1272,329 @@
     "contains_firmware_artifacts": false,
     "contains_raw_test_evidence": false,
     "source_scope": "manifest-listed X4 Pro/Classic port files, handoffs, compatibility work, .gitmodules, and pinned S3 SDK gitlink"
+  },
+  "v1_6_7_upgrade_20261124": {
+  "status": "Firmware builds and host/QEMU software validation completed; physical hardware validation remains open.",
+  "date": "2026-11-24",
+  "source": {
+    "integration_tag": "1.6.7",
+    "integration_commit": "5696a555f9f741e8b80c7360d26a74129750610d",
+    "firmware_source_commit": "ad0f269d13aed74d535c619588e1b3bde4f4ecbc",
+    "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+    "firmware_build_source_head": "a6de722635b0ade901b31a1457ef9ae7cc248509",
+    "original_c3_and_standalone_web_emulator_modified": false,
+    "dependency_gitlinks": {
+      "freeink-sdk": "7bd6aebe9b40198d7dddf455400cee9225430726 (inherited legacy pointer; remote object unavailable, local archive required)",
+      "freeink-sdk-s3": "5e94fe7480f019c89fbf691aef87523eb1b46704"
+    },
+    "files": [
+      ".gitignore",
+      ".gitmodules",
+      "docs/PORT_1.6.7_FEATURE_PARITY.md",
+      "docs/WEB_EMULATOR_S3_COMPATIBILITY_HANDOFF_2026-11-11.md",
+      "freeink-sdk-s3",
+      "lib/hal/HalGPIO.cpp",
+      "lib/hal/HalGPIO.h",
+      "lib/hal/HalStorage.cpp",
+      "platformio.ini",
+      "PORT_HANDOFF.md",
+      "PORT_SOURCE_DELTA.json",
+      "REFERENCE-LICENSES.md",
+      "scripts/export_experimental_firmware.py",
+      "scripts/guard_nooir_upload.py",
+      "scripts/simulator_board_config.py",
+      "scripts/simulator_gpio_compat.py",
+      "scripts/simulator_hal_clock.py",
+      "scripts/simulator_hal_storage.py",
+      "scripts/simulator_heap_compat.py",
+      "scripts/simulator_network_compat.py",
+      "scripts/simulator_png_compat.py",
+      "scripts/simulator_serial_compat.py",
+      "scripts/simulator_string_compat.py",
+      "scripts/simulator_system_compat.py",
+      "scripts/simulator_wifi_compat.py",
+      "simulator_compat/esp_netif.h",
+      "simulator_compat/HostPlatform.h",
+      "simulator_compat/SdFat.h",
+      "src/activities/reader/EpubReaderActivity.cpp",
+      "src/activities/settings/BleButtonMapActivity.cpp",
+      "src/activities/settings/BluetoothSettingsActivity.cpp",
+      "src/activities/settings/DeviceInfoActivity.cpp",
+      "src/activities/settings/DeviceInfoActivity.h",
+      "src/activities/settings/SettingsActivity.cpp",
+      "src/BleInput.cpp",
+      "src/BleMappingProfileStore.cpp",
+      "src/main.cpp",
+      "src/MappedInputManager.cpp",
+      "src/network/FirmwareFlasher.cpp",
+      "src/network/FirmwareFlasher.h",
+      "src/network/OtaUpdater.cpp",
+      "src/NooirAppDescriptor.cpp",
+      "src/NooirDeviceIdentity.h",
+      "src/NooirFirmwareIdentity.h",
+      "src/platform/skip_efuse_blk_check.c",
+      "test/nooir_firmware_identity/CMakeLists.txt",
+      "test/nooir_firmware_identity/NooirFirmwareIdentityTest.cpp",
+      "test/python/test_firmware_artifacts.py"
+    ],
+    "sha256_by_file": {
+      ".gitignore": "2153783155c234ddc8e59ce4204e1fea96530c0ccf5e2c3906fa2c615fd53b87",
+      ".gitmodules": "f91735bf1fd4944f51757d70708ec0b890dc3913c38dbc8d05752f68e0262c87",
+      "docs/PORT_1.6.7_FEATURE_PARITY.md": "03c0722e8fc419dab825b640fccd367ac05d96159e04ffaa99297b6eb58c2a72",
+      "docs/WEB_EMULATOR_S3_COMPATIBILITY_HANDOFF_2026-11-11.md": "53e9fd4779be61d06a9170994418b84913fd580a383ac513a1b398dea20330ec",
+      "lib/hal/HalGPIO.cpp": "9a48ed8777ffc75a864d3dda9b17b78a071a15a6ac5d75594fb77944d6220517",
+      "lib/hal/HalGPIO.h": "d645a778a1062f0bb5b924b5dcb0a35b463e3bf9f1f0706698b3cc30c81f47f3",
+      "lib/hal/HalStorage.cpp": "0f6ab386982c9b862b0fadfab06be0352c05014878cf1dd8782e80e41eb06496",
+      "platformio.ini": "f7d994800169a39f6ba82e190d7c0b70270a6e2919cd480f9842aca33d0239c9",
+      "PORT_HANDOFF.md": "e625b58d772bd3e4c7ad4bb3cb57f2e5b950dd0c35945758253d63dfdbfa9beb",
+      "REFERENCE-LICENSES.md": "61a07afeba38153856eba1825d37e0ce59b8f2494639ec68b5066377ba3719d7",
+      "scripts/export_experimental_firmware.py": "050ae19500b1ed6f029468b217d64b2f58bb94fbbd69207ef3bd796402f493ab",
+      "scripts/guard_nooir_upload.py": "8216a797b1e2fd589e194312bdfcff541de6a30218cd0b09344596f89bc87da2",
+      "scripts/simulator_board_config.py": "e2af3ceb64d9aa8d6983d144c1b62a8975336b84875a88f709978c29c1c131f3",
+      "scripts/simulator_gpio_compat.py": "fdad3615d7e0796ff027831f4b412bd71b5a34992f374e805614f041fffd09be",
+      "scripts/simulator_hal_clock.py": "2740502c78d868069fd55f0ea5fc29d2980a405a967ca398edab566d6a1466c3",
+      "scripts/simulator_hal_storage.py": "1d8b7bc21379ccc088bd6033c1a745459d17055824c702e655877ef0307681fe",
+      "scripts/simulator_heap_compat.py": "eb572728d8c7e53a71fd82a5892acc42abdae0463d6f85d328dac1255038d171",
+      "scripts/simulator_network_compat.py": "9920c4cee143898af3a55572703cd82abb368fbf8bdec60d2b35b3bfbb66992e",
+      "scripts/simulator_png_compat.py": "442f8e1b4f919780fc63113585b3cb4ced52485157893fa25f6590c7dc597748",
+      "scripts/simulator_serial_compat.py": "1f8dc7a0e2863155e26d2f38787b99ecde525dd1ac1a01ea00742b655d6802a4",
+      "scripts/simulator_string_compat.py": "f669d78baf77c1787e8590796c76a4e5eebcdecbc2abd4237d1112804ba04f42",
+      "scripts/simulator_system_compat.py": "6e348ae30482b88190489de6a0b063f112aea99dcbf88a46cd947449a9de8e8b",
+      "scripts/simulator_wifi_compat.py": "b3090b593dd0c44e4cfc83547c27d52c217124256ef47afffb145a82e33b2746",
+      "simulator_compat/esp_netif.h": "a8733f5e1a90c3d6127f294cd1d35d7504b45c74ed50b43ed9e5759f47fde640",
+      "simulator_compat/HostPlatform.h": "158c52a9173f012c78f7cba97cdbfac322782fb231ca430a5238720bac2e6ece",
+      "simulator_compat/SdFat.h": "8f5b5b65eba7928edec8ebd74e590a0585714bfb6d4bc76110fcb4fca0da5515",
+      "src/activities/reader/EpubReaderActivity.cpp": "eb9a11f6e65056c59044afc69aae6343111725d412550d038f6caa84dd6fc066",
+      "src/activities/settings/BleButtonMapActivity.cpp": "22103c8e26638a66b99375adde01f86370634b8f01bc9713cdd728b8b771ea07",
+      "src/activities/settings/BluetoothSettingsActivity.cpp": "a528cc367ffb15dfa35d43b60df323a2a628cc38120a9096732f2b9e6226faf4",
+      "src/activities/settings/DeviceInfoActivity.cpp": "54ae9c37f27fa569e8cdb066667bd5e3d8602ce00729de0017e339b12a129081",
+      "src/activities/settings/DeviceInfoActivity.h": "59fccd645f0a1685bb4e6776880693fd7452fce131f0c3ddbba406a930ed5d1c",
+      "src/activities/settings/SettingsActivity.cpp": "62f0d2499d8afac97b293533f884938203ee85f23368e561948e462827037ca5",
+      "src/BleInput.cpp": "9529f6ed3ded9f48b3c6c5cc71ef574c08cba7f42e828a6aecd08f45171ef386",
+      "src/BleMappingProfileStore.cpp": "acf2c11c1288c506cc8edd6a06c281a9d57170b8d2b509b545f248bfc379d7e0",
+      "src/main.cpp": "d405a814dc2be01944507041fc1dd5509682573f14956adaabc60f0d9bb899c0",
+      "src/MappedInputManager.cpp": "ae94245281f30a0655582620f9234d6584ada700f4d10cc2bc3184c3c44bc745",
+      "src/network/FirmwareFlasher.cpp": "e0e70a2034fbe2c34f9b1e5797a483a11207e5c1f7457c815409f379370717f7",
+      "src/network/FirmwareFlasher.h": "b091b02f4d96473f8d1727a1cfa5394ffe49d0d7233d72a8db4908746b427549",
+      "src/network/OtaUpdater.cpp": "b91c89a303d7adc5ede38bf54ecf074f4685984becf96b29b3868ddf69dba9d2",
+      "src/NooirAppDescriptor.cpp": "d342c9f3f0a93ef31e8516c19d9e3cd6bdf6688003bba6e04413e5199a0f6914",
+      "src/NooirDeviceIdentity.h": "2b48a2344d13d1792b0f4cc94834657631fbf84a15ad7cbdc46e1b5847a8eec8",
+      "src/NooirFirmwareIdentity.h": "7120452d45360ac5bb92f3f83cb01dab938d9b3c841ba36940f1901014f15935",
+      "src/platform/skip_efuse_blk_check.c": "0b49841556f23fac201206c299ecefd10e9e5cfc0a4b31f661c12130149a1633",
+      "test/nooir_firmware_identity/CMakeLists.txt": "4d1df271372fbbd2f07ef0f2ea67a29de903971789d24c4d66cc8aed44cdc001",
+      "test/nooir_firmware_identity/NooirFirmwareIdentityTest.cpp": "6c2a297069c1fdb6821f7a5d8c5aaeeffd861e3bf1fb15e5aae10110270fe645",
+      "test/python/test_firmware_artifacts.py": "092008c8c299a05fc40074be21b8c566003856e03ddd19f39a7fbb644aa91ca8"
+    }
+  },
+  "build_toolchain": {
+    "platformio_core": "6.1.19",
+    "espressif32": "55.03.37",
+    "arduino_esp32": "3.3.7",
+    "esp_idf": "5.5.2",
+    "esptool": "5.1.2",
+    "xtensa": "14.2.0+20251107",
+    "board": "esp32-s3-devkitc1-n16r8",
+    "chip": "ESP32-S3",
+    "flash_bytes": 16777216,
+    "flash_mode": "DIO",
+    "flash_hz": 80000000,
+    "memory_type": "dio_opi",
+    "psram": "8 MiB OPI configured",
+    "partition_table_sha256": "98e02c50532c388d85cc3b7c96d004142dc713b23368d293c881ecdcb419e44e",
+    "app0": "0x10000",
+    "app1": "0x650000",
+    "app_slot_bytes": 6553600,
+    "artifact_role": "application-only experimental images"
+  },
+  "device_builds": {
+    "x4pro": {
+      "environment": "nooir167_x4pro",
+      "device_id": "X4PRO",
+      "project_name": "Folio Nooir X4 Pro",
+      "firmware_version": "1.6.7-x4p-exp-no-flash",
+      "touch_enabled": true,
+      "bin_path": "${NOOIR_D_ROOT}\\_builds\\nooir-s3-v1.6.7-20261124\\artifacts\\FolioNooir_1.6.7-X4Pro-Experimental.bin",
+      "bin_bytes": 5694720,
+      "bin_sha256": "3e47ba8ce10901e5a037ecfcd75443615707882e7d2c32856949ba341868d7d5",
+      "elf_path": "${NOOIR_D_ROOT}\\_builds\\nooir-s3-v1.6.7-20261124\\artifacts\\FolioNooir_1.6.7-X4Pro-Experimental.elf",
+      "elf_bytes": 87599692,
+      "elf_sha256": "8a123c4a2c636585214af964bcb03abc90f60db1db28e87b12a1e1475200adcb",
+      "build_seconds": 230.68,
+      "build_log": "${NOOIR_D_ROOT}\\_builds\\nooir-s3-v1.6.7-20261124\\logs\\build-x4pro-v1.6.7-retry04.log",
+      "build_log_sha256": "f528d95935ee3605b779d20411cb16f9c136ef4f2ce725c4806f6c2873718e0a",
+      "static_ram_bytes": 67164,
+      "app_slot_percent": 86.9,
+      "warnings": [
+        "Windows Long Path Support disabled",
+        "Existing Rect explicit-constructor conversion warning"
+      ]
+    },
+    "x4classic": {
+      "environment": "nooir167_x4classic",
+      "device_id": "X4CLASSIC",
+      "project_name": "Folio Nooir X4 Classic",
+      "firmware_version": "1.6.7-x4c-exp-no-flash",
+      "touch_enabled": false,
+      "bin_path": "${NOOIR_D_ROOT}\\_builds\\nooir-s3-v1.6.7-20261124\\artifacts\\FolioNooir_1.6.7-X4Classic-Experimental.bin",
+      "bin_bytes": 5699376,
+      "bin_sha256": "c4bf429556c15d1eccc92343352395f3dc36e90634569a17258f48fa4fc9cb10",
+      "elf_path": "${NOOIR_D_ROOT}\\_builds\\nooir-s3-v1.6.7-20261124\\artifacts\\FolioNooir_1.6.7-X4Classic-Experimental.elf",
+      "elf_bytes": 87623700,
+      "elf_sha256": "564b1e53a916f7d1aceba1faae6a0b1697f06b21b5b05eb2467b8541ad5480c7",
+      "build_seconds": 352.23,
+      "build_log": "${NOOIR_D_ROOT}\\_builds\\nooir-s3-v1.6.7-20261124\\logs\\build-x4classic-v1.6.7-retry02.log",
+      "build_log_sha256": "36db066685717cfc48492bcd3620c016442ca7a949b2d16f2b29449fde5bfbcb",
+      "static_ram_bytes": 67164,
+      "app_slot_percent": 87.0,
+      "warnings": [
+        "Windows Long Path Support disabled",
+        "Existing Rect explicit-constructor conversion warning",
+        "wolfSSL macro redefinitions",
+        "Deprecated WebSockets NetworkClient::flush()"
+      ]
+    }
+  },
+  "artifact_validation": {
+    "esptool_image_info": "Both app images identify ESP32-S3, 16 MiB DIO/80 MHz; checksums valid; embedded ELF hashes match standalone ELF files.",
+    "partition_fit": "Both fit unchanged 6,553,600-byte application slot.",
+    "firmware_rebuilt_after_artifacts": false,
+    "generated_BIN_ELF_in_git": false,
+    "local_manifests": [
+      "artifacts/FolioNooir_1.6.7-X4Pro-Experimental.bin.manifest.json",
+      "artifacts/FolioNooir_1.6.7-X4Classic-Experimental.bin.manifest.json"
+    ]
+  },
+  "pro_qemu": {
+    "emulator": "eink-qemu 0.9.2",
+    "machine": "x4pro",
+    "panel": "uc8279-68",
+    "flash_dump": "${NOOIR_D_ROOT}\\_builds\\nooir-s3-v1.6.7-20261124\\artifacts\\Folio-Nooir-v1.6.7-X4PRO-QEMU-ONLY-NOT-FOR-PHYSICAL-FLASH-16MiB.bin",
+    "flash_dump_bytes": 16777216,
+    "flash_dump_sha256": "08b2e69602d8790a13bcab1c39f39d481194298516bb3a2904c6804e09d78c77",
+    "safety": "EMULATOR ONLY — NEVER FOR PHYSICAL FLASHING",
+    "inputs": [
+      {
+        "component": "bootloader",
+        "sha256": "09c6a477ac9b33721e9ea455fda1e29dc5b2f35c85d0b858b693defcab6f19fb",
+        "offset": "0x0"
+      },
+      {
+        "component": "partition_table",
+        "sha256": "bd0f7954aca2ef7d925ee21aaa1f3dc8822d1d6ce5cbbd26a135e5886bfff6ce",
+        "offset": "0x8000"
+      },
+      {
+        "component": "x4pro_application",
+        "sha256": "3e47ba8ce10901e5a037ecfcd75443615707882e7d2c32856949ba341868d7d5",
+        "offset": "0x10000"
+      }
+    ],
+    "virtual_power_hold_guest_ms": 50000,
+    "run01": {
+      "passed": 27,
+      "total": 27,
+      "run_jsonl_sha256": "d3cd78c199232c4388ba9b679c9d9eaaff7ed080eafe07b2e620af0cf1144bcf",
+      "result": "PASS"
+    },
+    "run03": {
+      "passed": 30,
+      "total": 30,
+      "run_jsonl_sha256": "0651acab8a6f2328f6ff9f9a4e80d70d7aa6ee6c88d97e17b3172f997bcd0bc8",
+      "console_sha256": "6c1582f073c3c4501de6d9820bec67ea60806ad5fa4b26999a7a2ded961cba0a",
+      "memory": "~8.24–8.29 MiB free PSRAM; corrupt blocks 0",
+      "result": "PASS Reader open/render/page next/previous/exit/progress save/reopen"
+    },
+    "limitations": [
+      "Pro swipe not confirmed",
+      "Deep sleep/wake and physical power behavior unverified",
+      "Physical PSRAM training, SDMMC, panel, GPIO and retail bootloader compatibility unverified"
+    ]
+  },
+  "classic_sdl2": {
+    "environment": "simulator_nooir167_x4classic",
+    "host": "Ubuntu 24.04.4 WSLg",
+    "sdl2": "2.30.0",
+    "platformio_core": "6.1.19",
+    "build_result": "SUCCESS",
+    "build_seconds": 878.87,
+    "build_log": "${NOOIR_D_ROOT}\\_builds\\nooir-s3-v1.6.7-20261124\\logs\\wsl-sim-x4classic-v1.6.7-build-retry07.log",
+    "build_log_sha256": "95d31df35b618664c71fd4dea8b7643c112b1c9994206e87eb98a4dbdfe456bb",
+    "executable": "${NOOIR_D_ROOT}\\_worktrees\\nooir-s3-167-upgrade-20261124\\.pio\\build\\simulator_nooir167_x4classic\\program",
+    "executable_bytes": 15335496,
+    "executable_sha256": "036bab3fff5d47f627b641358d372463b0486b908efb475e0b8bc1c358b86ec7",
+    "run_result": "PASS; exit 0",
+    "run_log": "${NOOIR_D_ROOT}\\_builds\\nooir-s3-v1.6.7-20261124\\logs\\wsl-sim-x4classic-v1.6.7-run04-reader.log",
+    "run_log_bytes": 23869,
+    "run_log_sha256": "ca7f741377928d0ada78b2e9ca8d297a63ef40a72d18bcb46064d6d28df207df",
+    "input": "2400:LEFT;10000:DOWN;11500:ENTER;15000:DOWN;17000:UP;19000:ESCAPE;23000:QUIT",
+    "sample_epub_sha256": "c8e8de68968636258d0417b2ca059ec993f88f4c1d6d82779f91dca2cfbb68bc",
+    "stages": [
+      "X4 Classic identity",
+      "Library",
+      "EPUB open/render",
+      "page 0 to 1",
+      "page 1 to 0",
+      "Reader exit",
+      "progress.bin writes",
+      "recent/book-state/reading-statistics writes"
+    ],
+    "touch_profile": "disabled; no touch events were sent",
+    "storage": "host folder-backed virtual SD, not SDMMC",
+    "memory": "synthetic 1 MiB host heap; not PSRAM",
+    "saved_progress_reopen_after_process_restart": "not tested",
+    "screenshots": {
+      "library.bmp": "bbc8faf62e8837bda92b30f6d3c5551670d4d1db1615e3afcaef1c8dae544c52",
+      "book-selected.bmp": "bbc8faf62e8837bda92b30f6d3c5551670d4d1db1615e3afcaef1c8dae544c52",
+      "reader-page0.bmp": "681e17e852ccfe02e7f68faa38f0c1e4504894c1c82d64dd94e8482d6e3701fd",
+      "reader-page1.bmp": "3db4f98dfb1ed3c0b1158b99b30bed310bd7ef8e234f93b34192d9d0c2584eca",
+      "reader-previous.bmp": "681e17e852ccfe02e7f68faa38f0c1e4504894c1c82d64dd94e8482d6e3701fd",
+      "after-exit.bmp": "e27b5b8e52bb4d2169547bf442577e9ba4f512a73b08e32e5331d89d6c10f5f4"
+    },
+    "prior_attempts": "Preserved; not counted because of incomplete inputs or EPUB nested one folder below SD root."
+  },
+  "software_tests": {
+    "python_unittest": {
+      "result": "PASS 5/5",
+      "log": "${NOOIR_D_ROOT}\\_builds\\nooir-s3-v1.6.7-20261124\\logs\\python-unit-tests-v1.6.7.log",
+      "log_sha256": "6a1c297a15fae36809977c3afaaab01f93319531162f54a29385f72120f67ccd"
+    },
+    "full_pytest": "Not run: pytest unavailable in isolated Windows environment; not installed globally.",
+    "firmware_builds": "Pro SUCCESS; Classic SUCCESS",
+    "pro_exact_build_qemu": "PASS 27/27 and 30/30",
+    "classic_native_sdl2": "PASS build and Reader run; host only"
+  },
+  "update_safety": {
+    "NOOIR_EXPERIMENTAL_DEVICE_BUILD": "Blocks OtaUpdater::checkForUpdate and installUpdate for these experimental builds; returns NO_UPDATE.",
+    "NOOIR_DISABLE_FIRMWARE_FLASHING": "FirmwareFlasher::validateImageFile and flashFromSdPath return FLASHING_DISABLED before an image write.",
+    "ui": "SD updater/recovery UI can still be presented but those APIs reject action; no in-device OTA or SD recovery is available.",
+    "no_physical_flash": true,
+    "physical_flash_ready": false,
+    "external_backup_and_recovery": "Must be independently validated for the exact model and partition map before any separately approved device write."
+  },
+  "local_only_artifacts": {
+    "root": "${NOOIR_D_ROOT}\\_builds\\nooir-s3-v1.6.7-20261124",
+    "include_bins_elfs_in_git": false,
+    "include_logs_screenshots_and_full_flash_in_git": false,
+    "preserve_generated_cache_and_misnamed_local_cache_directory": true,
+    "misnamed_untracked_directory": "Misnamed generated cache directory at repository root; left local-only and unstaged.",
+    "qemu_flash_component_manifest": "${NOOIR_D_ROOT}\\_builds\\nooir-s3-v1.6.7-20261124\\artifacts\\FolioNooir-v1.6.7-X4PRO-QEMU-ONLY-NOT-FOR-PHYSICAL-FLASH-16MiB.manifest.json"
+  },
+  "remaining_gaps": [
+    "No Pro or Classic physical boot/panel/input/power tests",
+    "Pro deep sleep/wake and swipe unverified",
+    "Classic S3 BIN not executed; no Classic QEMU model",
+    "Classic progress reopen after process restart not newly tested",
+    "No validated external recovery/backup process; builds are not flash-ready",
+    "BLE HID, USB MSC, frontlight and warm light intentionally disabled"
+  ],
+  "handoff_sha256": "e625b58d772bd3e4c7ad4bb3cb57f2e5b950dd0c35945758253d63dfdbfa9beb",
+  "remote_backup": {
+    "status": "pending reviewed source-only commit and push",
+    "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+    "remote": "https://github.com/toshio2011/folio-nooir.git",
+    "release": false,
+    "merge": false,
+    "deployment": false
   }
+}
 }

@@ -12,22 +12,32 @@ from pathlib import Path
 Import("env")  # noqa: F821 -- provided by PlatformIO
 
 
-if str(env.get("PIOENV") or "") in ("simulator_x4", "simulator_x3"):
+SIMULATOR_ENVS = (
+    "simulator_x4",
+    "simulator_x3",
+    "simulator_nooir167_x4pro",
+    "simulator_nooir167_x4classic",
+)
+
+simulator_env = str(env.get("PIOENV") or "")
+if simulator_env in SIMULATOR_ENVS:
     project_dir = Path(env.subst("$PROJECT_DIR"))
-    simulator_dir = project_dir / ".pio" / "libdeps" / str(env.get("PIOENV")) / "simulator"
+    simulator_dir = project_dir / ".pio" / "libdeps" / simulator_env / "simulator"
     header_path = simulator_dir / "src" / "BoardConfig.h"
 
     if not header_path.is_file():
+        has_touch = simulator_env == "simulator_nooir167_x4pro"
+        touch_value = "true" if has_touch else "false"
         header_path.write_text(
             """#pragma once
 
 // Host-only compatibility for current Nooir shared startup/settings code.
 // Physical BoardConfig remains excluded from native simulator builds.
 namespace BoardConfig {
-inline bool hasTouch() { return false; }
+inline bool hasTouch() { return TOUCH_VALUE; }
 inline void holdPowerRails() {}
 }  // namespace BoardConfig
-""",
+""".replace("TOUCH_VALUE", touch_value),
             encoding="utf-8",
             newline="",
         )

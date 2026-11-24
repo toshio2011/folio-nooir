@@ -1,10 +1,12 @@
-# Folio Nooir v1.6.6 — X4 Pro / X4 Classic Port Handover
+# Folio Nooir X4 Pro / X4 Classic ESP32-S3 Port Handover
 
-Updated: 2026-11-13
+> Current checkpoint (2026-11-24): both experimental v1.6.7 ESP32-S3 application builds passed with verified BIN/ELF pairs. The exact Pro pair passed 27/27 and 30/30 Reader checks in native eink-qemu. The Classic 1.6.7 SDL2 host build and scripted EPUB Reader/page-navigation/exit run passed. No physical device was flashed; host and QEMU results do not establish physical compatibility.
 
-**Workstream status:** PAUSED — awaiting physical hardware testing or a concrete Web Emulator integration requirement.
+Updated: 2026-11-24
 
-The latest verified software checkpoint is the Classic SDL2 host replay plus the exact-build Pro native eink-qemu Reader replay (27/27 steps). Physical compatibility, Pro deep sleep/wake, Classic firmware execution, physical touch/swipe, and safe recovery remain open. See the closing checkpoint at the end of this file.
+**Workstream status:** Experimental software-validation checkpoint complete; awaiting physical hardware testing or a concrete Web Emulator integration requirement. The builds are not physically flash-ready.
+
+The latest verified software checkpoint is the Classic SDL2 host replay plus the exact-build Pro native eink-qemu Reader replay (30/30 checks in run03; run01 was 27/27). Physical compatibility, Pro deep sleep/wake, Classic firmware execution, physical touch/swipe, and safe recovery remain open. See the closing checkpoint at the end of this file.
 
 ## Scope and safety
 
@@ -543,3 +545,62 @@ No experimental BIN/ELF, QEMU full-flash image, build directory, cache, temporar
 Keep physical Pro and Classic boot, board/panel identification, PSRAM training, physical SDMMC and GPIO, Pro touch/swipe, Classic buttons, display/power sequencing, deep-sleep/wake, Classic firmware execution, dedicated Pro page-1 capture, and safe external recovery open. Restart only when a correctly identified physical unit is available for a separately scoped validation, or when the Web Emulator thread provides a concrete integration requirement. Do not infer Classic firmware compatibility from Pro QEMU or SDL2 results. Any future device write still requires separate authorization and verified board-matched backup/recovery prerequisites.
 
 Remote branch verification and commit identity will be recorded here after the push is confirmed.
+## 2026-11-24 integrated v1.6.7 S3 upgrade checkpoint
+
+### Scope, provenance, and preservation
+
+This branch upgrades only the experimental X4 Pro / X4 Classic ESP32-S3 port. Its base is the integrated Nooir 1.6.7 candidate `5696a555f9f741e8b80c7360d26a74129750610d`, built on firmware source revision `ad0f269d13aed74d535c619588e1b3bde4f4ecbc`. Port commits through `a6de722635b0ade901b31a1457ef9ae7cc248509` add separate S3 profiles, target identity, S3 SDK compatibility, upload/firmware-update protection, and compatibility guards for BLE APIs unavailable in the S3 stub. The host-simulator compatibility edits are restricted to native simulator profile and shim files; they do not alter the firmware candidate bytes.
+
+The branch is `codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124`, based on `codex/folio-nooir-1.6.7-integrated-20261120`. The original X4 C3 release source, the separate `_04` BLE milestone, MihonNooir, standalone Web Emulator source, the v1.6.6 isolated port, and its preserved firmware remain outside this worktree and were not intentionally edited. No board was flashed; nothing was merged, released, or deployed.
+
+### Device profiles and build identities
+
+Both builds used PlatformIO Core 6.1.19, PIO Arduino ESP32 platform 55.03.37, Arduino-ESP32 3.3.7 / ESP-IDF 5.5.2, esptool 5.1.2, and Xtensa toolchain 14.2.0+20251107. The board definition is `esp32-s3-devkitc1-n16r8`, MCU ESP32-S3, 16 MiB DIO flash at 80 MHz, `dio_opi` memory mode with 8 MiB OPI PSRAM configured, and the unchanged `partitions.csv` SHA-256 `98e02c50532c388d85cc3b7c96d004142dc713b23368d293c881ecdcb419e44e`. The build app slot is 6,553,600 bytes; app0 is at `0x10000`, app1 at `0x650000`.
+
+| Target | PlatformIO env / identity | Touch | Build result | App BIN (bytes; SHA-256) | Matching ELF (bytes; SHA-256) |
+| --- | --- | --- | --- | --- | --- |
+| X4 Pro | `nooir167_x4pro`; `Folio Nooir X4 Pro`; `1.6.7-x4p-exp-no-flash` | on | success, 230.68 s | `FolioNooir_1.6.7-X4Pro-Experimental.bin`; 5,694,720; `3e47ba8ce10901e5a037ecfcd75443615707882e7d2c32856949ba341868d7d5` | `FolioNooir_1.6.7-X4Pro-Experimental.elf`; 87,599,692; `8a123c4a2c636585214af964bcb03abc90f60db1db28e87b12a1e1475200adcb` |
+| X4 Classic | `nooir167_x4classic`; `Folio Nooir X4 Classic`; `1.6.7-x4c-exp-no-flash` | off | success, 352.23 s | `FolioNooir_1.6.7-X4Classic-Experimental.bin`; 5,699,376; `c4bf429556c15d1eccc92343352395f3dc36e90634569a17258f48fa4fc9cb10` | `FolioNooir_1.6.7-X4Classic-Experimental.elf`; 87,623,700; `564b1e53a916f7d1aceba1faae6a0b1697f06b21b5b05eb2467b8541ad5480c7` |
+
+The image metadata identifies ESP32-S3, 16 MiB, DIO/80 MHz and the per-device project/version strings. Image checksum and validation hash pass; the embedded ELF hash matches the separately preserved ELF. The application uses 86.9% (Pro) and 87.0% (Classic) of the configured build slot. Static RAM is 67,164 / 327,680 bytes (20.5%). These are application-only experimental candidates, not complete physical flash images and not validated for a retail board's bootloader or partition map.
+
+Successful firmware build logs are `${NOOIR_D_ROOT}\_builds\nooir-s3-v1.6.7-20261124\logs\build-x4pro-v1.6.7-retry04.log` (SHA-256 `f528d95935ee3605b779d20411cb16f9c136ef4f2ce725c4806f6c2873718e0a`) and `...\build-x4classic-v1.6.7-retry02.log` (SHA-256 `36db066685717cfc48492bcd3620c016442ca7a949b2d16f2b29449fde5bfbcb`). Pro warnings: Windows long-path support disabled and an existing `Rect` explicit-constructor conversion warning. Classic also reported wolfSSL macro redefinitions and deprecated WebSockets `NetworkClient::flush()`; the serial retry succeeded. Earlier failed attempts are retained as separate logs and did not replace either successful artifact.
+
+All build outputs and caches are under `${NOOIR_D_ROOT}\_builds\nooir-s3-v1.6.7-20261124`. BIN/ELF pairs, successful logs, test logs, QEMU full-flash, virtual SD, and run evidence are preserved there. Build manifests are local-only and identify the images as experimental / not for flashing.
+
+### Feature scope and firmware-update safety
+
+The shared Nooir 1.6.7 application source comes from the integrated 1.6.7 base. It carries the integrated Reader/EPUB and styling changes, progress/cache behavior, recent/finished shelf work, Main/Folio Lite themes, settings/device information, achievements, XTC/XTCH/CBZ support, and existing Web UI code. See `docs/PORT_1.6.7_FEATURE_PARITY.md` for the included source lineage, device capability switches, and validation boundaries. A feature being present in common source is not evidence that the relevant physical S3 path was tested.
+
+The profiles intentionally compile BLE HID host, USB MSC, frontlight and warm light out. `NOOIR_EXPERIMENTAL_DEVICE_BUILD=1` causes OTA update check and install to return without selecting or writing a generic release image. Separately, `NOOIR_DISABLE_FIRMWARE_FLASHING=1` makes `FirmwareFlasher::validateImageFile()` and `flashFromSdPath()` return `FLASHING_DISABLED`; the SD update/recovery UI may still be present, but does not reach an image write through these APIs. This guard does not establish a working recovery path. Keep both restrictions until a separate backup/recovery procedure has been validated for the exact physical model and partition map.
+
+### Pro exact-build QEMU validation
+
+Native eink-qemu 0.9.2 ran the exact new Pro BIN/ELF on machine `x4pro`, panel `uc8279-68`, USB Serial/JTAG, with the virtual power-hold workaround set to 50,000 guest milliseconds. The virtual SD image is a synthetic 2050 MiB card containing a small multipage EPUB. The app starts with the expected Pro identity; serial evidence shows PSRAM allocation, SDMMC mount, display initialization, Home, Library, and Reader startup.
+
+Run01 passed 27/27 scripted checks. Run02 timed out on a later input after the guest had entered the low-power timer path; no crash or panic was recorded. Run03 used the shorter post-boot wait and passed 30/30 checks: EPUB open/render, forward/back page keys, exit to Library, progress save, reopen at saved progress, then navigation/exit. The reopened-page screenshot hash matched the prior page screenshot. Heap snapshots showed no corrupt blocks; Pro QEMU reported about 8.24–8.29 MiB free PSRAM across Home/Reader/exit. The only logged errors were expected absent optional emulator IMU and default virtual NVS values. These are QEMU-only results. Deep sleep/wake, physical PSRAM training, physical SDMMC/GPIO/panel/touch/power behavior, and retail bootloader compatibility remain unverified.
+
+The 16 MiB QEMU image `Folio-Nooir-v1.6.7-X4PRO-QEMU-ONLY-NOT-FOR-PHYSICAL-FLASH-16MiB.bin` has SHA-256 `08b2e69602d8790a13bcab1c39f39d481194298516bb3a2904c6804e09d78c77`. It was composed for emulator use from the matching Pro build's bootloader at `0x0`, partition table at `0x8000`, and application at `0x10000`, then supplied as a whole dump to QEMU (`flash.kind=dump`, partitions from that dump). Its label is literal: **QEMU ONLY — NEVER FOR PHYSICAL FLASHING**. To reproduce, use the matching build's own `bootloader.bin`, generated partition binary and Pro app BIN; place them at those build offsets into a newly zero-filled 16 MiB image with the eink-qemu 0.9.2 `flash` subcommand for machine `x4pro`; verify every input hash and the final image hash before running. Do not pass this combined image to a hardware flasher.
+
+Retained evidence paths: `${NOOIR_D_ROOT}\_builds\nooir-s3-v1.6.7-20261124\qemu\pro-v1.6.7-reader-run01`, `...\pro-v1.6.7-reader-run02-reopen`, `...\pro-v1.6.7-reader-run03-reopen-fast`, and the matching `logs\qemu-pro-v1.6.7-run0*-cli.log`. Run03 `run.jsonl` SHA-256 is `0651acab8a6f2328f6ff9f9a4e80d70d7aa6ee6c88d97e17b3172f997bcd0bc8`; `console.jsonl` SHA-256 is `6c1582f073c3c4501de6d9820bec67ea60806ad5fa4b26999a7a2ded961cba0a`.
+
+### Classic host simulation and other software tests
+
+The 1.6.6 Classic SDL2 replay remains historical host-application evidence. The new 1.6.7 Classic result below is also host-only: it does not execute the Classic S3 BIN. The focused build used Ubuntu 24.04.4 WSL/WSLg, SDL2 2.30.0, and PlatformIO Core 6.1.19 with D: source/cache/output paths. The separate `simulator_nooir167_x4classic` profile reports touch disabled; the scripted run used buttons only. Its 1 MiB synthetic heap is not physical PSRAM. There is no Classic eink-qemu machine. Host simulation cannot validate S3 boot, SDMMC, panel, PSRAM, GPIO, electrical behavior, sleep/wake or recovery.
+
+`python -m unittest discover -s test\python -v` passed 5/5 (`logs\python-unit-tests-v1.6.7.log`, SHA-256 `6a1c297a15fae36809977c3afaaab01f93319531162f54a29385f72120f67ccd`). A full `pytest test -q` attempt did not run because pytest is absent from the isolated Windows environment (`No module named pytest`); it was not installed globally. No firmware rebuild followed the two successful firmware builds. The Classic host-simulator compile is separate from those firmware artifacts.
+
+### 1.6.7 Classic SDL2 validation results
+
+The `simulator_nooir167_x4classic` native host build completed successfully in Ubuntu 24.04.4 WSL/WSLg with SDL2 2.30.0 and PlatformIO Core 6.1.19. It took 878.87 seconds and produced `.pio/build/simulator_nooir167_x4classic/program` (15,335,496 bytes; SHA-256 `036bab3fff5d47f627b641358d372463b0486b908efb475e0b8bc1c358b86ec7`). Build log: `${NOOIR_D_ROOT}/_builds/nooir-s3-v1.6.7-20261124/logs/wsl-sim-x4classic-v1.6.7-build-retry07.log` (5,868 bytes; SHA-256 `95d31df35b618664c71fd4dea8b7643c112b1c9994206e87eb98a4dbdfe456bb`). This host executable is not the Classic ESP32-S3 firmware BIN.
+
+A fresh folder-backed virtual SD run used the synthetic EPUB `${NOOIR_D_ROOT}/_builds/nooir-s3-v1.6.7-20261124/fixtures/classic-sdl2-v1.6.7-run04/sd/multipage-sample.epub` (1,243 bytes; SHA-256 `c8e8de68968636258d0417b2ca059ec993f88f4c1d6d82779f91dca2cfbb68bc`). It reached X4 Classic identity, Home/RecentBooks, Library, EPUB open, Reader page 0, next page 1, previous page 0, Reader exit and RecentBooks return. Logs show `progress.bin` saves on page renders plus `recent.json`, `book-states.json` and `reading-stats.json` writes on exit. The process exited 0. WSLg emitted non-fatal libEGL/ZINK device warnings; SDL rendering and BMP capture succeeded. A process-restart reopen at saved progress was not tested. One TOC warning belongs to the small synthetic EPUB; its pages rendered.
+
+Input was buttons only: `2400:LEFT;10000:DOWN;11500:ENTER;15000:DOWN;17000:UP;19000:ESCAPE;23000:QUIT`. Run log: `${NOOIR_D_ROOT}/_builds/nooir-s3-v1.6.7-20261124/logs/wsl-sim-x4classic-v1.6.7-run04-reader.log` (23,869 bytes; SHA-256 `ca7f741377928d0ada78b2e9ca8d297a63ef40a72d18bcb46064d6d28df207df`). BMP screenshots are 480×800 at `${NOOIR_D_ROOT}/_builds/nooir-s3-v1.6.7-20261124/simulator/classic-sdl2-v1.6.7-run04-reader/shots/`: `library.bmp` and `book-selected.bmp` share SHA-256 `bbc8faf62e8837bda92b30f6d3c5551670d4d1db1615e3afcaef1c8dae544c52`; `reader-page0.bmp` and `reader-previous.bmp` share `681e17e852ccfe02e7f68faa38f0c1e4504894c1c82d64dd94e8482d6e3701fd`; `reader-page1.bmp` is `3db4f98dfb1ed3c0b1158b99b30bed310bd7ef8e234f93b34192d9d0c2584eca`; `after-exit.bmp` is `e27b5b8e52bb4d2169547bf442577e9ba4f512a73b08e32e5331d89d6c10f5f4`.
+
+Earlier 1.6.7 attempts are preserved but are not counted as Reader passes: the first used a premature key sequence and captured no screenshots; the next used an EPUB nested under a `books/` folder and selected that folder. Run04 corrected the fixture to place the EPUB at virtual-card root and is the passing evidence above. These outcomes are not firmware defects.
+### Environment note and remaining checks
+
+A prior attempted PIO command was issued from the C: conversation directory and failed before starting a project build because it could not find `platformio.ini`. During an earlier cache-copy step, existing `${WINDOWS_USER}\Documents\side\.pio\libdeps\nooir167_x4pro` and `...\nooir167_x4classic` directories were involved; they were left intact, and it is not possible to prove whether copy metadata/content changed. No firmware/source/build output was intentionally produced on C:. Subsequent work used the isolated D: worktree, D: caches, D: build logs and D: outputs. Do not recreate or depend on the deleted C: workspace.
+
+Before any future physical bring-up, separately verify exact board/revision and bootloader/partition map; create and validate a full backup/restore and recovery method; use a current-limited supply and serial capture; confirm PSRAM training, profile, panel/rotation/refresh, SDMMC, Pro touch or Classic buttons, power rails, sleep/wake, and sustained EPUB/XTC/XTCH/CBZ/progress behavior. No physical flashing is authorized by this handoff.

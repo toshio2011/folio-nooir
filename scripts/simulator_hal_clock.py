@@ -20,6 +20,8 @@ if str(env.get("PIOENV") or "") in (
     "simulator_x3",
     "simulator_x4pro",
     "simulator_x4classic",
+    "simulator_nooir167_x4pro",
+    "simulator_nooir167_x4classic",
 ):
     project_dir = Path(env.subst("$PROJECT_DIR"))
     simulator_dir = project_dir / ".pio" / "libdeps" / str(env.get("PIOENV")) / "simulator"

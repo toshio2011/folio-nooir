@@ -14,7 +14,10 @@ Import("env")  # noqa: F821  -- provided by PlatformIO
 
 simulator_env = str(env.get("PIOENV") or "")
 
-if simulator_env in ("simulator_x4", "simulator_x3", "simulator_x4pro", "simulator_x4classic"):
+if simulator_env in (
+    "simulator_x4", "simulator_x3", "simulator_x4pro", "simulator_x4classic",
+    "simulator_nooir167_x4pro", "simulator_nooir167_x4classic",
+):
     project_dir = Path(env.subst("$PROJECT_DIR"))
     string_path = (
         project_dir

@@ -173,3 +173,34 @@ The verified software evidence is separated by execution type: exact fresh X4 Pr
 Resume only for a specifically scoped physical validation with safe external recovery prepared, or a concrete Web Emulator integration requirement. Keep the browser host-simulator backend distinct from a real ESP32-S3 guest backend.
 
 Remote backup verification will be added after the push is confirmed.
+## Evidence update — v1.6.7 S3 candidates (2026-11-24)
+
+This update supersedes the 2026-11-13 pause text for source/build evidence only. It does not change the standalone Web Emulator. The experimental S3 port now uses the integrated Nooir 1.6.7 source and has separate X4 Pro and X4 Classic ESP32-S3 build profiles.
+
+### Pro native QEMU
+
+The exact newly built Pro BIN/ELF ran with eink-qemu 0.9.2, machine `x4pro`, panel `uc8279-68`, USB Serial/JTAG, and a synthetic 2050 MiB SD image. The 16 MiB flash dump was composed from the matching build's bootloader, partition table, and Pro application. It is labeled QEMU-ONLY / NEVER FOR PHYSICAL FLASHING.
+
+- Run01: 27/27 scripted checks, including app startup, profile identification, PSRAM allocator, SDMMC mount, Home/Library, EPUB open, first render, page forward/back, and reader exit.
+- Run02: failed a later reopen tap because the guest entered its low-power timer state before the harness input; no crash/panic was observed.
+- Run03: 30/30 checks after reducing the post-boot wait. It reopened the EPUB at saved progress; the reopened-page screenshot hash matched Run01's next-page screenshot. Forward/back navigation and exit to Library passed. Heap checks reported no corrupt blocks and PSRAM free-space stayed around 8.24–8.29 MiB in this emulator.
+
+The startup power-hold workaround is 50,000 guest milliseconds. It is required to pass the emulated boot hold; it is not a physical power-button recipe. QEMU exercised CPU low-power frequency behavior only. Deep sleep, wake-from-sleep, real PSRAM training, physical display refresh, touch, retail bootloader compatibility, and all physical SD/GPIO behavior remain unverified.
+
+Evidence is under `${NOOIR_D_ROOT}\_builds\nooir-s3-v1.6.7-20261124\qemu\pro-v1.6.7-reader-run01`, `...run02-reopen`, and `...run03-reopen-fast`; CLI captures are in the sibling `logs` directory. The exact firmware and evidence hashes are in the main port handoff and source-delta manifest.
+
+### Classic simulator boundary
+
+The Classic firmware compiles as an ESP32-S3 image with the Classic device identity and touch disabled. eink-qemu has no Classic machine. SDL2 simulation exercises host application code only; it does not execute this BIN and cannot certify S3 boot, PSRAM, SDMMC, GPIO, panel, buttons, sleep, or recovery. Current v1.6.7 SDL2 validation is recorded in `PORT_HANDOFF.md`; the earlier 1.6.6 replay remains historical evidence.
+
+### Frontend/backend requirements and unsupported capabilities
+
+A Web Emulator integration should keep X4 Pro and Classic as separate profiles, preserve the Pro-only touch behavior, and represent Classic side page buttons plus lower navigation/confirm/back and power controls. Keep display orientation explicit (logical 800×480 versus QEMU capture 480×800). Model SDMMC as a virtual storage service; QEMU's Pro mount is evidence for firmware/emulator integration, not for physical electrical timing. The S3 application profiles compile out BLE HID host, USB MSC, frontlight, and warm light. OTA and SD firmware flashing/recovery writes are disabled in these experimental builds. Do not present unsupported controls as working hardware features.
+
+No browser-side change is authorized by this compatibility note. A concrete integration request must specify the target emulator, control schema, display-frame contract, virtual storage contract, and how unsupported power/sleep behavior is surfaced.
+## 2026-11-24 v1.6.7 simulator and firmware evidence
+
+- **Pro guest firmware in QEMU:** the exact v1.6.7 X4 Pro BIN/ELF pair ran on `eink-qemu 0.9.2`, machine `x4pro`, with the 50,000 ms virtual Power-hold workaround. The first Reader run passed 27/27 checks; the corrected reopen run passed 30/30 including EPUB render, next/previous page keys, exit, saved progress and reopen at that position. Run03 `run.jsonl` SHA-256: `0651acab8a6f2328f6ff9f9a4e80d70d7aa6ee6c88d97e17b3172f997bcd0bc8`; `console.jsonl`: `6c1582f073c3c4501de6d9820bec67ea60806ad5fa4b26999a7a2ded961cba0a`. This is virtual firmware execution; physical PSRAM, SDMMC, panel, touch and deep-sleep/wake remain unverified.
+- **Classic native host app:** `simulator_nooir167_x4classic` compiled in Ubuntu 24.04.4 WSL/WSLg, SDL2 2.30.0, and PlatformIO Core 6.1.19. A button-only replay on a fresh folder-backed card opened the synthetic EPUB, rendered page 0, turned to page 1 and back, exited, and wrote progress/recent/book-state/reading-statistics data. Run log SHA-256: `ca7f741377928d0ada78b2e9ca8d297a63ef40a72d18bcb46064d6d28df207df`; page 0 SHA-256 `681e17e852ccfe02e7f68faa38f0c1e4504894c1c82d64dd94e8482d6e3701fd`; page 1 `3db4f98dfb1ed3c0b1158b99b30bed310bd7ef8e234f93b34192d9d0c2584eca`. The Classic profile has touch disabled and the run sent no touch events. It did not execute the Classic S3 BIN; no Classic firmware QEMU machine exists.
+- **Build artifacts:** the matching experimental Pro and Classic BIN/ELF pairs and successful logs are preserved locally under `${NOOIR_D_ROOT}/_builds/nooir-s3-v1.6.7-20261124`. Firmware binaries, logs, SD fixtures, QEMU dump, and screenshots are not part of this Web Emulator source tree.
+- **Boundary:** do not label the Classic host run as firmware emulation or physical certification. Keep the host simulator backend separate from Pro S3 guest execution and from any future Classic guest model. The full 16 MiB Pro dump is QEMU-only and never for physical flashing.
