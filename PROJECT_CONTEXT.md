@@ -1329,3 +1329,9 @@ CTest, or host C++ compiler is available for offline gtests; the Settings page
 JavaScript syntax check and `git diff --check` pass. No flash, commit, or push
 was performed. This remains a physical-validation candidate, not a
 release-ready build.
+
+## 2026-11-24 — workspace and release context
+
+D: is authoritative for original-X4 1.6.7 development. The published tag remains separate from the experimental `_04` milestone and the clean-label build record. The full legacy C: tree is preserved on D: with zero recorded hash mismatches; removal remains pending because active Codex processes held working directories there. Keep C: out of development. The older Nov. 19 generated/junction/cache copy is not a complete mirror.
+
+Web Emulator, X4 Pro/Classic, and the November 18 Reader Status Bar experiment remain separate from original-X4 firmware. The Status Bar candidate has its own verified 17-file patch and focused object-compile evidence only; no image or physical visual acceptance. See [the 1.6.7 continuation record](docs/milestones/FOLIO_NOOIR_1.6.7_DEV_CONTINUATION_2026-11-24.md) for experiment lineage, measured behavior, hashes, memory policy and outstanding safety gates.

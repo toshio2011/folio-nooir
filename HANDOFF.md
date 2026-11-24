@@ -1157,3 +1157,9 @@ table confirms NimBLE and BleKeyboardHost. Offline GTests were unavailable
 (no CMake/CTest or host C++ compiler); Settings JS syntax and `git diff --check`
 passed. The build was not flashed; no stage/commit/push was performed. Do not
 call this release-ready until the physical X4 checklist passes.
+
+## 2026-11-24 — D: authority and preservation checkpoint
+
+D: remains the authoritative development drive. The original-X4 integration branch is `codex/folio-nooir-1.6.7-integrated-20261120`; its release source commit is `ad0f269d13aed74d535c619588e1b3bde4f4ecbc`. The published `1.6.7` release and its clean-label image remain distinct from the experimental `_04` image. See [the development continuation record](docs/milestones/FOLIO_NOOIR_1.6.7_DEV_CONTINUATION_2026-11-24.md) for source lineage, full artifact hashes, measurements, tests, memory policy, unresolved risks, and separate workstream statuses.
+
+The legacy C: tree was fully preserved on D: and recorded as hash-verified, but its removal is still pending because active Codex processes had working directories there. Do not develop on C:. The older November 19 candidate has a documented generated/junction-cache discrepancy and is not a production source mirror. The Status Bar experiment now has a separate, hash-verified D: copy; it remains unintegrated and has no physical visual acceptance. Web Emulator and Pro/Classic remain separate projects.

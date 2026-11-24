@@ -1,6 +1,6 @@
 # Do Not Repeat — Folio Nooir 1.6.7
 
-Updated 2026-11-20. Read the current `HANDOFF.md` and the cumulative audit before starting work.
+Updated 2026-11-24. Read the current `HANDOFF.md` and the cumulative audit before starting work.
 
 - Preserve `_04` BIN/ELF; never rebuild over them. Hashes and provenance are in `docs/milestones/FOLIO_NOOIR_1.6.7_X4_BLE_MILESTONE_2026-11-20.md`.
 - The owner reports physical repeated EPUB BLE recovery on the original X4. Do not repeat the `_03` pre-fix test or describe it as `_04`. The saved raw COM3 file with three runtime floor faults is the pre-fix evidence; the raw post-fix _04 capture is not present in the workspace.
@@ -19,3 +19,11 @@ Updated 2026-11-20. Read the current `HANDOFF.md` and the cumulative audit befor
 - Full PIO build succeeded after directing `NOOIR_FIRMWARE_OUTPUT` to a unique path. The default `artifacts/firmware.bin` collision guard intentionally refused overwrite; do not disable that guard or overwrite it. The final BIN/ELF hashes and image checks are in `docs/integration/NOOIR_1.6.7_BUILD_RECORD_2026-11-20.md`.
 - The new integrated BIN has not been flashed or physically tested. Do not transfer `_04` owner-reported hardware evidence to it; the post-fix raw `_04` COM3 capture remains unavailable.
 - No-device watchdog and partial NimBLE initialization rollback remain unresolved. Do not call the branch or image release-stable.
+
+## 2026-11-24 — migration and documentation sync
+
+- Keep D: authoritative for original-X4 1.6.7. Release source is `ad0f269d13aed74d535c619588e1b3bde4f4ecbc`; do not reapply the older November 19 idle-BLE candidate. Its source/build manifests were verified separately from the full generated/cache tree.
+- The legacy C: tree is preserved on D: (124,609 files; 9,914,179,724 bytes; zero recorded hash mismatches), but deletion remains pending while Codex processes hold it. Do not build or develop on C:; do not terminate those processes to force cleanup.
+- The older November 19 candidate copy has a 5,969-file / 278,864,682-byte generated/junction/cache discrepancy. Those entries are not claimed migrated; do not treat that copy as a complete source mirror.
+- The November 18 Status Bar experiment is separately preserved and hash-verified on D:. Its 17-file patch is `D38FAC135E115B9E9F615D0E53A6C966F1FB09DAB334D5EF6A1FA626947C0638`; no full link or physical visual test exists. Do not repeat the preservation audit or integrate it blindly.
+- Use `docs/milestones/FOLIO_NOOIR_1.6.7_DEV_CONTINUATION_2026-11-24.md` for the consolidated `_02`/`_03`/`_04` history, memory thresholds, performance evidence, image hashes, risks and separate Web/S3 project states. The post-fix `_04` physical summary is owner-reported; the raw post-fix COM3 capture and BIN binding are unavailable. Do not conflate it with the archived pre-fix `_03` log.

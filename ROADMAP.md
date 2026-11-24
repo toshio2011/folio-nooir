@@ -474,3 +474,9 @@ The map/symbol table confirms linked NimBLE and BleKeyboardHost. Offline host
 tests could not run (no CMake/CTest/compiler); Settings JS syntax and
 `git diff --check` passed. No flash/commit/push. Physical X4 validation remains
 required; this is not release-ready.
+
+## 2026-11-24 — 1.6.7 continuation checkpoint
+
+The original-X4 1.6.7 release is published. Preserve the adaptive BLE disconnect-render-reconnect behavior and the recorded `_02` → `_03` → `_04` evidence; do not restart the rejected threshold/cache-probe cycle. The watchdog and partial NimBLE initialization rollback remain unresolved. The exact release image still needs its own physical acceptance coverage, including 20 EPUB turns in one session, reverse turns, XTCH, BLE-OFF responsiveness, demanding EPUBs and sleep/wake. Continuous BLE for every EPUB workload is unproven and is not a reason to reduce Reader safety margins.
+
+Keep the Web Emulator, S3 Pro/Classic port and Reader Status Bar experiment isolated. See `docs/milestones/FOLIO_NOOIR_1.6.7_DEV_CONTINUATION_2026-11-24.md` for the D:-only workspace checkpoint, tests, artifact identities and continuation gates.
