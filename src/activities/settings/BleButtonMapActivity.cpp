@@ -453,6 +453,7 @@ void BleButtonMapActivity::render(RenderLock&&) {
                      I18N.get(noticeString));
   } else if (step == Step::WaitForKey && mappedInput.bleCaptureSawUnsupported()) {
     const char* diagnostic = tr(STR_BT_MAP_UNSUPPORTED);
+#if FREEINK_CAP_BLE_HID_HOST
     switch (mappedInput.bleCaptureRejectReason()) {
       case static_cast<uint8_t>(freeink::CaptureRejectReason::DescriptorLength):
         diagnostic = "HID report length mismatch";
@@ -466,6 +467,7 @@ void BleButtonMapActivity::render(RenderLock&&) {
       default:
         break;
     }
+#endif
     GUI.drawHelpText(renderer, Rect{0, pageHeight - metrics.buttonHintsHeight - 22, pageWidth, 20},
                      diagnostic);
   }
