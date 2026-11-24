@@ -115,8 +115,18 @@ try:
     _source = Path(env.subst("$BUILD_DIR/firmware.bin"))  # noqa: F821
     _metadata = {
         "device": _device,
+        "firmware_version": RELEASE_VERSION,
         "experimental": True,
         "flash_performed": False,
+        "chip_target": "ESP32-S3",
+        "board": env.GetProjectOption("board", ""),
+        "flash_size_bytes": 16 * 1024 * 1024,
+        "flash_mode": "DIO",
+        "flash_frequency_hz": 80_000_000,
+        "psram_size_bytes": 8 * 1024 * 1024,
+        "psram_type": "OPI",
+        "touch_enabled": _device == "X4PRO",
+        "ble_enabled": False,
         **partition_metadata(_project_dir, _device),
     }
     _output_setting = os.environ.get("NOOIR_S3_OUTPUT_DIR")
