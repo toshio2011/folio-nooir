@@ -5,6 +5,7 @@
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <BoardConfig.h>
 #include <WiFi.h>
 #include <Epub/blocks/ImageBlock.h>
 #include <esp_netif.h>
@@ -16,6 +17,7 @@
 #include "WifiSelectionActivity.h"
 #include "BleInput.h"
 #include "activities/network/CalibreConnectActivity.h"
+#include "activities/network/UsbDriveActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/QrUtils.h"
@@ -238,6 +240,17 @@ void CrossPointWebServerActivity::onExit() {
 }
 
 void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) {
+  if (mode == NetworkMode::USB_DRIVE) {
+#if FREEINK_CAP_USB_MSC
+    LOG_INF("USB", "Selecting USB Drive mode");
+    activityManager.replaceActivity(std::make_unique<UsbDriveActivity>(renderer, mappedInput));
+#else
+    LOG_ERR("USB", "USB Drive mode is not enabled for this device profile");
+    onGoHome();
+#endif
+    return;
+  }
+
   const char* modeName = "Join Network";
   if (mode == NetworkMode::CONNECT_CALIBRE) {
     modeName = "Connect to Calibre";

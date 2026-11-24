@@ -21,7 +21,7 @@ constexpr char latestReleaseUrl[] = "https://api.github.com/repos/toshio2011/fol
 }  // namespace
 
 OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
-#if NOOIR_EXPERIMENTAL_DEVICE_BUILD
+#if NOOIR_EXPERIMENTAL_DEVICE_BUILD || NOOIR_DISABLE_FIRMWARE_FLASHING
   // The public v1.6.6 release asset is the C3 X3/X4 image. Keep experimental
   // S3 builds away from the generic firmware.bin endpoint until there is a
   // per-model release manifest and verified OTA policy.
@@ -116,7 +116,7 @@ bool OtaUpdater::isUpdateNewer() const {
 const std::string& OtaUpdater::getLatestVersion() const { return latestVersion; }
 
 OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgress, void* ctx) {
-#if NOOIR_EXPERIMENTAL_DEVICE_BUILD
+#if NOOIR_EXPERIMENTAL_DEVICE_BUILD || NOOIR_DISABLE_FIRMWARE_FLASHING
   (void)onProgress;
   (void)ctx;
   return NO_UPDATE;

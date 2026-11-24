@@ -4,6 +4,9 @@
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
+#if defined(NOOIR_S3_SDK_COMPAT) && NOOIR_S3_SDK_COMPAT && defined(FREEINK_CAP_FRONTLIGHT) && FREEINK_CAP_FRONTLIGHT
+#include <HalFrontlight.h>
+#endif
 #include <Logging.h>
 #include <esp_system.h>
 
@@ -501,12 +504,12 @@ void SettingsActivity::rebuildSettingsLists() {
       currentGroupSettings.push_back(
           SettingInfo::Action(StrId::STR_SETTINGS_PROFILES, SettingAction::SettingsProfiles));
       currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
-#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD
+#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD && !NOOIR_DISABLE_FIRMWARE_FLASHING
       if (!BoardConfig::hasTouch()) {
         currentGroupSettings.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
       }
 #endif
-#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD
+#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD && !NOOIR_DISABLE_FIRMWARE_FLASHING
       currentGroupSettings.push_back(
           SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
 #endif
@@ -1029,12 +1032,12 @@ void SettingsActivity::toggleCurrentSetting() {
         startActivityForResult(std::make_unique<ClearCacheActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::CheckForUpdates:
-#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD
+#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD && !NOOIR_DISABLE_FIRMWARE_FLASHING
         startActivityForResult(std::make_unique<OtaUpdateActivity>(renderer, mappedInput), resultHandler);
 #endif
         break;
       case SettingAction::SdFirmwareUpdate:
-#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD
+#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD && !NOOIR_DISABLE_FIRMWARE_FLASHING
         startActivityForResult(std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInput), resultHandler);
 #endif
         break;
@@ -1083,6 +1086,15 @@ void SettingsActivity::toggleCurrentSetting() {
   }
 
   syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
+#if defined(NOOIR_S3_SDK_COMPAT) && NOOIR_S3_SDK_COMPAT && defined(FREEINK_CAP_FRONTLIGHT) && FREEINK_CAP_FRONTLIGHT
+  if (setting.valuePtr == &CrossPointSettings::frontlightOn) {
+    Frontlight.setOn(SETTINGS.frontlightOn != 0);
+  } else if (setting.valuePtr == &CrossPointSettings::frontlightBrightness) {
+    Frontlight.setBrightness(SETTINGS.frontlightBrightness);
+  } else if (setting.valuePtr == &CrossPointSettings::frontlightWarmth) {
+    Frontlight.setWarmth(SETTINGS.frontlightWarmth);
+  }
+#endif
   SETTINGS.saveToFile();
   if (listShapeChanged) {
     rebuildSettingsLists();

@@ -158,6 +158,7 @@ class ActivityManager {
   void popActivity();
 
   bool preventAutoSleep() const;
+  bool requiresExclusiveStorageLoop() const;
   // Activities request a real deep sleep through the main loop so the normal
   // reader-exit, sleep-screen, and hardware shutdown sequence is preserved.
   void requestSleep();

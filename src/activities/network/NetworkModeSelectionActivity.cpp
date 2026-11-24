@@ -2,13 +2,14 @@
 
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <BoardConfig.h>
 
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
 namespace {
-constexpr int MENU_ITEM_COUNT = 3;
+constexpr int MENU_ITEM_COUNT = FREEINK_CAP_USB_MSC ? 4 : 3;
 }  // namespace
 
 void NetworkModeSelectionActivity::onEnter() {
@@ -30,6 +31,8 @@ void NetworkModeSelectionActivity::loop() {
       mode = NetworkMode::CONNECT_CALIBRE;
     } else if (selectedIndex == 2) {
       mode = NetworkMode::CREATE_HOTSPOT;
+    } else if (selectedIndex == 3) {
+      mode = NetworkMode::USB_DRIVE;
     }
     onModeSelected(mode);
   };
@@ -84,11 +87,11 @@ void NetworkModeSelectionActivity::render(RenderLock&&) {
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2;
   // Menu items and descriptions
-  static constexpr StrId menuItems[MENU_ITEM_COUNT] = {StrId::STR_JOIN_NETWORK, StrId::STR_CALIBRE_WIRELESS,
-                                                       StrId::STR_CREATE_HOTSPOT};
-  static constexpr StrId menuDescs[MENU_ITEM_COUNT] = {StrId::STR_JOIN_DESC, StrId::STR_CALIBRE_DESC,
-                                                       StrId::STR_HOTSPOT_DESC};
-  static constexpr UIIcon menuIcons[MENU_ITEM_COUNT] = {UIIcon::Wifi, UIIcon::Library, UIIcon::Hotspot};
+  static constexpr StrId menuItems[4] = {StrId::STR_JOIN_NETWORK, StrId::STR_CALIBRE_WIRELESS,
+                                         StrId::STR_CREATE_HOTSPOT, StrId::STR_USB_DRIVE};
+  static constexpr StrId menuDescs[4] = {StrId::STR_JOIN_DESC, StrId::STR_CALIBRE_DESC,
+                                         StrId::STR_HOTSPOT_DESC, StrId::STR_USB_DRIVE_DESC};
+  static constexpr UIIcon menuIcons[4] = {UIIcon::Wifi, UIIcon::Library, UIIcon::Hotspot, UIIcon::Library};
 
   GUI.drawList(
       renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(MENU_ITEM_COUNT), selectedIndex,

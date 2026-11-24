@@ -612,3 +612,50 @@ The reviewed source and documentation are backed up on [`codex/nooir-x4pro-x4cla
 This is a development source backup only. No pull request was created, and nothing was merged, released, deployed or flashed. The experimental Pro/Classic BIN/ELF pairs, successful firmware build logs, QEMU-only full-flash image, QEMU and SDL2 logs/screenshots, virtual SD fixtures and build caches remain local under `${NOOIR_D_ROOT}/_builds/nooir-s3-v1.6.7-20261124`; they were not added to Git. Two RTL test BMP fixtures inherited from the 1.6.7 base are unchanged; no simulator screenshots or generated port binaries were committed. The S3 FreeInk SDK remains a gitlink at `5e94fe7480f019c89fbf691aef87523eb1b46704`.
 
 The backup does not change the remaining physical requirements. Do not consider either image flash-ready until a board-matched full backup and external recovery procedure have been validated. Resume hardware work only with an explicitly scoped test and separate approval for any device write; the Web Emulator source remains outside this branch.
+
+
+## 2026-11-24 end-of-day checkpoint — PAUSED
+
+**Workstream status: PAUSED — resume from this D: checkout only.** Authoritative workspace: `D:\fatiha\side\_worktrees\nooir-s3-167-upgrade-20261124`. Branch: `codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124`. Protected source checkpoint before today’s source/doc commit: `be3f218988ca3e874d68f6d777165be3c521fac4`. S3 SDK checkout: `995d9bd523b9c45b18710bca17a3158ce724a7f4`.
+
+### Reference revisions
+
+- CrossPoint Reader: `92e8714a332c2c1903ea93290cf0b9b4f6f6697c`; FreeInk SDK pin `995d9bd523b9c45b18710bca17a3158ce724a7f4`.
+- CrossInk: `9914146eeae7b46b300f475a16c32426fc02ec1f`; FreeInk SDK pin `699370183fa3a0e33c9cb83a36f701bbb6022095`.
+
+### Implemented or investigated in this working tree
+
+- **USB Drive / MSC (Pro and Classic):** new USB Drive activity and mode selection; syncs files, releases SD font handles, unmounts/detaches the filesystem before raw block-device ownership; handles host wait, eject, disconnect/suspend hint, I/O/startup error, and then reboots to remount/re-index. USB transfers are split into at most 16-sector batches with a cooperative yield and conditional current-task watchdog reset. USB OTG-to-Serial/JTAG restoration follows the pinned CrossPoint handoff helper. Existing Wi-Fi Web UI transfer routes remain. The host MSC callback/lifecycle harness passed against the pinned SDK source patched into a D: temporary copy; it covers bounds, large reads/writes, partial sectors, watchdog subscription behavior, eject/disconnect, and startup/I/O failure. It does **not** test TinyUSB, SDMMC, or a real host/device. The firmware build did not reach C++ compilation; device runtime remains unverified.
+- **Pro frontlight:** Pro-only persistent on/off, brightness and warmth settings; initializes/restores after accepted wake and parks LED pins before deep sleep. No physical LED/PWM, temperature or sleep/wake test. Warm/cool channels are from the Pro profile. Classic has these controls disabled.
+- **Pro touch:** existing application input routes provide Home/Library/Settings/list touch and Reader tap/swipe page-turn paths for EPUB, XTC/XTCH and CBZ, behind the Pro touch capability. This checkpoint adds no new configurable gesture/tap-zone system, accidental-touch filter, or capacitive Home validation; coordinate transforms and all physical GT911 behavior remain open.
+- **Classic controls:** Classic touch/light remain disabled; existing SDK/profile button mapping and shared remappable front-button controls are retained. Physical button timing, shortcuts and orientation behavior remain untested.
+- **Shared S3:** ESP32-S3 profiles use the board-matched one-bit SDMMC profiles, PSRAM-backed framebuffer, OPI PSRAM settings, shared panel/display abstraction, battery/RTC/IMU and sleep plumbing. Previous Pro QEMU evidence showed the earlier certified build’s profile, PSRAM allocator, display/Home and virtual SD; it is not evidence for this unbuilt source state. Classic firmware execution has no Classic QEMU machine.
+- **Fonts:** Nooir still provides built-in fonts and `.cpfont` SD fonts. Native TTF/OTF runtime rendering has **not** been ported. CrossPoint’s FreeInkFont/FreeType adapter is PSRAM-gated and substantially changes registry, renderer, cache and shaping ownership; treat scalable TTF/OTF as open implementation work, not parity.
+- **BLE:** S3 BLE HID remains explicitly disabled in both profiles. No NimBLE central feasibility/build/runtime test was performed. Do not carry C3 BLE thresholds, SPI-array changes or SDK patches into the S3 port without a separate compatibility audit.
+- **Updates/recovery:** `NOOIR_DISABLE_FIRMWARE_FLASHING` now defaults safely to off for legacy profiles and is wired into S3 OTA availability/install, update menu routes, boot recovery route, and the SD flasher’s validation/write APIs. The experimental-build guard remains too. These settings protect software entry points; they do not provide recovery. Experimental builds remain not flash-ready without an independently verified model-specific backup and recovery method.
+
+The complete per-model comparison is in `docs/PORT_1.6.7_FEATURE_PARITY.md`. All source changes are experimental and unbuilt; review status is not device compatibility evidence.
+
+### Today’s build/test outcome and preserved artifacts
+
+- The USB MSC host test passed. Log: `${NOOIR_D_ROOT}\_builds\nooir-s3-v1.6.7-20261124\logs\host-usb-msc-20261124.log`; SHA-256: `433b2a68f1b1c94e39ab477bd04687a8366037cbac8739df694917778fbf0dc4`.
+- Existing Pro firmware-in-QEMU evidence remains historical: exact earlier Pro pair, eink-qemu 0.9.2, run03 30/30 Reader checks; the earlier run01 27/27 is also preserved. Classic SDL2 run04 remains a host-only pass for Home/Library/EPUB page turns/exit and persistence writes. Neither simulator was rerun against today’s source.
+- Pinned SDK host runner attempts did not reach test compilation: the checked-in `.sh` files use CRLF and the WSL launch/normalization attempt failed at the shell wrapper. Do not interpret as SDK test failures; use a correctly normalized temporary runner next time.
+- The Pro build attempt did not reach application compilation. PlatformIO’s Windows Python output thread raised `UnicodeEncodeError` under CP1252 while emitting a Unicode progress line. It was interrupted safely; Classic build was not started. Failed log preserved at `${NOOIR_D_ROOT}\_builds\nooir-s3-v1.6.7-20261124\logs\build-x4pro-v1.6.7-parity-20261124.log`; SHA-256: `89a02f9d033b3066974b2f8c2c992f1ed7ef281d875a09be562a055ce8fe6796`. No new BIN, ELF or manifest was exported. Do not rerun with the same console encoding. The temporary cache/build output directory is `D:\fatiha\side\_builds\nooir-s3-v1.6.7-20261124\feature-parity-20261124`; it contains only a PlatformIO config/checksum marker and is preserved.
+- The temporary `platformio.local.ini` override was restored to the original D: `build-cache` path; the generated patch was removed from the FreeInk SDK checkout, which is clean at the pin above. No preserved firmware artifact was overwritten.
+
+Certified old pairs were re-hashed before the attempted build and remain unchanged:
+
+| Device | BIN bytes / SHA-256 | ELF bytes / SHA-256 |
+|---|---|---|
+| Pro | 5,694,720 / `3e47ba8ce10901e5a037ecfcd75443615707882e7d2c32856949ba341868d7d5` | 87,599,692 / `8a123c4a2c636585214af964bcb03abc90f60db1db28e87b12a1e1475200adcb` |
+| Classic | 5,699,376 / `c4bf429556c15d1eccc92343352395f3dc36e90634569a17258f48fa4fc9cb10` | 87,623,700 / `564b1e53a916f7d1aceba1faae6a0b1697f06b21b5b05eb2467b8541ad5480c7` |
+
+They remain at `${NOOIR_D_ROOT}\_builds\nooir-s3-v1.6.7-20261124\artifacts` and are not part of Git.
+
+### First steps on resumption
+
+1. Confirm branch, local source/docs changes, protected artifacts and the restored local PIO config; do not touch the preserved `build-cache` or any protected build-cache folder.
+2. Run PlatformIO only after setting process-local `PYTHONIOENCODING=utf-8` (or use the already configured D: WSL environment), with a fresh D: build/cache/output path. Build Pro and Classic separately; preserve logs and export new, distinctly named BIN/ELF pairs without modifying the certified pairs. Do not flash.
+3. If builds succeed, inspect metadata/slot fit/hashes, then validate exact Pro firmware in QEMU and the Classic host simulator; clearly label host versus firmware execution. Keep physical, deep-sleep, touch/swipe, Classic firmware execution and recovery checks open.
+4. Resume the native TTF/OTF integration investigation only after these builds and documentation are reviewed; it is a significant renderer/font-cache port, not a quick dependency toggle.

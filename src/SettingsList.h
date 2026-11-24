@@ -5,6 +5,9 @@
 #include <HalTiltSensor.h>
 #include <I18n.h>
 #include <SdCardFontRegistry.h>
+#if defined(NOOIR_S3_SDK_COMPAT) && NOOIR_S3_SDK_COMPAT && defined(FREEINK_CAP_FRONTLIGHT) && FREEINK_CAP_FRONTLIGHT
+#include <HalFrontlight.h>
+#endif
 
 #include <algorithm>
 #include <cstring>
@@ -573,6 +576,16 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
         }
       }
     }
+#if defined(NOOIR_S3_SDK_COMPAT) && NOOIR_S3_SDK_COMPAT && defined(FREEINK_CAP_FRONTLIGHT) && FREEINK_CAP_FRONTLIGHT
+    if (BoardConfig::isX4Pro()) {
+      v.insert(v.begin(), {SettingInfo::Toggle(StrId::STR_FRONTLIGHT, &CrossPointSettings::frontlightOn,
+                                               "frontlightOn", StrId::STR_CAT_DISPLAY),
+                           SettingInfo::Value(StrId::STR_BRIGHTNESS, &CrossPointSettings::frontlightBrightness,
+                                              {0, 100, 5}, "frontlightBrightness", StrId::STR_CAT_DISPLAY),
+                           SettingInfo::Value(StrId::STR_WARMTH, &CrossPointSettings::frontlightWarmth,
+                                              {0, 100, 5}, "frontlightWarmth", StrId::STR_CAT_DISPLAY)});
+    }
+#endif
     return v;
   }();
 

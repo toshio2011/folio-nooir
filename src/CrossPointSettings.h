@@ -393,6 +393,13 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t statusBarProgressBarThickness = PROGRESS_BAR_NORMAL;
   uint8_t statusBarTitle = CHAPTER_TITLE;
   uint8_t statusBarBattery = 1;
+#if defined(NOOIR_S3_SDK_COMPAT) && NOOIR_S3_SDK_COMPAT && defined(FREEINK_CAP_FRONTLIGHT) && FREEINK_CAP_FRONTLIGHT
+  // X4 Pro dual-channel light settings. These fields are compiled only for the
+  // isolated S3 profile so the released C3 settings format remains unchanged.
+  uint8_t frontlightOn = 0;
+  uint8_t frontlightBrightness = 60;
+  uint8_t frontlightWarmth = 50;
+#endif
   uint8_t xtcStatusBarMode = XTC_STATUS_BAR_HIDE;
   // Manga reader preferences are stored separately from generic UI options
   // so old settings files keep the left-to-right, fit-to-screen defaults.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Print.h>
+#include <BoardConfig.h>
 #include <common/FsApiConstants.h>  // for oflag_t
 #include <freertos/semphr.h>
 
@@ -9,14 +10,28 @@
 #include <string>
 #include <vector>
 
+#if defined(FREEINK_CAP_USB_MSC) && FREEINK_CAP_USB_MSC
+#include <UsbMassStorage.h>
+#endif
+
 class HalFile;
 
 enum class HalStorageReadStatus : uint8_t { Success, NotFound, ParentMissing, Unavailable, IoError, TooLarge };
+
+enum class UsbDriveState : uint8_t { Unsupported, WaitingForHost, Connected, Ejected, Disconnected, IoError };
 
 class HalStorage {
  public:
   HalStorage();
   bool begin();
+  // The USB host takes exclusive raw-sector ownership after all app filesystem
+  // users drain and the mounted volume has been flushed and detached. A restart
+  // is required after endUsbDrive() before normal filesystem use resumes.
+  bool beginUsbDrive();
+  bool disconnectUsbDriveHost();
+  void endUsbDrive();
+  UsbDriveState usbDriveState() const;
+  bool usbDriveHostSuspended() const;
   bool ready() const;
   // Cached card capacity captured during begin(); does not query FAT or scan files.
   uint64_t cardCapacityBytes() const;
@@ -61,6 +76,9 @@ class HalStorage {
 
   bool initialized = false;
   SemaphoreHandle_t storageMutex = nullptr;
+#if defined(FREEINK_CAP_USB_MSC) && FREEINK_CAP_USB_MSC
+  freeink::UsbMassStorage usbMassStorage;
+#endif
 };
 
 #define Storage HalStorage::getInstance()

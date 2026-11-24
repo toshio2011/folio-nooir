@@ -85,7 +85,7 @@ inline SettingsGroupId settingsGroupIdForSettingKey(const char* key) {
       "featuredShowFileType",   "featuredShowAuthor",    "featuredShowSynopsis",    "featuredShowStatus",
       "featuredShowProgress",   "featuredShowStartedDate", "featuredShowFinishedDate", "featuredShowReadingTime",
       "featuredShowSessions",   "spineDecorationStyle",  "spineAppearanceMode",     "uiScalePercent",
-      "fadingFix",
+      "fadingFix", "frontlightOn", "frontlightBrightness", "frontlightWarmth",
   };
   if (settingsKeyIn(key, homeKeys)) return SettingsGroupId::HomeAppearance;
 

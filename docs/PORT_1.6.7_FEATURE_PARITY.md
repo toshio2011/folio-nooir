@@ -1,39 +1,28 @@
-# Folio Nooir 1.6.7 X4 Pro / X4 Classic S3 feature parity
+# Folio Nooir 1.6.7 — X4 Pro / X4 Classic S3 parity checkpoint
 
-Status: experimental port; source is based on the integrated Folio Nooir 1.6.7 revision `5696a555f9f741e8b80c7360d26a74129750610d`, which includes firmware source revision `ad0f269d13aed74d535c619588e1b3bde4f4ecbc`. The port commit adds S3 device profiles and compatibility guards; it does not transplant the original X4 C3 board configuration. Firmware candidates are not approved for physical flashing.
+**Status: PAUSED — experimental source checkpoint; no physical validation.** Reference revisions: CrossPoint Reader `92e8714a332c2c1903ea93290cf0b9b4f6f6697c` with FreeInk SDK `995d9bd523b9c45b18710bca17a3158ce724a7f4`; CrossInk `9914146eeae7b46b300f475a16c32426fc02ec1f` with FreeInk SDK `699370183fa3a0e33c9cb83a36f701bbb6022095`.
 
-## Included application source
+| Model / capability | CrossPoint reference | CrossInk reference | Folio Nooir 1.6.7 S3 status / evidence |
+|---|---|---|---|
+| Pro profile / display | X4 Pro S3 profile, 800×480 controller variants, touch/frontlight pins | Pro profile and panel/touch initialization | Separate `X4PRO` profile; profile/display paths compile historically; new source not built today; physical panel and refresh pending |
+| Pro touch / Home | GT911 input and UI routes | GT911 input path | Existing Home, library, settings, list and reader touch routes; EPUB/XTC/XTCH/CBZ tap/swipe page-turn path present. Configurable zones/gestures and accidental-touch tuning incomplete; physical GT911/Home/rotation untested |
+| Pro illumination | Dual-channel warm/cool light manager | Brightness/warmth UI and restore behavior | New Pro-only persisted on/brightness/warmth settings; init on wake and park before sleep. Not compiled or hardware tested today |
+| Classic profile / controls | Classic hardware profile, active buttons and orientation-aware mapping | Classic button profile/navigation | Separate `X4CLASSIC` profile; touch and lights disabled; existing mapped controls/shortcuts remain. Prior SDL2 run is host-only; real button timing, mapping and orientation pending |
+| USB Drive / MSC | TinyUSB MSC over native SDMMC; unmount/sync, eject, host handoff and restart | MSC handoff lifecycle | New shared USB Drive UI and exclusive raw SD ownership; sync/unmount, error/eject/disconnect/suspend timeout, restart/remount/reindex, Serial/JTAG restore. Host callback harness passed; firmware build, TinyUSB and hardware unverified |
+| SDMMC/storage | Board-specific 1-bit SDMMC profiles and guarded ownership | SDMMC lifecycle | Uses per-board SDK wiring; Pro virtual SD worked in prior QEMU. Physical SD/transfer performance untested; Classic firmware execution absent |
+| PSRAM/framebuffer | S3 PSRAM-aware allocators and frame buffers | PSRAM-backed rendering | Both profiles configure 8 MiB OPI and PSRAM-backed framebuffer. Prior Pro QEMU allocator evidence applies only to old certified BIN; today’s changes unbuilt; physical training/performance pending |
+| Fonts | FreeInkFont/FreeType TTF/OTF streaming adapter and PSRAM-aware caches | Static/runtime font features vary by implementation | Nooir built-ins and `.cpfont` remain. Native TTF/OTF runtime support is not integrated; renderer/registry/cache/shaping port remains open |
+| Panel detection/refresh | Profile-specific panel variants, refresh and sleep controls | Profile-specific display handling | Shared Nooir display abstraction and SDK profiles retained; current physical controller, grayscale/refresh and sleep-screen behavior unverified |
+| Battery / RTC / orientation | Board battery gauge, BM8563 RTC, Classic IMU/tilt | Device profile support where wired | Existing SDK/profile components and app plumbing retained; physical gauge/charging/RTC/tilt/rotation calibration untested |
+| Power / deep sleep | Board power manager, wake and peripheral sequencing | Sleep/wake integration | Existing Nooir sleep path retained; Pro light parks before sleep and initializes after wake. No new deep-sleep/wake or current measurement |
+| BLE HID | S3 BLE host implementation available upstream | BLE support depends on target | Disabled in both experimental S3 builds; feasibility and coexistence remain open. Do not transplant C3-specific thresholds or SPI-array assumptions |
+| OTA / SD recovery | Device-specific firmware update path | Device-specific recovery/update path | OTA menu/check/install and SD/recovery entry/write paths gated by `NOOIR_DISABLE_FIRMWARE_FLASHING` plus experimental guard. No safe physical recovery procedure validated |
+| Library / formats / Web UI | Shared application behaviors and transfer routes | Shared reader/storage behaviors | Nooir Main/Folio Lite, EPUB styling, XTC/XTCH/CBZ, dictionaries, clippings, achievements, shelves, persistence and Wi-Fi Web UI retained in source. New source unbuilt; host/QEMU evidence is from earlier revisions |
 
-The shared Nooir 1.6.7 application and library code is inherited from the integrated 1.6.7 base. This includes the integrated Reader/EPUB, styling and Force Paragraph Indents, progress/persistence and cache work, recent/finished bookshelf behavior, Main and Folio Lite themes, Settings and Device Info, achievements, XTC/XTCH/CBZ readers, and existing Web UI. These features compile into both S3 profiles unless the device capability gates below exclude a hardware-specific path. The source lineage is verified; compilation does not by itself establish physical runtime parity for each feature.
+## Evidence and limits
 
-## Device profiles and compiled capabilities
+The USB MSC host harness passed on 2026-11-24, covering bounded reads/writes, partial sectors, watchdog yielding/reset only for subscribed tasks, eject/disconnect and error/startup handling. This is a host stub test, not TinyUSB or physical storage validation. Existing Pro QEMU Reader run03 passed 30/30 checks on the earlier certified Pro pair; run01 passed 27/27. Existing Classic SDL2 run04 passed scripted Home/Library/EPUB page turn/exit/persistence writes, but does not execute its S3 BIN. No emulator was rerun after today’s source changes.
 
-| Capability | X4 Pro S3 | X4 Classic S3 | Evidence / boundary |
-| --- | --- | --- | --- |
-| MCU | ESP32-S3 | ESP32-S3 | Matching build metadata; no physical boot performed |
-| Flash | 16 MiB, DIO, 80 MHz | 16 MiB, DIO, 80 MHz | Build profile; retail module/bootloader compatibility still needs hardware verification |
-| PSRAM | 8 MiB OPI configured | 8 MiB OPI configured | Pro QEMU allocator checks only; physical PSRAM training is open |
-| FreeInk device identity | `X4PRO=1`, Classic off | `X4CLASSIC=1`, Pro off | Separate PlatformIO environments and runtime profile IDs |
-| Touch | enabled | disabled | Compile-time capability; physical touch/input behavior unverified |
-| SD | one-bit SDMMC through S3 SDK | one-bit SDMMC through S3 SDK | Pro QEMU virtual SDMMC mount passed; physical card/GPIO validation open; Classic has no firmware emulator |
-| Framebuffer | PSRAM-backed (`FREEINK_FB_PSRAM=1`) | PSRAM-backed (`FREEINK_FB_PSRAM=1`) | Build configuration; physical allocation/refresh behavior open |
-| BLE HID host | disabled | disabled | FreeInk S3 no-op compatibility implementation is linked; BLE/NimBLE is not enabled or tested |
-| USB MSC | disabled | disabled | Compile-time capability off |
-| Frontlight / warm light | disabled | disabled | Compile-time capabilities off; no claim of supported illumination hardware |
-| OTA update | disabled for experimental device builds | disabled for experimental device builds | `NOOIR_EXPERIMENTAL_DEVICE_BUILD=1` makes OTA check/install return without network image selection or writes |
-| SD firmware update / recovery write | disabled | disabled | `NOOIR_DISABLE_FIRMWARE_FLASHING=1` makes `FirmwareFlasher` validation and flash APIs return `FLASHING_DISABLED`; recovery UI is not a validated recovery path |
+The Pro rebuild failed before compilation because PlatformIO’s Windows output thread could not encode a Unicode status line under CP1252. Classic build was not started. The prior certified BIN/ELF pairs remain hash-verified and unchanged. Current source changes are not build-certified.
 
-Both profiles retain the 1.6.6-derived partition table unchanged. The build's application slot is 6,553,600 bytes; the new app images fit at 86.9% (Pro) and 87.0% (Classic). Matching build/partition metadata is not evidence that a retail X4 Pro or Classic bootloader accepts this layout.
-
-## Validation state
-
-- **Firmware compilation:** both 1.6.7 S3 application builds succeeded and their ESP32-S3 image metadata, checksums, matching ELF identity, partition fit, and SHA-256 values are recorded in `PORT_HANDOFF.md` and `PORT_SOURCE_DELTA.json`.
-- **Pro firmware in native QEMU:** exact Pro BIN/ELF ran on eink-qemu 0.9.2 `x4pro` with `uc8279-68`. Reader open, rendering, page keys, exit and persisted-progress reopen passed. QEMU is virtual evidence only; deep sleep/wake and physical hardware remain open.
-- **Classic SDL2 host simulation:** host simulation runs application code and does not execute the Classic ESP32-S3 BIN. It cannot certify S3 startup, SDMMC, GPIO, panel, PSRAM, power, or electrical behavior. The latest 1.6.7 run result is recorded in the version-specific handoff; earlier 1.6.6 SDL2 passes remain historical.
-- **Physical X4 Pro and Classic:** no board was flashed or tested. Both targets remain experimental and not physically validated.
-
-## Update safety and physical bring-up
-
-The public generic `firmware.bin` points at the released original-X4 C3 image. Experimental builds therefore keep OTA disabled, and SD flashing/recovery APIs return disabled. Do not remove these guards or use the experimental image until a separately validated backup/recovery procedure exists for the exact retail board and partition map.
-
-A future hardware phase must independently verify board revision, bootloader and partition map, full backup/restore, serial boot, OPI PSRAM training, profile identity, display/controller and rotation, SDMMC wiring, Pro touch or Classic buttons, battery/rails/sleep/wake, sustained EPUB/CBZ/XTC/XTCH behavior, progress persistence, and safe recovery from interrupted updates. Firmware must remain unflashed until the owner separately approves the precise hardware test and recovery plan.
+Never flash either device until a board-matched full backup and independently validated external recovery method exist. No physical Pro or Classic boot, display, touch/button, SDMMC, PSRAM, battery, sleep/wake, BLE or recovery result is claimed.

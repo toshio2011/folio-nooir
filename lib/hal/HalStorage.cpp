@@ -115,6 +115,87 @@ HalStorage::HalStorage() {
 
 bool HalStorage::begin() { return SDCard.begin(); }
 
+bool HalStorage::beginUsbDrive() {
+#if defined(FREEINK_CAP_USB_MSC) && FREEINK_CAP_USB_MSC
+  StorageLock lock("usb_begin");
+  if (!SDCard.ready()) {
+    LOG_ERR("USB", "USB Drive requires a mounted SD filesystem");
+    return false;
+  }
+  if (!SDCard.syncFilesystem()) {
+    LOG_ERR("USB", "Unable to flush SD filesystem before USB Drive ownership transfer");
+    return false;
+  }
+
+  auto* const blockDevice = SDCard.detachFilesystemForRawAccess();
+  if (!blockDevice) {
+    LOG_ERR("USB", "Unable to detach SD filesystem for raw USB Drive access");
+    return false;
+  }
+
+  if (!usbMassStorage.begin(blockDevice)) {
+    LOG_ERR("USB", "USB Drive MSC initialization failed; restoring SD filesystem");
+    if (!SDCard.begin()) {
+      LOG_ERR("USB", "Unable to remount SD card after USB Drive startup failure");
+    }
+    return false;
+  }
+  LOG_INF("USB", "SD filesystem flushed and detached; USB MSC owns the card");
+  return true;
+#else
+  return false;
+#endif
+}
+
+bool HalStorage::disconnectUsbDriveHost() {
+#if defined(FREEINK_CAP_USB_MSC) && FREEINK_CAP_USB_MSC
+  StorageLock lock("usb_disconnect");
+  return usbMassStorage.disconnectHost();
+#else
+  return false;
+#endif
+}
+
+void HalStorage::endUsbDrive() {
+#if defined(FREEINK_CAP_USB_MSC) && FREEINK_CAP_USB_MSC
+  StorageLock lock("usb_end");
+  // The host may have changed FAT metadata. Never remount here; the USB activity
+  // restarts the device so all app indexes and fonts are rebuilt from disk.
+  usbMassStorage.end();
+#endif
+}
+
+UsbDriveState HalStorage::usbDriveState() const {
+#if defined(FREEINK_CAP_USB_MSC) && FREEINK_CAP_USB_MSC
+  StorageLock lock("usb_state");
+  switch (usbMassStorage.state()) {
+    case freeink::UsbMassStorageState::WaitingForHost:
+      return UsbDriveState::WaitingForHost;
+    case freeink::UsbMassStorageState::Connected:
+    case freeink::UsbMassStorageState::Accessed:
+      return UsbDriveState::Connected;
+    case freeink::UsbMassStorageState::Ejected:
+      return UsbDriveState::Ejected;
+    case freeink::UsbMassStorageState::Disconnected:
+      return UsbDriveState::Disconnected;
+    case freeink::UsbMassStorageState::IoError:
+      return UsbDriveState::IoError;
+    case freeink::UsbMassStorageState::Idle:
+      break;
+  }
+#endif
+  return UsbDriveState::Unsupported;
+}
+
+bool HalStorage::usbDriveHostSuspended() const {
+#if defined(FREEINK_CAP_USB_MSC) && FREEINK_CAP_USB_MSC
+  StorageLock lock("usb_suspend_state");
+  return usbMassStorage.hostSuspended();
+#else
+  return false;
+#endif
+}
+
 bool HalStorage::ready() const { return SDCard.ready(); }
 
 uint64_t HalStorage::cardCapacityBytes() const { return SDCard.ready() ? SDCard.sdTotalBytes() : 0; }

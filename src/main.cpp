@@ -8,6 +8,9 @@
 #include <HalDisplay.h>
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
+#if defined(NOOIR_S3_SDK_COMPAT) && NOOIR_S3_SDK_COMPAT && defined(FREEINK_CAP_FRONTLIGHT) && FREEINK_CAP_FRONTLIGHT
+#include <HalFrontlight.h>
+#endif
 #include <HalStorage.h>
 #include <HalSystem.h>
 #include <HalTiltSensor.h>
@@ -27,6 +30,7 @@
 #include "CrossPointState.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
+#include "platform/UsbSerialJtagHandoff.h"
 #include "NooirDeviceIdentity.h"
 #include "NooirFirmwareIdentity.h"
 #include "OpdsServerStore.h"
@@ -159,6 +163,18 @@ void silentRestart() {
   ESP.restart();
 }
 
+void restartToHomeAfterStorageHandoff() {
+  if (deepSleepInProgress) return;
+  silentRebootTarget = SILENT_REBOOT_TARGET_HOME;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Restart after exclusive SD storage handoff (target=home)");
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+#if defined(NOOIR_S3_SDK_COMPAT) && NOOIR_S3_SDK_COMPAT && defined(FREEINK_CAP_USB_MSC) && FREEINK_CAP_USB_MSC
+  handoffUsbOtgToSerialJtag();
+#endif
+  ESP.restart();
+}
 void silentRestartToReader() {
   if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
   silentRebootTarget = SILENT_REBOOT_TARGET_READER;
@@ -315,6 +331,12 @@ void enterDeepSleep(bool fromTimeout = false) {
   EpubDiagnostics::phaseRecord("sleep_peripherals_cleaned");
   display.deepSleep();
   EpubDiagnostics::phaseRecord("sleep_display_suspended");
+#if defined(NOOIR_S3_SDK_COMPAT) && NOOIR_S3_SDK_COMPAT && defined(FREEINK_CAP_FRONTLIGHT) && FREEINK_CAP_FRONTLIGHT
+  // Keep the saved on/off preference intact; park the Pro LED pins at their
+  // inactive level before the S3 enters deep sleep. Setup restores the setting
+  // only after the next power-button wake is accepted.
+  Frontlight.prepareForDeepSleep();
+#endif
   LOG_DBG("MAIN", "Entering deep sleep");
 
   LOG_INF("SLEEP", "deep_sleep_enter free=%u largest=%u", static_cast<unsigned>(ESP.getFreeHeap()),
@@ -492,7 +514,11 @@ void setup() {
       break;
   }
 
-#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD
+#if defined(NOOIR_S3_SDK_COMPAT) && NOOIR_S3_SDK_COMPAT && defined(FREEINK_CAP_FRONTLIGHT) && FREEINK_CAP_FRONTLIGHT
+  Frontlight.begin(SETTINGS.frontlightBrightness, SETTINGS.frontlightWarmth, SETTINGS.frontlightOn != 0);
+#endif
+
+#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD && !NOOIR_DISABLE_FIRMWARE_FLASHING
   // Recovery firmware mode: hold left side button (BTN_UP) together with the power button at
   // boot to skip directly to the SD-card firmware update screen.
   bool recoveryFirmwareMode = false;
@@ -582,7 +608,7 @@ void setup() {
       break;
   }
 
-#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD
+#if !NOOIR_EXPERIMENTAL_DEVICE_BUILD && !NOOIR_DISABLE_FIRMWARE_FLASHING
   if (recoveryFirmwareMode) {
     // Skip normal home/reader routing: jump straight into the SD firmware picker.
     activityManager.replaceActivity(
@@ -918,6 +944,15 @@ void loop() {
   }
 #endif
   updateBluetoothLifecycle();
+  if (activityManager.requiresExclusiveStorageLoop()) {
+    // USB Drive owns the unmounted raw SD card. Skip weather writes, sleep,
+    // screenshots, shortcuts, settings work and ordinary navigation until the
+    // activity observes eject/disconnect and restarts the device.
+    activityManager.loop();
+    powerManager.setPowerSaving(false);
+    delay(10);
+    return;
+  }
   ClockWeatherSyncService::processPendingWifiConnection();
 #if FREEINK_CAP_BLE_HID_HOST && NOOIR_EPUB_BLE_IDLE_ADMISSION_DIAGNOSTIC
   if (BleHid.isRunning() && !bleInputDrainedBeforeLifecycle) BleHid.poll();

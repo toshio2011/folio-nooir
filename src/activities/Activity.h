@@ -43,6 +43,9 @@ class Activity {
 
   virtual bool skipLoopDelay() { return false; }
   virtual bool preventAutoSleep() { return false; }
+  // True while this activity temporarily owns the SD card outside the mounted filesystem.
+  // The main loop and activity manager then suppress all other storage users until restart.
+  virtual bool requiresExclusiveStorageLoop() const { return false; }
   virtual bool isReaderActivity() const { return false; }
   virtual bool isHomeActivity() const { return false; }
   // True when this screen currently owns a modal popup. Global transient

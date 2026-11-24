@@ -333,6 +333,16 @@ void ActivityManager::renderTaskLoop() {
 }
 
 void ActivityManager::loop() {
+  if (currentActivity && currentActivity->requiresExclusiveStorageLoop()) {
+    currentActivity->loop();
+    // Never process a pending navigation while the USB host owns the raw SD card.
+    // The USB activity ends the session and restarts the device after eject/disconnect.
+    if (requestedUpdate.exchange(false) && renderTaskHandle) {
+      xTaskNotify(renderTaskHandle, 1, eIncrement);
+    }
+    return;
+  }
+
   bool settingsToastActive = false;
   unsigned long settingsToastShownAt = 0;
   taskENTER_CRITICAL(&activityManagerSpinlock);
@@ -1065,6 +1075,10 @@ void ActivityManager::popActivity() {
 }
 
 bool ActivityManager::preventAutoSleep() const { return currentActivity && currentActivity->preventAutoSleep(); }
+
+bool ActivityManager::requiresExclusiveStorageLoop() const {
+  return currentActivity && currentActivity->requiresExclusiveStorageLoop();
+}
 
 void ActivityManager::requestSleep() { sleepRequested = true; }
 
