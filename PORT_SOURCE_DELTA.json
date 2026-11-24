@@ -235,7 +235,7 @@
     }
   },
   "commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
-  "handoff_sha256": "e8f93e82aaafe990190bb54f015b233a2b01182b1fed00603a03044f62104228",
+  "handoff_sha256": "aaf365dc0b0ad636e4b33228d403b6bbcbf2906bb8f373027fcfb297f107b3e2",
   "limitations": [
     "Classic SDL2 simulator uses folder-backed host storage and does not validate physical SDMMC, PSRAM, panel, GPIO, power, or touch hardware.",
     "No physical validation or flash is claimed.",
@@ -1274,7 +1274,7 @@
     "source_scope": "manifest-listed X4 Pro/Classic port files, handoffs, compatibility work, .gitmodules, and pinned S3 SDK gitlink"
   },
   "v1_6_7_upgrade_20261124": {
-  "status": "Remote source backup verified; firmware builds and host/QEMU software validation completed; physical hardware validation remains open.",
+  "status": "PAUSED — source backup verified; firmware builds and host/QEMU software validation complete; resume only for physical hardware testing or a concrete Web Emulator integration requirement.",
   "date": "2026-11-24",
   "source": {
     "integration_tag": "1.6.7",
@@ -1346,7 +1346,7 @@
       "lib/hal/HalGPIO.h": "d645a778a1062f0bb5b924b5dcb0a35b463e3bf9f1f0706698b3cc30c81f47f3",
       "lib/hal/HalStorage.cpp": "0f6ab386982c9b862b0fadfab06be0352c05014878cf1dd8782e80e41eb06496",
       "platformio.ini": "f7d994800169a39f6ba82e190d7c0b70270a6e2919cd480f9842aca33d0239c9",
-      "PORT_HANDOFF.md": "e8f93e82aaafe990190bb54f015b233a2b01182b1fed00603a03044f62104228",
+      "PORT_HANDOFF.md": "aaf365dc0b0ad636e4b33228d403b6bbcbf2906bb8f373027fcfb297f107b3e2",
       "REFERENCE-LICENSES.md": "61a07afeba38153856eba1825d37e0ce59b8f2494639ec68b5066377ba3719d7",
       "scripts/export_experimental_firmware.py": "050ae19500b1ed6f029468b217d64b2f58bb94fbbd69207ef3bd796402f493ab",
       "scripts/guard_nooir_upload.py": "8216a797b1e2fd589e194312bdfcff541de6a30218cd0b09344596f89bc87da2",
@@ -1587,7 +1587,7 @@
     "No validated external recovery/backup process; builds are not flash-ready",
     "BLE HID, USB MSC, frontlight and warm light intentionally disabled"
   ],
-  "handoff_sha256": "e8f93e82aaafe990190bb54f015b233a2b01182b1fed00603a03044f62104228",
+  "handoff_sha256": "aaf365dc0b0ad636e4b33228d403b6bbcbf2906bb8f373027fcfb297f107b3e2",
   "remote_backup": {
   "status": "verified",
   "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",

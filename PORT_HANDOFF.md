@@ -4,7 +4,7 @@
 
 Updated: 2026-11-24
 
-**Workstream status:** The source backup is verified on the dedicated development branch. Experimental software validation is complete; the port awaits physical hardware testing or a concrete Web Emulator integration requirement. The builds are not physically flash-ready.
+**Workstream status: PAUSED —** the source backup is verified on the dedicated development branch, and software validation is complete. Resume only for physical hardware testing or a concrete Web Emulator integration requirement. The builds are not physically flash-ready.
 
 The latest verified software checkpoint is the Classic SDL2 host replay plus the exact-build Pro native eink-qemu Reader replay (30/30 checks in run03; run01 was 27/27). Physical compatibility, Pro deep sleep/wake, Classic firmware execution, physical touch/swipe, and safe recovery remain open. See the closing checkpoint at the end of this file.
 
