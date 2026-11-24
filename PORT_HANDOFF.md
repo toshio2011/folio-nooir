@@ -4,7 +4,7 @@
 
 Updated: 2026-11-24
 
-**Workstream status:** Experimental software-validation checkpoint complete; awaiting physical hardware testing or a concrete Web Emulator integration requirement. The builds are not physically flash-ready.
+**Workstream status:** The source backup is verified on the dedicated development branch. Experimental software validation is complete; the port awaits physical hardware testing or a concrete Web Emulator integration requirement. The builds are not physically flash-ready.
 
 The latest verified software checkpoint is the Classic SDL2 host replay plus the exact-build Pro native eink-qemu Reader replay (30/30 checks in run03; run01 was 27/27). Physical compatibility, Pro deep sleep/wake, Classic firmware execution, physical touch/swipe, and safe recovery remain open. See the closing checkpoint at the end of this file.
 
@@ -604,3 +604,11 @@ Earlier 1.6.7 attempts are preserved but are not counted as Reader passes: the f
 A prior attempted PIO command was issued from the C: conversation directory and failed before starting a project build because it could not find `platformio.ini`. During an earlier cache-copy step, existing `${WINDOWS_USER}\Documents\side\.pio\libdeps\nooir167_x4pro` and `...\nooir167_x4classic` directories were involved; they were left intact, and it is not possible to prove whether copy metadata/content changed. No firmware/source/build output was intentionally produced on C:. Subsequent work used the isolated D: worktree, D: caches, D: build logs and D: outputs. Do not recreate or depend on the deleted C: workspace.
 
 Before any future physical bring-up, separately verify exact board/revision and bootloader/partition map; create and validate a full backup/restore and recovery method; use a current-limited supply and serial capture; confirm PSRAM training, profile, panel/rotation/refresh, SDMMC, Pro touch or Classic buttons, power rails, sleep/wake, and sustained EPUB/XTC/XTCH/CBZ/progress behavior. No physical flashing is authorized by this handoff.
+
+## 2026-11-24 GitHub source backup — verified
+
+The reviewed source and documentation are backed up on [`codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124`](https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124). The first pushed source checkpoint is commit `99e59f729bab898bacfef24457e15ce4dd9a1046` ([commit](https://github.com/toshio2011/folio-nooir/commit/99e59f729bab898bacfef24457e15ce4dd9a1046)). Fetch verification matched the remote ref to that commit and confirmed the port handoff, source-delta, Pro/Classic S3 profiles and compatibility files were present.
+
+This is a development source backup only. No pull request was created, and nothing was merged, released, deployed or flashed. The experimental Pro/Classic BIN/ELF pairs, successful firmware build logs, QEMU-only full-flash image, QEMU and SDL2 logs/screenshots, virtual SD fixtures and build caches remain local under `${NOOIR_D_ROOT}/_builds/nooir-s3-v1.6.7-20261124`; they were not added to Git. Two RTL test BMP fixtures inherited from the 1.6.7 base are unchanged; no simulator screenshots or generated port binaries were committed. The S3 FreeInk SDK remains a gitlink at `5e94fe7480f019c89fbf691aef87523eb1b46704`.
+
+The backup does not change the remaining physical requirements. Do not consider either image flash-ready until a board-matched full backup and external recovery procedure have been validated. Resume hardware work only with an explicitly scoped test and separate approval for any device write; the Web Emulator source remains outside this branch.
