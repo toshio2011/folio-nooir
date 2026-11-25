@@ -732,8 +732,7 @@ Updated 2026-11-25. The X4 Pro / X4 Classic feature-parity workstream is paused 
 
 - Continue only in D:\fatiha\side\_worktrees\nooir-s3-167-upgrade-20261124.
 - Dedicated branch: codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124
-- Remote destination: https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124
-- Source checkpoint commit with the three USB compile corrections: 892da60facddd270e74e2015e70b4be388189564..
+
 - Source commit before this documentation closeout: 325f3ac8dc0bfcb1d5e81910052932a258567308. The remote branch matched this commit before the closeout edits.
 - Before the closeout, the tracked tree had no modifications. One pre-existing generated build-cache directory was untracked at repository root; Git displays its Windows path with escaped characters. It was left untouched and is excluded from staging.
 - This checkpoint changes only PORT_HANDOFF.md, PORT_SOURCE_DELTA.json, and docs/PORT_1.6.7_FEATURE_PARITY.md. Build caches, partial outputs, logs, prior binaries, and temporary root-state backups remain local and preserved.
@@ -838,10 +837,10 @@ Completed before 5:28 PM MYT. At the checkpoint, no matching PlatformIO, Python 
 - Authoritative D: workspace: D:\fatiha\side\_worktrees\nooir-s3-167-upgrade-20261124
 - Dedicated branch: codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124
 - Remote destination: https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124
-- Source checkpoint commit with the three USB compile corrections: 892da60facddd270e74e2015e70b4be388189564.
+
 - Source HEAD before checkpoint edits: 91e1fac80375bf568558b5684f8245e2ab46caa5; GitHub branch head matched it.
-- Reviewed implementation/source and handoff checkpoint commit: 892da60facddd270e74e2015e70b4be388189564.
-- The current firmware build source was that commit plus the reviewed, local source diff affecting three tracked files in src/SdCardFontSystem.cpp, src/SdCardFontSystem.h, and src/activities/network/UsbDriveActivity.cpp. The BIN manifests name the base commit; this handoff records the local diff that was present during the builds.
+- Remote source checkpoint commit: 375173cfd4e6d721a8406562ae3bdcc0dc641b77; the source files in that commit match the local source blobs.
+- The current firmware build source was base commit 91e1fac80375bf568558b5684f8245e2ab46caa5 plus the local source diff affecting three tracked files in src/SdCardFontSystem.cpp, src/SdCardFontSystem.h, and src/activities/network/UsbDriveActivity.cpp. The BIN manifests name the base commit; this handoff records the local diff that was present during the builds.
 - The separate freeink-sdk and freeink-sdk-s3 submodules remain at 958720659ea289ae325e83db20049d0ea844800d and 995d9bd523b9c45b18710bca17a3158ce724a7f4; neither has tracked changes.
 - The only pre-existing untracked repository item is the generated cache at D:\fatiha\side\_builds\nooir-s3-v1.6.7-20261124\build-cache; it is preserved and excluded from Git.
 - The temporary PlatformIO config was restored to its original SHA-256 db9da19691325abe1dc3f06b05a29e738b7cf3360d00edcf7f37ed345fd793ba. All 21 files in the D: root-state snapshot were hash-verified restored. Per-build cache, dependency, and output directories are separate under D:\p\run3.

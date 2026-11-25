@@ -1281,7 +1281,6 @@
       "integration_commit": "5696a555f9f741e8b80c7360d26a74129750610d",
       "firmware_source_commit": "ad0f269d13aed74d535c619588e1b3bde4f4ecbc",
       "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
-  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
       "firmware_build_source_head": "a6de722635b0ade901b31a1457ef9ae7cc248509",
       "original_c3_and_standalone_web_emulator_modified": false,
       "dependency_gitlinks": {
@@ -1592,7 +1591,6 @@
     "remote_backup": {
       "status": "verified",
       "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
-  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
       "remote": "https://github.com/toshio2011/folio-nooir.git",
       "branch_url": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
       "commit_url": "https://github.com/toshio2011/folio-nooir/commit/99e59f729bab898bacfef24457e15ce4dd9a1046",
@@ -1627,7 +1625,6 @@
   "checkpoint_2026_11_24": {
     "workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
     "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
-  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
     "source_checkpoint_commit": "be3f218988ca3e874d68f6d777165be3c521fac4",
     "status": "PAUSED — end-of-day checkpoint; source changes not build-certified",
     "upstream": {
@@ -1685,7 +1682,6 @@
     "date": "2026-11-25",
     "workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
     "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
-  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
     "source_head_at_checkpoint_start": "dc123febde5ab7393d64a83aa3fdf500d5f89316",
     "status": "PAUSED — end-of-day checkpoint; resume tomorrow. Current feature-parity source is not firmware-build-certified.",
     "tracked_changes_at_start": [
@@ -1772,7 +1768,6 @@
     "git": {
       "remote": "https://github.com/toshio2011/folio-nooir.git",
       "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
-  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
       "branch_url": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
       "verified_source_checkpoint_commit": "97b6b291685b692e23dd797f6cada5347e891045",
       "verified_remote_head": "97b6b291685b692e23dd797f6cada5347e891045",
@@ -1796,7 +1791,6 @@
     "date": "2026-11-25",
     "workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
     "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
-  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
     "base_head": "bd98d922c9eafc54ce6838b75f019645cfac369f",
     "source_change": "Moved the five USB method definitions after the complete nested StorageLock definition; no method body or lock semantics changed.",
     "source_sha256": "efcf8be15cab43a0e9570d2b372019572e16c049bdb720d120bfcb66a85f1f1b",
@@ -1811,7 +1805,6 @@
     "status": "PAUSED — end-of-day checkpoint; both latest S3 firmware builds failed; no operation remains running.",
     "workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
     "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
-  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
     "source_head_before_documentation_closeout": "325f3ac8dc0bfcb1d5e81910052932a258567308",
     "remote_head_before_documentation_closeout": "325f3ac8dc0bfcb1d5e81910052932a258567308",
     "git_before_closeout": {
@@ -1917,7 +1910,6 @@
     "status": "PAUSED — stopped before 5:28 PM MYT; no operation active.",
     "workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
     "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
-  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
     "source_head_at_checkpoint": "82a669ba69475709dc21621c447620ca8e801055",
     "remote_head_before_docs_checkpoint": "82a669ba69475709dc21621c447620ca8e801055",
     "source_worktree_changes": [
@@ -2006,7 +1998,7 @@
   "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
   "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
   "source_head_before_checkpoint": "91e1fac80375bf568558b5684f8245e2ab46caa5",
-  "source_checkpoint_commit": "892da60facddd270e74e2015e70b4be388189564",
+  "source_checkpoint_commit": "375173cfd4e6d721a8406562ae3bdcc0dc641b77",
   "remote_head_before_checkpoint": "91e1fac80375bf568558b5684f8245e2ab46caa5",
   "current_source_diff": [
     "src/SdCardFontSystem.cpp: add releaseForStorage to release interface caches and SD-backed reader fonts before external raw-sector ownership.",
