@@ -667,13 +667,13 @@ They remain at `${NOOIR_D_ROOT}\_builds\nooir-s3-v1.6.7-20261124\artifacts` and 
 
 Authoritative workspace: D:\fatiha\side\_worktrees\nooir-s3-167-upgrade-20261124
 Branch: codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124
-Source HEAD at start: dc123febde5ab7393d64a83aa3fdf500d5f89316. The remote branch matched this commit before the closing commit.
+Source HEAD at start: dc123febde5ab7393d64a83aa3fdf500d5f89316. The reviewed source and checkpoint commit is 97b6b291685b692e23dd797f6cada5347e891045.
 
 ### Safe stop and Git state
 
 The only active firmware build was allowed to finish. It exited failed after 12 minutes 20 seconds and its wrapper completed cleanup. No build, test, simulator, QEMU run, flash, or source investigation is running now. The wrapper restored platformio.local.ini (SHA-256 DB9DA19691325ABE1DC3F06B05A29E738B7CF3360D00EDCF7F37ED345FD793BA), the patched SDK USB source (SHA-256 E7A167602BFD3DBE9FF5A7DF08A987671C47BEDC46AA44C6BD28FBDDF3720B6C), and generated root configuration files. The migration archive and shared/global PlatformIO installation were not changed.
 
-At the start, tracked changes were limited to platformio.ini; Git also reported one pre-existing generated build-cache directory as untracked. That cache remains local and must not be staged. The closing commit is limited to the reviewed platformio.ini, PORT_HANDOFF.md, PORT_SOURCE_DELTA.json, and docs/PORT_1.6.7_FEATURE_PARITY.md. It contains no BIN/ELF, cache, raw log, private file, temporary SD image, or screenshot. Verify the final commit and remote tip in Git before relying on its backup; push only to the dedicated branch above.
+At the start, tracked changes were limited to platformio.ini; Git also reported one pre-existing generated build-cache directory as untracked. That cache remains local and was not staged. The reviewed closing commit contains only platformio.ini, PORT_HANDOFF.md, PORT_SOURCE_DELTA.json, and docs/PORT_1.6.7_FEATURE_PARITY.md. It contains no BIN/ELF, cache, raw log, private file, temporary SD image, or screenshot. The push was verified without force-push: local and remote branch heads both equal 97b6b291685b692e23dd797f6cada5347e891045. See the [dedicated S3 development branch](https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124) and [verified checkpoint commit](https://github.com/toshio2011/folio-nooir/commit/97b6b291685b692e23dd797f6cada5347e891045). Tracked files are clean after the push; the generated build cache remains untracked and local.
 
 ### Feature parity state
 

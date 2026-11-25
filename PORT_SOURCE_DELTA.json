@@ -235,7 +235,7 @@
     }
   },
   "commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
-  "handoff_sha256": "45f9e4f8ad76c432146aa45ad19d511b72c46fa745582f69663f9074b6b1a84b",
+  "handoff_sha256": "0dcb960224ac8596d7186900ce9e7ab153eeea4d8dfbc4e776197b54a1eba831",
   "limitations": [
     "Classic SDL2 simulator uses folder-backed host storage and does not validate physical SDMMC, PSRAM, panel, GPIO, power, or touch hardware.",
     "No physical validation or flash is claimed.",
@@ -1764,6 +1764,24 @@
       "physical_flash": false,
       "generated_binaries_logs_caches_staged": false,
       "merge_release_deploy": false
+    },
+    "git": {
+      "remote": "https://github.com/toshio2011/folio-nooir.git",
+      "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+      "branch_url": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+      "verified_source_checkpoint_commit": "97b6b291685b692e23dd797f6cada5347e891045",
+      "verified_remote_head": "97b6b291685b692e23dd797f6cada5347e891045",
+      "local_matches_remote": true,
+      "pushed_without_force": true,
+      "required_files": [
+        "platformio.ini",
+        "PORT_HANDOFF.md",
+        "PORT_SOURCE_DELTA.json",
+        "docs/PORT_1.6.7_FEATURE_PARITY.md"
+      ],
+      "generated_artifacts_committed": false,
+      "tracked_worktree_after_push": "clean",
+      "generated_build_cache": "local-only, untracked"
     }
   }
 }
