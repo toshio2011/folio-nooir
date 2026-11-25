@@ -1,6 +1,6 @@
 # Folio Nooir 1.6.7 — X4 Pro / X4 Classic S3 parity checkpoint
 
-**Status: PAUSED — experimental source checkpoint; no physical validation.** Reference revisions: CrossPoint Reader `92e8714a332c2c1903ea93290cf0b9b4f6f6697c` with FreeInk SDK `995d9bd523b9c45b18710bca17a3158ce724a7f4`; CrossInk `9914146eeae7b46b300f475a16c32426fc02ec1f` with FreeInk SDK `699370183fa3a0e33c9cb83a36f701bbb6022095`.
+**Status: PAUSED — end-of-day 2026-11-25 checkpoint; no physical validation.** The 2026-11-24 firmware/QEMU/SDL2 results below are historical evidence for the preserved earlier artifact/source snapshot. The later feature-parity source has not passed a complete ESP32-S3 build; today's Pro build stopped at the StorageLock compile error recorded below. Reference revisions: CrossPoint Reader `92e8714a332c2c1903ea93290cf0b9b4f6f6697c` with FreeInk SDK `995d9bd523b9c45b18710bca17a3158ce724a7f4`; CrossInk `9914146eeae7b46b300f475a16c32426fc02ec1f` with FreeInk SDK `699370183fa3a0e33c9cb83a36f701bbb6022095`.
 
 | Model / capability | CrossPoint reference | CrossInk reference | Folio Nooir 1.6.7 S3 status / evidence |
 |---|---|---|---|
@@ -26,3 +26,18 @@ The USB MSC host harness passed on 2026-11-24, covering bounded reads/writes, pa
 The Pro rebuild failed before compilation because PlatformIO’s Windows output thread could not encode a Unicode status line under CP1252. Classic build was not started. The prior certified BIN/ELF pairs remain hash-verified and unchanged. Current source changes are not build-certified.
 
 Never flash either device until a board-matched full backup and independently validated external recovery method exist. No physical Pro or Classic boot, display, touch/button, SDMMC, PSRAM, battery, sleep/wake, BLE or recovery result is claimed.
+
+
+## 2026-11-25 closing update
+
+This update supersedes any reading of the table above that could imply the newly added feature-parity source was certified by the preserved BINs or emulator runs. The certified Pro/Classic firmware pair and Pro QEMU/Classic SDL2 evidence predate today's unbuilt changes.
+
+- USB MSC: source and host lifecycle harness exist; the last host harness passed on 2026-11-24. Today's clean Pro build compiled the MSC implementation but stopped at five incomplete HalStorage::StorageLock instantiations. No Pro or Classic firmware BIN was created today.
+- Pro touch/gestures: touch profile and existing UI routes are present. Gesture-zone tuning and GT911 hardware behavior remain unverified; the QEMU swipe result is unconfirmed.
+- Pro frontlight/warmth: Pro-only persistence and sleep/wake source integration are present but were not compiled in a successful current build and have no hardware evidence.
+- Classic buttons/shortcuts: touch remains disabled; existing button mappings and shortcuts remain in source. Prior SDL2 navigation used host key events, not the physical buttons or the Classic S3 BIN.
+- SDMMC, display, PSRAM and power: existing device definitions and older Pro QEMU evidence remain useful references. Physical SDMMC, panel variants, PSRAM training, rails and sleep/wake are open. Classic S3 firmware execution remains open because no Classic QEMU machine is available.
+- CrossPoint/CrossInk reference revisions are listed at the top; they guide implementation only.
+- S3 BLE remains disabled and feasibility has not been tested. Native TTF/OTF integration remains unimplemented. Battery/RTC/orientation/panel-detection and safe external recovery remain open.
+- Do not repeat the stale dependency-link build attempt, the reused core missing sdkconfig.h, the deep Windows build path, or the QEMU long-wait pattern that timed out. Use short D: paths and fresh build/dependency directories after resumption.
+- No physical flash, merge, release, deployment, or work on the original C3 release, Web Emulator, Status Bar experiment or MihonNooir occurred in this checkpoint.

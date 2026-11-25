@@ -235,7 +235,7 @@
     }
   },
   "commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
-  "handoff_sha256": "aaf365dc0b0ad636e4b33228d403b6bbcbf2906bb8f373027fcfb297f107b3e2",
+  "handoff_sha256": "45f9e4f8ad76c432146aa45ad19d511b72c46fa745582f69663f9074b6b1a84b",
   "limitations": [
     "Classic SDL2 simulator uses folder-backed host storage and does not validate physical SDMMC, PSRAM, panel, GPIO, power, or touch hardware.",
     "No physical validation or flash is claimed.",
@@ -527,7 +527,7 @@
         "path": "platformio.ini",
         "status": "modified",
         "upstream_sha256": "ff03157d7a81b1f60341dbf4d5ffbe33bb2fe49f6e3cb7d09ff42bf5d87b6f28",
-        "worktree_sha256": "258e3b7abd1cccdb55634379ea9b8b8d063247898d79f0af51ef582dd00706f6"
+        "worktree_sha256": "d261e43457206b6963bc703e217ca203f935507240d7044c9cad49afcae57aba"
       },
       {
         "path": "scripts/export_experimental_firmware.py",
@@ -1199,7 +1199,7 @@
     "Exercise Home, Library, EPUB first page, next/previous, exit, progress reopen, deep sleep, button wake, and repeated transitions while monitoring reset/brownout/heap/card integrity.",
     "Keep OTA unavailable until image/manifest, partition/rollback state, and external recovery are reviewed and tested."
   ],
-  "workstream_status": "PAUSED — awaiting physical hardware testing or a concrete Web Emulator integration requirement.",
+  "workstream_status": "PAUSED — end-of-day 2026-11-25 checkpoint; resume tomorrow from the authoritative D: worktree.",
   "closing_checkpoint": {
     "date": "2026-11-13",
     "status": "PAUSED — awaiting physical hardware testing or a concrete Web Emulator integration requirement",
@@ -1345,7 +1345,7 @@
         "lib/hal/HalGPIO.cpp": "9a48ed8777ffc75a864d3dda9b17b78a071a15a6ac5d75594fb77944d6220517",
         "lib/hal/HalGPIO.h": "d645a778a1062f0bb5b924b5dcb0a35b463e3bf9f1f0706698b3cc30c81f47f3",
         "lib/hal/HalStorage.cpp": "0f6ab386982c9b862b0fadfab06be0352c05014878cf1dd8782e80e41eb06496",
-        "platformio.ini": "f7d994800169a39f6ba82e190d7c0b70270a6e2919cd480f9842aca33d0239c9",
+        "platformio.ini": "d261e43457206b6963bc703e217ca203f935507240d7044c9cad49afcae57aba",
         "PORT_HANDOFF.md": "aaf365dc0b0ad636e4b33228d403b6bbcbf2906bb8f373027fcfb297f107b3e2",
         "REFERENCE-LICENSES.md": "61a07afeba38153856eba1825d37e0ce59b8f2494639ec68b5066377ba3719d7",
         "scripts/export_experimental_firmware.py": "050ae19500b1ed6f029468b217d64b2f58bb94fbbd69207ef3bd796402f493ab",
@@ -1677,5 +1677,93 @@
       "TTF/OTF integration",
       "physical validation/recovery remains open"
     ]
+  },
+  "checkpoint_2026_11_25": {
+    "date": "2026-11-25",
+    "workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
+    "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+    "source_head_at_checkpoint_start": "dc123febde5ab7393d64a83aa3fdf500d5f89316",
+    "status": "PAUSED — end-of-day checkpoint; resume tomorrow. Current feature-parity source is not firmware-build-certified.",
+    "tracked_changes_at_start": [
+      "platformio.ini"
+    ],
+    "local_only_untracked": [
+      "Pre-existing generated build-cache directory at repository root; excluded from stage/commit."
+    ],
+    "upstream": {
+      "crosspoint": "92e8714a332c2c1903ea93290cf0b9b4f6f6697c",
+      "crossink_sdk": "699370183fa3a0e33c9cb83a36f701bbb6022095",
+      "crossink": "9914146eeae7b46b300f475a16c32426fc02ec1f",
+      "crosspoint_sdk": "995d9bd523b9c45b18710bca17a3158ce724a7f4"
+    },
+    "feature_status": {
+      "classic_buttons_shortcuts": "Existing mapped input and shortcuts retained; prior SDL2 host replay only; physical buttons untested.",
+      "other_device_gaps": "Battery/RTC/orientation/panel variants, physical storage, deep sleep/wake and external recovery remain open.",
+      "pro_frontlight_warmth": "Pro-only persistent controls and sleep/wake integration in source; current source not build-certified or hardware-tested.",
+      "ble_s3": "Disabled; feasibility untested.",
+      "usb_msc": "Source present; 2026-11-24 host lifecycle harness passed; current Pro compile reached MSC code then failed at five incomplete StorageLock instantiations; no firmware/device validation.",
+      "ttf_otf": "Not implemented; renderer/registry/cache integration remains open.",
+      "pro_touch_gestures": "Touch profile and existing routes present; gesture tuning and physical GT911/swipe unverified.",
+      "sdmmc_display_psram_power": "Older Pro QEMU and Classic SDL2 evidence only; current source unbuilt; all physical behavior open."
+    },
+    "preserved_firmware": {
+      "pro_elf_sha256": "8a123c4a2c636585214af964bcb03abc90f60db1db28e87b12a1e1475200adcb",
+      "classic_bin_sha256": "c4bf429556c15d1eccc92343352395f3dc36e90634569a17258f48fa4fc9cb10",
+      "classic_elf_sha256": "564b1e53a916f7d1aceba1faae6a0b1697f06b21b5b05eb2467b8541ad5480c7",
+      "artifact_root": "D:\\fatiha\\side\\_builds\\nooir-s3-v1.6.7-20261124\\artifacts",
+      "no_new_artifacts": true,
+      "pro_bin_sha256": "3e47ba8ce10901e5a037ecfcd75443615707882e7d2c32856949ba341868d7d5",
+      "unchanged": true
+    },
+    "latest_build_attempt": {
+      "core": "D:\\p\\core",
+      "prior_attempts": [
+        "Stale .pio-link dependencies resolved migration-archive libraries and failed with USBMSC/USB undeclared; logs remain in D:\\fatiha\\side\\_builds\\nooir-s3-v1.6.7-20261125-prebuilt-msc\\logs.",
+        "Fresh libdeps reused an isolated core missing generated sdkconfig.h; logs remain in D:\\fatiha\\side\\_builds\\nooir-s3-v1.6.7-20261125-prebuilt-msc-freshlibdeps\\logs.",
+        "Clean core at a long path failed with Windows WinError 206; partial output remains in the clean-core attempt directory.",
+        "Fresh short-path core built the prebuilt TinyUSB configuration and reached application code before the StorageLock error."
+      ],
+      "target": "X4 Pro / nooir167_x4pro",
+      "log": "D:\\p\\run\\logs\\build-x4pro-v1.6.7-clean-55.03.37-short-core-20261125.log",
+      "result": "FAILED; 12m20s; no BIN/ELF exported",
+      "build_root": "D:\\p\\run",
+      "warnings": [
+        "wolfSSL macro redefinitions",
+        "FILE_READ/FILE_WRITE macro redefinitions"
+      ],
+      "first_failure": "lib/hal/HalStorage.cpp lines 120, 152, 161, 170, 192: HalStorage::StorageLock is incomplete at variable instantiation.",
+      "output_directory": "D:\\p\\run\\artifacts; no new artifact exported",
+      "toolchain": "PlatformIO Core 6.1.19; Espressif32 55.03.37; Arduino-ESP32 3.3.7 / ESP-IDF 5.5.2; Xtensa 14.2.0+20251107"
+    },
+    "last_successful_evidence": {
+      "pro_qemu": "Preserved Pro pair only: run01 27/27 and run03 30/30; QEMU evidence does not certify current source.",
+      "classic_sdl2": "Prior host-only Reader navigation/exit/progress writes; does not execute Classic BIN or validate physical hardware.",
+      "python_artifact_tests": "5/5 passed in the prior source checkpoint.",
+      "usb_msc_host": "2026-11-24 lifecycle harness passed, SHA-256 433b2a68f1b1c94e39ab477bd04687a8366037cbac8739df694917778fbf0dc4.",
+      "tests_run_today": [],
+      "firmware_pair_builds": "Successful Pro/Classic builds and hashes listed above; logs remain under D:\\fatiha\\side\\_builds\\nooir-s3-v1.6.7-20261124\\logs; these pairs predate later feature-parity source."
+    },
+    "closeout_paths": {
+      "caches": "D:\\p\\core and D:\\p\\run build/cache/libdeps directories",
+      "certified_artifacts": "D:\\fatiha\\side\\_builds\\nooir-s3-v1.6.7-20261124\\artifacts",
+      "workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
+      "build_logs": "D:\\p\\run\\logs and D:\\fatiha\\side\\_builds\\nooir-s3-v1.6.7-20261125-*"
+    },
+    "next_steps": [
+      "Verify the dedicated branch push and final working-tree status.",
+      "Fix the StorageLock incomplete-type source error with the smallest correct change.",
+      "Build both profiles in fresh short-path D: directories, preserving the old BIN/ELF pairs.",
+      "Inspect metadata and hashes, then run exact-new-Pro QEMU and current-source Classic SDL2 checks.",
+      "Continue physical touch/buttons/frontlight/SDMMC/display/PSRAM/power/recovery validation only with exact devices and separate authorization.",
+      "Investigate S3 BLE and native TTF/OTF integration after firmware builds are green."
+    ],
+    "guardrails": {
+      "shared_platformio_modified": false,
+      "original_c3_web_emulator_status_bar_mihonnooir_modified": false,
+      "migration_archive_modified": false,
+      "physical_flash": false,
+      "generated_binaries_logs_caches_staged": false,
+      "merge_release_deploy": false
+    }
   }
 }
