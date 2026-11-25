@@ -2,11 +2,13 @@
 
 > Artifact checkpoint (2026-11-24; historical): the preserved Pro and Classic v1.6.7 BIN/ELF pairs passed their recorded build checks. The exact Pro pair passed 27/27 and 30/30 Reader checks in native eink-qemu; the Classic SDL2 host build and scripted Reader run passed. These results apply to the earlier artifact source checkpoint, not to the later feature-parity changes now in this branch.
 >
-> Latest source checkpoint (2026-11-25): the Pro build attempt reached the S3 USB MSC code and then failed on five incomplete-type errors for HalStorage::StorageLock. No new BIN/ELF was produced. The previous certified artifacts and all local evidence remain preserved. No physical device was flashed.
+> Earlier Pro compile (2026-11-25): five incomplete-type errors in HalStorage::StorageLock were fixed by moving the USB methods after the complete nested class definition; method bodies and lock behavior were unchanged.
+>
+> Latest Pro and Classic builds (2026-11-25): both failed at missing SdCardFontSystem::releaseForStorage and MappedInputManager::consumePowerGesture calls in UsbDriveActivity. No new BIN/ELF was produced. The preserved pairs and all local evidence remain unchanged; no physical device was flashed.
 
 Updated: 2026-11-25
 
-**Workstream status: ACTIVE — resumed 2026-11-25.** The recorded StorageLock declaration-order blocker has a narrow source fix; Pro and Classic builds are pending. The preserved BIN/ELF and QEMU/SDL2 results remain tied to their earlier source checkpoint. No physical device was flashed; nothing was merged, released, or deployed.
+**Workstream status: PAUSED — end-of-day checkpoint 2026-11-25.** The current USB Drive implementation does not compile for either S3 profile because it calls two APIs that are absent; the successful BIN/ELF pairs and simulator evidence remain tied to earlier source. No physical device was flashed, and nothing was merged, released, or deployed.
 
 The last artifact-backed software checkpoint was the Classic SDL2 host replay plus the exact-build Pro native eink-qemu Reader replay (30/30 checks in run03; run01 was 27/27). Those runs belong to the preserved earlier artifacts. Physical compatibility, Pro deep sleep/wake, Classic firmware execution, physical touch/swipe, and safe recovery remain open. See the 2026-11-25 closing checkpoint at the end of this file.
 
@@ -719,3 +721,61 @@ No physical Pro or Classic was flashed. No bootloader/eFuse/security/partition d
 ## 2026-11-25 resumed validation note
 
 The prior Pro compile showed five incomplete-type errors because the USB methods instantiated the nested HalStorage::StorageLock before its full class definition. The five USB method definitions were moved below the complete lock definition; method bodies and locking behavior were otherwise left unchanged. This is a source-level ordering correction, not yet a verified firmware fix. Next action is to rebuild Pro and Classic from the committed source on fresh D: build/cache/libdeps paths, preserving the previous experimental pairs and using the existing PlatformIO 55.03.37 / Arduino 3.3.7 / ESP-IDF 5.5.2 toolchain. Do not flash either device.
+
+## 2026-11-25 end-of-day closeout — PAUSED
+
+Updated 2026-11-25. The X4 Pro / X4 Classic feature-parity workstream is paused at this checkpoint. No build, test, simulator, or emulator process remains running. Both requested firmware builds finished with compile errors; no build is still active. Nothing was flashed, merged, released, or deployed.
+
+### Authoritative source and Git checkpoint
+
+- Continue only in D:\fatiha\side\_worktrees\nooir-s3-167-upgrade-20261124.
+- Dedicated branch: codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124.
+- Source commit before this documentation closeout: 325f3ac8dc0bfcb1d5e81910052932a258567308. The remote branch matched this commit before the closeout edits.
+- Before the closeout, the tracked tree had no modifications. One pre-existing generated build-cache directory was untracked at repository root; Git displays its Windows path with escaped characters. It was left untouched and is excluded from staging.
+- This checkpoint changes only PORT_HANDOFF.md, PORT_SOURCE_DELTA.json, and docs/PORT_1.6.7_FEATURE_PARITY.md. Build caches, partial outputs, logs, prior binaries, and temporary root-state backups remain local and preserved.
+
+### Latest build attempt — failed, no new artifacts
+
+Both profiles used the pinned toolchain: PlatformIO Core 6.1.19 at D:\p\core; Espressif32 55.03.37; Arduino-ESP32 3.3.7 / ESP-IDF 5.5.2; Xtensa 14.2.0+20251107. Separate builds and dependencies were under D:\p\run2.
+
+- Pro: failed after 232.13 seconds. Log: D:\p\run2\logs\build-nooir167_x4pro-v1.6.7-325f3ac8-20261125.log; 227,581 bytes; SHA-256 B1F72C8712D31015D83540D6A5BA07D8484C828834DD9EAFF7A9DBEE77C88234.
+- Classic: failed after 240.66 seconds. Log: D:\p\run2\logs\build-nooir167_x4classic-v1.6.7-325f3ac8-20261125.log; 237,509 bytes; SHA-256 2C9DA36698820EC7686723BC00059D5D3384BBD2BB540498E25B0242EF5CE1B0.
+- Both stop compiling src/activities/network/UsbDriveActivity.cpp: line 27 calls missing SdCardFontSystem::releaseForStorage; line 110 calls missing MappedInputManager::consumePowerGesture. The committed StorageLock declaration-order correction allowed compilation to proceed farther, but did not fix these separate API mismatches. Do not add guessed no-op APIs; inspect the intended font release and input-edge handling before changing source.
+- Non-fatal warnings include FILE_READ/FILE_WRITE redefinitions and wolfSSL macro redefinitions. Windows long-path support was also reported disabled.
+- D:\p\run2\artifacts contains no exported BIN/ELF. The partial build directories, dependencies, logs, and D:\p\run2\generated-root-state are preserved. The temporary generated SDK/config changes were restored to their recorded originals.
+
+### Preserved successful artifacts and evidence
+
+The unchanged last successful v1.6.7 application pairs are in D:\fatiha\side\_builds\nooir-s3-v1.6.7-20261124\artifacts. Their hashes were recomputed at closeout:
+
+| Device | BIN size / SHA-256 | Matching ELF size / SHA-256 |
+|---|---|---|
+| X4 Pro | 5,694,720 bytes / 3e47ba8ce10901e5a037ecfcd75443615707882e7d2c32856949ba341868d7d5 | 87,599,692 bytes / 8a123c4a2c636585214af964bcb03abc90f60db1db28e87b12a1e1475200adcb |
+| X4 Classic | 5,699,376 bytes / c4bf429556c15d1eccc92343352395f3dc36e90634569a17258f48fa4fc9cb10 | 87,623,700 bytes / 564b1e53a916f7d1aceba1faae6a0b1697f06b21b5b05eb2467b8541ad5480c7 |
+
+These pairs predate the latest feature-parity source. Preserve them unchanged; they do not certify the current source.
+
+Last successful software evidence remains historical to its recorded source/artifact checkpoints:
+
+- Exact preserved Pro BIN/ELF in native eink-qemu 0.9.2: Reader run01 passed 27/27; run03 passed 30/30, including EPUB open/render, forward/back navigation, exit, progress save, and reopening at saved progress. Run02 timed out after entering the emulator low-power timer path; no panic/crash was recorded. Retain the known virtual Power-hold workaround and the shorter run03 post-boot wait. QEMU does not prove physical behavior.
+- Classic SDL2 host run04 passed Home, Library, EPUB open, next/previous page, Reader exit, and persistence writes. It used host key events and folder-backed storage; restart/reopen persistence and the Classic S3 BIN were not tested. There is no Classic QEMU machine.
+- The USB MSC host lifecycle harness passed on 2026-11-24 (log SHA-256 433b2a68f1b1c94e39ab477bd04687a8366037cbac8739df694917778fbf0dc4). It does not validate TinyUSB firmware execution or physical SD ownership.
+- The recorded Python artifact/unit checks passed 5/5 on their earlier source checkpoint. They were not rerun in this closeout.
+
+### Feature parity and remaining gaps
+
+The complete status table is in docs/PORT_1.6.7_FEATURE_PARITY.md. USB Drive/MSC is only partially implemented and current firmware compilation is blocked by the two missing APIs above. Pro touch/gesture routes and Pro-only frontlight/warmth persistence/sleep hooks are present in source but are not built at this checkpoint and have no physical evidence. Classic touch-disabled/button mappings and shortcuts remain in source; SDL2 key navigation is not physical button validation.
+
+The profiles retain separate Pro and Classic device definitions. Both request 16 MiB DIO flash and 8 MiB OPI PSRAM. Earlier Pro QEMU evidence covers virtual SDMMC, display rendering, and emulator PSRAM allocation for the preserved BIN only. Physical SDMMC, panel revisions/refresh, PSRAM training, GPIO, buttons, Pro GT911 touch/swipes, frontlight channels, battery/RTC/orientation, rails, sleep/deep-sleep/wake, and USB host handoff remain unverified. S3 BLE is disabled and feasibility is untested. Native TTF/OTF integration is not implemented. OTA and ordinary SD firmware/recovery writes are guarded in these experimental profiles; neither is a validated recovery method.
+
+Reference commits reviewed for implementation guidance: CrossPoint Reader 92e8714a332c2c1903ea93290cf0b9b4f6f6697c with FreeInk SDK 995d9bd523b9c45b18710bca17a3158ce724a7f; CrossInk 9914146eeae7b46b300f475a16c32426fc02ec1f with FreeInk SDK 699370183fa3a0e33c9cb83a36f701bbb6022095. These references do not certify Nooir firmware.
+
+### Tomorrow's continuation, in priority order
+
+1. Resume in the authoritative D: worktree and confirm branch/remote state; keep the local generated cache excluded.
+2. Inspect SdCardFontSystem cache/renderer cleanup and MappedInputManager/HalGPIO power-edge dispatch. Resolve the two UsbDriveActivity API mismatches with real semantics and minimal source changes.
+3. Build Pro and Classic with the same pinned toolchain using new, short D: paths and fresh per-profile build/cache/dependency directories. Use separately named outputs; never overwrite the preserved pairs.
+4. Verify new image metadata, app-slot fit, BIN/ELF pairing and hashes. Run Pro QEMU only against the exact new Pro pair; use the established virtual Power-hold and short timing. Run the focused Classic SDL2 checks against current source, while labeling them host-only.
+5. Continue hardware-only validation later with exact board revisions and an independently verified backup/recovery process. Keep touch/swipes, physical buttons, frontlight/warmth, SDMMC/MSC, panel, PSRAM, power/deep-sleep/wake, BLE, fonts, and recovery explicitly open.
+
+No work was done on the original X4 release, Web Emulator, Status Bar experiment, MihonNooir, migration archive, or shared PlatformIO toolchain. No physical flashing is authorized by this checkpoint.
