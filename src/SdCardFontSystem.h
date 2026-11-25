@@ -73,6 +73,10 @@ class SdCardFontSystem {
   /// the ActivityManager reloads the family lazily after returning to a light
   /// screen.
   void releaseInterfaceFontCaches();
+
+  /// Release all SD-backed reader and interface fonts before external raw-sector ownership.
+  /// Persisted family choices and the registry remain available for the post-restart reload.
+  void releaseForStorage(GfxRenderer& renderer);
   bool interfaceFontResident() const { return !uiManager_.currentFamilyName().empty(); }
 
   /// Release only glyph/layout caches for pressure reclaim paths that should

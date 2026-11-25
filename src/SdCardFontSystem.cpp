@@ -448,6 +448,13 @@ void SdCardFontSystem::releaseInterfaceFontCaches() {
 #endif
 }
 
+void SdCardFontSystem::releaseForStorage(GfxRenderer& renderer) {
+  // The interface font release removes UI overrides and unloads its SD-owned objects.
+  // The reader manager owns the selected reader font and size-matched CJK fallbacks.
+  releaseInterfaceFontCaches();
+  manager_.unloadAll(renderer);
+}
+
 void SdCardFontSystem::releaseInterfaceFontGlyphCaches() {
 #if NOOIR_SD_FONT_DIAGNOSTICS
   uiManager_.logMemoryStats("pressure_before_interface_cache_release");

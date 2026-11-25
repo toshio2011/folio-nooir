@@ -107,7 +107,8 @@ void UsbDriveActivity::loop() {
   const bool canExitWithInput = state == UsbDriveState::WaitingForHost || startFailed;
   if (canExitWithInput && (mappedInput.wasPressed(MappedInputManager::Button::Back) ||
                            mappedInput.wasPressed(MappedInputManager::Button::Power) || mappedInput.wasHomeGesture())) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Power)) mappedInput.consumePowerGesture();
+    // Exclusive-storage mode skips normal main-loop power handling. Restarting here
+    // is the complete action for the Power edge.
     restartAfterStorageHandoff();
     return;
   }

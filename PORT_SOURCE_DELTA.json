@@ -1199,7 +1199,7 @@
     "Exercise Home, Library, EPUB first page, next/previous, exit, progress reopen, deep sleep, button wake, and repeated transitions while monitoring reset/brownout/heap/card integrity.",
     "Keep OTA unavailable until image/manifest, partition/rollback state, and external recovery are reviewed and tested."
   ],
-  "workstream_status": "PAUSED — final end-of-day checkpoint 2026-11-25; no build or test active; partial USB font-release source fix remains unbuilt and local.",
+  "workstream_status": "PAUSED — 2026-11-25 end-of-day feature-parity checkpoint; corrected Pro and Classic builds succeeded; no process active; physical validation and runtime tests on the fresh pairs remain open.",
   "closing_checkpoint": {
     "date": "2026-11-13",
     "status": "PAUSED — awaiting physical hardware testing or a concrete Web Emulator integration requirement",
@@ -1281,6 +1281,7 @@
       "integration_commit": "5696a555f9f741e8b80c7360d26a74129750610d",
       "firmware_source_commit": "ad0f269d13aed74d535c619588e1b3bde4f4ecbc",
       "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
       "firmware_build_source_head": "a6de722635b0ade901b31a1457ef9ae7cc248509",
       "original_c3_and_standalone_web_emulator_modified": false,
       "dependency_gitlinks": {
@@ -1591,6 +1592,7 @@
     "remote_backup": {
       "status": "verified",
       "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
       "remote": "https://github.com/toshio2011/folio-nooir.git",
       "branch_url": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
       "commit_url": "https://github.com/toshio2011/folio-nooir/commit/99e59f729bab898bacfef24457e15ce4dd9a1046",
@@ -1625,6 +1627,7 @@
   "checkpoint_2026_11_24": {
     "workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
     "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
     "source_checkpoint_commit": "be3f218988ca3e874d68f6d777165be3c521fac4",
     "status": "PAUSED — end-of-day checkpoint; source changes not build-certified",
     "upstream": {
@@ -1682,6 +1685,7 @@
     "date": "2026-11-25",
     "workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
     "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
     "source_head_at_checkpoint_start": "dc123febde5ab7393d64a83aa3fdf500d5f89316",
     "status": "PAUSED — end-of-day checkpoint; resume tomorrow. Current feature-parity source is not firmware-build-certified.",
     "tracked_changes_at_start": [
@@ -1768,6 +1772,7 @@
     "git": {
       "remote": "https://github.com/toshio2011/folio-nooir.git",
       "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
       "branch_url": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
       "verified_source_checkpoint_commit": "97b6b291685b692e23dd797f6cada5347e891045",
       "verified_remote_head": "97b6b291685b692e23dd797f6cada5347e891045",
@@ -1791,6 +1796,7 @@
     "date": "2026-11-25",
     "workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
     "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
     "base_head": "bd98d922c9eafc54ce6838b75f019645cfac369f",
     "source_change": "Moved the five USB method definitions after the complete nested StorageLock definition; no method body or lock semantics changed.",
     "source_sha256": "efcf8be15cab43a0e9570d2b372019572e16c049bdb720d120bfcb66a85f1f1b",
@@ -1805,6 +1811,7 @@
     "status": "PAUSED — end-of-day checkpoint; both latest S3 firmware builds failed; no operation remains running.",
     "workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
     "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
     "source_head_before_documentation_closeout": "325f3ac8dc0bfcb1d5e81910052932a258567308",
     "remote_head_before_documentation_closeout": "325f3ac8dc0bfcb1d5e81910052932a258567308",
     "git_before_closeout": {
@@ -1910,6 +1917,7 @@
     "status": "PAUSED — stopped before 5:28 PM MYT; no operation active.",
     "workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
     "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
     "source_head_at_checkpoint": "82a669ba69475709dc21621c447620ca8e801055",
     "remote_head_before_docs_checkpoint": "82a669ba69475709dc21621c447620ca8e801055",
     "source_worktree_changes": [
@@ -1990,5 +1998,115 @@
       "merge_release_deploy": false,
       "generated_artifacts_committed": false
     }
+  },
+  "end_of_day_checkpoint_2026_11_25_feature_parity": {
+  "date": "2026-11-25",
+  "status": "PAUSED — checkpoint completed before 5:28 PM MYT; no build/test process active.",
+  "workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
+  "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+  "source_head_before_checkpoint": "91e1fac80375bf568558b5684f8245e2ab46caa5",
+  "source_checkpoint_commit": "892da60facddd270e74e2015e70b4be388189564",
+  "remote_head_before_checkpoint": "91e1fac80375bf568558b5684f8245e2ab46caa5",
+  "current_source_diff": [
+    "src/SdCardFontSystem.cpp: add releaseForStorage to release interface caches and SD-backed reader fonts before external raw-sector ownership.",
+    "src/SdCardFontSystem.h: declare/document releaseForStorage.",
+    "src/activities/network/UsbDriveActivity.cpp: remove call to nonexistent consumePowerGesture; exclusive-storage Power edge already triggers controlled teardown/restart."
+  ],
+  "source_diff_validation": "Both Pro and Classic compilation/linking succeeded with these local source changes. No runtime or host MSC lifecycle test rerun after the changes.",
+  "build_toolchain": "PlatformIO Core 6.1.19 at D:\\p\\core; Espressif32 55.03.37; Arduino-ESP32 3.3.7 / ESP-IDF 5.5.2; Xtensa 14.2.0+20251107.",
+  "hardware_profile": "Both ESP32-S3 DevKitC-1 N16R8 profiles: 16 MiB DIO flash, 8 MiB OPI PSRAM, existing 6,553,600-byte application slot; app-only experimental output; no flashing.",
+  "fresh_builds": {
+    "x4pro": {
+      "result": "SUCCESS; compile/link only; 436.31 s.",
+      "bin": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Pro-Experimental.bin",
+      "bin_size_bytes": 5765536,
+      "bin_sha256": "03dfc9e157df4d18adb864d87e2bc5a05df34c76e5e77a2304e166f156ba6002",
+      "elf": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Pro-Experimental.elf",
+      "elf_size_bytes": 93834740,
+      "elf_sha256": "3364471f3d65a2a745221a7a31dcae865f1751ed7f166c0c3af849434ce7bb8d",
+      "log": "D:\\p\\run3\\logs\\build-x4pro-v1.6.7-usb-fix-20261125.log",
+      "log_sha256": "f5f77a212bea99c56cff4bc5181a46f44d6d622e0e0c0746af4e8f3afaf93cd0",
+      "manifest": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Pro-Experimental.bin.manifest.json",
+      "qemu_on_this_pair": false
+    },
+    "x4classic": {
+      "result": "SUCCESS; compile/link only; 537.17 s.",
+      "bin": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Classic-Experimental.bin",
+      "bin_size_bytes": 5755696,
+      "bin_sha256": "9fdee5dbd9c5fe9d3bd355627cd74773e71f3ab564d56b2aa39894e7df86ff6b",
+      "elf": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Classic-Experimental.elf",
+      "elf_size_bytes": 93490396,
+      "elf_sha256": "3bc85fdf23f04f9df6d047a42b1509b477f3ec5b4a46aea94b74ddcde12354a7",
+      "log": "D:\\p\\run3\\logs\\build-x4classic-v1.6.7-usb-fix-20261125.log",
+      "log_sha256": "662a2a39d6002a5c5fc69b7c73cc5e20ca021e15c116ebdb450e92adf285d6b6",
+      "manifest": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Classic-Experimental.bin.manifest.json",
+      "classic_simulator_on_this_pair": false
+    }
+  },
+  "warnings": [
+    "FILE_READ/FILE_WRITE macro redefinitions.",
+    "wolfSSL configuration macro redefinitions.",
+    "Deprecated NetworkClient::flush() call in WebSockets.",
+    "Rect explicit-constructor aggregate conversions in CarouselTheme.cpp.",
+    "Windows Long Path Support disabled warning."
+  ],
+  "earlier_compile_failures_superseded": [
+    "D:\\p\\run2\\logs\\build-nooir167_x4pro-v1.6.7-325f3ac8-20261125.log",
+    "D:\\p\\run2\\logs\\build-nooir167_x4classic-v1.6.7-325f3ac8-20261125.log"
+  ],
+  "preserved_2026_11_24_pairs": {
+    "root": "D:\\fatiha\\side\\_builds\\nooir-s3-v1.6.7-20261124\\artifacts",
+    "x4pro_bin_sha256": "3e47ba8ce10901e5a037ecfcd75443615707882e7d2c32856949ba341868d7d5",
+    "x4pro_elf_sha256": "8a123c4a2c636585214af964bcb03abc90f60db1db28e87b12a1e1475200adcb",
+    "x4classic_bin_sha256": "c4bf429556c15d1eccc92343352395f3dc36e90634569a17258f48fa4fc9cb10",
+    "x4classic_elf_sha256": "564b1e53a916f7d1aceba1faae6a0b1697f06b21b5b05eb2467b8541ad5480c7",
+    "unchanged": true
+  },
+  "previous_runtime_evidence": {
+    "pro_qemu": "Older preserved Pro pair in eink-qemu 0.9.2: run01 27/27; run03 30/30. Not run3 BIN. Run02 timed out in virtual low-power timer path without recorded panic.",
+    "classic_sdl2": "Prior host SDL2 run passed Home/Library/EPUB open, page forward/back, Reader exit, persistence writes. Does not execute S3 BIN; no Classic QEMU.",
+    "usb_msc_host": "2026-11-24 host callback lifecycle harness passed on older source; not rerun after current source changes.",
+    "python_artifact_checks": "5/5 on earlier source checkpoint; not rerun."
+  },
+  "feature_status": {
+    "usb_msc": "Compile-validated now; lifecycle/MSC/physical SD remains unverified.",
+    "pro_touch_gesture": "Source present; fresh BIN not QEMU-tested; hardware untested; swipe evidence unconfirmed.",
+    "pro_frontlight_warmth": "Source and compile validated; hardware/persistence/sleep/USB/Wi-Fi behavior untested.",
+    "classic_buttons": "Source compile validated; prior simulator uses keyboard input; physical buttons untested.",
+    "sdmmc": "Profiled; prior virtual/host storage only; physical test pending.",
+    "display_psram": "Compile/profile evidence; previous emulator evidence is older; physical panel and PSRAM training pending.",
+    "power": "Existing hooks; no fresh runtime evidence; physical deep sleep/wake pending.",
+    "ble": "Disabled; S3 feasibility untested.",
+    "native_ttf_otf": "Not integrated.",
+    "recovery": "OTA and SD update/write paths guarded; validated external recovery absent."
+  },
+  "upstream_references": {
+    "crosspoint_reader": "92e8714a332c2c1903ea93290cf0b9b4f6f6697c",
+    "crosspoint_sdk": "995d9bd523b9c45b18710bca17a3158ce724a7f4",
+    "crossink": "9914146eeae7b46b300f475a16c32426fc02ec1f",
+    "crossink_sdk": "699370183fa3a0e33c9cb83a36f701bbb6022095"
+  },
+  "preservation_and_safety": {
+    "no_physical_flash": true,
+    "no_merge_release_deploy": true,
+    "original_x4_web_emulator_status_bar_mihonnooir_and_migration_archive_untouched": true,
+    "build_artifacts_and_logs_committed": false,
+    "root_state_restore": "All 21 recorded files restored and matched the D:\\p\\run3\\root-state manifest; PlatformIO config original SHA verified.",
+    "only_untracked_repo_path": "Generated cache at D:\\fatiha\\side\\_builds\\nooir-s3-v1.6.7-20261124\\build-cache; preserve and exclude."
+  },
+  "restart_order": [
+    "Resume only in the authoritative D: branch and confirm checkpoint status.",
+    "Run the focused USB MSC host lifecycle harness against the current font-release and Power-edge behavior.",
+    "If runtime evidence is needed, use exact run3 Pro BIN in eink-qemu with the known short timing/virtual Power-hold procedure; do not claim Classic S3 execution from SDL2.",
+    "Keep physical input, touch, frontlight, SDMMC, panel, PSRAM, power, BLE, and recovery gaps model-specific.",
+    "Require exact board identification and independently validated backup/recovery before any future physical bring-up."
+  ],
+  "operations_started_for_closeout": {
+    "builds": false,
+    "tests": false,
+    "simulators": false,
+    "qemu": false
   }
+}
 }

@@ -1,5 +1,7 @@
 # Folio Nooir X4 Pro / X4 Classic ESP32-S3 Port Handover
 
+> **Current checkpoint — 2026-11-25, PAUSED.** The corrected X4 Pro and X4 Classic firmware builds completed successfully from source commit 91e1fac80375bf568558b5684f8245e2ab46caa5 plus the local source diff affecting three tracked files recorded below. The new app-only experimental BIN/ELF pairs are preserved under D:\p\run3\artifacts. The earlier run2 compile failures and the 2026-11-24 artifact/test results are historical. No QEMU, SDL2, or runtime tests were repeated against the new pairs, and no physical device was flashed. The final checkpoint section below supersedes earlier statements that the current builds failed or that no new BIN/ELF was produced.
+
 > Artifact checkpoint (2026-11-24; historical): the preserved Pro and Classic v1.6.7 BIN/ELF pairs passed their recorded build checks. The exact Pro pair passed 27/27 and 30/30 Reader checks in native eink-qemu; the Classic SDL2 host build and scripted Reader run passed. These results apply to the earlier artifact source checkpoint, not to the later feature-parity changes now in this branch.
 >
 > Earlier Pro compile (2026-11-25): five incomplete-type errors in HalStorage::StorageLock were fixed by moving the USB methods after the complete nested class definition; method bodies and lock behavior were unchanged.
@@ -729,7 +731,9 @@ Updated 2026-11-25. The X4 Pro / X4 Classic feature-parity workstream is paused 
 ### Authoritative source and Git checkpoint
 
 - Continue only in D:\fatiha\side\_worktrees\nooir-s3-167-upgrade-20261124.
-- Dedicated branch: codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124.
+- Dedicated branch: codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124
+- Remote destination: https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124
+- Source checkpoint commit with the three USB compile corrections: 892da60facddd270e74e2015e70b4be388189564..
 - Source commit before this documentation closeout: 325f3ac8dc0bfcb1d5e81910052932a258567308. The remote branch matched this commit before the closeout edits.
 - Before the closeout, the tracked tree had no modifications. One pre-existing generated build-cache directory was untracked at repository root; Git displays its Windows path with escaped characters. It was left untouched and is excluded from staging.
 - This checkpoint changes only PORT_HANDOFF.md, PORT_SOURCE_DELTA.json, and docs/PORT_1.6.7_FEATURE_PARITY.md. Build caches, partial outputs, logs, prior binaries, and temporary root-state backups remain local and preserved.
@@ -824,3 +828,74 @@ Checkpoint recorded before 5:28 PM MYT. No build, test, simulator, QEMU, or emul
 5. Keep physical touch/swipe/buttons, frontlight/warmth, SDMMC/MSC, display, PSRAM, power/deep sleep/wake, S3 BLE and safe backup/recovery open until validated.
 
 No work was done on the original X4/C3 release, Web Emulator, Status Bar experiment, MihonNooir, migration archive or shared PlatformIO installation. No physical flashing is permitted by this checkpoint.
+
+## 2026-11-25 final source/build handover — PAUSED
+
+Completed before 5:28 PM MYT. At the checkpoint, no matching PlatformIO, Python test, QEMU, or SDL2 process was active; there was nothing to interrupt. The two builds described below had already finished. No new build, test, simulator, or emulator run was started for closeout. No physical device was flashed, and no merge, release, or deployment occurred.
+
+### Workspace and Git state
+
+- Authoritative D: workspace: D:\fatiha\side\_worktrees\nooir-s3-167-upgrade-20261124
+- Dedicated branch: codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124
+- Remote destination: https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124
+- Source checkpoint commit with the three USB compile corrections: 892da60facddd270e74e2015e70b4be388189564.
+- Source HEAD before checkpoint edits: 91e1fac80375bf568558b5684f8245e2ab46caa5; GitHub branch head matched it.
+- Reviewed implementation/source and handoff checkpoint commit: 892da60facddd270e74e2015e70b4be388189564.
+- The current firmware build source was that commit plus the reviewed, local source diff affecting three tracked files in src/SdCardFontSystem.cpp, src/SdCardFontSystem.h, and src/activities/network/UsbDriveActivity.cpp. The BIN manifests name the base commit; this handoff records the local diff that was present during the builds.
+- The separate freeink-sdk and freeink-sdk-s3 submodules remain at 958720659ea289ae325e83db20049d0ea844800d and 995d9bd523b9c45b18710bca17a3158ce724a7f4; neither has tracked changes.
+- The only pre-existing untracked repository item is the generated cache at D:\fatiha\side\_builds\nooir-s3-v1.6.7-20261124\build-cache; it is preserved and excluded from Git.
+- The temporary PlatformIO config was restored to its original SHA-256 db9da19691325abe1dc3f06b05a29e738b7cf3360d00edcf7f37ed345fd793ba. All 21 files in the D: root-state snapshot were hash-verified restored. Per-build cache, dependency, and output directories are separate under D:\p\run3.
+- Only the three source files above and the three handoff/parity documents are intended for the checkpoint commit. Do not stage the generated cache, run logs, manifests outside the source delta, BIN/ELF, temporary root-state files, or build directories.
+
+### Source changes and build result
+
+The previously failing USB Drive build paths are now compile-clean:
+
+- SdCardFontSystem::releaseForStorage(GfxRenderer&) calls the existing interface-font cache release and unloads reader-managed SD fonts before exclusive raw-sector storage ownership. It does not erase the selected font/registry settings.
+- The Power-edge path no longer calls nonexistent MappedInputManager::consumePowerGesture(). In the exclusive-storage loop, that event already triggers the activity's controlled USB teardown/restart and bypasses normal main-loop power handling.
+- These changes passed compilation/linking in both S3 profiles. MSC lifecycle behavior and the Power exit path have not been rerun in a host harness, emulator, or on hardware, so record them as compile-validated only.
+
+Pinned toolchain: PlatformIO Core 6.1.19 (D:\p\core), Espressif32 55.03.37, Arduino-ESP32 3.3.7 / ESP-IDF 5.5.2, Xtensa 14.2.0+20251107. Both target esp32-s3-devkitc1-n16r8, ESP32-S3, 16 MiB DIO flash, 8 MiB OPI PSRAM, and the existing 6,553,600-byte application slot. Both outputs are application-only; no flash operation occurred. Export manifests mark them experimental and not for flashing, with physical validation pending.
+
+| Target | Result and output | Size / SHA-256 | Matching ELF | Build log |
+|---|---|---|---|---|
+| X4 Pro | SUCCESS, D:\p\run3\artifacts\FolioNooir_1.6.7-X4Pro-Experimental.bin | 5,765,536 bytes / 03dfc9e157df4d18adb864d87e2bc5a05df34c76e5e77a2304e166f156ba6002 | D:\p\run3\artifacts\FolioNooir_1.6.7-X4Pro-Experimental.elf, 93,834,740 bytes / 3364471f3d65a2a745221a7a31dcae865f1751ed7f166c0c3af849434ce7bb8d | D:\p\run3\logs\build-x4pro-v1.6.7-usb-fix-20261125.log, SHA-256 f5f77a212bea99c56cff4bc5181a46f44d6d622e0e0c0746af4e8f3afaf93cd0; success in 436.31 s |
+| X4 Classic | SUCCESS, D:\p\run3\artifacts\FolioNooir_1.6.7-X4Classic-Experimental.bin | 5,755,696 bytes / 9fdee5dbd9c5fe9d3bd355627cd74773e71f3ab564d56b2aa39894e7df86ff6b | D:\p\run3\artifacts\FolioNooir_1.6.7-X4Classic-Experimental.elf, 93,490,396 bytes / 3bc85fdf23f04f9df6d047a42b1509b477f3ec5b4a46aea94b74ddcde12354a7 | D:\p\run3\logs\build-x4classic-v1.6.7-usb-fix-20261125.log, SHA-256 662a2a39d6002a5c5fc69b7c73cc5e20ca021e15c116ebdb450e92adf285d6b6; success in 537.17 s |
+
+Build warnings were non-fatal: repeated FILE_READ/FILE_WRITE macro redefinitions, wolfSSL macro redefinitions, deprecated NetworkClient::flush() call, Rect explicit-constructor conversions in CarouselTheme.cpp, and the Windows long-path-support warning. No compiler/linker error remained. The run2 failure logs remain preserved under D:\p\run2\logs; they are superseded as current build status, not deleted.
+
+The certified pre-existing 2026-11-24 pairs remain unchanged at D:\fatiha\side\_builds\nooir-s3-v1.6.7-20261124\artifacts: Pro BIN 3e47ba8ce10901e5a037ecfcd75443615707882e7d2c32856949ba341868d7d5, ELF 8a123c4a2c636585214af964bcb03abc90f60db1db28e87b12a1e1475200adcb; Classic BIN c4bf429556c15d1eccc92343352395f3dc36e90634569a17258f48fa4fc9cb10, ELF 564b1e53a916f7d1aceba1faae6a0b1697f06b21b5b05eb2467b8541ad5480c7. The new run3 outputs are separately named and do not overwrite them.
+
+### Feature parity status and evidence limits
+
+| Area | Current status |
+|---|---|
+| USB Drive / MSC, both models | Shared exclusive-storage activity and SD-backed font release compile in both builds. The 2026-11-24 host callback lifecycle harness passed on older source, but was not rerun after these source changes. TinyUSB enumeration, host file transfer, eject/remount, raw SD ownership, progress preservation, and recovery remain unverified. |
+| X4 Pro touch and gestures | Pro profile and existing touch/tap/swipe routes are present. QEMU swipe evidence is unconfirmed. GT911, gesture zones, Home button, rotation, accidental-touch handling, and physical EPUB/XTC/XTCH/CBZ gestures remain hardware-pending. The run3 Pro firmware has not been booted in QEMU. |
+| X4 Pro frontlight and warmth | Pro-only persistent brightness/warmth controls and sleep/wake hooks remain in source and compile. LED channel wiring, warmth calibration, persistence across real power loss, and restoration during sleep, USB, and Wi-Fi are not hardware-tested. Classic keeps lighting controls disabled. |
+| X4 Classic buttons and shortcuts | Separate Classic profile remains touch-disabled and retains mapped buttons/shortcuts. Prior SDL2 runs used host keyboard events, not physical GPIO, so polarity, short/long press, orientation, and shortcut fidelity are unconfirmed. |
+| SDMMC and USB storage | Per-model native SDMMC definitions remain separate. Older Pro QEMU mounted virtual SD; older Classic SDL2 used a host folder. No physical SDMMC or MSC handoff test has been run. |
+| Display and framebuffer | Both builds compile with their separate profiles. Earlier Pro QEMU and Classic SDL2 rendered pages on their respective old firmware/host checkpoints. Current run3 binaries were not runtime-tested; panel revisions, refresh/grayscale, rotation, ghosting, and physical framebuffer stability remain open. |
+| PSRAM | Both builds request 8 MiB OPI PSRAM and retain PSRAM-aware framebuffer configuration. Older Pro QEMU memory evidence applies only to its earlier BIN. Training margins and allocation under load on either physical board remain unverified. |
+| Power, sleep, and wake | Existing board-specific sequencing remains; Pro light hooks park/restore around sleep in source. Pro QEMU run02 timed out in the virtual low-power timer path; the shorter run03 timing and virtual Power-hold workaround remain the known emulator procedure. No physical deep-sleep, wake, current draw, or repeated-cycle evidence exists. |
+| CrossPoint / CrossInk | Reference revisions reviewed: CrossPoint Reader 92e8714a332c2c1903ea93290cf0b9b4f6f6697c / SDK 995d9bd523b9c45b18710bca17a3158ce724a7f4; CrossInk 9914146eeae7b46b300f475a16c32426fc02ec1f / SDK 699370183fa3a0e33c9cb83a36f701bbb6022095. They are reference implementations, not Nooir validation. |
+| BLE HID | Disabled in both S3 profiles. S3 feasibility/coexistence has not been investigated to a tested conclusion. Do not infer support from the original C3 BLE project. |
+| Other device-specific capabilities | Main/Folio Lite, EPUB styling, XTC/XTCH/CBZ, dictionaries, clippings, achievements, shelves, progress, and Wi-Fi Web UI remain in shared source and compile in these builds; no feature regression suite was run today. Native TTF/OTF rendering is not integrated. Battery/charging, RTC, Classic tilt/orientation, panel detection, and per-revision refresh remain unverified. |
+| Update and recovery | Experimental OTA checks/install and ordinary SD firmware-write paths remain guarded. This is not a validated recovery method. Neither board is flash-ready without a board-matched backup and independently proven recovery route. |
+
+### Test reconciliation and restart order
+
+- New evidence today: successful Pro and Classic compilation/linking only. No tests, QEMU, or SDL2 sessions were started after the builds. The 5/5 Python artifact checks and 2026-11-24 USB host harness are historical evidence, not rerun.
+- Pro QEMU: the preserved older Pro pair passed run01 27/27 and run03 30/30 in eink-qemu 0.9.2. These are actual firmware-in-QEMU results for the older BIN, not run3. Run02 timed out in the emulator's low-power timer path without a recorded panic. Keep the known Power-hold and shorter-timing workaround.
+- Classic SDL2: prior host simulator passed Home/Library, EPUB open, next/previous page, Reader exit, and persistence writes. It does not execute the Classic S3 BIN. No Classic QEMU machine is available.
+- Physical Pro and Classic behavior remains entirely unclaimed. Do not flash either model. Recovery is still an explicit prerequisite.
+
+When the user resumes, continue in this order:
+
+1. Confirm this branch/checkpoint and preserve the untracked cache; inspect staged scope before any commit.
+2. Run the focused USB MSC host lifecycle harness against the current font-release and Power-edge behavior; keep host evidence distinct from firmware execution.
+3. If runtime validation is required, test the exact run3 Pro BIN in native eink-qemu with the known short timing and virtual Power-hold procedure. Do not rerun the complete Classic SDL2 script without a specific need; its result is host-only.
+4. Address any feature-specific gap only with board-separated changes and separately named outputs. Keep S3 BLE and native TTF/OTF as independent investigations.
+5. Before any physical bring-up, identify exact board/panel revisions and validate a read-only backup plus independent recovery procedure. OTA/SD update guards stay in place until then.
+
+This workstream is PAUSED at this checkpoint. No physical flash, push to any public release branch, merge, release, deployment, or work on the original X4 release, Web Emulator, Status Bar experiment, MihonNooir, migration archive, or shared PlatformIO environment occurred.
