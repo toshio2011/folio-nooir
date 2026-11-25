@@ -235,7 +235,7 @@
     }
   },
   "commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
-  "handoff_sha256": "892d364f6ea1004677fbe461bd78154e30340dd9e8d7b71cae0ff243e433f748",
+  "handoff_sha256": "6c84542befbf8414739bba5f6d207e13a0354a5c58101f9a6a378795656ab547",
   "limitations": [
     "Classic SDL2 simulator uses folder-backed host storage and does not validate physical SDMMC, PSRAM, panel, GPIO, power, or touch hardware.",
     "No physical validation or flash is claimed.",
@@ -498,7 +498,7 @@
       {
         "path": "PORT_HANDOFF.md",
         "status": "added",
-        "worktree_sha256": "892d364f6ea1004677fbe461bd78154e30340dd9e8d7b71cae0ff243e433f748"
+        "worktree_sha256": "6c84542befbf8414739bba5f6d207e13a0354a5c58101f9a6a378795656ab547"
       },
       {
         "path": "REFERENCE-LICENSES.md",
@@ -1346,7 +1346,7 @@
         "lib/hal/HalGPIO.h": "d645a778a1062f0bb5b924b5dcb0a35b463e3bf9f1f0706698b3cc30c81f47f3",
         "lib/hal/HalStorage.cpp": "efcf8be15cab43a0e9570d2b372019572e16c049bdb720d120bfcb66a85f1f1b",
         "platformio.ini": "d261e43457206b6963bc703e217ca203f935507240d7044c9cad49afcae57aba",
-        "PORT_HANDOFF.md": "892d364f6ea1004677fbe461bd78154e30340dd9e8d7b71cae0ff243e433f748",
+        "PORT_HANDOFF.md": "6c84542befbf8414739bba5f6d207e13a0354a5c58101f9a6a378795656ab547",
         "REFERENCE-LICENSES.md": "61a07afeba38153856eba1825d37e0ce59b8f2494639ec68b5066377ba3719d7",
         "scripts/export_experimental_firmware.py": "050ae19500b1ed6f029468b217d64b2f58bb94fbbd69207ef3bd796402f493ab",
         "scripts/guard_nooir_upload.py": "8216a797b1e2fd589e194312bdfcff541de6a30218cd0b09344596f89bc87da2",
