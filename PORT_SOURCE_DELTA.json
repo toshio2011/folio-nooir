@@ -235,7 +235,7 @@
     }
   },
   "commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
-  "handoff_sha256": "0dcb960224ac8596d7186900ce9e7ab153eeea4d8dfbc4e776197b54a1eba831",
+  "handoff_sha256": "26b2212f947a00dbbd97cf5a8e94aed7422b50a7f556101691b5ed1515476a5c",
   "limitations": [
     "Classic SDL2 simulator uses folder-backed host storage and does not validate physical SDMMC, PSRAM, panel, GPIO, power, or touch hardware.",
     "No physical validation or flash is claimed.",
@@ -1781,7 +1781,10 @@
       ],
       "generated_artifacts_committed": false,
       "tracked_worktree_after_push": "clean",
-      "generated_build_cache": "local-only, untracked"
+      "generated_build_cache": "local-only, untracked",
+      "verified_backup_note_commit": "c7551a8daf5bbe9957a2c53529c8bf8ae91bfab4",
+      "remote_head_at_second_verification": "c7551a8daf5bbe9957a2c53529c8bf8ae91bfab4",
+      "second_verification_local_matches_remote": true
     }
   }
 }
