@@ -82,3 +82,23 @@ The current feature-parity source is committed at source baseline 325f3ac8dc0bfc
 2. Rebuild both targets on the pinned toolchain in fresh short D: paths; keep prior pairs untouched.
 3. Verify artifact metadata and hashes, then run exact-new-Pro QEMU checks and focused current-source Classic SDL2 checks.
 4. Only later, validate physical behavior using identified boards and a tested backup/recovery plan. Keep S3 BLE and TTF/OTF as separate follow-up investigations.
+
+## 2026-11-25 final end-of-day checkpoint — PAUSED
+
+This checkpoint supersedes earlier wording that treated the prior clean source commit as the current working tree. At checkpoint start, source HEAD was 82a669ba69475709dc21621c447620ca8e801055 and matched origin. The local tree contains an unfinished, uncompiled font-release helper in src/SdCardFontSystem.cpp and src/SdCardFontSystem.h; the MappedInputManager::consumePowerGesture call remains unresolved. The source diff is preserved locally and at D:\p\run2\handover\pending-usb-font-storage-fix-20261125.patch (SHA-256 52305c0025bed8cd20d3a74c3b555ce1dbdf54e54f3a42389223cd9cba107030), excluded from the docs checkpoint commit. A generated build cache is also untracked and excluded.
+
+No build/test process was active. No tests, builds, simulators or emulator runs were started for this closeout. The last Pro and Classic builds failed on those two API calls and produced no BIN/ELF. Their logs and partial outputs remain under D:\p\run2. The 2026-11-24 Pro and Classic experimental BIN/ELF pairs remain unchanged and are the last successful firmware builds; they predate current feature-parity source.
+
+| Area | Status at pause |
+|---|---|
+| USB Drive / MSC | Partially implemented. Earlier host lifecycle harness passed; current S3 firmware has no successful build. The local helper addresses only the font-release API and is unverified. TinyUSB, physical host transfers, SDMMC exclusivity, eject/remount and recovery remain open. |
+| Pro touch / gestures | Existing Pro input routes are in source. Physical GT911 behavior, tuning, rotation and swipe are untested; earlier QEMU swipe claim is unconfirmed. |
+| Pro frontlight / warmth | Persistent Pro settings and sleep/wake hooks remain in source, but current source is unbuilt and light behavior is physically untested. |
+| Classic buttons / shortcuts | Mapped controls remain in the separate touch-disabled profile. Prior SDL2 tests use keyboard events, not physical buttons. |
+| SDMMC / display / PSRAM / power | Prior Pro QEMU and Classic SDL2 results apply only to earlier artifacts or host code. Physical buses, panel revisions, memory training, rails, deep sleep and wake remain unverified. |
+| CrossPoint / CrossInk | Reference revisions and SDK pins are recorded in PORT_HANDOFF.md and PORT_SOURCE_DELTA.json. They guide implementation and do not certify Nooir. |
+| BLE and other device-specific work | S3 BLE remains disabled and feasibility untested. Native TTF/OTF remains unimplemented. Battery/RTC/orientation/panel detection and safe external recovery remain open. |
+
+Last successful evidence remains: Pro exact-pair QEMU run01 27/27 and run03 30/30; Classic host SDL2 run04 navigation, Reader exit and persistence writes; USB host lifecycle harness; earlier Python artifact tests 5/5. These were not rerun today and do not certify current source or physical devices. See PORT_HANDOFF.md for exact BIN/ELF hashes, failed build-log hashes, test limits and prioritized restart steps.
+
+The dedicated S3 branch is the only Git destination. The closeout stages documentation only; it excludes the partial source patch, build cache, firmware, logs and temporary artifacts. The workstream is PAUSED. No physical flash, merge, release, deployment, or changes to the original release, Web Emulator, Status Bar experiment or MihonNooir.

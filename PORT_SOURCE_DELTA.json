@@ -1199,7 +1199,7 @@
     "Exercise Home, Library, EPUB first page, next/previous, exit, progress reopen, deep sleep, button wake, and repeated transitions while monitoring reset/brownout/heap/card integrity.",
     "Keep OTA unavailable until image/manifest, partition/rollback state, and external recovery are reviewed and tested."
   ],
-  "workstream_status": "PAUSED — end-of-day 2026-11-25; Pro and Classic builds fail at two unresolved UsbDriveActivity APIs; no operations running.",
+  "workstream_status": "PAUSED — final end-of-day checkpoint 2026-11-25; no build or test active; partial USB font-release source fix remains unbuilt and local.",
   "closing_checkpoint": {
     "date": "2026-11-13",
     "status": "PAUSED — awaiting physical hardware testing or a concrete Web Emulator integration requirement",
@@ -1904,6 +1904,91 @@
       "generated_caches_logs_or_binaries_committed": false,
       "preserve_partial_outputs_and_local_cache": true
     }
+  },
+  "end_of_day_checkpoint_2026_11_25_final": {
+    "date": "2026-11-25",
+    "status": "PAUSED — stopped before 5:28 PM MYT; no operation active.",
+    "workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
+    "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+    "source_head_at_checkpoint": "82a669ba69475709dc21621c447620ca8e801055",
+    "remote_head_before_docs_checkpoint": "82a669ba69475709dc21621c447620ca8e801055",
+    "source_worktree_changes": [
+      "src/SdCardFontSystem.cpp",
+      "src/SdCardFontSystem.h"
+    ],
+    "partial_source_change": {
+      "description": "Adds SdCardFontSystem::releaseForStorage to release interface font caches and reader SD fonts before external raw-sector ownership.",
+      "validation": "Uncompiled and not runtime tested. The MappedInputManager::consumePowerGesture call in UsbDriveActivity remains unresolved; current-source build status is unconfirmed.",
+      "local_patch": "D:\\p\\run2\\handover\\pending-usb-font-storage-fix-20261125.patch",
+      "patch_sha256": "52305c0025bed8cd20d3a74c3b555ce1dbdf54e54f3a42389223cd9cba107030",
+      "git_diff_check": "Two trailing whitespace lines in new comments; fix during source review.",
+      "committed": false
+    },
+    "local_untracked": [
+      "Pre-existing generated build-cache directory at repository root; preserved and excluded."
+    ],
+    "documentation_updated": {
+      "files": [
+        "PORT_HANDOFF.md",
+        "PORT_SOURCE_DELTA.json",
+        "docs/PORT_1.6.7_FEATURE_PARITY.md"
+      ],
+      "handoff_sha256": "c18184236d0af802b633b56cae5576e79f1154a607f455832a9337ac69c2c124",
+      "feature_parity_sha256": "12641b37b7ddf7646684e72099d4816fe3ab4d2fa78fb20ed018c943be64f232",
+      "staged_scope": "Documentation only; source patch, cache, logs, BIN/ELF and temporary outputs excluded."
+    },
+    "active_process_check": "No build, test, simulator, or QEMU process active; no process was stopped.",
+    "latest_builds": {
+      "result": "Pro and Classic builds failed at the same two UsbDriveActivity API mismatches; no BIN/ELF exported. Partial local helper was not rebuilt.",
+      "toolchain": "PlatformIO Core 6.1.19; Espressif32 55.03.37; Arduino-ESP32 3.3.7; ESP-IDF 5.5.2; Xtensa 14.2.0+20251107.",
+      "logs": [
+        {
+          "device": "X4 Pro",
+          "path": "D:\\p\\run2\\logs\\build-nooir167_x4pro-v1.6.7-325f3ac8-20261125.log",
+          "sha256": "b1f72c8712d31015d83540d6a5ba07d8484c828834dd9eaff7a9dbee77c88234"
+        },
+        {
+          "device": "X4 Classic",
+          "path": "D:\\p\\run2\\logs\\build-nooir167_x4classic-v1.6.7-325f3ac8-20261125.log",
+          "sha256": "2c9da36698820ec7686723bc00059d5d3384bbd2bb540498e25b0242ef5ce1b0"
+        }
+      ],
+      "output": "D:\\p\\run2\\artifacts; no exported BIN or ELF."
+    },
+    "preserved_pairs": {
+      "root": "D:\\fatiha\\side\\_builds\\nooir-s3-v1.6.7-20261124\\artifacts",
+      "x4pro_bin_sha256": "3e47ba8ce10901e5a037ecfcd75443615707882e7d2c32856949ba341868d7d5",
+      "x4pro_elf_sha256": "8a123c4a2c636585214af964bcb03abc90f60db1db28e87b12a1e1475200adcb",
+      "x4classic_bin_sha256": "c4bf429556c15d1eccc92343352395f3dc36e90634569a17258f48fa4fc9cb10",
+      "x4classic_elf_sha256": "564b1e53a916f7d1aceba1faae6a0b1697f06b21b5b05eb2467b8541ad5480c7",
+      "unchanged": true,
+      "predates_current_feature_parity_source": true
+    },
+    "last_successful_tests": {
+      "pro_qemu": "Exact preserved Pro pair: run01 27/27 and run03 30/30 in eink-qemu 0.9.2; earlier artifact only.",
+      "classic_sdl2": "run04 passed keyboard-driven Home/Library/EPUB navigation, Reader exit and persistence writes; host-only.",
+      "usb_msc_host": "Passed 2026-11-24; host lifecycle harness only; SHA-256 433b2a68f1b1c94e39ab477bd04687a8366037cbac8739df694917778fbf0dc4.",
+      "python_artifact_tests": "Earlier source checkpoint: 5/5; not rerun at this closeout.",
+      "tests_started_for_closeout": false
+    },
+    "upstream_references": {
+      "crosspoint_reader": "92e8714a332c2c1903ea93290cf0b9b4f6f6697c",
+      "crosspoint_sdk": "995d9bd523b9c45b18710bca17a3158ce724a7f4",
+      "crossink": "9914146eeae7b46b300f475a16c32426fc02ec1f",
+      "crossink_sdk": "699370183fa3a0e33c9cb83a36f701bbb6022095"
+    },
+    "restart_order": [
+      "Inspect power-edge semantics and resolve consumePowerGesture without a no-op shim.",
+      "Review and validate the local releaseForStorage helper and USB handoff.",
+      "Build both profiles in fresh short D: paths with the pinned toolchain and separately named outputs.",
+      "Check artifact metadata/hashes, exact Pro QEMU, and current-source Classic SDL2; keep host and firmware evidence distinct.",
+      "Keep physical I/O, deep sleep/wake, BLE feasibility, and independent backup/recovery open."
+    ],
+    "guardrails": {
+      "physical_flash": false,
+      "original_x4_release_web_emulator_status_bar_mihonnooir_migration_archive_and_shared_platformio_modified": false,
+      "merge_release_deploy": false,
+      "generated_artifacts_committed": false
+    }
   }
-
 }

@@ -779,3 +779,48 @@ Reference commits reviewed for implementation guidance: CrossPoint Reader 92e871
 5. Continue hardware-only validation later with exact board revisions and an independently verified backup/recovery process. Keep touch/swipes, physical buttons, frontlight/warmth, SDMMC/MSC, panel, PSRAM, power/deep-sleep/wake, BLE, fonts, and recovery explicitly open.
 
 No work was done on the original X4 release, Web Emulator, Status Bar experiment, MihonNooir, migration archive, or shared PlatformIO toolchain. No physical flashing is authorized by this checkpoint.
+
+## 2026-11-25 final end-of-day checkpoint — PAUSED
+
+Checkpoint recorded before 5:28 PM MYT. No build, test, simulator, QEMU, or emulator process was active when checked; nothing needed interruption. No new build or test was started for this closeout. No device was flashed; no release, merge, or deployment occurred.
+
+### Authoritative source and working tree
+
+- Continue only from D:\fatiha\side\_worktrees\nooir-s3-167-upgrade-20261124 on branch codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124.
+- Source baseline at checkpoint start: 82a669ba69475709dc21621c447620ca8e801055. The origin branch matched this revision before the documentation update.
+- The only tracked local source edits at checkpoint start are src/SdCardFontSystem.cpp and src/SdCardFontSystem.h. They add an unbuilt releaseForStorage helper that releases interface and reader SD-backed fonts before raw storage handoff. The MappedInputManager::consumePowerGesture call remains unresolved. These source edits are deliberately excluded from the docs-only commit because they have not been compiled or fully validated.
+- A standalone copy of the unfinished source diff is preserved at D:\p\run2\handover\pending-usb-font-storage-fix-20261125.patch; SHA-256: 52305c0025bed8cd20d3a74c3b555ce1dbdf54e54f3a42389223cd9cba107030. The working-tree edits remain present. git diff --check reports trailing whitespace on two new comment lines; review and clean the patch before a source commit.
+- A pre-existing generated build-cache directory remains untracked at repository root. It and all caches, partial outputs, logs, firmware, manifests, screenshots and local evidence are preserved and excluded from Git staging.
+- This checkpoint commits only PORT_HANDOFF.md, PORT_SOURCE_DELTA.json and docs/PORT_1.6.7_FEATURE_PARITY.md.
+
+### Feature-parity state
+
+| Feature | Current status |
+|---|---|
+| USB Drive / MSC, both boards | Activity and handoff logic plus the 2026-11-24 host lifecycle harness exist. Current firmware is not build-certified. The last Pro and Classic builds failed on missing releaseForStorage and consumePowerGesture APIs; this local patch adds only the former and has not been rebuilt. TinyUSB enumeration, physical SDMMC ownership, host transfers, eject and remount remain unverified. |
+| X4 Pro touch and gestures | Pro profile and existing touch routes are present. GT911 input, gesture tuning, rotation, accidental-touch filtering and physical swipes are untested. A prior QEMU swipe claim is unconfirmed. |
+| X4 Pro frontlight and warmth | Pro-only persistent controls and sleep/wake hooks are in source. Current source is not build-certified; LED channels, warmth, power-cycle persistence and sleep/wake are untested on hardware. Classic light controls remain disabled. |
+| X4 Classic physical buttons and shortcuts | Classic remains a separate touch-disabled profile with mapped controls and shortcuts. SDL2 used host keyboard events; physical button GPIO, polarity, timing, long press and orientation remain untested. |
+| SDMMC, display, PSRAM and power | Per-board settings remain separate. Earlier Pro QEMU evidence covers virtual SD, rendered pages and emulator PSRAM for the preserved Pro pair only; Classic SDL2 used folder-backed storage. Physical SDMMC/MSC exclusivity, panel revisions/refresh, PSRAM training, framebuffer margins, rails, deep sleep, wake and current draw are open. |
+| CrossPoint and CrossInk references | CrossPoint 92e8714a332c2c1903ea93290cf0b9b4f6f6697c with SDK 995d9bd523b9c45b18710bca17a3158ce724a7f4; CrossInk 9914146eeae7b46b300f475a16c32426fc02ec1f with SDK 699370183fa3a0e33c9cb83a36f701bbb6022095. These guide implementation; they do not validate Nooir or hardware. |
+| S3 BLE | Disabled in both experimental profiles; feasibility and coexistence have not been tested. |
+| Fonts and other device-specific features | Built-in and .cpfont paths remain; native TTF/OTF rendering is not implemented. Battery/RTC, Classic IMU/orientation, panel detection, power sequencing and model-specific recovery remain unverified. OTA and ordinary SD firmware/recovery writes are guarded; those guards are not a recovery plan. |
+
+### Builds, tests and preservation
+
+- Latest successful firmware outputs are the 2026-11-24 app-only pairs in D:\fatiha\side\_builds\nooir-s3-v1.6.7-20261124\artifacts. Pro BIN SHA-256 3e47ba8ce10901e5a037ecfcd75443615707882e7d2c32856949ba341868d7d5; ELF 8a123c4a2c636585214af964bcb03abc90f60db1db28e87b12a1e1475200adcb. Classic BIN c4bf429556c15d1eccc92343352395f3dc36e90634569a17258f48fa4fc9cb10; ELF 564b1e53a916f7d1aceba1faae6a0b1697f06b21b5b05eb2467b8541ad5480c7. Both use separate ESP32-S3 profiles, 16 MiB DIO flash, 8 MiB OPI PSRAM configuration and a 6,553,600-byte app slot. They predate current parity source; preserve unchanged.
+- Latest Pro build failed at UsbDriveActivity calls to SdCardFontSystem::releaseForStorage and MappedInputManager::consumePowerGesture. Log: D:\p\run2\logs\build-nooir167_x4pro-v1.6.7-325f3ac8-20261125.log; SHA-256 b1f72c8712d31015d83540d6a5ba07d8484c828834dd9eaff7a9dbee77c88234.
+- Latest Classic build failed at the same calls. Log: D:\p\run2\logs\build-nooir167_x4classic-v1.6.7-325f3ac8-20261125.log; SHA-256 2c9da36698820ec7686723bc00059d5d3384bbd2bb540498e25b0242ef5ce1b0.
+- Those attempts used PlatformIO Core 6.1.19 at D:\p\core, Espressif32 55.03.37, Arduino-ESP32 3.3.7 / ESP-IDF 5.5.2, Xtensa 14.2.0+20251107. D:\p\run2\artifacts has no exported BIN or ELF. The local helper has not been built; current-source compile status is unconfirmed.
+- Last successful tests are historical: exact preserved Pro pair in eink-qemu 0.9.2 passed run01 27/27 and run03 30/30; Classic SDL2 run04 passed keyboard-driven Home/Library/EPUB next and previous page, exit and persistence writes; USB MSC host lifecycle harness passed on 2026-11-24; earlier artifact tests passed 5/5. None were repeated against current source. Run02 timed out in the emulator low-power timer path; no panic was recorded. Keep the known virtual Power-hold workaround and short run03 timing.
+- Do not repeat stale dependency links to the migration archive, the reused PIO core missing sdkconfig.h, the long-path WinError 206 attempt, or the long QEMU low-power wait pattern.
+
+### Continuation order
+
+1. Resume only in the authoritative D: worktree; preserve the local cache and standalone patch. Inspect power-edge handling before resolving consumePowerGesture; do not add a no-op shim.
+2. Review and complete the font release helper and USB handoff with focused validation. Keep unverified source changes separate from the docs checkpoint.
+3. Build Pro and Classic separately with the pinned toolchain in fresh short D: paths and new artifact names; retain the 2026-11-24 binaries unchanged.
+4. Inspect new BIN/ELF metadata and hashes, then test exact Pro firmware in QEMU and current-source Classic SDL2. Keep host, firmware-in-QEMU and physical evidence distinct.
+5. Keep physical touch/swipe/buttons, frontlight/warmth, SDMMC/MSC, display, PSRAM, power/deep sleep/wake, S3 BLE and safe backup/recovery open until validated.
+
+No work was done on the original X4/C3 release, Web Emulator, Status Bar experiment, MihonNooir, migration archive or shared PlatformIO installation. No physical flashing is permitted by this checkpoint.
