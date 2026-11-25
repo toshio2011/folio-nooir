@@ -235,7 +235,7 @@
     }
   },
   "commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
-  "handoff_sha256": "26b2212f947a00dbbd97cf5a8e94aed7422b50a7f556101691b5ed1515476a5c",
+  "handoff_sha256": "9f4e2b8751f70967a3099d59707f6b603c7f0e9ade3aec5c8fe69ed22ec87a1f",
   "limitations": [
     "Classic SDL2 simulator uses folder-backed host storage and does not validate physical SDMMC, PSRAM, panel, GPIO, power, or touch hardware.",
     "No physical validation or flash is claimed.",
@@ -498,7 +498,7 @@
       {
         "path": "PORT_HANDOFF.md",
         "status": "added",
-        "worktree_sha256": "cb7bcfca418949fbcc25974bcbea48824b5709045fa0ce83a085665ffba6233e"
+        "worktree_sha256": "9f4e2b8751f70967a3099d59707f6b603c7f0e9ade3aec5c8fe69ed22ec87a1f"
       },
       {
         "path": "REFERENCE-LICENSES.md",
@@ -521,7 +521,7 @@
         "path": "lib/hal/HalStorage.cpp",
         "status": "modified",
         "upstream_sha256": "f6e439b84bed1125c268ad1b4e2b384fbfb7e37a2374f5549a9c25bef51087d1",
-        "worktree_sha256": "36cd9c92e0bcf70f8c7cae34994b92e8cf3774009b179f1e5bf349a5e5dffad3"
+        "worktree_sha256": "efcf8be15cab43a0e9570d2b372019572e16c049bdb720d120bfcb66a85f1f1b"
       },
       {
         "path": "platformio.ini",
@@ -1199,7 +1199,7 @@
     "Exercise Home, Library, EPUB first page, next/previous, exit, progress reopen, deep sleep, button wake, and repeated transitions while monitoring reset/brownout/heap/card integrity.",
     "Keep OTA unavailable until image/manifest, partition/rollback state, and external recovery are reviewed and tested."
   ],
-  "workstream_status": "PAUSED — end-of-day 2026-11-25 checkpoint; resume tomorrow from the authoritative D: worktree.",
+  "workstream_status": "ACTIVE — resumed 2026-11-25; narrow StorageLock ordering fix committed and Pro/Classic rebuilds pending.",
   "closing_checkpoint": {
     "date": "2026-11-13",
     "status": "PAUSED — awaiting physical hardware testing or a concrete Web Emulator integration requirement",
@@ -1340,13 +1340,13 @@
       "sha256_by_file": {
         ".gitignore": "2153783155c234ddc8e59ce4204e1fea96530c0ccf5e2c3906fa2c615fd53b87",
         ".gitmodules": "f91735bf1fd4944f51757d70708ec0b890dc3913c38dbc8d05752f68e0262c87",
-        "docs/PORT_1.6.7_FEATURE_PARITY.md": "03c0722e8fc419dab825b640fccd367ac05d96159e04ffaa99297b6eb58c2a72",
+        "docs/PORT_1.6.7_FEATURE_PARITY.md": "9efdb9e7bd543fca160a64fdf81e5853c7d3b0899e9cafebdc5671a23992583c",
         "docs/WEB_EMULATOR_S3_COMPATIBILITY_HANDOFF_2026-11-11.md": "53e9fd4779be61d06a9170994418b84913fd580a383ac513a1b398dea20330ec",
         "lib/hal/HalGPIO.cpp": "9a48ed8777ffc75a864d3dda9b17b78a071a15a6ac5d75594fb77944d6220517",
         "lib/hal/HalGPIO.h": "d645a778a1062f0bb5b924b5dcb0a35b463e3bf9f1f0706698b3cc30c81f47f3",
-        "lib/hal/HalStorage.cpp": "0f6ab386982c9b862b0fadfab06be0352c05014878cf1dd8782e80e41eb06496",
+        "lib/hal/HalStorage.cpp": "efcf8be15cab43a0e9570d2b372019572e16c049bdb720d120bfcb66a85f1f1b",
         "platformio.ini": "d261e43457206b6963bc703e217ca203f935507240d7044c9cad49afcae57aba",
-        "PORT_HANDOFF.md": "aaf365dc0b0ad636e4b33228d403b6bbcbf2906bb8f373027fcfb297f107b3e2",
+        "PORT_HANDOFF.md": "9f4e2b8751f70967a3099d59707f6b603c7f0e9ade3aec5c8fe69ed22ec87a1f",
         "REFERENCE-LICENSES.md": "61a07afeba38153856eba1825d37e0ce59b8f2494639ec68b5066377ba3719d7",
         "scripts/export_experimental_firmware.py": "050ae19500b1ed6f029468b217d64b2f58bb94fbbd69207ef3bd796402f493ab",
         "scripts/guard_nooir_upload.py": "8216a797b1e2fd589e194312bdfcff541de6a30218cd0b09344596f89bc87da2",
@@ -1786,5 +1786,18 @@
       "remote_head_at_second_verification": "c7551a8daf5bbe9957a2c53529c8bf8ae91bfab4",
       "second_verification_local_matches_remote": true
     }
+  },
+  "resume_2026_11_25_storage_lock_fix": {
+    "date": "2026-11-25",
+    "workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
+    "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+    "base_head": "bd98d922c9eafc54ce6838b75f019645cfac369f",
+    "source_change": "Moved the five USB method definitions after the complete nested StorageLock definition; no method body or lock semantics changed.",
+    "source_sha256": "efcf8be15cab43a0e9570d2b372019572e16c049bdb720d120bfcb66a85f1f1b",
+    "validation": "Pending fresh Pro and Classic firmware builds.",
+    "status": "ACTIVE — resumed; previous artifacts and evidence preserved.",
+    "build_outputs": "Fresh separate D: paths under D:\\p\\run2; no build started yet.",
+    "no_new_artifacts": true,
+    "physical_flash": false
   }
 }

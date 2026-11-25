@@ -1,6 +1,6 @@
 # Folio Nooir 1.6.7 — X4 Pro / X4 Classic S3 parity checkpoint
 
-**Status: PAUSED — end-of-day 2026-11-25 checkpoint; no physical validation.** The 2026-11-24 firmware/QEMU/SDL2 results below are historical evidence for the preserved earlier artifact/source snapshot. The later feature-parity source has not passed a complete ESP32-S3 build; today's Pro build stopped at the StorageLock compile error recorded below. Reference revisions: CrossPoint Reader `92e8714a332c2c1903ea93290cf0b9b4f6f6697c` with FreeInk SDK `995d9bd523b9c45b18710bca17a3158ce724a7f4`; CrossInk `9914146eeae7b46b300f475a16c32426fc02ec1f` with FreeInk SDK `699370183fa3a0e33c9cb83a36f701bbb6022095`.
+**Status: ACTIVE — resumed 2026-11-25; no physical validation.** The 2026-11-24 firmware/QEMU/SDL2 results below are historical evidence for the preserved earlier artifact/source snapshot. The later feature-parity source has not passed a complete ESP32-S3 build; a narrow StorageLock declaration-order correction is now in source and awaits a fresh build. Reference revisions: CrossPoint Reader `92e8714a332c2c1903ea93290cf0b9b4f6f6697c` with FreeInk SDK `995d9bd523b9c45b18710bca17a3158ce724a7f4`; CrossInk `9914146eeae7b46b300f475a16c32426fc02ec1f` with FreeInk SDK `699370183fa3a0e33c9cb83a36f701bbb6022095`.
 
 | Model / capability | CrossPoint reference | CrossInk reference | Folio Nooir 1.6.7 S3 status / evidence |
 |---|---|---|---|
@@ -41,3 +41,7 @@ This update supersedes any reading of the table above that could imply the newly
 - S3 BLE remains disabled and feasibility has not been tested. Native TTF/OTF integration remains unimplemented. Battery/RTC/orientation/panel-detection and safe external recovery remain open.
 - Do not repeat the stale dependency-link build attempt, the reused core missing sdkconfig.h, the deep Windows build path, or the QEMU long-wait pattern that timed out. Use short D: paths and fresh build/dependency directories after resumption.
 - No physical flash, merge, release, deployment, or work on the original C3 release, Web Emulator, Status Bar experiment or MihonNooir occurred in this checkpoint.
+
+### Resumed source correction
+
+The five USB methods that instantiate HalStorage::StorageLock now appear after the nested class definition. Their implementation and mutex behavior are unchanged. This corrects C++ type-completeness ordering only; firmware build and runtime validation are pending.

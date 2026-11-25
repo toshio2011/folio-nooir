@@ -6,7 +6,7 @@
 
 Updated: 2026-11-25
 
-**Workstream status: PAUSED — end-of-day checkpoint.** Resume tomorrow from the authoritative D: worktree below. Today's feature-parity source is not firmware-build-certified; the preserved BIN/ELF and QEMU/SDL2 results remain tied to their earlier source checkpoint. No physical device was flashed; nothing was merged, released, or deployed.
+**Workstream status: ACTIVE — resumed 2026-11-25.** The recorded StorageLock declaration-order blocker has a narrow source fix; Pro and Classic builds are pending. The preserved BIN/ELF and QEMU/SDL2 results remain tied to their earlier source checkpoint. No physical device was flashed; nothing was merged, released, or deployed.
 
 The last artifact-backed software checkpoint was the Classic SDL2 host replay plus the exact-build Pro native eink-qemu Reader replay (30/30 checks in run03; run01 was 27/27). Those runs belong to the preserved earlier artifacts. Physical compatibility, Pro deep sleep/wake, Classic firmware execution, physical touch/swipe, and safe recovery remain open. See the 2026-11-25 closing checkpoint at the end of this file.
 
@@ -714,3 +714,8 @@ Earlier preserved attempts must not be repeated in the same form: stale .pio-lin
 5. Continue physical-only checks later: Pro touch/swipe/frontlight/warmth, Classic physical buttons, SDMMC/MSC ownership, panel, PSRAM training, deep sleep/wake, BLE feasibility and validated external backup/recovery.
 
 No physical Pro or Classic was flashed. No bootloader/eFuse/security/partition data, original X4/C3 release, Web Emulator, Status Bar experiment, MihonNooir, migration archive, or shared PlatformIO environment was changed. OTA and ordinary SD recovery remain disabled in the experimental profiles; they are not flash-ready until a model-matched backup and external recovery process is independently validated.
+
+
+## 2026-11-25 resumed validation note
+
+The prior Pro compile showed five incomplete-type errors because the USB methods instantiated the nested HalStorage::StorageLock before its full class definition. The five USB method definitions were moved below the complete lock definition; method bodies and locking behavior were otherwise left unchanged. This is a source-level ordering correction, not yet a verified firmware fix. Next action is to rebuild Pro and Classic from the committed source on fresh D: build/cache/libdeps paths, preserving the previous experimental pairs and using the existing PlatformIO 55.03.37 / Arduino 3.3.7 / ESP-IDF 5.5.2 toolchain. Do not flash either device.
