@@ -2062,7 +2062,7 @@
     "python_artifact_checks": "5/5 on earlier source checkpoint; not rerun."
   },
   "feature_status": {
-    "usb_msc": "Compile-validated now; lifecycle/MSC/physical SD remains unverified.",
+    "usb_msc": "Both S3 builds compile; focused SDK-stub callback/sector-boundary/eject/disconnect/startup-failure/watchdog-yield harness passed 2026-11-25. Nooir font-release/Power-edge integration, TinyUSB, and physical SD handoff remain unverified.",
     "pro_touch_gesture": "Source present; fresh BIN not QEMU-tested; hardware untested; swipe evidence unconfirmed.",
     "pro_frontlight_warmth": "Source and compile validated; hardware/persistence/sleep/USB/Wi-Fi behavior untested.",
     "classic_buttons": "Source compile validated; prior simulator uses keyboard input; physical buttons untested.",
@@ -2096,9 +2096,73 @@
   ],
   "operations_started_for_closeout": {
     "builds": false,
-    "tests": false,
+    "tests": true,
     "simulators": false,
     "qemu": false
   }
-}
+},
+  "eod_checkpoint_2026_11_25": {
+    "local_time": "2026-11-25 13:56 MYT",
+    "state": "PAUSED",
+    "authoritative_workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
+    "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+    "branch_head_before_documentation": "5ddd4794d519b61907dbd197abcd66af6a1209a1",
+    "source_fix_commit": "375173cfd4e6d721a8406562ae3bdcc0dc641b77",
+    "tracked_worktree_before_documentation": "clean",
+    "preserved_untracked": "D:\\fatiha\\side\\_builds\\nooir-s3-v1.6.7-20261124\\build-cache",
+    "active_build_test_simulator_qemu_processes": [],
+    "preserved_run3_artifacts": [
+      {
+        "target": "X4 Pro",
+        "bin": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Pro-Experimental.bin",
+        "bin_bytes": 5765536,
+        "bin_sha256": "03dfc9e157df4d18adb864d87e2bc5a05df34c76e5e77a2304e166f156ba6002",
+        "elf": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Pro-Experimental.elf",
+        "elf_bytes": 93834740,
+        "elf_sha256": "3364471f3d65a2a745221a7a31dcae865f1751ed7f166c0c3af849434ce7bb8d",
+        "build": "successful compile/link; not run in QEMU or on hardware"
+      },
+      {
+        "target": "X4 Classic",
+        "bin": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Classic-Experimental.bin",
+        "bin_bytes": 5755696,
+        "bin_sha256": "9fdee5dbd9c5fe9d3bd355627cd74773e71f3ab564d56b2aa39894e7df86ff6b",
+        "elf": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Classic-Experimental.elf",
+        "elf_bytes": 93490396,
+        "elf_sha256": "3bc85fdf23f04f9df6d047a42b1509b477f3ec5b4a46aea94b74ddcde12354a7",
+        "build": "successful compile/link; not run in QEMU or on hardware"
+      }
+    ],
+    "preserved_2026_11_24_bin_elf_pairs": "Re-hashed; all four BIN/ELF hashes match the prior handoff and artifacts remain unchanged.",
+    "usb_host_harness": {
+      "command": "WSL: sh /mnt/d/fatiha/side/_worktrees/nooir-s3-167-upgrade-20261124/test/host/usb_mass_storage/run.sh with TMPDIR=/mnt/d/p/run4/tmp",
+      "result": "passed",
+      "coverage": "USB MSC SDK callback, sector bounds, eject/disconnect, startup-failure, watchdog-yield",
+      "log": "D:\\p\\run4\\logs\\usb-msc-host-checkpoint-20261125.log",
+      "log_sha256": "9fe4760bd3285417e8c388a0b0c81dc0d48f8bfb8abd233679646eafe89f36d6",
+      "preserved_temp_outputs": [
+        "D:\\p\\run4\\tmp\\nooir-usb-msc-host\\test_usb_mass_storage",
+        "D:\\p\\run4\\tmp\\nooir-usb-msc-host\\UsbMassStorage.cpp"
+      ],
+      "does_not_verify": "Nooir font-release/Power-edge integration, S3 BIN execution, TinyUSB enumeration, host transfer, or physical SDMMC handoff"
+    },
+    "historical_runtime_evidence": {
+      "pro_qemu": "Earlier preserved Pro pair only: run01 27/27 and run03 30/30; run02 timed out in the low-power timer path; not evidence for run3 BIN.",
+      "classic_sdl2": "Host-only Home/Library/EPUB navigation, exit and persistence writes; no Classic S3 BIN execution; no Classic QEMU."
+    },
+    "references": {
+      "crosspoint_reader": "92e8714a332c2c1903ea93290cf0b9b4f6f6697c",
+      "crosspoint_sdk": "995d9bd523b9c45b18710bca17a3158ce724a7f4",
+      "crossink": "9914146eeae7b46b300f475a16c32426fc02ec1f",
+      "crossink_sdk": "699370183fa3a0e33c9cb83a36f701bbb6022095"
+    },
+    "next_steps": [
+      "Boot exact run3 Pro BIN in eink-qemu 0.9.2 using X4 Pro machine, short timing and virtual Power-hold; record startup, PSRAM, profile, display, SD, Home and Reader milestones.",
+      "Create focused app-level validation for Nooir font-release and Power-edge USB handoff; do not treat SDK callback tests as app integration evidence.",
+      "Keep Classic SDL2 host evidence separate from S3 BIN execution; rerun only for a relevant source change.",
+      "Defer physical work until exact boards and an independently validated backup/recovery route are available."
+    ],
+    "physical_flash": "not performed; no device is flash-ready without a board-matched backup and independently validated recovery",
+    "prohibited_scope": "No original release, Web Emulator, Status Bar experiment, MihonNooir, migration archive, shared toolchain, merge, public release, or deployment."
+  }
 }

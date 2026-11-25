@@ -898,3 +898,56 @@ When the user resumes, continue in this order:
 5. Before any physical bring-up, identify exact board/panel revisions and validate a read-only backup plus independent recovery procedure. OTA/SD update guards stay in place until then.
 
 This workstream is PAUSED at this checkpoint. No physical flash, push to any public release branch, merge, release, deployment, or work on the original X4 release, Web Emulator, Status Bar experiment, MihonNooir, migration archive, or shared PlatformIO environment occurred.
+
+## 2026-11-25 end-of-day checkpoint — PAUSED
+
+Checkpoint captured at 1:56 PM MYT. No build, test, simulator, or QEMU process was active. No new build or emulator session was started. The only fresh check in this closeout was the focused USB MSC host harness described below.
+
+### Workspace and preservation
+
+- Authoritative workspace: `D:\fatiha\side\_worktrees\nooir-s3-167-upgrade-20261124`
+- Dedicated branch: `codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124`
+- Branch HEAD before these documentation edits: `5ddd4794d519b61907dbd197abcd66af6a1209a1`, matching origin.
+- The source fix is already committed in the dedicated branch at `375173cfd4e6d721a8406562ae3bdcc0dc641b77`; current HEAD adds documentation corrections. Tracked files were clean before this closeout. No unfinished tracked source diff was present.
+- The sole untracked worktree item is the generated cache at `D:\fatiha\side\_builds\nooir-s3-v1.6.7-20261124\build-cache`. It remains untouched and excluded from Git. The earlier patch remains as a local archive at `D:\p\run2\handover\pending-usb-font-storage-fix-20261125.patch` (SHA-256 `52305c0025bed8cd20d3a74c3b555ce1dbdf54e54f3a42389223cd9cba107030`); it is superseded by source fix commit `375173cfd4e6d721a8406562ae3bdcc0dc641b77` and must not be reapplied. Prior outputs and logs remain preserved.
+- The latest successful run3 Pro and Classic BIN/ELF pairs and the earlier 2026-11-24 pairs were re-hashed. All hashes match the identities recorded above. Run3 build logs and the older artifacts were left unchanged. No BIN, ELF, cache, or private log is included in this documentation checkpoint.
+- Fresh run3 outputs remain application-only and experimental. They were successfully compiled and linked but were not run in QEMU or on hardware.
+
+### Fresh USB host evidence
+
+The focused SDK host harness passed from the current checkout on 2026-11-25. It reports: “USB MSC callback, sector bounds, eject/disconnect, startup-failure, and watchdog-yield tests passed.”
+
+- Log: `D:\p\run4\logs\usb-msc-host-checkpoint-20261125.log`
+- Log SHA-256: `9fe4760bd3285417e8c388a0b0c81dc0d48f8bfb8abd233679646eafe89f36d6`
+- Temporary harness outputs, preserved locally: `D:\p\run4\tmp\nooir-usb-msc-host\test_usb_mass_storage` and `D:\p\run4\tmp\nooir-usb-msc-host\UsbMassStorage.cpp`
+- This is host-stub evidence for the SDK MSC callback implementation. It does not execute Nooir’s font-release helper or Power-edge activity path, the ESP32-S3 BIN, TinyUSB enumeration, a USB host transfer, or physical SDMMC ownership/eject/remount behavior.
+
+### Feature status and evidence boundaries
+
+- **USB Drive / MSC, Pro and Classic:** The shared Nooir activity and font-release code compile in both run3 profiles. The SDK callback harness now passes the bounds, eject/disconnect, startup-failure and watchdog-yield cases above. No Nooir app-level handoff test, TinyUSB device test, or physical card/host transfer test is verified.
+- **X4 Pro touch and gestures:** The touch-enabled profile and existing input routes are present. The run3 Pro BIN has not been run in QEMU. GT911/Home input, gesture tuning, rotation and physical swipes remain untested; any earlier QEMU swipe claim remains unconfirmed.
+- **X4 Pro frontlight and warmth:** Pro-only controls and sleep/wake hooks compile. LEDs, warmth calibration, persistence over power loss, and behavior around USB, Wi-Fi and sleep are untested on the device.
+- **X4 Classic buttons and shortcuts:** The separate touch-disabled profile and mappings compile. Prior SDL2 tests used host keyboard events, not physical GPIO buttons; polarity, short/long press, orientation and shortcuts remain unverified.
+- **SDMMC, display and PSRAM:** Per-model profiles compile. The earlier Pro QEMU virtual-SD/display/PSRAM evidence belongs to its earlier BIN; Classic SDL2 uses host-folder storage and does not execute the S3 BIN. Physical SDMMC, panel revision/refresh, PSRAM training and sustained framebuffer allocation remain open.
+- **Power:** Preserve the known Pro QEMU short-timing and virtual Power-hold workaround. The older run02 low-power timer path timed out. Deep sleep, wake buttons, rail sequencing, current draw and repeated cycles require hardware.
+- **CrossPoint/CrossInk:** The revisions and SDK commits in this handoff/source delta remain reference material only; they do not certify Nooir behavior.
+- **S3 BLE:** Disabled and not tested for feasibility/coexistence. Native TTF/OTF integration remains unimplemented. Battery/charging, RTC, Classic tilt/orientation calibration, panel auto-detection, and per-revision refresh remain open.
+- **Update/recovery:** Experimental OTA and normal SD firmware-write paths remain guarded. No independent recovery method has been validated. Neither device is ready for physical flashing.
+
+### Reconciled validation record
+
+- Latest run3 firmware builds: Pro and Classic both succeeded using the pinned toolchain; exact BIN/ELF identities, build-log hashes, sizes, flash/PSRAM settings and warnings are listed in the build table above. Their hashes were rechecked during this checkpoint.
+- Preserved 2026-11-24 Pro and Classic BIN/ELF pairs: hashes rechecked and unchanged.
+- Pro firmware-in-QEMU: historical 27/27 run01 and 30/30 run03 on the earlier preserved Pro pair. These are actual firmware-in-QEMU results for that older pair, not the run3 BIN. The 27/27 checkpoint remains valid historical evidence.
+- Classic SDL2: historical host run passed Home/Library/EPUB open, page forward/back, Reader exit and progress writes; it does not run the Classic BIN. No Classic QEMU machine is available.
+- Fresh USB MSC host harness: passed as stated above, with the SDK-only scope.
+- Physical Pro and Classic validation: none is claimed.
+
+### Ordered continuation
+
+1. Boot the exact run3 Pro BIN in eink-qemu 0.9.2 using the known X4 Pro machine, short timing and virtual Power-hold workaround. Record the first/last successful milestone from application startup through Home and Reader.
+2. Add a focused validation seam for Nooir’s font-release and Power-edge USB handoff. Do not repeat the SDK callback harness alone as if it tested those application paths.
+3. Keep Classic SDL2 evidence classified as host-only; rerun only if a source change affects its tested behavior. Do not claim Classic S3 execution without a compatible firmware-execution target or hardware.
+4. Defer physical touch/buttons, frontlight, SDMMC/MSC, display, PSRAM, power, BLE and recovery checks until the exact boards are available. Before any later flash, require a board-matched backup and independently validated external recovery path.
+
+This port workstream is **PAUSED** at this checkpoint. No physical flashing, merge, public release, deployment, or work on the original X4/C3 release, Web Emulator, Status Bar experiment, MihonNooir, migration archive, or shared PlatformIO environment occurred.

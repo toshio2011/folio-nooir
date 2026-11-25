@@ -122,3 +122,29 @@ This section supersedes earlier statements in this file that the latest Pro/Clas
 | OTA, SD update, and recovery | Experimental OTA and SD firmware-write guards remain enabled. | No safe physical backup/recovery route has been validated. Neither BIN is ready for physical flashing. |
 
 **Evidence classification:** Pro QEMU 27/27 and 30/30 are actual firmware-in-QEMU runs on the earlier preserved Pro pair. Classic SDL2 and the USB MSC callback harness are host-only tests on earlier source. The two run3 results are successful S3 compile/link only; neither BIN was booted in QEMU or executed in the Classic simulator. No physical hardware result is claimed.
+
+## 2026-11-25 end-of-day reconciliation — PAUSED
+
+This is the latest evidence checkpoint and supersedes earlier snapshots in this document where they conflict.
+
+| Area | Current result | Still open |
+|---|---|---|
+| USB Drive / MSC — Pro and Classic | Shared Nooir activity/font-release paths compile in both run3 S3 builds. The current-checkout SDK host callback harness passed on 2026-11-25: sector bounds, eject/disconnect, startup failures and watchdog yielding. Log SHA-256: `9fe4760bd3285417e8c388a0b0c81dc0d48f8bfb8abd233679646eafe89f36d6`. | Harness does not execute Nooir font-release or Power-edge logic, the firmware BIN, TinyUSB enumeration, host transfers, or physical SD handoff/eject/remount. |
+| Pro touch and gestures | Touch-enabled Pro profile and existing routes compile. | Fresh run3 BIN has no QEMU runtime evidence. GT911, Home input, gesture zones, rotation and physical swipes remain untested; prior QEMU swipe claim is unconfirmed. |
+| Pro frontlight and warmth | Pro-only controls and sleep/wake hooks compile. | LED channels, warmth calibration, real persistence, sleep/wake, USB/Wi-Fi transitions and battery impact need hardware. |
+| Classic buttons and shortcuts | Separate touch-disabled profile/mappings compile. | Prior SDL2 uses keyboard input, not GPIO. Physical buttons, polarity, timing, orientation and shortcuts remain unverified. |
+| SDMMC, display and PSRAM | Per-model settings compile. Earlier Pro QEMU mounted virtual storage and rendered on an older pair; Classic SDL2 used host-folder storage. | New run3 BINs were not run in either simulator. Physical SDMMC, panel revisions/refresh, PSRAM training and sustained allocation remain open. |
+| Power | Existing per-model sequencing compiles; use the known short Pro QEMU timing and virtual Power-hold workaround. | Earlier run02 timed out in the emulator low-power timer path. Physical deep sleep, wake, rails, current draw and repeated cycles remain open. |
+| CrossPoint/CrossInk | CrossPoint Reader `92e8714a332c2c1903ea93290cf0b9b4f6f6697c`, SDK `995d9bd523b9c45b18710bca17a3158ce724a7f4`; CrossInk `9914146eeae7b46b300f475a16c32426fc02ec1f`, SDK `699370183fa3a0e33c9cb83a36f701bbb6022095`. | Reference implementations only. |
+| BLE and other model-specific features | S3 BLE remains disabled; common reader and library features are present in source. | BLE feasibility is untested; native TTF/OTF is not integrated. Battery/charging, RTC, Classic tilt/orientation, panel detection and per-revision refresh remain unimplemented or hardware-unverified. |
+| OTA and recovery | Experimental OTA and normal SD firmware-write guards remain in place. | No safe, independent recovery route has been validated. Neither target is physically flash-ready. |
+
+### Evidence classification
+
+- **Builds:** Pro and Classic run3 BIN/ELF pairs built successfully with the pinned toolchain. Their sizes and SHA-256 values match the recorded manifests. The earlier 2026-11-24 pairs were re-hashed and remain unchanged. Build success proves compilation/linking only.
+- **Firmware in QEMU:** Pro run01 27/27 and run03 30/30 are verified historical runs on the older preserved Pro pair. The 27/27 checkpoint remains valid. The fresh run3 Pro BIN has not been booted in QEMU.
+- **Host simulation:** Classic SDL2 passed Home/Library/EPUB open, page forward/back, Reader exit and persistence writes. It does not execute the Classic S3 BIN, and there is no Classic QEMU machine.
+- **Host USB harness:** Passed 2026-11-25; SDK callback/stub scope only, not Nooir integration or hardware.
+- **Physical hardware:** No Pro or Classic device validation is claimed.
+
+The next software milestone is booting the exact run3 Pro BIN in X4 Pro QEMU with the known short timing and virtual Power-hold. Next, validate the Nooir USB font-release/Power-edge path through a focused app-level test. Keep physical SDMMC, display, input, PSRAM, lighting, power, BLE and recovery open until device evidence exists.
