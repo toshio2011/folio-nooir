@@ -951,3 +951,87 @@ The focused SDK host harness passed from the current checkout on 2026-11-25. It 
 4. Defer physical touch/buttons, frontlight, SDMMC/MSC, display, PSRAM, power, BLE and recovery checks until the exact boards are available. Before any later flash, require a board-matched backup and independently validated external recovery path.
 
 This port workstream is **PAUSED** at this checkpoint. No physical flashing, merge, public release, deployment, or work on the original X4/C3 release, Web Emulator, Status Bar experiment, MihonNooir, migration archive, or shared PlatformIO environment occurred.
+
+## 2026-11-26 feature-parity continuation - PAUSED
+
+This checkpoint supersedes earlier statements in this handoff that the run3 Pro BIN had not been exercised in QEMU. Historical entries remain as history.
+
+### Workspace, source and preserved firmware
+
+- Authoritative D: workspace: D:\fatiha\side\_worktrees\nooir-s3-167-upgrade-20261124
+- Branch: codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124
+- Parent HEAD before this checkpoint: ee6e120ca89944a553bb5aae349f36f8c36beffb, matching origin before closeout edits. The existing USB font-release/Power-edge source fix is in the branch at 375173cfd4e6d721a8406562ae3bdcc0dc641b77.
+- Before these docs, the only new worktree item was the completed host harness under test/host/usb_drive_activity/. The build cache at D:\fatiha\side\_builds\nooir-s3-v1.6.7-20261124\build-cache is preserved and excluded. No production source change or firmware rebuild occurred in this checkpoint.
+- Binaries and full test evidence remain local-only under D:\p\run3, D:\p\run4 and D:\p\run5. None are staged for Git.
+
+Run3 build pairs are unchanged:
+
+| Target | BIN | Matching ELF | Build |
+|---|---|---|---|
+| X4 Pro | D:\p\run3\artifacts\FolioNooir_1.6.7-X4Pro-Experimental.bin, 5,765,536 bytes, SHA-256 03dfc9e157df4d18adb864d87e2bc5a05df34c76e5e77a2304e166f156ba6002 | D:\p\run3\artifacts\FolioNooir_1.6.7-X4Pro-Experimental.elf, 93,834,740 bytes, SHA-256 3364471f3d65a2a745221a7a31dcae865f1751ed7f166c0c3af849434ce7bb8d | Successful compile/link with PlatformIO Core 6.1.19, Espressif32 55.03.37, Arduino-ESP32 3.3.7 / ESP-IDF 5.5.2 and Xtensa 14.2.0+20251107. |
+| X4 Classic | D:\p\run3\artifacts\FolioNooir_1.6.7-X4Classic-Experimental.bin, 5,755,696 bytes, SHA-256 9fdee5dbd9c5fe9d3bd355627cd74773e71f3ab564d56b2aa39894e7df86ff6b | D:\p\run3\artifacts\FolioNooir_1.6.7-X4Classic-Experimental.elf, 93,490,396 bytes, SHA-256 3bc85fdf23f04f9df6d047a42b1509b477f3ec5b4a46aea94b74ddcde12354a7 | Successful compile/link with same pinned toolchain. |
+
+Neither pair was rebuilt today. The earlier 2026-11-24 pairs also remain preserved and unchanged. These artifacts are experimental and not physically validated or cleared for hardware flashing.
+
+### X4 Pro native QEMU - exact run3 firmware
+
+Native eink-qemu 0.9.2 ran the exact run3 Pro application on machine x4pro with panel uc8279-68. The known virtual Power-hold workaround was retained at 50,000 ms with accelerated timing and a copied virtual SD card. This is firmware-in-QEMU evidence, not physical-device evidence.
+
+The emulator-only 16 MiB image was composed from the matching run3 build directory:
+- Image: D:\p\run4\qemu\FolioNooir_1.6.7-X4Pro-QEMU-ONLY-NOT-FOR-PHYSICAL-FLASH-16MiB.bin
+- Size 16,777,216 bytes; SHA-256 57d6a8e3f0eb40da0a85c2dd6d08e060c0028aab58185f8bd9c8b761ccbbdd68.
+- Source build directory: D:\p\run3\pio-build-pro\nooir167_x4pro. The matching bootloader, partition table and application were verified at offsets 0x0, 0x8000 and 0x10000. The application bytes match the Pro BIN SHA above.
+- Composition command: eink-qemu.exe flash D:\p\run3\pio-build-pro\nooir167_x4pro D:\p\run4\qemu\FolioNooir_1.6.7-X4Pro-QEMU-ONLY-NOT-FOR-PHYSICAL-FLASH-16MiB.bin --machine x4pro.
+- This full image is strictly emulator-only and must never be used for physical flashing.
+
+Run 1 at D:\p\run4\qemu\pro-run3-reader-reopen-fast passed 30/30 scripted steps and exited 0. Its script is D:\p\run4\qemu\pro-run3-reader-reopen-fast.steps (SHA-256 2dc47b119589d9414f6b27a120ad134cfeb5a9808b45a2084b98dcbafabda27f). Serial evidence includes ESP-ROM:esp32s3-20210327, entry 0x403c8898, Hardware detect: X4 Pro, Display initialized, SDMMC card mounted, and Home, FolioLibrary and Reader transitions. It opened an EPUB, rendered a page, moved forward and back, exited to Library and saved progress.
+
+- Main log D:\p\run4\qemu\pro-run3-reader-reopen-fast\log.txt, SHA-256 c95e4f0b8bb0fc4f86b4148f9f49e0d515d7e291501e134d3dd21c77e63db74d.
+- Run JSONL SHA-256 b2ba2cd57858bbbdad0d8817140a13b58598c16f3aa550c6befa96cc67c7e92d.
+- Metrics SHA-256 0b152dd04d7b612527d9a80a50f23ddcb4328f8b3d5b190371846b043624752c.
+- Reader screenshot SHA-256 9f883579173fea4997300571e132de42d58cdc53008a9e4b065686c911c0a644. Fixture title “X4 Classic Simulator Sample” is sample EPUB content, not a Classic-device run.
+- QEMU heap snapshots showed an allocatable SPIRAM region with about 7.69 MiB free and zero corrupt blocks. This is emulator allocator evidence, not physical OPI PSRAM training. There was no separate physical-style PSRAM initialization confirmation in serial.
+- Page render samples were 2,132, 1,310 and 1,323 ms (median 1,323 ms); BW render median was 44 ms.
+- Two non-fatal application errors appeared: SDK IMU not found and first-boot settings_source=defaults. No panic, assertion or heap corruption was recorded. The missing virtual IMU is not classified as a firmware failure.
+
+Run 2 used a separate cold QEMU process and a writable copy of run 1's virtual SD. It passed 14/14 steps, mounted the card, reopened the same EPUB at saved progress and exited successfully. The reader-after-reboot screenshot is byte-identical to the first run's reader screenshot (SHA-256 9f883579173fea4997300571e132de42d58cdc53008a9e4b065686c911c0a644). Evidence directory: D:\p\run4\qemu\pro-run3-progress-reopen-after-cold-boot. Log SHA-256 33676b59250fb286a91766d71509f96560958ae13d72aed898f41a63d8acf71d; run JSONL SHA-256 234f6b29ce6b1882d4eaf205e03c7c2b494fa763943511df418f5a1a62f07cfb; metrics SHA-256 b8d4356e4836c52829f972f184815516cbdbd34337103e2e275c4d2216cc3ed9.
+
+Completed Pro QEMU milestones: app entry/serial, Pro profile, display, virtual SD mount, Home/Library, EPUB open/page navigation, Reader exit/progress save, and progress reopen after a separate cold process. No failure occurred within those tested milestones. Deep sleep, real power cycle, touch hardware, frontlight, USB enumeration and physical buses were not exercised.
+
+### Nooir USB Drive activity host harness
+
+A focused WSL host harness compiled and passed against production src/activities/network/UsbDriveActivity.cpp. It exercises font-release request -> preparation-render wait -> Storage.begin ordering; Power/Back/Home exits while waiting; Connected-state handling; wait/start/suspend/I/O timeouts; eject/disconnect states; idempotent teardown and no duplicate Storage.endUsbDrive.
+
+- Test files are under test/host/usb_drive_activity/ (run.sh, test_usb_drive_activity.cpp and hardware/UI stubs).
+- Final log: D:\p\run5\logs\usb-drive-activity-host-20261126-final.log, SHA-256 4e065e8ea0eb08c44c8b9e571a2e8ca201a51bde095cfc93881fbbb8e41effd0.
+- The harness uses stubs. It does not execute real font-cache release, the S3 BIN, TinyUSB enumeration, host reads/writes, physical SDMMC ownership or recovery.
+- Initial harness attempts failed because the first RenderLock stub was trivial under -Werror and because run.sh had CRLF under WSL. Both harness setup issues were corrected before the final passing run; they are not firmware failures.
+
+### Feature status at pause
+
+| Area | Status and evidence |
+|---|---|
+| USB Drive / MSC, both models | Shared activity/font-release paths compile in both builds. App-level host control-flow harness passed. Real cache release, TinyUSB enumeration, host transfers, eject/remount, physical SD ownership and recovery remain unverified. |
+| Pro touch / gestures | Pro profile and touch routes are present. QEMU used scripted coordinates and keys, not GT911 hardware. Physical touch/swipe, gesture zones, Home input and rotation remain unverified. |
+| Pro frontlight / warmth | Pro-specific settings and sleep/wake hooks compile. LED channels, warmth calibration, persistence, sleep/USB/Wi-Fi transitions and battery impact need hardware. |
+| Classic buttons / shortcuts | Separate touch-disabled profile/mappings compile. Earlier SDL2 used host keyboard events and host rendering, not the S3 BIN, GPIO or physical panel. |
+| SDMMC / display / PSRAM | Pro QEMU mounted virtual SD and rendered Home/EPUB with exact run3 BIN. Classic SDL2 is host-only. Physical SDMMC, panels/revisions, framebuffer stability, refresh/grayscale and PSRAM training remain open. |
+| Power | Virtual Pro boot-hold workaround worked. QEMU Reader run did not validate sleep/wake; physical sequencing/current draw/cycles remain open. |
+| CrossPoint / CrossInk | CrossPoint Reader 92e8714a332c2c1903ea93290cf0b9b4f6f6697c, SDK 995d9bd523b9c45b18710bca17a3158ce724a7f4; CrossInk 9914146eeae7b46b300f475a16c32426fc02ec1f, SDK 699370183fa3a0e33c9cb83a36f701bbb6022095. References only. |
+| S3 BLE | Disabled in both profiles; feasibility/coexistence is untested. Do not infer S3 support from C3. |
+| Other features and recovery | Shared reader/library features compile; no broad regression suite was run. Native TTF/OTF is not integrated. OTA/normal SD firmware-write guards remain; independent safe backup/recovery is required before physical bring-up. |
+
+Classic SDL2 checkpoint remains the earlier host-only Home/Library/EPUB navigation, page-turn, Reader-exit and persistence result. It was not rerun and does not certify the Classic BIN. No Classic QEMU machine is available. No physical Pro or Classic result is claimed.
+
+### Closeout and next steps
+
+No build, emulator or test process is running. No physical device was flashed. Original X4 release, Web Emulator, Status Bar experiment and MihonNooir were untouched. Migration archive and shared PlatformIO toolchain were not modified.
+
+When work resumes:
+1. Confirm exact Pro/Classic board and panel revisions. Prepare and independently validate a board-matched backup and recovery route before any physical write.
+2. With recovery proven, bring up each target separately with serial capture and current-limited power. Never use the 16 MiB QEMU image.
+3. Validate each board's panel, PSRAM, SDMMC, input, Pro touch/frontlight, Classic buttons, sleep/wake, USB MSC/eject/remount and recovery. Keep model evidence separate.
+4. Investigate S3 BLE and native TTF/OTF as separately scoped work.
+5. Rebuild only for an approved source change or an explicit validation requirement; preserve current run3 pairs.
+
+Workstream status: PAUSED at the user's requested checkpoint. No further development is authorized in this checkpoint.

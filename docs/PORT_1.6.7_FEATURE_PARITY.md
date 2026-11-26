@@ -148,3 +148,36 @@ This is the latest evidence checkpoint and supersedes earlier snapshots in this 
 - **Physical hardware:** No Pro or Classic device validation is claimed.
 
 The next software milestone is booting the exact run3 Pro BIN in X4 Pro QEMU with the known short timing and virtual Power-hold. Next, validate the Nooir USB font-release/Power-edge path through a focused app-level test. Keep physical SDMMC, display, input, PSRAM, lighting, power, BLE and recovery open until device evidence exists.
+
+## 2026-11-26 current feature-parity checkpoint - PAUSED
+
+This dated checkpoint supersedes earlier statements that the run3 Pro BIN had not reached QEMU. Physical board behavior remains open.
+
+| Feature | Implementation and verified evidence | Open work |
+|---|---|---|
+| USB Drive / MSC, Pro and Classic | Shared activity compiled in both S3 builds. New host harness passed for activity transition order, font-release request ordering, preparation-render wait, Power/Back/Home exit, timeouts, eject/disconnect and idempotent teardown. Log: D:\p\run5\logs\usb-drive-activity-host-20261126-final.log. | Harness stubs hardware/font manager internals; no S3 BIN, TinyUSB enumeration, host transfer, real cache release, SDMMC ownership or recovery was tested. |
+| X4 Pro touch and gestures | Pro routes exist. Native QEMU run3 covers app/library/Reader behavior with scripted emulator input. | No GT911 or capacitive button execution, physical touch/swipe, gesture-zone tuning or rotation. |
+| X4 Pro frontlight and warmth | Pro-specific controls and sleep/wake hooks compile. | LED channels, warmth, persistence through real power loss, sleep/USB/Wi-Fi transitions and current draw need hardware. |
+| X4 Classic buttons and shortcuts | Separate touch-disabled profile and shortcuts compile. | Earlier SDL2 used host keyboard events; physical buttons/GPIO/polarity/long press/panel behavior are untested. |
+| SDMMC, display, framebuffer and PSRAM | Exact run3 Pro firmware mounted virtual SD and rendered Home/EPUB in x4pro QEMU. Emulator heap snapshots showed about 7.69 MiB free SPIRAM and zero corrupt blocks. | Virtual SD/heap do not verify physical SDMMC, panel revision/wiring, OPI training, refresh/ghosting or sustained allocation. Classic SDL2 is host-only. |
+| Power / sleep | Pro emulator boot used the known virtual Power-hold workaround. | Deep sleep, wake sources, physical rails/current, repeated cycles, Classic power and real progress persistence remain open. |
+| CrossPoint / CrossInk | CrossPoint Reader 92e8714a332c2c1903ea93290cf0b9b4f6f6697c with SDK 995d9bd523b9c45b18710bca17a3158ce724a7f4; CrossInk 9914146eeae7b46b300f475a16c32426fc02ec1f with SDK 699370183fa3a0e33c9cb83a36f701bbb6022095. | Reference implementations only; they do not certify Nooir hardware. |
+| BLE and remaining features | BLE stays disabled for S3. Shared Nooir reader/library features compile. | BLE feasibility/coexistence is untested; native TTF/OTF is not integrated; battery/charging, RTC, Classic tilt/orientation, panel detection and revision tuning remain open. |
+| Firmware update/recovery | Experimental OTA and normal SD firmware-write guards remain. | No independently validated backup/recovery route. Do not physically flash either BIN until this prerequisite is satisfied. |
+
+### Latest software evidence
+
+- Pro run3 BIN, matching ELF, X4 Pro QEMU machine, 30/30 steps: startup, Pro profile, display, virtual SD, Home/Library, EPUB open, page navigation, exit and progress save. Evidence: D:\p\run4\qemu\pro-run3-reader-reopen-fast.
+- A second separate Pro QEMU process reopened the saved page from a copy of the first virtual SD and passed 14/14 steps. Reader screenshot SHA-256 matches the first run exactly. This verifies persistence across emulator processes for this BIN.
+- Classic SDL2 checkpoint remains host-simulator-only and was not rerun. Earlier it passed Home/Library, EPUB open, forward/back, Reader exit and persistence writes; it does not execute the Classic BIN. No Classic QEMU exists.
+- No physical X4 Pro or X4 Classic validation occurred. Builds, Pro QEMU, Classic SDL2 and host USB harness are separate evidence classes.
+
+### Resume sequence
+
+1. Confirm exact board revisions and validate independent backup/recovery.
+2. Perform separately logged physical bring-up for Pro and Classic: power/serial, panel, PSRAM, SDMMC, input, sleep/wake and USB storage.
+3. Treat Pro touch/frontlight and Classic GPIO/button behavior as model-specific milestones.
+4. Scope S3 BLE and native font support independently; rebuild only for a justified source change.
+5. Keep artifacts separate; never use QEMU-only full flash for hardware.
+
+Status: PAUSED at the end-of-day checkpoint.

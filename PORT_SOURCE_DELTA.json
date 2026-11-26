@@ -235,7 +235,7 @@
     }
   },
   "commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
-  "handoff_sha256": "6c84542befbf8414739bba5f6d207e13a0354a5c58101f9a6a378795656ab547",
+  "handoff_sha256": "e48a725a2833cc96a10f2b9aa2b945cc180f55e7777a4bda86ffb9043b1505e5",
   "limitations": [
     "Classic SDL2 simulator uses folder-backed host storage and does not validate physical SDMMC, PSRAM, panel, GPIO, power, or touch hardware.",
     "No physical validation or flash is claimed.",
@@ -2164,5 +2164,101 @@
     ],
     "physical_flash": "not performed; no device is flash-ready without a board-matched backup and independently validated recovery",
     "prohibited_scope": "No original release, Web Emulator, Status Bar experiment, MihonNooir, migration archive, shared toolchain, merge, public release, or deployment."
+  },
+  "checkpoint_2026_11_26": {
+    "local_date": "2026-11-26",
+    "status": "PAUSED",
+    "authoritative_workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
+    "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+    "parent_head_before_closeout": "ee6e120ca89944a553bb5aae349f36f8c36beffb",
+    "source_fix_commit": "375173cfd4e6d721a8406562ae3bdcc0dc641b77",
+    "worktree_before_closeout": "No production source changes; completed test/host/usb_drive_activity host harness was untracked; generated build-cache preserved and excluded.",
+    "outputs_policy": "D:\\p only for artifacts/logs/cache; no generated BIN/ELF, QEMU flash, virtual SD card, private logs or caches are committed.",
+    "firmware": [
+      {
+        "target": "X4 Pro",
+        "bin": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Pro-Experimental.bin",
+        "bin_bytes": 5765536,
+        "bin_sha256": "03dfc9e157df4d18adb864d87e2bc5a05df34c76e5e77a2304e166f156ba6002",
+        "elf": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Pro-Experimental.elf",
+        "elf_bytes": 93834740,
+        "elf_sha256": "3364471f3d65a2a745221a7a31dcae865f1751ed7f166c0c3af849434ce7bb8d",
+        "build_status": "previously successful; not rebuilt in this checkpoint"
+      },
+      {
+        "target": "X4 Classic",
+        "bin": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Classic-Experimental.bin",
+        "bin_bytes": 5755696,
+        "bin_sha256": "9fdee5dbd9c5fe9d3bd355627cd74773e71f3ab564d56b2aa39894e7df86ff6b",
+        "elf": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Classic-Experimental.elf",
+        "elf_bytes": 93490396,
+        "elf_sha256": "3bc85fdf23f04f9df6d047a42b1509b477f3ec5b4a46aea94b74ddcde12354a7",
+        "build_status": "previously successful; not rebuilt in this checkpoint"
+      }
+    ],
+    "pro_qemu": {
+      "qemu_version": "eink-qemu 0.9.2",
+      "machine": "x4pro",
+      "panel": "uc8279-68",
+      "boot_power_hold_ms": 50000,
+      "qemu_only_full_flash": "D:\\p\\run4\\qemu\\FolioNooir_1.6.7-X4Pro-QEMU-ONLY-NOT-FOR-PHYSICAL-FLASH-16MiB.bin",
+      "qemu_only_flash_bytes": 16777216,
+      "qemu_only_flash_sha256": "57d6a8e3f0eb40da0a85c2dd6d08e060c0028aab58185f8bd9c8b761ccbbdd68",
+      "flash_composition": {
+        "source_build_directory": "D:\\p\\run3\\pio-build-pro\\nooir167_x4pro",
+        "bootloader_offset": "0x0",
+        "partition_table_offset": "0x8000",
+        "application_offset": "0x10000",
+        "application_sha256_matches_pro_bin": true,
+        "physical_use": "prohibited; emulator-only"
+      },
+      "first_run": {
+        "directory": "D:\\p\\run4\\qemu\\pro-run3-reader-reopen-fast",
+        "result": "passed 30/30 steps; exit code 0",
+        "log_sha256": "c95e4f0b8bb0fc4f86b4148f9f49e0d515d7e291501e134d3dd21c77e63db74d",
+        "run_jsonl_sha256": "b2ba2cd57858bbbdad0d8817140a13b58598c16f3aa550c6befa96cc67c7e92d",
+        "metrics_sha256": "0b152dd04d7b612527d9a80a50f23ddcb4328f8b3d5b190371846b043624752c",
+        "reader_screenshot_sha256": "9f883579173fea4997300571e132de42d58cdc53008a9e4b065686c911c0a644",
+        "milestones": ["application entry and serial", "X4 Pro profile", "display initialized", "virtual SD mounted", "Home and Library", "EPUB open and page navigation", "Reader exit", "progress saved"],
+        "heap_evidence": "QEMU reports about 7.69 MiB free allocatable SPIRAM with zero corrupt blocks; not physical PSRAM training.",
+        "performance": {"page_render_ms": [2132, 1310, 1323], "page_render_median_ms": 1323, "bw_render_median_ms": 44},
+        "errors": ["SDK IMU not found (not classified as firmware fault)", "settings_source=defaults on first boot"],
+        "panic_or_assert": false
+      },
+      "cold_reopen": {
+        "directory": "D:\\p\\run4\\qemu\\pro-run3-progress-reopen-after-cold-boot",
+        "result": "passed 14/14 steps in a separate QEMU process",
+        "log_sha256": "33676b59250fb286a91766d71509f96560958ae13d72aed898f41a63d8acf71d",
+        "run_jsonl_sha256": "234f6b29ce6b1882d4eaf205e03c7c2b494fa763943511df418f5a1a62f07cfb",
+        "metrics_sha256": "b8d4356e4836c52829f972f184815516cbdbd34337103e2e275c4d2216cc3ed9",
+        "reopened_reader_screenshot_sha256": "9f883579173fea4997300571e132de42d58cdc53008a9e4b065686c911c0a644",
+        "card_mode": "copy of first-run virtual SD; original preserved"
+      },
+      "limitations": ["No physical hardware execution", "No GT911/touch validation", "No deep sleep/wake", "No physical SDMMC/panel/PSRAM training", "No USB MSC enumeration or transfer"]
+    },
+    "usb_drive_activity_host_test": {
+      "result": "passed",
+      "scope": ["production UsbDriveActivity.cpp control flow with stubbed hardware/UI/font manager", "font-release request before render wait before Storage.begin", "Power/Back/Home, timeout, eject/disconnect and idempotent teardown branches"],
+      "log": "D:\\p\\run5\\logs\\usb-drive-activity-host-20261126-final.log",
+      "log_sha256": "4e065e8ea0eb08c44c8b9e571a2e8ca201a51bde095cfc93881fbbb8e41effd0",
+      "does_not_test": ["real font cache release", "ESP32-S3 BIN", "TinyUSB enumeration", "USB host read/write", "physical SDMMC handoff or recovery"],
+      "harness_files": "test/host/usb_drive_activity/"
+    },
+    "classic_host_simulator": "Earlier SDL2 checkpoint passed Home/Library/EPUB open, next/previous, Reader exit and persistence writes. Not rerun; does not execute Classic S3 BIN; no Classic QEMU.",
+    "upstream_references": {
+      "crosspoint_reader": "92e8714a332c2c1903ea93290cf0b9b4f6f6697c",
+      "crosspoint_sdk": "995d9bd523b9c45b18710bca17a3158ce724a7f4",
+      "crossink": "9914146eeae7b46b300f475a16c32426fc02ec1f",
+      "crossink_sdk": "699370183fa3a0e33c9cb83a36f701bbb6022095"
+    },
+    "next_steps_priority": [
+      "Confirm exact board/panel revisions and independently validate board-matched backup and recovery before any physical write.",
+      "When recovery is proven, perform separately logged Pro and Classic bring-up with current-limited power and serial capture.",
+      "Validate hardware panel, PSRAM, SDMMC, input, Pro frontlight/touch, Classic buttons, deep sleep/wake, USB MSC/eject/remount on each target.",
+      "Investigate S3 BLE and native TTF/OTF as separate tasks.",
+      "Rebuild only when a source change or validation need justifies it; preserve current BIN/ELF pairs."
+    ],
+    "active_processes_at_closeout": [],
+    "physical_flash": "not performed"
   }
 }
