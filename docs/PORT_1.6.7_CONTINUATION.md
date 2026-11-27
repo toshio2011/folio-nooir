@@ -58,3 +58,27 @@ These references are MIT licensed. No upstream source was copied in this docs-on
 6. Preserve all earlier artifact/evidence paths. Any justified rebuild gets a new directory/name and hashes; never overwrite run3.
 
 No merge, public release, deployment, physical write, or unrelated project work is part of this checkpoint.
+
+
+## 2026-11-27 continuation — hardware-foundation feasibility
+
+Current isolated D: branch: `codex/nooir-crosspoint-hardware-foundation-feasibility-20261127`, base `02d8080d7e6c66dc687071438df5994df9c8f8dc`; candidate SDK pin `de19f154ef0963879592f3baf6da68606122797c`. No app source changed. Two candidate S3 builds and the Pro QEMU Reader/persistence session are preserved. The full review is in `docs/HARDWARE_FOUNDATION_FEASIBILITY_2026-11-27.md`; raw outputs stay under `D:\fatiha\side\_builds\nooir-hardware-foundation-20261127`.
+
+### Next work, in priority order
+
+1. Keep the four run3 and candidate BIN/ELF pairs unchanged; do not rebuild just to regenerate hashes. Do not flash; candidate firmware has no validated safe backup/recovery route.
+2. If performance work resumes, first add timing spans for SD read, EPUB decompress, image/glyph decode, render, panel phases, and QEMU host wall time. Reuse an identical fixture and pacing for old Nooir, candidate Nooir and stable CrossPoint; collect enough samples to make p95 useful.
+3. Capture reproducible Nooir Lite, Featured Book, Spine, populated Recent/Library/Finished, each reader format, Settings, USB Drive and Pro touch/frontlight screens using genuine cover assets. Record fixture, app identity, screenshot path and hash. Do not compare unrelated UI screens as if they were the same feature.
+4. Add timed workloads for selection, shelf pagination, thumbnail cache, 400+ books, warm/cold boot, book open/exit, partial refresh, memory and task stack; USB start/eject/remount remains a separate real-device requirement.
+5. Keep Classic SDL2 evidence labeled host-only. If Classic firmware execution is needed before hardware is available, first identify a maintained Classic-capable emulator; eink-qemu currently has no Classic machine.
+6. Hardware work starts with exact retail revision identification and a board-matched backup/recovery route, followed by separately approved Pro and Classic acceptance runs. Never use the QEMU full image physically.
+
+The latest test does not justify claiming performance parity or a finished/polished UI. The provisional SDK-layer approach preserves app behavior and builds both profiles, while the remaining evidence above is the gate for any stronger claim.
+
+## 2026-11-27 full UX validation continuation
+
+The Pro QEMU review is extended with a generated EPUB, a 400-file EPUB folder listing, and two-page XTC, XTCH and CBZ smoke tests on the exact preserved candidate Pro image. See `docs/HARDWARE_FOUNDATION_FEASIBILITY_2026-11-27.md` and the D:-only `evidence-index.json` for raw serial logs, screenshots, heaps and hashes. These are emulator results only; CBZ shows a visible next-page cache progress strip.
+
+The prior Classic SDL2 button-navigation pass and screenshots remain host-only. A current-source WSL simulator build was attempted using D:-hosted caches but failed after 18m42s because `FREEINK_CAP_USB_MSC` is undefined for the simulator target. The failed build log is preserved at `D:\fatiha\side\_builds\nooir-hardware-foundation-20261127\evidence\full-ux-validation-20261127\logs\classic-simulator-build-attempt02.log`. No source workaround, app build, device flash, or physical test occurred.
+
+The matched QEMU 20-turn comparison shows candidate Nooir at the original Nooir timing level, with no meaningful speedup. The outstanding work is the missing screen-mode review, book-selection/pagination/thumbnail timing, storage/decode/display attribution, current host simulator configuration, and all physical bring-up/recovery checks. Keep the 16 MiB QEMU image emulator-only.

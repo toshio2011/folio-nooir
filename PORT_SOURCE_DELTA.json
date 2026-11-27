@@ -232,10 +232,19 @@
       "active_old_C_workspace_references": 0,
       "old_C_references_remaining": "8 generated font header command comments; historic QEMU console/run metadata",
       "no_S3_firmware_built": true
+    },
+    "latest_build_attempt_2026_11_27": {
+      "status": "FAILED",
+      "environment": "simulator_nooir167_x4classic",
+      "duration_seconds": 1122.73,
+      "error": "NetworkModeSelectionActivity.cpp:12:33: FREEINK_CAP_USB_MSC undefined for simulator target",
+      "log": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\evidence\\full-ux-validation-20261127\\logs\\classic-simulator-build-attempt02.log",
+      "source_modified": false
     }
   },
   "commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
-  "handoff_sha256": "88d81a03d760811dd61ad9b51967b25e2e75ca14c1edaa1bc439920946895d57",
+  "handoff_sha256": "07afcaec54222915c6cef9b6d92dd2469b564fcb59057c84a6579e42bddcb5de",
+  "handoff_git_blob_sha256": "159015c5cdd5c4486688be805a01f467e02f243ee572bb6e8eb225b3314bb2f4",
   "limitations": [
     "Classic SDL2 simulator uses folder-backed host storage and does not validate physical SDMMC, PSRAM, panel, GPIO, power, or touch hardware.",
     "No physical validation or flash is claimed.",
@@ -1188,7 +1197,15 @@
       "buttons/touch-disabled behavior on unit",
       "sleep and wake",
       "physical progress persistence"
-    ]
+    ],
+    "latest_compile_attempt": {
+      "status": "FAILED",
+      "duration_seconds": 1122.73,
+      "first_error": "NetworkModeSelectionActivity.cpp:12:33: FREEINK_CAP_USB_MSC undefined for simulator target",
+      "log": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\evidence\\full-ux-validation-20261127\\logs\\classic-simulator-build-attempt02.log",
+      "runtime_replay_performed": false,
+      "application_source_modified": false
+    }
   },
   "hardware_bringup_checklist": [
     "Confirm exact retail model/revision and Pro/Classic panel-controller variant.",
@@ -1199,7 +1216,7 @@
     "Exercise Home, Library, EPUB first page, next/previous, exit, progress reopen, deep sleep, button wake, and repeated transitions while monitoring reset/brownout/heap/card integrity.",
     "Keep OTA unavailable until image/manifest, partition/rollback state, and external recovery are reviewed and tested."
   ],
-  "workstream_status": "PAUSED — 2026-11-25 end-of-day feature-parity checkpoint; corrected Pro and Classic builds succeeded; no process active; physical validation and runtime tests on the fresh pairs remain open.",
+  "workstream_status": "CONTINUING — full 2026-11-27 visual/performance evidence captured; candidate S3 artifacts unchanged; Classic current-source SDL2 build has one host-capability blocker; physical validation and remaining visual/performance gaps remain open.",
   "closing_checkpoint": {
     "date": "2026-11-13",
     "status": "PAUSED — awaiting physical hardware testing or a concrete Web Emulator integration requirement",
@@ -1992,115 +2009,115 @@
     }
   },
   "end_of_day_checkpoint_2026_11_25_feature_parity": {
-  "date": "2026-11-25",
-  "status": "PAUSED — checkpoint completed before 5:28 PM MYT; no build/test process active.",
-  "workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
-  "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
-  "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
-  "source_head_before_checkpoint": "91e1fac80375bf568558b5684f8245e2ab46caa5",
-  "source_checkpoint_commit": "375173cfd4e6d721a8406562ae3bdcc0dc641b77",
-  "remote_head_before_checkpoint": "91e1fac80375bf568558b5684f8245e2ab46caa5",
-  "current_source_diff": [
-    "src/SdCardFontSystem.cpp: add releaseForStorage to release interface caches and SD-backed reader fonts before external raw-sector ownership.",
-    "src/SdCardFontSystem.h: declare/document releaseForStorage.",
-    "src/activities/network/UsbDriveActivity.cpp: remove call to nonexistent consumePowerGesture; exclusive-storage Power edge already triggers controlled teardown/restart."
-  ],
-  "source_diff_validation": "Both Pro and Classic compilation/linking succeeded with these local source changes. No runtime or host MSC lifecycle test rerun after the changes.",
-  "build_toolchain": "PlatformIO Core 6.1.19 at D:\\p\\core; Espressif32 55.03.37; Arduino-ESP32 3.3.7 / ESP-IDF 5.5.2; Xtensa 14.2.0+20251107.",
-  "hardware_profile": "Both ESP32-S3 DevKitC-1 N16R8 profiles: 16 MiB DIO flash, 8 MiB OPI PSRAM, existing 6,553,600-byte application slot; app-only experimental output; no flashing.",
-  "fresh_builds": {
-    "x4pro": {
-      "result": "SUCCESS; compile/link only; 436.31 s.",
-      "bin": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Pro-Experimental.bin",
-      "bin_size_bytes": 5765536,
-      "bin_sha256": "03dfc9e157df4d18adb864d87e2bc5a05df34c76e5e77a2304e166f156ba6002",
-      "elf": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Pro-Experimental.elf",
-      "elf_size_bytes": 93834740,
-      "elf_sha256": "3364471f3d65a2a745221a7a31dcae865f1751ed7f166c0c3af849434ce7bb8d",
-      "log": "D:\\p\\run3\\logs\\build-x4pro-v1.6.7-usb-fix-20261125.log",
-      "log_sha256": "f5f77a212bea99c56cff4bc5181a46f44d6d622e0e0c0746af4e8f3afaf93cd0",
-      "manifest": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Pro-Experimental.bin.manifest.json",
-      "qemu_on_this_pair": false
+    "date": "2026-11-25",
+    "status": "PAUSED — checkpoint completed before 5:28 PM MYT; no build/test process active.",
+    "workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
+    "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+    "remote_backup_location": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+    "source_head_before_checkpoint": "91e1fac80375bf568558b5684f8245e2ab46caa5",
+    "source_checkpoint_commit": "375173cfd4e6d721a8406562ae3bdcc0dc641b77",
+    "remote_head_before_checkpoint": "91e1fac80375bf568558b5684f8245e2ab46caa5",
+    "current_source_diff": [
+      "src/SdCardFontSystem.cpp: add releaseForStorage to release interface caches and SD-backed reader fonts before external raw-sector ownership.",
+      "src/SdCardFontSystem.h: declare/document releaseForStorage.",
+      "src/activities/network/UsbDriveActivity.cpp: remove call to nonexistent consumePowerGesture; exclusive-storage Power edge already triggers controlled teardown/restart."
+    ],
+    "source_diff_validation": "Both Pro and Classic compilation/linking succeeded with these local source changes. No runtime or host MSC lifecycle test rerun after the changes.",
+    "build_toolchain": "PlatformIO Core 6.1.19 at D:\\p\\core; Espressif32 55.03.37; Arduino-ESP32 3.3.7 / ESP-IDF 5.5.2; Xtensa 14.2.0+20251107.",
+    "hardware_profile": "Both ESP32-S3 DevKitC-1 N16R8 profiles: 16 MiB DIO flash, 8 MiB OPI PSRAM, existing 6,553,600-byte application slot; app-only experimental output; no flashing.",
+    "fresh_builds": {
+      "x4pro": {
+        "result": "SUCCESS; compile/link only; 436.31 s.",
+        "bin": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Pro-Experimental.bin",
+        "bin_size_bytes": 5765536,
+        "bin_sha256": "03dfc9e157df4d18adb864d87e2bc5a05df34c76e5e77a2304e166f156ba6002",
+        "elf": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Pro-Experimental.elf",
+        "elf_size_bytes": 93834740,
+        "elf_sha256": "3364471f3d65a2a745221a7a31dcae865f1751ed7f166c0c3af849434ce7bb8d",
+        "log": "D:\\p\\run3\\logs\\build-x4pro-v1.6.7-usb-fix-20261125.log",
+        "log_sha256": "f5f77a212bea99c56cff4bc5181a46f44d6d622e0e0c0746af4e8f3afaf93cd0",
+        "manifest": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Pro-Experimental.bin.manifest.json",
+        "qemu_on_this_pair": false
+      },
+      "x4classic": {
+        "result": "SUCCESS; compile/link only; 537.17 s.",
+        "bin": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Classic-Experimental.bin",
+        "bin_size_bytes": 5755696,
+        "bin_sha256": "9fdee5dbd9c5fe9d3bd355627cd74773e71f3ab564d56b2aa39894e7df86ff6b",
+        "elf": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Classic-Experimental.elf",
+        "elf_size_bytes": 93490396,
+        "elf_sha256": "3bc85fdf23f04f9df6d047a42b1509b477f3ec5b4a46aea94b74ddcde12354a7",
+        "log": "D:\\p\\run3\\logs\\build-x4classic-v1.6.7-usb-fix-20261125.log",
+        "log_sha256": "662a2a39d6002a5c5fc69b7c73cc5e20ca021e15c116ebdb450e92adf285d6b6",
+        "manifest": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Classic-Experimental.bin.manifest.json",
+        "classic_simulator_on_this_pair": false
+      }
     },
-    "x4classic": {
-      "result": "SUCCESS; compile/link only; 537.17 s.",
-      "bin": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Classic-Experimental.bin",
-      "bin_size_bytes": 5755696,
-      "bin_sha256": "9fdee5dbd9c5fe9d3bd355627cd74773e71f3ab564d56b2aa39894e7df86ff6b",
-      "elf": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Classic-Experimental.elf",
-      "elf_size_bytes": 93490396,
-      "elf_sha256": "3bc85fdf23f04f9df6d047a42b1509b477f3ec5b4a46aea94b74ddcde12354a7",
-      "log": "D:\\p\\run3\\logs\\build-x4classic-v1.6.7-usb-fix-20261125.log",
-      "log_sha256": "662a2a39d6002a5c5fc69b7c73cc5e20ca021e15c116ebdb450e92adf285d6b6",
-      "manifest": "D:\\p\\run3\\artifacts\\FolioNooir_1.6.7-X4Classic-Experimental.bin.manifest.json",
-      "classic_simulator_on_this_pair": false
+    "warnings": [
+      "FILE_READ/FILE_WRITE macro redefinitions.",
+      "wolfSSL configuration macro redefinitions.",
+      "Deprecated NetworkClient::flush() call in WebSockets.",
+      "Rect explicit-constructor aggregate conversions in CarouselTheme.cpp.",
+      "Windows Long Path Support disabled warning."
+    ],
+    "earlier_compile_failures_superseded": [
+      "D:\\p\\run2\\logs\\build-nooir167_x4pro-v1.6.7-325f3ac8-20261125.log",
+      "D:\\p\\run2\\logs\\build-nooir167_x4classic-v1.6.7-325f3ac8-20261125.log"
+    ],
+    "preserved_2026_11_24_pairs": {
+      "root": "D:\\fatiha\\side\\_builds\\nooir-s3-v1.6.7-20261124\\artifacts",
+      "x4pro_bin_sha256": "3e47ba8ce10901e5a037ecfcd75443615707882e7d2c32856949ba341868d7d5",
+      "x4pro_elf_sha256": "8a123c4a2c636585214af964bcb03abc90f60db1db28e87b12a1e1475200adcb",
+      "x4classic_bin_sha256": "c4bf429556c15d1eccc92343352395f3dc36e90634569a17258f48fa4fc9cb10",
+      "x4classic_elf_sha256": "564b1e53a916f7d1aceba1faae6a0b1697f06b21b5b05eb2467b8541ad5480c7",
+      "unchanged": true
+    },
+    "previous_runtime_evidence": {
+      "pro_qemu": "Older preserved Pro pair in eink-qemu 0.9.2: run01 27/27; run03 30/30. Not run3 BIN. Run02 timed out in virtual low-power timer path without recorded panic.",
+      "classic_sdl2": "Prior host SDL2 run passed Home/Library/EPUB open, page forward/back, Reader exit, persistence writes. Does not execute S3 BIN; no Classic QEMU.",
+      "usb_msc_host": "2026-11-24 host callback lifecycle harness passed on older source; not rerun after current source changes.",
+      "python_artifact_checks": "5/5 on earlier source checkpoint; not rerun."
+    },
+    "feature_status": {
+      "usb_msc": "Both S3 builds compile; focused SDK-stub callback/sector-boundary/eject/disconnect/startup-failure/watchdog-yield harness passed 2026-11-25. Nooir font-release/Power-edge integration, TinyUSB, and physical SD handoff remain unverified.",
+      "pro_touch_gesture": "Source present; fresh BIN not QEMU-tested; hardware untested; swipe evidence unconfirmed.",
+      "pro_frontlight_warmth": "Source and compile validated; hardware/persistence/sleep/USB/Wi-Fi behavior untested.",
+      "classic_buttons": "Source compile validated; prior simulator uses keyboard input; physical buttons untested.",
+      "sdmmc": "Profiled; prior virtual/host storage only; physical test pending.",
+      "display_psram": "Compile/profile evidence; previous emulator evidence is older; physical panel and PSRAM training pending.",
+      "power": "Existing hooks; no fresh runtime evidence; physical deep sleep/wake pending.",
+      "ble": "Disabled; S3 feasibility untested.",
+      "native_ttf_otf": "Not integrated.",
+      "recovery": "OTA and SD update/write paths guarded; validated external recovery absent."
+    },
+    "upstream_references": {
+      "crosspoint_reader": "92e8714a332c2c1903ea93290cf0b9b4f6f6697c",
+      "crosspoint_sdk": "995d9bd523b9c45b18710bca17a3158ce724a7f4",
+      "crossink": "9914146eeae7b46b300f475a16c32426fc02ec1f",
+      "crossink_sdk": "699370183fa3a0e33c9cb83a36f701bbb6022095"
+    },
+    "preservation_and_safety": {
+      "no_physical_flash": true,
+      "no_merge_release_deploy": true,
+      "original_x4_web_emulator_status_bar_mihonnooir_and_migration_archive_untouched": true,
+      "build_artifacts_and_logs_committed": false,
+      "root_state_restore": "All 21 recorded files restored and matched the D:\\p\\run3\\root-state manifest; PlatformIO config original SHA verified.",
+      "only_untracked_repo_path": "Generated cache at D:\\fatiha\\side\\_builds\\nooir-s3-v1.6.7-20261124\\build-cache; preserve and exclude."
+    },
+    "restart_order": [
+      "Resume only in the authoritative D: branch and confirm checkpoint status.",
+      "Run the focused USB MSC host lifecycle harness against the current font-release and Power-edge behavior.",
+      "If runtime evidence is needed, use exact run3 Pro BIN in eink-qemu with the known short timing/virtual Power-hold procedure; do not claim Classic S3 execution from SDL2.",
+      "Keep physical input, touch, frontlight, SDMMC, panel, PSRAM, power, BLE, and recovery gaps model-specific.",
+      "Require exact board identification and independently validated backup/recovery before any future physical bring-up."
+    ],
+    "operations_started_for_closeout": {
+      "builds": false,
+      "tests": true,
+      "simulators": false,
+      "qemu": false
     }
   },
-  "warnings": [
-    "FILE_READ/FILE_WRITE macro redefinitions.",
-    "wolfSSL configuration macro redefinitions.",
-    "Deprecated NetworkClient::flush() call in WebSockets.",
-    "Rect explicit-constructor aggregate conversions in CarouselTheme.cpp.",
-    "Windows Long Path Support disabled warning."
-  ],
-  "earlier_compile_failures_superseded": [
-    "D:\\p\\run2\\logs\\build-nooir167_x4pro-v1.6.7-325f3ac8-20261125.log",
-    "D:\\p\\run2\\logs\\build-nooir167_x4classic-v1.6.7-325f3ac8-20261125.log"
-  ],
-  "preserved_2026_11_24_pairs": {
-    "root": "D:\\fatiha\\side\\_builds\\nooir-s3-v1.6.7-20261124\\artifacts",
-    "x4pro_bin_sha256": "3e47ba8ce10901e5a037ecfcd75443615707882e7d2c32856949ba341868d7d5",
-    "x4pro_elf_sha256": "8a123c4a2c636585214af964bcb03abc90f60db1db28e87b12a1e1475200adcb",
-    "x4classic_bin_sha256": "c4bf429556c15d1eccc92343352395f3dc36e90634569a17258f48fa4fc9cb10",
-    "x4classic_elf_sha256": "564b1e53a916f7d1aceba1faae6a0b1697f06b21b5b05eb2467b8541ad5480c7",
-    "unchanged": true
-  },
-  "previous_runtime_evidence": {
-    "pro_qemu": "Older preserved Pro pair in eink-qemu 0.9.2: run01 27/27; run03 30/30. Not run3 BIN. Run02 timed out in virtual low-power timer path without recorded panic.",
-    "classic_sdl2": "Prior host SDL2 run passed Home/Library/EPUB open, page forward/back, Reader exit, persistence writes. Does not execute S3 BIN; no Classic QEMU.",
-    "usb_msc_host": "2026-11-24 host callback lifecycle harness passed on older source; not rerun after current source changes.",
-    "python_artifact_checks": "5/5 on earlier source checkpoint; not rerun."
-  },
-  "feature_status": {
-    "usb_msc": "Both S3 builds compile; focused SDK-stub callback/sector-boundary/eject/disconnect/startup-failure/watchdog-yield harness passed 2026-11-25. Nooir font-release/Power-edge integration, TinyUSB, and physical SD handoff remain unverified.",
-    "pro_touch_gesture": "Source present; fresh BIN not QEMU-tested; hardware untested; swipe evidence unconfirmed.",
-    "pro_frontlight_warmth": "Source and compile validated; hardware/persistence/sleep/USB/Wi-Fi behavior untested.",
-    "classic_buttons": "Source compile validated; prior simulator uses keyboard input; physical buttons untested.",
-    "sdmmc": "Profiled; prior virtual/host storage only; physical test pending.",
-    "display_psram": "Compile/profile evidence; previous emulator evidence is older; physical panel and PSRAM training pending.",
-    "power": "Existing hooks; no fresh runtime evidence; physical deep sleep/wake pending.",
-    "ble": "Disabled; S3 feasibility untested.",
-    "native_ttf_otf": "Not integrated.",
-    "recovery": "OTA and SD update/write paths guarded; validated external recovery absent."
-  },
-  "upstream_references": {
-    "crosspoint_reader": "92e8714a332c2c1903ea93290cf0b9b4f6f6697c",
-    "crosspoint_sdk": "995d9bd523b9c45b18710bca17a3158ce724a7f4",
-    "crossink": "9914146eeae7b46b300f475a16c32426fc02ec1f",
-    "crossink_sdk": "699370183fa3a0e33c9cb83a36f701bbb6022095"
-  },
-  "preservation_and_safety": {
-    "no_physical_flash": true,
-    "no_merge_release_deploy": true,
-    "original_x4_web_emulator_status_bar_mihonnooir_and_migration_archive_untouched": true,
-    "build_artifacts_and_logs_committed": false,
-    "root_state_restore": "All 21 recorded files restored and matched the D:\\p\\run3\\root-state manifest; PlatformIO config original SHA verified.",
-    "only_untracked_repo_path": "Generated cache at D:\\fatiha\\side\\_builds\\nooir-s3-v1.6.7-20261124\\build-cache; preserve and exclude."
-  },
-  "restart_order": [
-    "Resume only in the authoritative D: branch and confirm checkpoint status.",
-    "Run the focused USB MSC host lifecycle harness against the current font-release and Power-edge behavior.",
-    "If runtime evidence is needed, use exact run3 Pro BIN in eink-qemu with the known short timing/virtual Power-hold procedure; do not claim Classic S3 execution from SDL2.",
-    "Keep physical input, touch, frontlight, SDMMC, panel, PSRAM, power, BLE, and recovery gaps model-specific.",
-    "Require exact board identification and independently validated backup/recovery before any future physical bring-up."
-  ],
-  "operations_started_for_closeout": {
-    "builds": false,
-    "tests": true,
-    "simulators": false,
-    "qemu": false
-  }
-},
   "eod_checkpoint_2026_11_25": {
     "local_time": "2026-11-25 13:56 MYT",
     "state": "PAUSED",
@@ -2219,10 +2236,30 @@
         "run_jsonl_sha256": "b2ba2cd57858bbbdad0d8817140a13b58598c16f3aa550c6befa96cc67c7e92d",
         "metrics_sha256": "0b152dd04d7b612527d9a80a50f23ddcb4328f8b3d5b190371846b043624752c",
         "reader_screenshot_sha256": "9f883579173fea4997300571e132de42d58cdc53008a9e4b065686c911c0a644",
-        "milestones": ["application entry and serial", "X4 Pro profile", "display initialized", "virtual SD mounted", "Home and Library", "EPUB open and page navigation", "Reader exit", "progress saved"],
+        "milestones": [
+          "application entry and serial",
+          "X4 Pro profile",
+          "display initialized",
+          "virtual SD mounted",
+          "Home and Library",
+          "EPUB open and page navigation",
+          "Reader exit",
+          "progress saved"
+        ],
         "heap_evidence": "QEMU reports about 7.69 MiB free allocatable SPIRAM with zero corrupt blocks; not physical PSRAM training.",
-        "performance": {"page_render_ms": [2132, 1310, 1323], "page_render_median_ms": 1323, "bw_render_median_ms": 44},
-        "errors": ["SDK IMU not found (not classified as firmware fault)", "settings_source=defaults on first boot"],
+        "performance": {
+          "page_render_ms": [
+            2132,
+            1310,
+            1323
+          ],
+          "page_render_median_ms": 1323,
+          "bw_render_median_ms": 44
+        },
+        "errors": [
+          "SDK IMU not found (not classified as firmware fault)",
+          "settings_source=defaults on first boot"
+        ],
         "panic_or_assert": false
       },
       "cold_reopen": {
@@ -2234,14 +2271,30 @@
         "reopened_reader_screenshot_sha256": "9f883579173fea4997300571e132de42d58cdc53008a9e4b065686c911c0a644",
         "card_mode": "copy of first-run virtual SD; original preserved"
       },
-      "limitations": ["No physical hardware execution", "No GT911/touch validation", "No deep sleep/wake", "No physical SDMMC/panel/PSRAM training", "No USB MSC enumeration or transfer"]
+      "limitations": [
+        "No physical hardware execution",
+        "No GT911/touch validation",
+        "No deep sleep/wake",
+        "No physical SDMMC/panel/PSRAM training",
+        "No USB MSC enumeration or transfer"
+      ]
     },
     "usb_drive_activity_host_test": {
       "result": "passed",
-      "scope": ["production UsbDriveActivity.cpp control flow with stubbed hardware/UI/font manager", "font-release request before render wait before Storage.begin", "Power/Back/Home, timeout, eject/disconnect and idempotent teardown branches"],
+      "scope": [
+        "production UsbDriveActivity.cpp control flow with stubbed hardware/UI/font manager",
+        "font-release request before render wait before Storage.begin",
+        "Power/Back/Home, timeout, eject/disconnect and idempotent teardown branches"
+      ],
       "log": "D:\\p\\run5\\logs\\usb-drive-activity-host-20261126-final.log",
       "log_sha256": "4e065e8ea0eb08c44c8b9e571a2e8ca201a51bde095cfc93881fbbb8e41effd0",
-      "does_not_test": ["real font cache release", "ESP32-S3 BIN", "TinyUSB enumeration", "USB host read/write", "physical SDMMC handoff or recovery"],
+      "does_not_test": [
+        "real font cache release",
+        "ESP32-S3 BIN",
+        "TinyUSB enumeration",
+        "USB host read/write",
+        "physical SDMMC handoff or recovery"
+      ],
       "harness_files": "test/host/usb_drive_activity/"
     },
     "classic_host_simulator": "Earlier SDL2 checkpoint passed Home/Library/EPUB open, next/previous, Reader exit and persistence writes. Not rerun; does not execute Classic S3 BIN; no Classic QEMU.",
@@ -2433,5 +2486,550 @@
     "physical_flash": "not performed; not authorized",
     "checksum_basis": "sha256 is over current D: working-tree bytes; git_blob_sha256 is over the canonical staged Git file bytes (LF), to remain comparable across checkout platforms.",
     "handoff_git_blob_sha256": "50d6dda86fb2fcd507479e23b2645a981a43c68452e1809de456d24fe61bb8fe"
-  }
+  },
+  "hardware_foundation_feasibility_2026_11_27": {
+    "recorded_at": "2026-11-27",
+    "worktree": "D:\\fatiha\\side\\_worktrees\\nooir-hardware-foundation-feasibility-20261127",
+    "branch": "codex/nooir-crosspoint-hardware-foundation-feasibility-20261127",
+    "parent_head": "02d8080d7e6c66dc687071438df5994df9c8f8dc",
+    "source_delta_before_handoff_docs": [
+      "Nooir app source unchanged",
+      "freeink-sdk-s3 gitlink: 995d9bd523b9c45b18710bca17a3158ce724a7f4 -> de19f154ef0963879592f3baf6da68606122797c"
+    ],
+    "approach": {
+      "selected": "B, provisional",
+      "summary": "Retain Nooir app and device-specific profiles; trial the newer FreeInk hardware SDK layer.",
+      "alternatives": {
+        "A": "Keep existing SDK; least source change, misses candidate X4 hardware fixes.",
+        "C": "Move the full app to CrossPoint; rejected for this trial because it replaces Nooir application/UI and adds broad regression risk."
+      },
+      "evidence_limit": "Both candidate profiles compile; exact Pro firmware runs in QEMU. No physical validation or material performance win is established."
+    },
+    "upstreams": {
+      "stable_reference": {
+        "project": "CrossPoint Reader 2.0.0",
+        "commit": "42d58daaabcf469a2e5e1ba871714fb9dcf51d29",
+        "sdk": "5e94fe7480f019c89fbf691aef87523eb1b46704"
+      },
+      "candidate_sdk": {
+        "commit": "de19f154ef0963879592f3baf6da68606122797c",
+        "context": "CrossPoint 2.1.0rc pre-release checkpoint; not stable",
+        "based_on_old_commit": "995d9bd523b9c45b18710bca17a3158ce724a7f4",
+        "ahead": 27,
+        "behind": 0,
+        "files_changed": 61,
+        "insertions": 1828,
+        "deletions": 236
+      }
+    },
+    "temporary_build_patch": {
+      "script": "scripts/patch_nooir_usb_msc_watchdog.py",
+      "script_sha256": "DDED2AF75D035421A638950FB631F117B9D601810DD0019417E1F45E83FBA5DA",
+      "upstream_file_sha256": "cff2d3036ab3e1e1296b87a084b9d972b04b89d7b8a6f0d6781f8c77caefa82a",
+      "patched_file_sha256": "392689071D5C5B797F91C7A4CAF584F4279153476D983808DD09DC58C023C293",
+      "restored_after_build": true
+    },
+    "crosspoint_reference_builds": [
+      {
+        "device": "X4 Pro",
+        "bin": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\reference-artifacts\\crosspoint-2.0.0-x4pro\\firmware.bin",
+        "bin_bytes": 5376544,
+        "bin_sha256": "f51232b77fddc1759f0cede37e929bf410d6ba13ac500563a3cd3f320b14b444",
+        "elf": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\reference-artifacts\\crosspoint-2.0.0-x4pro\\firmware.elf",
+        "elf_bytes": 99979176,
+        "elf_sha256": "4cbb4fc52a14a1f2e6d8bb2f4d9458d6daa7e6e08cebd996d71c5b26df049a45"
+      },
+      {
+        "device": "X4 Classic",
+        "bin": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\reference-artifacts\\crosspoint-2.0.0-x4classic\\firmware.bin",
+        "bin_bytes": 5364080,
+        "bin_sha256": "f5c9a6c4dcbb43727d23087eb4d3894c5e87b6efba105fdaaf6a993444c8e58c",
+        "elf": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\reference-artifacts\\crosspoint-2.0.0-x4classic\\firmware.elf",
+        "elf_bytes": 99674592,
+        "elf_sha256": "9d8c7fa04b980a8da8db118286a5a17f8c0aad6ca58b5ce0939a4c3420892838"
+      }
+    ],
+    "candidate_builds": [
+      {
+        "device": "X4 Pro",
+        "environment": "nooir167_x4pro",
+        "identity": "1.6.7-x4p-exp-no-flash",
+        "bin": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\reference-artifacts\\nooir-de19-x4pro\\folio-nooir-v1.6.7-x4pro-sdk-de19-EXPERIMENTAL.bin",
+        "bin_bytes": 5781792,
+        "bin_sha256": "2E5D13EE5347DB71325ACE83C8171047AF54B02095344A65056A04E3266B2D43",
+        "elf": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\reference-artifacts\\nooir-de19-x4pro\\folio-nooir-v1.6.7-x4pro-sdk-de19-EXPERIMENTAL.elf",
+        "elf_bytes": 93943240,
+        "elf_sha256": "683A6E62105158B60AE8011D04C1EA11329845A24AE8CD655D5E9D40080BFDDC",
+        "build_log": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\logs\\nooir-de19-x4pro-build-attempt02-20261127.log",
+        "status": "successful; app-only experimental; not for physical flashing"
+      },
+      {
+        "device": "X4 Classic",
+        "environment": "nooir167_x4classic",
+        "identity": "1.6.7-x4c-exp-no-flash",
+        "bin": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\reference-artifacts\\nooir-de19-x4classic\\folio-nooir-v1.6.7-x4classic-sdk-de19-EXPERIMENTAL.bin",
+        "bin_bytes": 5772336,
+        "bin_sha256": "479816C14B1A1D8654972E1B0C809011E2D6DD69FD134E8A03739367A9D55D33",
+        "elf": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\reference-artifacts\\nooir-de19-x4classic\\folio-nooir-v1.6.7-x4classic-sdk-de19-EXPERIMENTAL.elf",
+        "elf_bytes": 93599836,
+        "elf_sha256": "890E7F32AE8378DB538122E3E7CB8C22B8333A7966AEB8047AD73CA76CA2EBAE",
+        "build_log": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\logs\\nooir-de19-x4classic-build-20261127.log",
+        "status": "successful build; Classic BIN not executed in firmware emulator"
+      }
+    ],
+    "preserved_run3_artifacts": {
+      "x4pro_bin_sha256": "03dfc9e157df4d18adb864d87e2bc5a05df34c76e5e77a2304e166f156ba6002",
+      "x4pro_elf_sha256": "3364471f3d65a2a745221a7a31dcae865f1751ed7f166c0c3af849434ce7bb8d",
+      "x4classic_bin_sha256": "9fdee5dbd9c5fe9d3bd355627cd74773e71f3ab564d56b2aa39894e7df86ff6b",
+      "x4classic_elf_sha256": "3bc85fdf23f04f9df6d047a42b1509b477f3ec5b4a46aea94b74ddcde12354a7",
+      "unchanged": true
+    },
+    "pro_qemu": {
+      "emulator": "eink-qemu 0.9.2",
+      "machine": "x4pro,panel=uc8279-68",
+      "qemu_full_flash_path": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\reference-artifacts\\nooir-de19-x4pro\\FolioNooir_1.6.7-X4Pro-SDK-de19-QEMU-ONLY-NOT-FOR-PHYSICAL-FLASH-16MiB.bin",
+      "qemu_full_flash_sha256": "a3ee6293c3cbd524fd0f462aa71413628c59aaec687e5b0cca25bc9e48239725",
+      "stages": [
+        "X4 Pro profile",
+        "display init",
+        "PSRAM allocator activity",
+        "SDMMC mount",
+        "Home/Library",
+        "EPUB rendering",
+        "8 page turns",
+        "Reader exit",
+        "saved progress reopened at 10/10"
+      ],
+      "power_hold_ms": 50000,
+      "not_verified": [
+        "physical display/touch/frontlight",
+        "deep sleep/wake",
+        "USB host MSC",
+        "recovery"
+      ]
+    },
+    "visual_review": {
+      "report": "docs/HARDWARE_FOUNDATION_FEASIBILITY_2026-11-27.md",
+      "report_sha256": "936479c6ae12c84b4e54695c27010a528b6e159fd29f30254a18aa43025ae16c",
+      "generated_comparison": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\evidence\\visual-comparison-20261127\\nooir-pro-home-before-after.png",
+      "generated_comparison_sha256": "BD07B0661269EC0B5E6D441423E05DD9BFA4849DACCBC6F710E38085843A84C9",
+      "reader_comparison": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\evidence\\visual-comparison-20261127\\nooir-pro-reader-page3-before-after.png",
+      "reader_comparison_sha256": "72a4270d5137ee14676511ec63c631db2671b86def3bc25bdc081c6b10d63b08",
+      "finding": "No meaningful UI change in same-surface Nooir Pro Recent captures; synthetic fixture has title-only cover placeholders, title truncation and no-synopsis text.",
+      "unconfirmed": [
+        "Lite",
+        "Featured Book",
+        "Spine",
+        "XTC",
+        "XTCH",
+        "CBZ",
+        "Nooir Settings",
+        "Nooir USB",
+        "Pro touch/gesture controls",
+        "Pro lighting controls",
+        "production-cover visual quality"
+      ]
+    },
+    "performance": {
+      "qemu_clock": "guest milliseconds; not physical wall time",
+      "p95": "nearest-rank; with n=8, p95 equals worst sample",
+      "old_nooir_total_page_render_ms": [
+        2132,
+        1310,
+        1323
+      ],
+      "old_nooir_median_ms": 1323,
+      "old_nooir_p95_worst_ms": 2132,
+      "candidate_nooir_8_turn_render_ms": [
+        1312,
+        1321,
+        1312,
+        1323,
+        1311,
+        1323,
+        1311,
+        1293
+      ],
+      "candidate_nooir_turn_render_median_ms": 1312,
+      "candidate_nooir_turn_render_p95_worst_ms": 1323,
+      "candidate_nooir_press_to_settled_ms": [
+        1603,
+        1391,
+        1407,
+        1380,
+        1386,
+        1475,
+        1403,
+        1487
+      ],
+      "candidate_nooir_press_to_settled_median_ms": 1405,
+      "candidate_nooir_press_to_settled_p95_worst_ms": 1603,
+      "crosspoint_2_0_press_to_settled_ms": [
+        1349,
+        1275,
+        1278,
+        1274,
+        1274,
+        1282,
+        1273,
+        1287
+      ],
+      "crosspoint_median_ms": 1276.5,
+      "crosspoint_p95_worst_ms": 1349,
+      "limitation": "Different pagination and app layout; same QEMU machine/panel, copied card source and input pacing but not an identical page workload. No material Nooir speedup shown."
+    },
+    "memory_and_io": {
+      "nooir_psram_free_approx_bytes": 7690000,
+      "nooir_internal_heap_free_min_approx_bytes": 229000,
+      "heap_corruption": 0,
+      "stack_watermark": "not captured",
+      "separate_sd_decode_glyph_emulator_timing": "not captured",
+      "large_library_400_plus": "not tested",
+      "usb_hardware_or_host_msc": "not tested"
+    },
+    "classic": {
+      "firmware_build": "successful BIN/ELF only",
+      "simulator": "existing SDL2 host app result; no rerun; does not execute S3 BIN",
+      "wsl_toolchain": "Ubuntu WSL available; SDL2 2.30.0 and g++ 13.3.0 present",
+      "qemu_machine": "none"
+    },
+    "safety": {
+      "physical_flash_performed": false,
+      "ota_and_sd_firmware_write_disabled": true,
+      "qemu_full_image_physical_use": "forbidden; emulator only",
+      "hardware_flash_ready": false,
+      "separate_backup_recovery_required": true
+    },
+    "updated_documents": [
+      {
+        "path": "PORT_HANDOFF.md",
+        "bytes": 184274,
+        "sha256": "07afcaec54222915c6cef9b6d92dd2469b564fcb59057c84a6579e42bddcb5de"
+      },
+      {
+        "path": "docs/HARDWARE_FOUNDATION_FEASIBILITY_2026-11-27.md",
+        "bytes": 28839,
+        "sha256": "ee5dd0dedbc1ef58d0f062419e84e05ff75300e56a0ffbe602be2225cce456c2"
+      },
+      {
+        "path": "docs/PORT_1.6.7_CONTINUATION.md",
+        "bytes": 10814,
+        "sha256": "597b1fd6b64e9427bba68637937d37ab9ada4912034ea288ac20d91a062400ed"
+      },
+      {
+        "path": "docs/PORT_1.6.7_FEATURE_PARITY.md",
+        "bytes": 43009,
+        "sha256": "7f85603018330fc3e35612b5649baa61f8d68582b3c45300ad35d45267b36f4c"
+      },
+      {
+        "path": "docs/WEB_EMULATOR_S3_COMPATIBILITY_HANDOFF_2026-11-11.md",
+        "bytes": 30523,
+        "sha256": "97adb2181ea44fd6a3e789ce67b7e10dd1f9c63658fc4743a49db8acf0f46e49"
+      }
+    ],
+    "evidence_roots": {
+      "requested_originals": [
+        "D:\\p\\run3\\artifacts",
+        "D:\\p\\run4\\qemu",
+        "D:\\p\\run5\\logs"
+      ],
+      "new_evidence": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\evidence",
+      "build_outputs": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\reference-artifacts"
+    },
+    "full_ux_validation_supersedes_prior_open_items": true,
+    "latest_evidence_index": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\evidence\\full-ux-validation-20261127\\evidence-index.json",
+    "latest_performance_summary": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\evidence\\full-ux-validation-20261127\\matched-performance-summary.json",
+    "latest_visual_review": {
+      "confirmed": [
+        "Nooir Pro Recent/Library/Finished surface from run4; actual EPUB Reader and page turns/reopen",
+        "candidate cover/metadata/body page",
+        "XTC/XTCH/CBZ page output",
+        "Classic SDL2 button-row and reader screenshots"
+      ],
+      "unconfirmed": [
+        "Folio Lite",
+        "Featured Book",
+        "Spine layouts",
+        "populated Finished shelf",
+        "Nooir Settings",
+        "Nooir USB Drive screen",
+        "Pro light/warmth/touch settings",
+        "physical touch/gesture",
+        "production-cover/book quality"
+      ],
+      "notable_finding": "CBZ first-page capture contains a prefetch progress strip; Nooir justified typography has wide gaps on synthetic fixture; original/candidate matched Home/Reader pixels are identical."
+    },
+    "latest_performance": {
+      "units": "QEMU guest ms; p95 nearest-rank; not physical latency",
+      "matched_press_to_settled_20": {
+        "original_nooir": {
+          "median": 1420,
+          "p95": 2260,
+          "worst": 2303
+        },
+        "candidate_nooir": {
+          "median": 1415,
+          "p95": 2249,
+          "worst": 2283
+        },
+        "stable_crosspoint_2_0": {
+          "median": 1403,
+          "p95": 1534,
+          "worst": 2331
+        }
+      },
+      "matched_warm_render_20": {
+        "original_nooir": {
+          "median": 1276,
+          "p95": 1285,
+          "worst": 2103
+        },
+        "candidate_nooir": {
+          "median": 1276,
+          "p95": 1285,
+          "worst": 2103
+        }
+      },
+      "candidate_render_phases": {
+        "bw_render_median_p95_worst_ms": [
+          25,
+          29,
+          29
+        ],
+        "main_display_median_p95_worst_ms": [
+          674.5,
+          677,
+          1501
+        ],
+        "gray_display_median_p95_worst_ms": [
+          342,
+          343,
+          343
+        ]
+      },
+      "legacy_run4_median_ms": 1323,
+      "legacy_run4_samples_ms": [
+        2132,
+        1310,
+        1323
+      ],
+      "home_initial_cpu_ms": 89.908,
+      "home_return_with_cover_cpu_ms": 140.763,
+      "reader_first_render_ms": 5133,
+      "reader_next_body_ms": 2109,
+      "reader_exit_total_us": 76977,
+      "400_listing_memory": {
+        "internal_free_bytes": 204728,
+        "internal_largest_bytes": 161644,
+        "psram_free_approx": "7.88 MiB",
+        "heap_corruption": 0
+      },
+      "limits": [
+        "no cold/warm boot distribution",
+        "no 400-entry scrolling/pagination/thumbnail latency samples",
+        "no isolated EPUB storage/decode/glyph/emulator timings",
+        "no USB timing",
+        "no physical panel metrics",
+        "one RecentBooks stack-watermark observation only"
+      ]
+    },
+    "latest_classic_status": {
+      "prior_host_replay": "PASS; button navigation and EPUB open/page/exit/progress writes; host-only",
+      "current_source_build": "FAILED after 18m42s",
+      "first_error": "NetworkModeSelectionActivity.cpp:12:33: FREEINK_CAP_USB_MSC undefined for simulator target",
+      "log": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\evidence\\full-ux-validation-20261127\\logs\\classic-simulator-build-attempt02.log",
+      "source_workaround_applied": false,
+      "classic_s3_bin_executed": false,
+      "classic_qemu_machine": "none"
+    }
+  },
+  "full_ux_validation_2026_11_27": {
+    "date": "2026-11-27",
+    "worktree": "D:\\fatiha\\side\\_worktrees\\nooir-hardware-foundation-feasibility-20261127",
+    "branch": "codex/nooir-crosspoint-hardware-foundation-feasibility-20261127",
+    "starting_head": "02d8080d7e6c66dc687071438df5994df9c8f8dc",
+    "firmware_rebuilt_this_continuation": false,
+    "nooir_application_source_changed": false,
+    "physical_flash_performed": false,
+    "release_or_deployment": false,
+    "evidence_index": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\evidence\\full-ux-validation-20261127\\evidence-index.json",
+    "performance_summary": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\evidence\\full-ux-validation-20261127\\matched-performance-summary.json",
+    "fixtures": {
+      "provenance": "self-authored; no personal or third-party books/assets",
+      "bulk_epubs": 400,
+      "special_epubs": 7,
+      "format_test_files": [
+        "XTC",
+        "XTCH",
+        "CBZ"
+      ],
+      "total_book_files": 410,
+      "total_bytes": 22174577,
+      "manifest_sha256": "3c3ba5339f80c6ad5058cd570659cf8cef4fdd1af1ebd32b89a0513304be9f44",
+      "validation_report_sha256": "541278268bdb939604041d4fc340c627a038ca219cb507e59589446c97d710c5"
+    },
+    "candidate_artifacts": {
+      "x4pro": {
+        "app_path": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\reference-artifacts\\nooir-de19-x4pro\\folio-nooir-v1.6.7-x4pro-sdk-de19-EXPERIMENTAL.bin",
+        "app_bytes": 5781792,
+        "app_sha256": "2e5d13ee5347db71325ace83c8171047af54b02095344a65056a04e3266b2d43",
+        "elf_sha256": "683a6e62105158b60ae8011d04c1ea11329845a24ae8cd655d5e9d40080bfddc",
+        "qemu_full_flash_sha256": "a3ee6293c3cbd524fd0f462aa71413628c59aaec687e5b0cca25bc9e48239725",
+        "qemu_full_flash_use": "emulator only; never physical"
+      },
+      "x4classic": {
+        "app_path": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\reference-artifacts\\nooir-de19-x4classic\\folio-nooir-v1.6.7-x4classic-sdk-de19-EXPERIMENTAL.bin",
+        "app_bytes": 5772336,
+        "app_sha256": "479816c14b1a1d8654972e1b0c809011e2d6dd69fd134e8a03739367a9d55d33",
+        "elf_sha256": "890e7f32ae8378db538122e3e7cb8c22b8333a7966aeb8047ad73ca76ca2ebae"
+      }
+    },
+    "pro_qemu": {
+      "qemu": "eink-qemu 0.9.2",
+      "machine": "x4pro,panel=uc8279-68",
+      "virtual_power_hold_ms": 50000,
+      "confirmed": [
+        "X4 Pro app identity",
+        "display init",
+        "PSRAM allocator",
+        "virtual SDMMC mount",
+        "Home/Library",
+        "400-item EPUB file list",
+        "EPUB open/cover/text/page turn/exit/progress save",
+        "XTC 1-bit two-page smoke",
+        "XTCH 2-bit two-page smoke",
+        "CBZ two-page cache-backed smoke"
+      ],
+      "nonfatal_errors": [
+        "emulated IMU unavailable",
+        "first-boot settings defaults",
+        "expected cold cache misses"
+      ],
+      "crash_or_heap_corruption": false
+    },
+    "visual_review": {
+      "confirmed": [
+        "Nooir Pro Recent/Library/Finished surface from run4; actual EPUB Reader and page turns/reopen",
+        "candidate cover/metadata/body page",
+        "XTC/XTCH/CBZ page output",
+        "Classic SDL2 button-row and reader screenshots"
+      ],
+      "unconfirmed": [
+        "Folio Lite",
+        "Featured Book",
+        "Spine layouts",
+        "populated Finished shelf",
+        "Nooir Settings",
+        "Nooir USB Drive screen",
+        "Pro light/warmth/touch settings",
+        "physical touch/gesture",
+        "production-cover/book quality"
+      ],
+      "notable_finding": "Matched Reader page renders for original and candidate Pro images are pixel-identical. Recent shelf comparison shows no meaningful UI change, but exact pixel identity is not claimed. The CBZ first-page capture has a prefetch progress strip; synthetic fixture typography and cover art limit polish conclusions."
+    },
+    "performance": {
+      "units": "QEMU guest ms; p95 nearest-rank; not physical latency",
+      "matched_press_to_settled_20": {
+        "original_nooir": {
+          "median": 1420,
+          "p95": 2260,
+          "worst": 2303
+        },
+        "candidate_nooir": {
+          "median": 1415,
+          "p95": 2249,
+          "worst": 2283
+        },
+        "stable_crosspoint_2_0": {
+          "median": 1403,
+          "p95": 1534,
+          "worst": 2331
+        }
+      },
+      "matched_warm_render_20": {
+        "original_nooir": {
+          "median": 1276,
+          "p95": 1285,
+          "worst": 2103
+        },
+        "candidate_nooir": {
+          "median": 1276,
+          "p95": 1285,
+          "worst": 2103
+        }
+      },
+      "candidate_render_phases": {
+        "bw_render_median_p95_worst_ms": [
+          25,
+          29,
+          29
+        ],
+        "main_display_median_p95_worst_ms": [
+          674.5,
+          677,
+          1501
+        ],
+        "gray_display_median_p95_worst_ms": [
+          342,
+          343,
+          343
+        ]
+      },
+      "legacy_run4_median_ms": 1323,
+      "legacy_run4_samples_ms": [
+        2132,
+        1310,
+        1323
+      ],
+      "home_initial_cpu_ms": 89.908,
+      "home_return_with_cover_cpu_ms": 140.763,
+      "reader_first_render_ms": 5133,
+      "reader_next_body_ms": 2109,
+      "reader_exit_total_us": 76977,
+      "400_listing_memory": {
+        "internal_free_bytes": 204728,
+        "internal_largest_bytes": 161644,
+        "psram_free_approx": "7.88 MiB",
+        "heap_corruption": 0
+      },
+      "limits": [
+        "no cold/warm boot distribution",
+        "no 400-entry scrolling/pagination/thumbnail latency samples",
+        "no isolated EPUB storage/decode/glyph/emulator timings",
+        "no USB timing",
+        "no physical panel metrics",
+        "one RecentBooks stack-watermark observation only"
+      ]
+    },
+    "classic_host_simulator": {
+      "prior_host_replay": "PASS; button navigation and EPUB open/page/exit/progress writes; host-only",
+      "current_source_build": "FAILED after 18m42s",
+      "first_error": "NetworkModeSelectionActivity.cpp:12:33: FREEINK_CAP_USB_MSC undefined for simulator target",
+      "log": "D:\\fatiha\\side\\_builds\\nooir-hardware-foundation-20261127\\evidence\\full-ux-validation-20261127\\logs\\classic-simulator-build-attempt02.log",
+      "source_workaround_applied": false,
+      "classic_s3_bin_executed": false,
+      "classic_qemu_machine": "none",
+      "log_sha256": "f832c1e04c1fd24a75da441e425f1f5a8a439d0536a426daec0098621037375e"
+    },
+    "d_drive_policy": {
+      "new_persistent_outputs_and_caches": "D:",
+      "one_early_ephemeral_temp_exception": "QEMU initial large-library attempt auto-created temp flash under C:\\Users\\fatiha\\AppData\\Local\\Temp; later runs used D:",
+      "old_c_workspace_recreated": false
+    },
+    "safety": {
+      "physical_flash": false,
+      "qemu_full_flash_for_physical_use": false,
+      "ota_recovery": "disabled in experimental build; independent backup/recovery required before device bring-up",
+      "release": false
+    },
+    "restart_conditions": [
+      "fix or explicitly waive current Classic host-simulator capability blocker",
+      "obtain missing screen/selection/pagination performance evidence if required",
+      "physical validation only with board-matched backup and independently verified recovery path"
+    ],
+    "evidence_index_sha256": "1a9adfc4b01776ce80c75507800bf10270727db887938da72fb91c184e1923d0",
+    "performance_summary_sha256": "0242598d293aead74ca56885398174a75e287183318d627246853dc5aeb2ce70"
+  },
+  "handoff_git_blob_id": "6c2f9d498243d990a5fc46e4fee6183cb4c19571",
+  "handoff_git_blob_sha256_method": "SHA-256 over Git blob object payload: b\"blob <size>\\0\" plus the exact UTF-8 handoff bytes; repository Git object format is SHA-1."
 }

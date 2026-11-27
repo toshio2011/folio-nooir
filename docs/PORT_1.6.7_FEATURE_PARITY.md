@@ -222,3 +222,25 @@ The branch’s vendored/submodule SDK is still pinned at `995d9bd523b9c45b18710b
 ### Recovery gate and continuation
 
 Separate pre-write readiness guides and physical acceptance checklists now exist for Classic and Pro under `docs/hardware/`. They are preparation templates only; no physical read/write was performed. Public exact-revision OEM stock images and independent recovery routes remain unconfirmed. Before any separately approved physical write, require a unit-matched backup, exact partition/security state, and recovery independently validated on an identical spare or equivalent safe setup. Keep the 16 MiB QEMU image emulator-only. See `docs/PORT_1.6.7_CONTINUATION.md` for ordered restart steps and exact evidence paths.
+
+
+## 2026-11-27 candidate hardware-foundation evidence
+
+The feasibility trial retained the Nooir application and changed only the FreeInk SDK gitlink from `995d9bd523b9c45b18710bca17a3158ce724a7f4` to candidate `de19f154ef0963879592f3baf6da68606122797c`. Both S3 profile builds succeeded. The source tree still keeps Pro and Classic definitions separate; the candidate SDK did not change either device profile. A temporary build-time watchdog patch was restored from the submodule after builds.
+
+| Area | Candidate evidence | Status and next proof |
+|---|---|---|
+| Shared hardware layer | Pro/Classic BIN/ELF pairs compiled with matching ESP32-S3/16 MiB DIO/8 MiB OPI/SDMMC configuration. Candidate SDK includes X4 refresh, SD error-path, MSC lifecycle, and PSRAM-aware font/cache changes. | Compile proven; actual retail panel, SDMMC, MSC and PSRAM behavior untested. |
+| Pro display and Reader | Exact candidate Pro image ran on eink-qemu 0.9.2 X4 Pro/UC8279-68; profile, display, SDMMC, Home/Library, EPUB turns, exit and persisted reopen were observed. | Emulator only. No physical touch/swipe, panel waveform/contrast, cold boot, sleep/wake or frontlight proof. |
+| Pro UI/touch/light | Existing scripted QEMU touch route opened Library/Reader. | No evidence for Nooir Settings, USB Drive or Pro touch/frontlight controls; touch gestures, GT911, Home-key and light channels remain physically untested. |
+| Classic input | Existing SDL2 app replay and screenshots show host keyboard/button navigation, EPUB open, page turns, exit and persistence. | It did not execute the current Classic S3 BIN. No Classic QEMU; physical GPIO/button mapping remains untested. |
+| Visual quality | Old/candidate Nooir Pro Recent screenshot comparison shows no meaningful UI difference. Test card has title-only covers, clipped names, no synopsis and low shelf density. Reader fixture shows wide justified-word spacing. | Production covers, Nooir Lite/Featured/Spine, XTC/XTCH/CBZ, Settings/USB and Pro lighting controls are unconfirmed. |
+| Performance | Pro candidate Reader renders and CrossPoint 2.0.0 were measured with small QEMU samples; details and exact data are in the feasibility report. Candidate is not measurably faster than CrossPoint in input-to-settled QEMU timing. | Need controlled physical measurements and separate SD/decode/font/display/refresh timing, large-library behavior, stack high-water and USB start/stop. |
+
+The evidence review distinguishes original BINs, new app-only candidate BINs, candidate Pro firmware-in-QEMU, prior Classic host simulation and physical hardware. No screenshot, timing, or pass count in one category certifies another. `NOOIR_DISABLE_FIRMWARE_FLASHING=1` and OTA suppression remain active. The QEMU 16 MiB image is emulator-only; neither candidate is physically flash-ready.
+
+## 2026-11-27 full UX validation addendum
+
+The Pro candidate QEMU evidence now includes a 400-EPUB file-list screen and two-page smoke tests for XTC 1-bit, XTCH 2-bit and CBZ, in addition to EPUB Reader/exit/progress. The list display does not verify scroll/pagination or 400-cover loading. The CBZ first-page screenshot shows a prefetch progress strip; its look-ahead cache takes roughly two seconds per page in the generated fixture. Full logs, screenshots, heap captures and artifact hashes are indexed in `docs/HARDWARE_FOUNDATION_FEASIBILITY_2026-11-27.md` and `D:\fatiha\side\_builds\nooir-hardware-foundation-20261127\evidence\full-ux-validation-20261127\evidence-index.json`.
+
+A current-source Classic SDL2 compile attempt on the isolated WSL toolchain failed because the simulator target omits `FREEINK_CAP_USB_MSC`. This is a host-simulator configuration blocker; no app code was changed. The earlier button-driven SDL2 EPUB replay remains a host-only pass, not execution of the Classic S3 BIN. No physical hardware or real USB/SDMMC/panel behavior is verified.
