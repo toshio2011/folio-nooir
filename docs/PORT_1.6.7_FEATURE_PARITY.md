@@ -181,3 +181,44 @@ This dated checkpoint supersedes earlier statements that the run3 Pro BIN had no
 5. Keep artifacts separate; never use QEMU-only full flash for hardware.
 
 Status: PAUSED at the end-of-day checkpoint.
+## 2026-11-27 hardware-readiness and parity review
+
+This is a documentation/research checkpoint from branch `codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124`, base `315840fdb4b22ef3709a317f75f98703f2ae407d`. No firmware source change, build, QEMU run, SDL2 rerun, or physical test was performed. All four run3 artifact hashes were recomputed and match the Nov 26 manifest. The generated D: build cache remains untracked and excluded.
+
+| Area | Current implementation / evidence | Remaining validation or work |
+|---|---|---|
+| USB Drive / MSC | Enabled for both S3 profiles; both run3 builds succeeded. The 2026-11-26 host harness passed activity lifecycle/control-flow cases with stubs. | TinyUSB enumeration, physical host transfers, safe eject, real SDMMC ownership/cache release and recovery remain untested on either device. Do not repeat or reimplement without a defect. |
+| X4 Pro touch / gestures | Pro profile enables GT911 and Home/touch routes; run3 Pro QEMU passed Reader navigation with emulator input. | GT911 identity, coordinates, physical taps/swipes, Home key, orientation, accidental-touch behavior and gesture zones require Pro hardware. |
+| Pro frontlight / warmth | Pro profile enables separate warm/cool light and persists settings in source. | Channel polarity/calibration, warmth order, persistence, sleep/USB/Wi-Fi interaction, current draw and battery effect require Pro hardware. |
+| X4 Classic controls | Classic profile has touch/light disabled; reference map has eight active-low keys. Earlier SDL2 tests used host keyboard input. | GPIO, polarity, bounce/hold/repeat, shortcuts, orientation and optional tilt/QMI8658 require Classic hardware. No Classic QEMU is available. |
+| Panel / display | Both profiles retain distinct device IDs and SDK panel detection; Pro QEMU used UC8279-68. | SSD1677, UC8179 and other UC8279 revisions, partial refresh, ghosting, contrast, BUSY timing and Classic firmware execution require target hardware. |
+| PSRAM / memory | Run3 builds target 8 MiB OPI PSRAM; Pro QEMU showed about 7.69 MiB allocatable SPIRAM and zero corrupt blocks. | Real OPI training, sustained PSRAM/DRAM allocation, task stack watermarks, fragmentation and long-session stability remain unverified. Internal-heap/stack comparable baseline was not recorded. |
+| SD / storage | Both profiles use native 1-bit SDMMC in SDK configuration; Pro QEMU virtual SD passed; Classic simulator uses host folder storage. | Physical 1-bit bus, power sequence, read/write integrity, speed and USB ownership require each device. No physical SDMMC throughput baseline exists. |
+| RTC / battery / charge | Profile/SDK paths describe BM8563 and CW2017; Classic adds QMI8658 reference. | Clock retention, gauge calibration, charge indication, USB/VBUS interpretation and tilt calibration remain unverified on Nooir hardware. |
+| Power / sleep | Existing model-separated power and wake code remains. QEMU uses the known 50,000 ms virtual Power-hold workaround. | Physical deep sleep, wake sources, rail sequencing, repeat cycles, sleep current and progress safety remain open. |
+| Runtime TTF/OTF | Firmware runtime uses converted `.cpfont`; FreeType is in host-side conversion tooling. | Native font parsing/shaping/cache is not implemented. Defer until a bounded memory/cache design, font-license review and performance/regression evidence exist. |
+| S3 BLE HID | S3 profiles set `FREEINK_CAP_BLE_HID_HOST=0` and exclude BLE. | Do not infer compatibility from C3. Treat BLE/Wi-Fi/USB/Reader coexistence, memory, latency, reconnect and power as separate S3 hardware experiments. |
+| Update/recovery | Experimental profiles return `NO_UPDATE` for OTA check/install, hide update routes, and `NOOIR_DISABLE_FIRMWARE_FLASHING=1` blocks SD FirmwareFlasher validation/write APIs. | These are write guards only. Exact stock backup, ROM path and independent recovery have not been validated; neither image is physically flash-ready. |
+
+### Test and performance evidence
+
+- **Firmware-in-QEMU:** exact run3 Pro image passed 30/30 Reader steps and a separate cold-process progress reopen passed 14/14. This includes app entry/serial, X4 Pro profile, display, virtual SD mount, Home/Library, EPUB open/pages, Reader exit and saved progress. The older 27/27 result is historical evidence for an earlier Pro image.
+- **Classic simulator:** prior SDL2 Home/Library/EPUB/page turn/exit/progress-write flow passed. It runs a host simulator, not the Classic BIN; no repeat was needed.
+- **USB host harness:** passed 2026-11-26 with stubs; it does not test firmware execution or physical buses/transfers.
+- **Run3 Pro QEMU baseline:** page render 2,132/1,310/1,323 ms (median 1,323 ms); BW median 44 ms; 23 refreshes / 12,257 ms; about 7.69 MiB free allocatable SPIRAM; zero corrupt blocks. Emulator-only and panel/timing-specific. It is not a physical throughput, internal heap, stack, or temperature baseline. No comparable Classic timing baseline exists. Future comparable candidates should use the same fixture, QEMU machine/panel and timing and report medians, worst case, heap minima and stack watermarks; any apparent regression must be investigated before acceptance.
+- This continuation ran no tests or builds; it only checked stored evidence and artifact SHA-256 values.
+
+### Current upstream references and attribution
+
+| Project snapshot reviewed 2026-11-27 | Exact head | SDK submodule | License / attribution |
+|---|---|---|---|
+| [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader/commit/fb72db9614fd474153edb0a58ec78ed0f6b7e8c2) | `fb72db9614fd474153edb0a58ec78ed0f6b7e8c2` | `de19f154ef0963879592f3baf6da68606122797c` | MIT; retain copyright and license notice if code is reused. |
+| [CrossInk](https://github.com/uxjulia/CrossInk/commit/d53849e1c620b7d600d9fe02b544fdf1534d4f51) | `d53849e1c620b7d600d9fe02b544fdf1534d4f51` | `f7fa9b6871192ea27d8aa37a03beaa749462c3ab` | MIT; retain copyright and license notice if code is reused. |
+| [Inx Pro](https://github.com/obijuankenobiii/inx-pro/commit/c5a6c7b75e9c6fbd8ce9741e6accd519ab6032e0) | `c5a6c7b75e9c6fbd8ce9741e6accd519ab6032e0` | `c996d1b90d5725519f3e479eed99c592c5b081b7` | MIT; retain copyright and license notice if code is reused. |
+| [FreeInk SDK](https://github.com/Free-Ink/freeink-sdk/tree/57cd928e7e2e59c109b4389d708e24633be8c7e5) | `57cd928e7e2e59c109b4389d708e24633be8c7e5` | main snapshot | MIT; retain copyright and license notice if code is reused. |
+
+The branch’s vendored/submodule SDK is still pinned at `995d9bd523b9c45b18710bca17a3158ce724a7f4`; this differs from the later upstream snapshots above. The hardware notes are based on upstream source-level references; exact retail board/panel/connector revisions must be confirmed on device. No upstream code was copied in this checkpoint.
+
+### Recovery gate and continuation
+
+Separate pre-write readiness guides and physical acceptance checklists now exist for Classic and Pro under `docs/hardware/`. They are preparation templates only; no physical read/write was performed. Public exact-revision OEM stock images and independent recovery routes remain unconfirmed. Before any separately approved physical write, require a unit-matched backup, exact partition/security state, and recovery independently validated on an identical spare or equivalent safe setup. Keep the 16 MiB QEMU image emulator-only. See `docs/PORT_1.6.7_CONTINUATION.md` for ordered restart steps and exact evidence paths.

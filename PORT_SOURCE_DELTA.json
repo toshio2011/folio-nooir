@@ -235,7 +235,7 @@
     }
   },
   "commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
-  "handoff_sha256": "e48a725a2833cc96a10f2b9aa2b945cc180f55e7777a4bda86ffb9043b1505e5",
+  "handoff_sha256": "88d81a03d760811dd61ad9b51967b25e2e75ca14c1edaa1bc439920946895d57",
   "limitations": [
     "Classic SDL2 simulator uses folder-backed host storage and does not validate physical SDMMC, PSRAM, panel, GPIO, power, or touch hardware.",
     "No physical validation or flash is claimed.",
@@ -2260,5 +2260,178 @@
     ],
     "active_processes_at_closeout": [],
     "physical_flash": "not performed"
+  },
+  "checkpoint_2026_11_27": {
+    "local_date": "2026-11-27",
+    "status": "hardware-readiness documentation and read-only source/evidence review; no device access or firmware source changes",
+    "authoritative_workspace": "D:\\fatiha\\side\\_worktrees\\nooir-s3-167-upgrade-20261124",
+    "branch": "codex/nooir-x4pro-x4classic-s3-port-v1.6.7-20261124",
+    "base_head": "315840fdb4b22ef3709a317f75f98703f2ae407d",
+    "starting_worktree": "Tracked source clean; only generated build-cache was untracked and remains preserved/excluded.",
+    "actions": {
+      "firmware_builds": 0,
+      "qemu_runs": 0,
+      "classic_sdl2_runs": 0,
+      "physical_device_reads": 0,
+      "physical_device_writes": 0,
+      "source_code_changes": 0,
+      "artifact_hashes_rechecked": 4
+    },
+    "preserved_run3_artifacts": [
+      {
+        "target": "X4 Pro",
+        "bin": "D:/p/run3/artifacts/FolioNooir_1.6.7-X4Pro-Experimental.bin",
+        "bytes": 5765536,
+        "sha256": "03dfc9e157df4d18adb864d87e2bc5a05df34c76e5e77a2304e166f156ba6002",
+        "elf": "D:/p/run3/artifacts/FolioNooir_1.6.7-X4Pro-Experimental.elf",
+        "elf_bytes": 93834740,
+        "elf_sha256": "3364471f3d65a2a745221a7a31dcae865f1751ed7f166c0c3af849434ce7bb8d"
+      },
+      {
+        "target": "X4 Classic",
+        "bin": "D:/p/run3/artifacts/FolioNooir_1.6.7-X4Classic-Experimental.bin",
+        "bytes": 5755696,
+        "sha256": "9fdee5dbd9c5fe9d3bd355627cd74773e71f3ab564d56b2aa39894e7df86ff6b",
+        "elf": "D:/p/run3/artifacts/FolioNooir_1.6.7-X4Classic-Experimental.elf",
+        "elf_bytes": 93490396,
+        "elf_sha256": "3bc85fdf23f04f9df6d047a42b1509b477f3ec5b4a46aea94b74ddcde12354a7"
+      }
+    ],
+    "evidence_reconciliation": {
+      "pro_exact_run3_qemu": {
+        "result": "30/30 passed; exact run3 Pro BIN, eink-qemu 0.9.2 x4pro / uc8279-68",
+        "repeated": false,
+        "evidence": "D:/p/run4/qemu/pro-run3-reader-reopen-fast"
+      },
+      "pro_cold_progress_reopen": {
+        "result": "14/14 passed in separate QEMU process",
+        "repeated": false,
+        "evidence": "D:/p/run4/qemu/pro-run3-progress-reopen-after-cold-boot"
+      },
+      "pro_27_of_27": "historical older Pro image; not the run3 binary",
+      "classic_sdl2": "prior host simulator pass; not Classic firmware execution; not repeated",
+      "usb_activity_host_harness": {
+        "result": "passed with stubs on 2026-11-26",
+        "repeated": false,
+        "log": "D:/p/run5/logs/usb-drive-activity-host-20261126-final.log",
+        "sha256": "4e065e8ea0eb08c44c8b9e571a2e8ca201a51bde095cfc93881fbbb8e41effd0"
+      },
+      "new_tests": "None; existing logs and artifact hashes only were inspected."
+    },
+    "performance_baseline": {
+      "scope": "run3 Pro QEMU only",
+      "page_render_ms": [
+        2132,
+        1310,
+        1323
+      ],
+      "page_render_median_ms": 1323,
+      "bw_render_median_ms": 44,
+      "panel_refreshes": 23,
+      "panel_refresh_total_ms": 12257.1,
+      "qemu_allocatable_spiram_about_bytes": 8063549,
+      "corrupt_blocks": 0,
+      "internal_heap_minimum": "not recorded as a comparable baseline",
+      "task_stack_watermarks": "not recorded",
+      "classic_comparable_timing": "not available",
+      "physical_sdmmc_throughput": "not measured"
+    },
+    "upstream_refs_reviewed_2026_11_27": {
+      "crosspoint_reader": {
+        "commit": "fb72db9614fd474153edb0a58ec78ed0f6b7e8c2",
+        "sdk": "de19f154ef0963879592f3baf6da68606122797c",
+        "license": "MIT"
+      },
+      "crossink": {
+        "commit": "d53849e1c620b7d600d9fe02b544fdf1534d4f51",
+        "sdk": "f7fa9b6871192ea27d8aa37a03beaa749462c3ab",
+        "license": "MIT"
+      },
+      "inx_pro": {
+        "commit": "c5a6c7b75e9c6fbd8ce9741e6accd519ab6032e0",
+        "sdk": "c996d1b90d5725519f3e479eed99c592c5b081b7",
+        "license": "MIT"
+      },
+      "freeink_sdk_main": "57cd928e7e2e59c109b4389d708e24633be8c7e5",
+      "local_sdk_submodule": "995d9bd523b9c45b18710bca17a3158ce724a7f4",
+      "reuse_policy": "No upstream code copied in this documentation-only update; preserve upstream MIT copyright/license notices if code is imported later."
+    },
+    "feature_review": {
+      "usb_msc": "already enabled and run3-build validated; host activity harness passed with stubs; physical enumeration/transfers/eject/SDMMC ownership remain open; no reimplementation justified.",
+      "runtime_fonts": "TTF/OTF not implemented in runtime; SD fonts use converted cpfont files and host conversion tooling. Defer until memory, cache, shaping, license, performance, and reader regression design exists.",
+      "s3_ble": "disabled in S3 profile; no C3 inference; require isolated coexistence and power tests.",
+      "physical_open_items": [
+        "Pro GT911 gestures and Home key",
+        "Pro warm/cool frontlight",
+        "Classic eight physical keys and optional IMU tilt",
+        "all physical panel variants",
+        "PSRAM/DRAM/stack margins",
+        "SDMMC and USB handoff",
+        "battery/charge/RTC",
+        "deep sleep/wake/current",
+        "independent backup and recovery"
+      ]
+    },
+    "safety": {
+      "ota": "check/install disabled in experimental profile",
+      "sd_firmwareflasher": "NOOIR_DISABLE_FIRMWARE_FLASHING=1 blocks validation/write APIs",
+      "physical_writes_authorized": false,
+      "stock_backup_and_independent_recovery": "not validated; neither app-only image is physically flash-ready",
+      "qemu_16m_flash": "emulator only; prohibited on hardware"
+    },
+    "documents": [
+      {
+        "path": "PORT_HANDOFF.md",
+        "bytes": 175434,
+        "sha256": "88d81a03d760811dd61ad9b51967b25e2e75ca14c1edaa1bc439920946895d57",
+        "git_blob_sha256": "50d6dda86fb2fcd507479e23b2645a981a43c68452e1809de456d24fe61bb8fe"
+      },
+      {
+        "path": "docs/PORT_1.6.7_FEATURE_PARITY.md",
+        "bytes": 38981,
+        "sha256": "f4d4292e9e9a1b5b5c05919e08121b1d7d8afc585ebea9f0b5a4e72967684ec8",
+        "git_blob_sha256": "a55be19ad87f86bf8b2bb2879385fbf195db52593e5fe66f8261f908955ef65f"
+      },
+      {
+        "path": "docs/PORT_1.6.7_CONTINUATION.md",
+        "bytes": 7131,
+        "sha256": "d6eb61f0259b7161953787968e4860cbdc449632a6dd3372c08544ebe1bab33b",
+        "git_blob_sha256": "d6eb61f0259b7161953787968e4860cbdc449632a6dd3372c08544ebe1bab33b"
+      },
+      {
+        "path": "docs/hardware/X4_CLASSIC_BACKUP_RECOVERY.md",
+        "bytes": 5326,
+        "sha256": "8e9e6e8e9ece12b93c96c131a1040de35d9e05913a4d6c23c0153a240b49f198",
+        "git_blob_sha256": "8e9e6e8e9ece12b93c96c131a1040de35d9e05913a4d6c23c0153a240b49f198"
+      },
+      {
+        "path": "docs/hardware/X4_PRO_BACKUP_RECOVERY.md",
+        "bytes": 5325,
+        "sha256": "f56e3287747565f7403270aa452b919044fd144d3d2016241a405431711b4af5",
+        "git_blob_sha256": "f56e3287747565f7403270aa452b919044fd144d3d2016241a405431711b4af5"
+      },
+      {
+        "path": "docs/hardware/X4_CLASSIC_ACCEPTANCE.md",
+        "bytes": 4703,
+        "sha256": "d0f9b9878303329f7eb1c1c2198c8f3c8f9be4723aa1e6f710d834ce9b006317",
+        "git_blob_sha256": "d0f9b9878303329f7eb1c1c2198c8f3c8f9be4723aa1e6f710d834ce9b006317"
+      },
+      {
+        "path": "docs/hardware/X4_PRO_ACCEPTANCE.md",
+        "bytes": 4829,
+        "sha256": "4f2a3d2fc97770473b5368488626b0e2f30b27149dd4b173ea0fcc3e18090091",
+        "git_blob_sha256": "4f2a3d2fc97770473b5368488626b0e2f30b27149dd4b173ea0fcc3e18090091"
+      }
+    ],
+    "next_steps_priority": [
+      "Identify each actual retail unit, board/panel revision, data path, flash/security state and OEM partition map using read-only collection.",
+      "Preserve user SD and internal flash where read access permits; keep private hashed D: backups.",
+      "Validate model-matched independent recovery on identical spare/sacrificial hardware before separately approved device writes.",
+      "Run separate Pro and Classic physical acceptance checklists with serial evidence and expendable test cards.",
+      "Keep S3 BLE and runtime TTF/OTF as isolated opt-in investigations; only rebuild for a justified reviewed source change."
+    ],
+    "physical_flash": "not performed; not authorized",
+    "checksum_basis": "sha256 is over current D: working-tree bytes; git_blob_sha256 is over the canonical staged Git file bytes (LF), to remain comparable across checkout platforms.",
+    "handoff_git_blob_sha256": "50d6dda86fb2fcd507479e23b2645a981a43c68452e1809de456d24fe61bb8fe"
   }
 }
