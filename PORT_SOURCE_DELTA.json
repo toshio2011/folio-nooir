@@ -243,8 +243,8 @@
     }
   },
   "commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
-  "handoff_sha256": "07afcaec54222915c6cef9b6d92dd2469b564fcb59057c84a6579e42bddcb5de",
-  "handoff_git_blob_sha256": "159015c5cdd5c4486688be805a01f467e02f243ee572bb6e8eb225b3314bb2f4",
+  "handoff_sha256": "6347b73506e66b706dd0c403e6b998cf915b3981e53b79c082a65d8b742bcf34",
+  "handoff_git_blob_sha256": "14677b3ce6a27b9c40ef2bd39730b947165115b0844fde856258cb7138b75ef0",
   "limitations": [
     "Classic SDL2 simulator uses folder-backed host storage and does not validate physical SDMMC, PSRAM, panel, GPIO, power, or touch hardware.",
     "No physical validation or flash is claimed.",
@@ -1282,13 +1282,16 @@
     ]
   },
   "github_backup": {
-    "status": "prepared; remote push verification pending",
+    "status": "pushed; remote branch ref verified against local commit SHA",
     "repository": "https://github.com/toshio2011/folio-nooir",
-    "branch": "codex/nooir-x4pro-x4classic-s3-port-20261113",
-    "base_commit": "b6d428a3187afc25d434fcb475e9ab436099c1ba",
+    "branch": "codex/nooir-crosspoint-hardware-foundation-feasibility-20261127",
+    "branch_url": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-crosspoint-hardware-foundation-feasibility-20261127",
+    "base_commit": "02d8080d7e6c66dc687071438df5994df9c8f8dc",
+    "verified_push_commit": "7c91d26e7c8d5fbedab1eef3373c97f5785b17e8",
+    "remote_ref_matched_local_commit": true,
     "contains_firmware_artifacts": false,
     "contains_raw_test_evidence": false,
-    "source_scope": "manifest-listed X4 Pro/Classic port files, handoffs, compatibility work, .gitmodules, and pinned S3 SDK gitlink"
+    "source_scope": "Port source is present in the branch ancestry; this review commit records handoffs, source-delta, compatibility and feasibility evidence, plus the candidate FreeInk SDK gitlink. It includes no generated output or firmware binary."
   },
   "v1_6_7_upgrade_20261124": {
     "status": "PAUSED — source backup verified; firmware builds and host/QEMU software validation complete; resume only for physical hardware testing or a concrete Web Emulator integration requirement.",
@@ -2703,8 +2706,8 @@
     "updated_documents": [
       {
         "path": "PORT_HANDOFF.md",
-        "bytes": 184274,
-        "sha256": "07afcaec54222915c6cef9b6d92dd2469b564fcb59057c84a6579e42bddcb5de"
+        "bytes": 184691,
+        "sha256": "6347b73506e66b706dd0c403e6b998cf915b3981e53b79c082a65d8b742bcf34"
       },
       {
         "path": "docs/HARDWARE_FOUNDATION_FEASIBILITY_2026-11-27.md",
@@ -3028,8 +3031,18 @@
       "physical validation only with board-matched backup and independently verified recovery path"
     ],
     "evidence_index_sha256": "1a9adfc4b01776ce80c75507800bf10270727db887938da72fb91c184e1923d0",
-    "performance_summary_sha256": "0242598d293aead74ca56885398174a75e287183318d627246853dc5aeb2ce70"
+    "performance_summary_sha256": "0242598d293aead74ca56885398174a75e287183318d627246853dc5aeb2ce70",
+    "remote_backup": {
+      "status": "pushed; remote branch ref verified against local commit SHA",
+      "repository": "https://github.com/toshio2011/folio-nooir",
+      "branch": "codex/nooir-crosspoint-hardware-foundation-feasibility-20261127",
+      "branch_url": "https://github.com/toshio2011/folio-nooir/tree/codex/nooir-crosspoint-hardware-foundation-feasibility-20261127",
+      "verified_push_commit": "7c91d26e7c8d5fbedab1eef3373c97f5785b17e8",
+      "remote_ref_matched_local_commit": true,
+      "contains_firmware_artifacts": false,
+      "contains_raw_test_evidence": false
+    }
   },
-  "handoff_git_blob_id": "6c2f9d498243d990a5fc46e4fee6183cb4c19571",
+  "handoff_git_blob_id": "610657c1037088f221184f498d5cd81c37e53a85",
   "handoff_git_blob_sha256_method": "SHA-256 over Git blob object payload: b\"blob <size>\\0\" plus the exact UTF-8 handoff bytes; repository Git object format is SHA-1."
 }
